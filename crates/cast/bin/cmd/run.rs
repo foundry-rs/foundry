@@ -90,7 +90,7 @@ impl RunArgs {
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
-        let provider = foundry_common::provider::alloy::ProviderBuilder::new(
+        let provider = foundry_common::provider::ProviderBuilder::new(
             &config.get_rpc_url_or_localhost_http()?,
         )
         .compute_units_per_second_opt(compute_units_per_second)
@@ -100,7 +100,8 @@ impl RunArgs {
         let tx = provider
             .get_transaction_by_hash(tx_hash)
             .await
-            .wrap_err_with(|| format!("tx not found: {:?}", tx_hash))?;
+            .wrap_err_with(|| format!("tx not found: {:?}", tx_hash))?
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
         if is_known_system_sender(tx.from) || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE) {

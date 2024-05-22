@@ -303,6 +303,31 @@ impl Cheatcode for prevrandao_1Call {
     }
 }
 
+impl Cheatcode for blobhashesCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { hashes } = self;
+        ensure!(
+            ccx.ecx.spec_id() >= SpecId::CANCUN,
+            "`blobhash` is not supported before the Cancun hard fork; \
+             see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
+        );
+        ccx.ecx.env.tx.blob_hashes.clone_from(hashes);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getBlobhashesCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        ensure!(
+            ccx.ecx.spec_id() >= SpecId::CANCUN,
+            "`blobhash` is not supported before the Cancun hard fork; \
+             see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
+        );
+        Ok(ccx.ecx.env.tx.blob_hashes.clone().abi_encode())
+    }
+}
+
 impl Cheatcode for rollCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { newHeight } = self;
@@ -528,7 +553,6 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 }
 
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
-    super::script::correct_sender_nonce(ccx)?;
     let (account, _) = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
     Ok(account.info.nonce.abi_encode())
 }

@@ -13,7 +13,6 @@ repository.workspace = true
 [dependencies]
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
-foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-macros.workspace = true
 
@@ -26,7 +25,7 @@ alloy-transport.workspace = true
 alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
 
-revm = { workspace = true, default-features = false, features = [
+revm = { workspace = true, features = [
     "std",
     "serde",
     "memory_limit",
@@ -35,6 +34,7 @@ revm = { workspace = true, default-features = false, features = [
     "optional_no_base_fee",
     "arbitrary",
     "optimism",
+    "c-kzg",
 ] }
 revm-inspectors.workspace = true
 
@@ -51,7 +51,7 @@ rustc-hash.workspace = true
 serde = "1"
 serde_json = "1"
 thiserror = "1"
-tokio = { version = "1", features = ["time", "macros"] }
+tokio = { workspace = true, features = ["time", "macros"] }
 tracing = "0.1"
 url = "2"
 

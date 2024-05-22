@@ -8,7 +8,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;
@@ -18,9 +18,7 @@ use foundry_cli::{
     utils::{has_batch_support, has_different_gas_calc},
 };
 use foundry_common::{
-    provider::alloy::{
-        estimate_eip1559_fees, get_http_provider, try_get_http_provider, RetryProvider,
-    },
+    provider::{get_http_provider, try_get_http_provider, RetryProvider},
     shell,
 };
 use foundry_config::Config;
@@ -45,7 +43,10 @@ where
     tx.gas = None;
 
     tx.set_gas_limit(
-        provider.estimate_gas(tx, None).await.wrap_err("Failed to estimate gas for tx")? *
+        provider
+            .estimate_gas(tx, BlockId::latest())
+            .await
+            .wrap_err("Failed to estimate gas for tx")? *
             estimate_multiplier as u128 /
             100,
     );
@@ -55,7 +56,7 @@ where
 pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64> {
     let provider = try_get_http_provider(provider_url)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
-    Ok(provider.get_transaction_count(caller, None).await?)
+    Ok(provider.get_transaction_count(caller, BlockId::latest()).await?)
 }
 
 pub async fn send_transaction(
@@ -70,7 +71,7 @@ pub async fn send_transaction(
     let from = tx.from.expect("no sender");
 
     if sequential_broadcast {
-        let nonce = provider.get_transaction_count(from, None).await?;
+        let nonce = provider.get_transaction_count(from, BlockId::latest()).await?;
 
         let tx_nonce = tx.nonce.expect("no nonce");
         if nonce != tx_nonce {
@@ -255,9 +256,7 @@ impl BundledState {
                         }),
                     ),
                     (false, _, _) => {
-                        let mut fees = estimate_eip1559_fees(&provider, Some(sequence.chain))
-                                .await
-                            .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                        let mut fees = provider.estimate_eip1559_fees(None).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
                         if let Some(gas_price) = self.args.with_gas_price {
                             fees.max_fee_per_gas = gas_price.to();
@@ -286,6 +285,11 @@ impl BundledState {
 
                         let mut tx = tx.clone();
                         tx.set_chain_id(sequence.chain);
+
+                        // Set TxKind::Create explicityly to satify `check_reqd_fields` in alloy
+                        if tx.to().is_none() {
+                            tx.set_create();
+                        }
 
                         if let Some(gas_price) = gas_price {
                             tx.set_gas_price(gas_price);

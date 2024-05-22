@@ -31,9 +31,10 @@ foundry-evm.workspace = true
 # evm support
 bytes = "1.4.0"
 k256.workspace = true
-ethers = { workspace = true, features = ["rustls", "ws", "ipc", "optimism"] }
+revm = { workspace = true, features = ["std", "serde", "memory_limit", "c-kzg"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
+alloy-contract = { workspace = true, features = ["pubsub"] }
 alloy-network.workspace = true
 alloy-eips.workspace = true
 alloy-rlp.workspace = true
@@ -59,7 +60,7 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 # async
-tokio = { version = "1", features = ["time"] }
+tokio = { workspace = true, features = ["time"] }
 parking_lot = "0.12"
 futures = "0.3"
 async-trait = "0.1"
@@ -84,21 +85,20 @@ auto_impl = "1"
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
 clap_complete_fig = "4"
-ethereum-forkid = "0.12"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
 alloy-json-abi.workspace = true
-ethers = { workspace = true, features = ["abigen", "optimism"] }
-ethers-core = { workspace = true, features = ["optimism"] }
-foundry-compilers = { workspace = true, features = ["project-util", "full"] }
+alloy-rpc-client = { workspace = true, features = ["pubsub"] }
+alloy-transport-ipc = { workspace = true, features = ["mock"] }
+alloy-transport-ws.workspace = true
+alloy-json-rpc.workspace = true
+alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
-
-pretty_assertions.workspace = true
-tokio = { version = "1", features = ["full"] }
-crc = "3.0.1"
+similar-asserts.workspace = true
+tokio = { workspace = true, features = ["full"] }
 
 [features]
 default = ["cli"]

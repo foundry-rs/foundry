@@ -81,8 +81,7 @@ impl SelectorsSubcommands {
                     output
                         .into_artifacts_with_files()
                         .filter(|(file, _, _)| {
-                            let is_sources_path = file
-                                .starts_with(&project.paths.sources.to_string_lossy().to_string());
+                            let is_sources_path = file.starts_with(&project.paths.sources);
                             let is_test = file.is_sol_test();
 
                             is_sources_path && !is_test
@@ -212,8 +211,7 @@ impl SelectorsSubcommands {
                     outcome
                         .into_artifacts_with_files()
                         .filter(|(file, _, _)| {
-                            let is_sources_path = file
-                                .starts_with(&project.paths.sources.to_string_lossy().to_string());
+                            let is_sources_path = file.starts_with(&project.paths.sources);
                             let is_test = file.is_sol_test();
 
                             is_sources_path && !is_test

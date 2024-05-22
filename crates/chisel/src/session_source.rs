@@ -7,8 +7,9 @@
 use eyre::Result;
 use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_compilers::{
-    artifacts::{Source, Sources},
-    CompilerInput, CompilerOutput, Solc,
+    artifacts::{Settings, Source, Sources},
+    compilers::{solc::SolcVersionManager, CompilerInput, CompilerVersionManager},
+    CompilerOutput, Solc, SolcInput,
 };
 use foundry_config::{Config, SolcReq};
 use foundry_evm::{backend::Backend, opts::EvmOpts};
@@ -94,20 +95,22 @@ impl SessionSourceConfig {
         let solc_req = if let Some(solc_req) = self.foundry_config.solc.clone() {
             solc_req
         } else if let Some(version) = Solc::installed_versions().into_iter().max() {
-            SolcReq::Version(version.into())
+            SolcReq::Version(version)
         } else {
             if !self.foundry_config.offline {
                 print!("{}", "No solidity versions installed! ".green());
             }
             // use default
-            SolcReq::Version("0.8.19".parse().unwrap())
+            SolcReq::Version(Version::new(0, 8, 19))
         };
+
+        let vm = SolcVersionManager::default();
 
         match solc_req {
             SolcReq::Version(version) => {
                 // Validate that the requested evm version is supported by the solc version
                 let req_evm_version = self.foundry_config.evm_version;
-                if let Some(compat_evm_version) = req_evm_version.normalize_version(&version) {
+                if let Some(compat_evm_version) = req_evm_version.normalize_version_solc(&version) {
                     if req_evm_version > compat_evm_version {
                         eyre::bail!(
                             "The set evm version, {req_evm_version}, is not supported by solc {version}. Upgrade to a newer solc version."
@@ -115,23 +118,22 @@ impl SessionSourceConfig {
                     }
                 }
 
-                let mut solc = Solc::find_svm_installed_version(version.to_string())?;
-
-                if solc.is_none() {
+                let solc = if let Ok(solc) = vm.get_installed(&version) {
+                    solc
+                } else {
                     if self.foundry_config.offline {
                         eyre::bail!("can't install missing solc {version} in offline mode")
                     }
                     println!("{}", format!("Installing solidity version {version}...").green());
-                    Solc::blocking_install(&version)?;
-                    solc = Solc::find_svm_installed_version(version.to_string())?;
-                }
-                solc.ok_or_else(|| eyre::eyre!("Failed to install {version}"))
+                    vm.install(&version)?
+                };
+                Ok(solc)
             }
             SolcReq::Local(solc) => {
                 if !solc.is_file() {
                     eyre::bail!("`solc` {} does not exist", solc.display());
                 }
-                Ok(Solc::new(solc))
+                Ok(Solc::new(solc)?)
             }
         }
     }
@@ -182,11 +184,9 @@ impl SessionSource {
     /// A new instance of [SessionSource]
     #[track_caller]
     pub fn new(solc: Solc, mut config: SessionSourceConfig) -> Self {
-        if let Ok(v) = solc.version_short() {
-            if v < MIN_VM_VERSION && !config.no_vm {
-                tracing::info!(version=%v, minimum=%MIN_VM_VERSION, "Disabling VM injection");
-                config.no_vm = true;
-            }
+        if solc.version < MIN_VM_VERSION && !config.no_vm {
+            tracing::info!(version=%solc.version, minimum=%MIN_VM_VERSION, "Disabling VM injection");
+            config.no_vm = true;
         }
 
         Self {
@@ -311,7 +311,7 @@ impl SessionSource {
     ///
     /// A [CompilerInput] object containing forge-std's `Vm` interface as well as the REPL contract
     /// source.
-    pub fn compiler_input(&self) -> CompilerInput {
+    pub fn compiler_input(&self) -> SolcInput {
         let mut sources = Sources::new();
         sources.insert(self.file_name.clone(), Source::new(self.to_repl_source()));
 
@@ -322,19 +322,17 @@ impl SessionSource {
             sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE));
         }
 
+        let settings = Settings {
+            remappings,
+            evm_version: Some(self.config.foundry_config.evm_version),
+            ..Default::default()
+        };
+
         // we only care about the solidity source, so we can safely unwrap
-        let mut compiler_input = CompilerInput::with_sources(sources)
+        SolcInput::build(sources, settings, &self.solc.version)
             .into_iter()
             .next()
-            .expect("Solidity source not found");
-
-        // get all remappings from the config
-        compiler_input.settings.remappings = remappings;
-
-        // We also need to enforce the EVM version that the user has specified.
-        compiler_input.settings.evm_version = Some(self.config.foundry_config.evm_version);
-
-        compiler_input
+            .expect("Solidity source not found")
     }
 
     /// Compiles the source using [solang_parser]
@@ -442,7 +440,7 @@ impl SessionSource {
     ///
     /// The [SessionSource] represented as a Forge Script contract.
     pub fn to_script_source(&self) -> String {
-        let Version { major, minor, patch, .. } = self.solc.version().unwrap();
+        let Version { major, minor, patch, .. } = self.solc.version;
         let Self { contract_name, global_code, top_level_code, run_code, config, .. } = self;
 
         let script_import =
@@ -473,7 +471,7 @@ contract {contract_name} is Script {{
     ///
     /// The [SessionSource] represented as a REPL contract.
     pub fn to_repl_source(&self) -> String {
-        let Version { major, minor, patch, .. } = self.solc.version().unwrap();
+        let Version { major, minor, patch, .. } = self.solc.version;
         let Self { contract_name, global_code, top_level_code, run_code, config, .. } = self;
 
         let (vm_import, vm_constant) = if !config.no_vm {

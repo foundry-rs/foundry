@@ -198,6 +198,7 @@ impl DebuggerContext<'_> {
             CallKind::StaticCall => "Contract staticcall",
             CallKind::CallCode => "Contract callcode",
             CallKind::DelegateCall => "Contract delegatecall",
+            CallKind::AuthCall => "Contract authcall",
         };
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text_output).block(block).wrap(Wrap { trim: false });

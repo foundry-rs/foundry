@@ -2,7 +2,9 @@
 
 use crate::constants::*;
 use foundry_compilers::{artifacts::Metadata, remappings::Remapping, ConfigurableContractArtifact};
-use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
+use foundry_config::{
+    parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,
+};
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
     rpc::next_etherscan_api_key,
@@ -544,6 +546,29 @@ forgetest_init!(can_clean_config, |prj, cmd| {
     assert!(!artifact.exists());
 });
 
+// checks that `clean` removes fuzz and invariant cache dirs
+forgetest_init!(can_clean_test_cache, |prj, cmd| {
+    let config = Config {
+        fuzz: FuzzConfig::new("cache/fuzz".into()),
+        invariant: InvariantConfig::new("cache/invariant".into()),
+        ..Default::default()
+    };
+    prj.write_config(config);
+    // default test contract is written in custom out directory
+    let fuzz_cache_dir = prj.root().join("cache/fuzz");
+    let _ = fs::create_dir(fuzz_cache_dir.clone());
+    let invariant_cache_dir = prj.root().join("cache/invariant");
+    let _ = fs::create_dir(invariant_cache_dir.clone());
+
+    assert!(fuzz_cache_dir.exists());
+    assert!(invariant_cache_dir.exists());
+
+    cmd.forge_fuse().arg("clean");
+    cmd.output();
+    assert!(!fuzz_cache_dir.exists());
+    assert!(!invariant_cache_dir.exists());
+});
+
 // checks that extra output works
 forgetest_init!(can_emit_extra_output, |prj, cmd| {
     cmd.args(["build", "--extra-output", "metadata"]);
@@ -825,37 +850,6 @@ contract A {
     assert!(out.contains("Compiler run successful!"));
     assert!(!out.contains("Compiler run successful with warnings:"));
 });
-
-// test against a local checkout, useful to debug with local ethers-rs patch
-forgetest!(
-    #[ignore]
-    can_compile_local_spells,
-    |_prj, cmd| {
-        let current_dir = std::env::current_dir().unwrap();
-        let root = current_dir
-            .join("../../foundry-integration-tests/testdata/spells-mainnet")
-            .to_string_lossy()
-            .to_string();
-        println!("project root: \"{root}\"");
-
-        let eth_rpc_url = foundry_test_utils::rpc::next_http_archive_rpc_endpoint();
-        let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
-
-        cmd.args([
-            "test",
-            "--root",
-            root.as_str(),
-            "--fork-url",
-            eth_rpc_url.as_str(),
-            "--fork-block-number",
-            "14435000",
-            "--libraries",
-            dss_exec_lib,
-            "-vvvvv",
-        ]);
-        cmd.assert_non_empty_stdout();
-    }
-);
 
 // test that a failing `forge build` does not impact followup builds
 forgetest!(can_build_after_failure, |prj, cmd| {

@@ -2,19 +2,17 @@ mod abi;
 mod anvil;
 mod anvil_api;
 mod api;
+mod eip4844;
 mod fork;
-mod ganache;
 mod gas;
 mod genesis;
-mod geth;
 mod ipc;
 mod logs;
 mod optimism;
+mod otterscan;
 mod proof;
 mod pubsub;
-// mod revert; // TODO uncomment <https://github.com/gakonst/ethers-rs/issues/2186>
-mod otterscan;
-
+mod revert;
 mod sign;
 mod state;
 mod traces;

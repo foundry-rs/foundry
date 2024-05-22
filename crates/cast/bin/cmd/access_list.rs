@@ -1,5 +1,5 @@
 use alloy_network::{AnyNetwork, TransactionBuilder};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use alloy_transport::Transport;
@@ -105,10 +105,15 @@ async fn access_list<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     to_json: bool,
 ) -> Result<()> {
     let mut req = WithOtherFields::<TransactionRequest>::default()
-        .with_to(to.into())
         .with_from(from)
         .with_value(tx.value.unwrap_or_default())
         .with_chain_id(chain.id());
+
+    if let Some(to) = to {
+        req.set_to(to);
+    } else {
+        req.set_kind(alloy_primitives::TxKind::Create);
+    }
 
     if let Some(gas_limit) = tx.gas_limit {
         req.set_gas_limit(gas_limit.to());
@@ -127,7 +132,7 @@ async fn access_list<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
         Vec::new()
     };
 
-    req.set_input(data.into());
+    req.set_input::<Bytes>(data.into());
 
     let cast = Cast::new(&provider);
 

@@ -10,12 +10,12 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters},
-    provider::alloy::ProviderBuilder,
+    provider::ProviderBuilder,
 };
 use foundry_compilers::{
     artifacts::{BytecodeHash, BytecodeObject, CompactContractBytecode},
     info::ContractInfo,
-    Artifact, EvmVersion,
+    Artifact, EvmVersion, SolcSparseFileFilter,
 };
 use foundry_config::{figment, impl_figment_convert, Chain, Config};
 use foundry_evm::{
@@ -184,7 +184,10 @@ impl VerifyBytecodeArgs {
         let mut transaction = provider
             .get_transaction_by_hash(creation_data.transaction_hash)
             .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?;
+            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
+            .ok_or_else(|| {
+                eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
+            })?;
         let receipt = provider
             .get_transaction_receipt(creation_data.transaction_hash)
             .await
@@ -262,7 +265,9 @@ impl VerifyBytecodeArgs {
                 let provider = utils::get_provider(&config)?;
                 provider
                     .get_transaction_by_hash(creation_data.transaction_hash)
-                    .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
+                    .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
+                        eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
+                    })?
                     .block_number.ok_or_else(|| {
                         eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
                     })?
@@ -286,9 +291,8 @@ impl VerifyBytecodeArgs {
         // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
         // block.
         let prev_block_id = BlockId::Number(BlockNumberOrTag::Number(simulation_block - 1));
-        let prev_block_nonce = provider
-            .get_transaction_count(creation_data.contract_creator, Some(prev_block_id))
-            .await?;
+        let prev_block_nonce =
+            provider.get_transaction_count(creation_data.contract_creator, prev_block_id).await?;
         transaction.nonce = prev_block_nonce;
 
         if let Some(ref block) = block {
@@ -373,10 +377,11 @@ impl VerifyBytecodeArgs {
 
         if let Some(skip) = &self.skip {
             if !skip.is_empty() {
-                compiler = compiler.filter(Box::new(SkipBuildFilters::new(
+                let filter = SolcSparseFileFilter::new(SkipBuildFilters::new(
                     skip.to_owned(),
                     project.root().to_path_buf(),
-                )?));
+                )?);
+                compiler = compiler.filter(Box::new(filter));
             }
         }
         let output = compiler.compile(&project)?;

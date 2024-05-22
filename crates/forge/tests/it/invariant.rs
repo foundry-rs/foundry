@@ -2,14 +2,33 @@
 
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
-use forge::{fuzz::CounterExample, result::TestStatus, TestOptions};
+use forge::{fuzz::CounterExample, TestOptions};
 use foundry_test_utils::Filter;
 use std::collections::BTreeMap;
+
+macro_rules! get_counterexample {
+    ($runner:ident, $filter:expr) => {
+        $runner
+            .test_collect($filter)
+            .values()
+            .last()
+            .expect("Invariant contract should be testable.")
+            .test_results
+            .values()
+            .last()
+            .expect("Invariant contract should be testable.")
+            .counterexample
+            .as_ref()
+            .expect("Invariant contract should have failed with a counterexample.")
+    };
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/(target|targetAbi|common)");
     let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.failure_persist_dir =
+        Some(tempfile::tempdir().unwrap().into_path());
     let results = runner.test_collect(&filter);
 
     assert_multiple(
@@ -173,6 +192,34 @@ async fn test_invariant() {
                     None,
                 )],
             ),
+            (
+                "default/fuzz/invariant/common/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest",
+                vec![("invariant_shrink_big_sequence()", true, None, None, None)],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantShrinkFailOnRevert.t.sol:ShrinkFailOnRevertTest",
+                vec![("invariant_shrink_fail_on_revert()", true, None, None, None)],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantScrapeValues.t.sol:FindFromReturnValueTest",
+                vec![(
+                    "invariant_value_not_found()",
+                    false,
+                    Some("revert: value from return found".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantScrapeValues.t.sol:FindFromLogValueTest",
+                vec![(
+                    "invariant_value_not_found()",
+                    false,
+                    Some("revert: value from logs found".into()),
+                    None,
+                    None,
+                )],
+            )
         ]),
     );
 }
@@ -247,20 +294,8 @@ async fn test_invariant_shrink() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
     runner.test_options.fuzz.seed = Some(U256::from(119u32));
-    let results = runner.test_collect(&filter);
 
-    let results =
-        results.values().last().expect("`InvariantInnerContract.t.sol` should be testable.");
-
-    let result =
-        results.test_results.values().last().expect("`InvariantInnerContract` should be testable.");
-
-    let counter = result
-        .counterexample
-        .as_ref()
-        .expect("`InvariantInnerContract` should have failed with a counterexample.");
-
-    match counter {
+    match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
         // `fuzz_seed` at 119 makes this sequence shrinkable from 4 to 2.
         CounterExample::Sequence(sequence) => {
@@ -305,23 +340,8 @@ async fn test_shrink(opts: TestOptions, contract_pattern: &str) {
     );
     let mut runner = TEST_DATA_DEFAULT.runner();
     runner.test_options = opts.clone();
-    let results = runner.test_collect(&filter);
-    let results = results.values().last().expect("`InvariantShrinkWithAssert` should be testable.");
 
-    let result = results
-        .test_results
-        .values()
-        .last()
-        .expect("`InvariantShrinkWithAssert` should be testable.");
-
-    assert_eq!(result.status, TestStatus::Failure);
-
-    let counter = result
-        .counterexample
-        .as_ref()
-        .expect("`InvariantShrinkWithAssert` should have failed with a counterexample.");
-
-    match counter {
+    match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
         CounterExample::Sequence(sequence) => {
             assert!(sequence.len() <= 3);
@@ -330,23 +350,108 @@ async fn test_shrink(opts: TestOptions, contract_pattern: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_invariant_preserve_state() {
-    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantPreserveState.t.sol");
+#[cfg_attr(windows, ignore = "for some reason there's different rng")]
+async fn test_shrink_big_sequence() {
+    let mut opts = TEST_DATA_DEFAULT.test_opts.clone();
+    opts.fuzz.seed = Some(U256::from(119u32));
+
+    let filter =
+        Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantShrinkBigSequence.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
-    // Should not fail with default options.
-    runner.test_options.invariant.fail_on_revert = true;
+    runner.test_options = opts.clone();
+    runner.test_options.invariant.runs = 1;
+    runner.test_options.invariant.depth = 500;
+
+    let initial_counterexample = runner
+        .test_collect(&filter)
+        .values()
+        .last()
+        .expect("Invariant contract should be testable.")
+        .test_results
+        .values()
+        .last()
+        .expect("Invariant contract should be testable.")
+        .counterexample
+        .clone()
+        .unwrap();
+
+    let initial_sequence = match initial_counterexample {
+        CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
+        CounterExample::Sequence(sequence) => sequence,
+    };
+    // ensure shrinks to same sequence of 77
+    assert_eq!(initial_sequence.len(), 77);
+
+    // test failure persistence
     let results = runner.test_collect(&filter);
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "default/fuzz/invariant/common/InvariantPreserveState.t.sol:InvariantPreserveState",
-            vec![("invariant_preserve_state()", true, None, None, None)],
+            "default/fuzz/invariant/common/InvariantShrinkBigSequence.t.sol:ShrinkBigSequenceTest",
+            vec![(
+                "invariant_shrink_big_sequence()",
+                false,
+                Some("invariant_shrink_big_sequence replay failure".into()),
+                None,
+                None,
+            )],
         )]),
     );
+    let new_sequence = match results
+        .values()
+        .last()
+        .expect("Invariant contract should be testable.")
+        .test_results
+        .values()
+        .last()
+        .expect("Invariant contract should be testable.")
+        .counterexample
+        .clone()
+        .unwrap()
+    {
+        CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
+        CounterExample::Sequence(sequence) => sequence,
+    };
+    // ensure shrinks to same sequence of 77
+    assert_eq!(new_sequence.len(), 77);
+    // ensure calls within failed sequence are the same as initial one
+    for index in 0..77 {
+        let new_call = new_sequence.get(index).unwrap();
+        let initial_call = initial_sequence.get(index).unwrap();
+        assert_eq!(new_call.sender, initial_call.sender);
+        assert_eq!(new_call.addr, initial_call.addr);
+        assert_eq!(new_call.calldata, initial_call.calldata);
+    }
+}
 
-    // same test should revert when preserve state enabled
+#[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(windows, ignore = "for some reason there's different rng")]
+async fn test_shrink_fail_on_revert() {
+    let mut opts = TEST_DATA_DEFAULT.test_opts.clone();
+    opts.fuzz.seed = Some(U256::from(119u32));
+
+    let filter =
+        Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantShrinkFailOnRevert.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options = opts.clone();
     runner.test_options.invariant.fail_on_revert = true;
-    runner.test_options.invariant.preserve_state = true;
+    runner.test_options.invariant.runs = 1;
+    runner.test_options.invariant.depth = 100;
+
+    match get_counterexample!(runner, &filter) {
+        CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
+        CounterExample::Sequence(sequence) => {
+            // ensure shrinks to sequence of 10
+            assert_eq!(sequence.len(), 10);
+        }
+    };
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_preserve_state() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantPreserveState.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.fail_on_revert = true;
     let results = runner.test_collect(&filter);
     assert_multiple(
         &results,
@@ -492,5 +597,37 @@ async fn test_invariant_fixtures() {
                 None,
             )],
         )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_scrape_values() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantScrapeValues.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([
+            (
+                "default/fuzz/invariant/common/InvariantScrapeValues.t.sol:FindFromReturnValueTest",
+                vec![(
+                    "invariant_value_not_found()",
+                    false,
+                    Some("revert: value from return found".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantScrapeValues.t.sol:FindFromLogValueTest",
+                vec![(
+                    "invariant_value_not_found()",
+                    false,
+                    Some("revert: value from logs found".into()),
+                    None,
+                    None,
+                )],
+            ),
+        ]),
     );
 }

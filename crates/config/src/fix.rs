@@ -220,7 +220,7 @@ pub fn fix_tomls() -> Vec<Warning> {
 mod tests {
     use super::*;
     use figment::Jail;
-    use pretty_assertions::assert_eq;
+    use similar_asserts::assert_eq;
 
     macro_rules! fix_test {
         ($(#[$attr:meta])* $name:ident, $fun:expr) => {

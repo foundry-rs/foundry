@@ -15,10 +15,11 @@ use crate::{
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
     Vm::AccountAccess,
 };
-use alloy_primitives::{Address, Bytes, Log, B256, U256};
+use alloy_primitives::{Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolInterface, SolValue};
-use foundry_common::{evm::Breakpoints, provider::alloy::RpcUrl, SELECTOR_LEN};
+use foundry_common::{evm::Breakpoints, SELECTOR_LEN};
+use foundry_config::Config;
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseExt, RevertDiagnostic},
@@ -80,7 +81,7 @@ impl Context {
 #[derive(Clone, Debug, Default)]
 pub struct BroadcastableTransaction {
     /// The optional RPC URL.
-    pub rpc: Option<RpcUrl>,
+    pub rpc: Option<String>,
     /// The transaction to broadcast.
     pub transaction: TransactionRequest,
 }
@@ -165,10 +166,6 @@ pub struct Cheatcodes {
 
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
-
-    /// Used to correct the nonce of --sender after the initiating call. For more, check
-    /// `docs/scripting`.
-    pub corrected_nonce: bool,
 
     /// Scripting based transactions
     pub broadcastable_transactions: BroadcastableTransactions,
@@ -767,6 +764,32 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     fn call(&mut self, ecx: &mut EvmContext<DB>, call: &mut CallInputs) -> Option<CallOutcome> {
         let gas = Gas::new(call.gas_limit);
 
+        // At the root call to test function or script `run()`/`setUp()` functions, we are
+        // decreasing sender nonce to ensure that it matches on-chain nonce once we start
+        // broadcasting.
+        if ecx.journaled_state.depth == 0 {
+            let sender = ecx.env.tx.caller;
+            if sender != Config::DEFAULT_SENDER {
+                let account = match super::evm::journaled_account(ecx, sender) {
+                    Ok(account) => account,
+                    Err(err) => {
+                        return Some(CallOutcome {
+                            result: InterpreterResult {
+                                result: InstructionResult::Revert,
+                                output: err.abi_encode().into(),
+                                gas,
+                            },
+                            memory_offset: call.return_memory_offset.clone(),
+                        })
+                    }
+                };
+                let prev = account.info.nonce;
+                account.info.nonce = prev.saturating_sub(1);
+
+                debug!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
+            }
+        }
+
         if call.contract == CHEATCODE_ADDRESS {
             return match self.apply_cheatcode(ecx, call) {
                 Ok(retdata) => Some(CallOutcome {
@@ -915,7 +938,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         rpc: ecx.db.active_fork_url(),
                         transaction: TransactionRequest {
                             from: Some(broadcast.new_origin),
-                            to: Some(call.contract),
+                            to: Some(TxKind::from(Some(call.contract))),
                             value: Some(call.transfer.value),
                             input: TransactionInput::new(call.input.clone()),
                             nonce: Some(account.info.nonce),

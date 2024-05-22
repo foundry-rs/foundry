@@ -124,13 +124,27 @@ pub fn fuzz_param_from_state(
     // Value strategy that uses the state.
     let value = || {
         let state = state.clone();
-        // Use `Index` instead of `Selector` to not iterate over the entire dictionary.
-        any::<prop::sample::Index>().prop_map(move |index| {
-            let state = state.dictionary_read();
-            let values = state.values();
-            let index = index.index(values.len());
-            *values.iter().nth(index).unwrap()
-        })
+        let param = param.clone();
+        // Generate a bias and use it to pick samples or non-persistent values (50 / 50).
+        // Use `Index` instead of `Selector` when selecting a value to avoid iterating over the
+        // entire dictionary.
+        ((0..100).prop_flat_map(Just), any::<prop::sample::Index>()).prop_map(
+            move |(bias, index)| {
+                let state = state.dictionary_read();
+                let values = match bias {
+                    x if x < 50 => {
+                        if let Some(sample_values) = state.samples(param.clone()) {
+                            sample_values
+                        } else {
+                            state.values()
+                        }
+                    }
+                    _ => state.values(),
+                };
+                let index = index.index(values.len());
+                *values.iter().nth(index).unwrap()
+            },
+        )
     };
 
     // Convert the value based on the parameter type
@@ -212,7 +226,7 @@ pub fn fuzz_param_from_state(
 #[cfg(test)]
 mod tests {
     use crate::{
-        strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state},
+        strategies::{fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState},
         FuzzFixtures,
     };
     use foundry_common::abi::get_func;
@@ -224,7 +238,7 @@ mod tests {
         let f = "testArray(uint64[2] calldata values)";
         let func = get_func(f).unwrap();
         let db = CacheDB::new(EmptyDB::default());
-        let state = build_initial_state(&db, FuzzDictionaryConfig::default());
+        let state = EvmFuzzState::new(&db, FuzzDictionaryConfig::default());
         let strat = proptest::prop_oneof![
             60 => fuzz_calldata(func.clone(), &FuzzFixtures::default()),
             40 => fuzz_calldata_from_state(func, &state),

@@ -1,5 +1,5 @@
 use alloy_network::TransactionBuilder;
-use alloy_primitives::U256;
+use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use cast::Cast;
 use clap::Parser;
@@ -122,9 +122,14 @@ impl CallArgs {
         };
 
         let mut req = WithOtherFields::<TransactionRequest>::default()
-            .with_to(to.into())
             .with_from(sender)
             .with_value(tx.value.unwrap_or_default());
+
+        if let Some(to) = to {
+            req.set_to(to);
+        } else {
+            req.set_kind(alloy_primitives::TxKind::Create);
+        }
 
         if let Some(nonce) = tx.nonce {
             req.set_nonce(nonce.to());
@@ -209,9 +214,10 @@ impl CallArgs {
 
                     let mut executor = TracingExecutor::new(env, fork, evm_version, debug);
 
+                    let to = if let Some(TxKind::Call(to)) = req.to { Some(to) } else { None };
                     let trace = TraceResult::from(executor.call_raw_committing(
                         sender,
-                        req.to.expect("an address to be here"),
+                        to.expect("an address to be here"),
                         data.into(),
                         req.value.unwrap_or_default(),
                     )?);
@@ -225,7 +231,7 @@ impl CallArgs {
             }
         };
 
-        req.set_input(data.into());
+        req.set_input(data);
 
         println!("{}", Cast::new(provider).call(&req, func.as_ref(), block).await?);
 

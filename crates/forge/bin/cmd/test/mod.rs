@@ -19,7 +19,9 @@ use foundry_common::{
     evm::EvmArgs,
     shell,
 };
-use foundry_compilers::{artifacts::output_selection::OutputSelection, utils::source_files_iter};
+use foundry_compilers::{
+    artifacts::output_selection::OutputSelection, utils::source_files_iter, SOLC_EXTENSIONS,
+};
 use foundry_config::{
     figment,
     figment::{
@@ -149,7 +151,7 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
     ) -> Result<BTreeSet<PathBuf>> {
         let mut project = config.create_project(true, true)?;
-        project.solc_config.settings.output_selection =
+        project.settings.output_selection =
             OutputSelection::common_output_selection(["abi".to_string()]);
         let output = project.compile()?;
 
@@ -201,7 +203,7 @@ impl TestArgs {
         }
 
         // Always recompile all sources to ensure that `getCode` cheatcode can use any artifact.
-        test_sources.extend(source_files_iter(project.paths.sources));
+        test_sources.extend(source_files_iter(project.paths.sources, SOLC_EXTENSIONS));
 
         Ok(test_sources)
     }
@@ -255,7 +257,7 @@ impl TestArgs {
 
         let test_options: TestOptions = TestOptionsBuilder::default()
             .fuzz(config.fuzz.clone())
-            .invariant(config.invariant)
+            .invariant(config.invariant.clone())
             .profiles(profiles)
             .build(&output, project_root)?;
 
@@ -359,7 +361,7 @@ impl TestArgs {
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
-        let remote_chain_id = runner.evm_opts.get_remote_chain_id();
+        let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();

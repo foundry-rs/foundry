@@ -1,8 +1,9 @@
+use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use alloy_transport::Transport;
 use eyre::Result;
 use foundry_cli::{opts::TransactionOpts, utils::parse_function_args};
@@ -52,22 +53,44 @@ pub async fn build_tx<
     tx: TransactionOpts,
     chain: impl Into<Chain>,
     etherscan_api_key: Option<String>,
+    blob_data: Option<Vec<u8>>,
 ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
     let chain = chain.into();
 
     let from = from.into().resolve(provider).await?;
-    let to = if let Some(to) = to { Some(to.into().resolve(provider).await?) } else { None };
 
-    let mut req = WithOtherFields::new(TransactionRequest::default())
-        .with_to(to.into())
+    let sidecar = blob_data
+        .map(|data| {
+            let mut coder = SidecarBuilder::<SimpleCoder>::default();
+            coder.ingest(&data);
+            coder.build()
+        })
+        .transpose()?;
+
+    let mut req = WithOtherFields::<TransactionRequest>::default()
         .with_from(from)
         .with_value(tx.value.unwrap_or_default())
         .with_chain_id(chain.id());
 
+    if let Some(sidecar) = sidecar {
+        req.set_blob_sidecar(sidecar);
+        req.populate_blob_hashes();
+        req.set_max_fee_per_blob_gas(
+            // If blob_base_fee is 0, uses 1 wei as minimum.
+            tx.blob_gas_price.map_or(provider.get_blob_base_fee().await?.max(1), |g| g.to()),
+        );
+    }
+
+    if let Some(to) = to {
+        req.set_to(to.into().resolve(provider).await?);
+    } else {
+        req.set_kind(alloy_primitives::TxKind::Create);
+    }
+
     req.set_nonce(if let Some(nonce) = tx.nonce {
         nonce.to()
     } else {
-        provider.get_transaction_count(from, None).await?
+        provider.get_transaction_count(from, BlockId::latest()).await?
     });
 
     if tx.legacy || chain.is_legacy() {
@@ -110,12 +133,12 @@ pub async fn build_tx<
         (Vec::new(), None)
     };
 
-    req.set_input(data.into());
+    req.set_input::<Bytes>(data.into());
 
     req.set_gas_limit(if let Some(gas_limit) = tx.gas_limit {
         gas_limit.to()
     } else {
-        provider.estimate_gas(&req, None).await?
+        provider.estimate_gas(&req, BlockId::latest()).await?
     });
 
     Ok((req, func))

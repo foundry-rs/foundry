@@ -20,13 +20,15 @@ use foundry_compilers::{
         RevertStrings, Settings, SettingsMetadata, Severity,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
+    compilers::{solc::SolcVersionManager, CompilerVersionManager},
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
-    ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
+    CompilerConfig, ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc,
+    SolcConfig,
 };
 use inflector::Inflector;
 use regex::Regex;
-use revm_primitives::SpecId;
+use revm_primitives::{FixedBytes, SpecId};
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -35,6 +37,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
 };
 
 // Macros useful for creating a figment.
@@ -394,6 +397,9 @@ pub struct Config {
     /// If disabled, it is possible to access artifacts which were not recompiled or cached.
     pub unchecked_cheatcode_artifacts: bool,
 
+    /// CREATE2 salt to use for the library deployment in scripts.
+    pub create2_library_salt: B256,
+
     /// Soldeer dependencies
     pub dependencies: Option<SoldeerConfig>,
 
@@ -453,12 +459,23 @@ impl Config {
     /// `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`
     pub const DEFAULT_SENDER: Address = address!("1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 
+    /// Default salt for create2 library deployments
+    pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
+
     /// Returns the current `Config`
     ///
     /// See `Config::figment`
     #[track_caller]
     pub fn load() -> Self {
         Config::from_provider(Config::figment())
+    }
+
+    /// Returns the current `Config` with the given `providers` preset
+    ///
+    /// See `Config::to_figment`
+    #[track_caller]
+    pub fn load_with_providers(providers: FigmentProviders) -> Self {
+        Config::default().to_figment(providers).extract().unwrap()
     }
 
     /// Returns the current `Config`
@@ -513,6 +530,86 @@ impl Config {
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.profile = figment.profile().clone();
         Ok(config)
+    }
+
+    /// Returns the populated [Figment] using the requested [FigmentProviders] preset.
+    ///
+    /// This will merge various providers, such as env,toml,remappings into the figment.
+    pub fn to_figment(self, providers: FigmentProviders) -> Figment {
+        let mut c = self;
+        let profile = Config::selected_profile();
+        let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
+
+        // merge global foundry.toml file
+        if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
+            figment = Config::merge_toml_provider(
+                figment,
+                TomlFileProvider::new(None, global_toml).cached(),
+                profile.clone(),
+            );
+        }
+        // merge local foundry.toml file
+        figment = Config::merge_toml_provider(
+            figment,
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
+                .cached(),
+            profile.clone(),
+        );
+
+        // merge environment variables
+        figment = figment
+            .merge(
+                Env::prefixed("DAPP_")
+                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .global(),
+            )
+            .merge(
+                Env::prefixed("DAPP_TEST_")
+                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
+                    .global(),
+            )
+            .merge(DappEnvCompatProvider)
+            .merge(EtherscanEnvProvider::default())
+            .merge(
+                Env::prefixed("FOUNDRY_")
+                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .map(|key| {
+                        let key = key.as_str();
+                        if Config::STANDALONE_SECTIONS.iter().any(|section| {
+                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
+                        }) {
+                            key.replacen('_', ".", 1).into()
+                        } else {
+                            key.into()
+                        }
+                    })
+                    .global(),
+            )
+            .select(profile.clone());
+
+        // only resolve remappings if all providers are requested
+        if providers.is_all() {
+            // we try to merge remappings after we've merged all other providers, this prevents
+            // redundant fs lookups to determine the default remappings that are eventually updated
+            // by other providers, like the toml file
+            let remappings = RemappingsProvider {
+                auto_detect_remappings: figment
+                    .extract_inner::<bool>("auto_detect_remappings")
+                    .unwrap_or(true),
+                lib_paths: figment
+                    .extract_inner::<Vec<PathBuf>>("libs")
+                    .map(Cow::Owned)
+                    .unwrap_or_else(|_| Cow::Borrowed(&c.libs)),
+                root: &c.__root.0,
+                remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
+            };
+            figment = figment.merge(remappings);
+        }
+
+        // normalize defaults
+        figment = c.normalize_defaults(figment);
+
+        Figment::from(c).merge(figment).select(profile)
     }
 
     /// The config supports relative paths and tracks the root path separately see
@@ -601,7 +698,7 @@ impl Config {
     /// Otherwise it returns the configured [EvmVersion].
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
         if let Some(version) = self.solc.as_ref().and_then(|solc| solc.try_version().ok()) {
-            if let Some(evm_version) = self.evm_version.normalize_version(&version) {
+            if let Some(evm_version) = self.evm_version.normalize_version_solc(&version) {
                 return evm_version;
             }
         }
@@ -667,21 +764,17 @@ impl Config {
     }
 
     /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
-    /// cache, caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
+    /// cache.
     pub fn ephemeral_no_artifacts_project(&self) -> Result<Project, SolcError> {
         self.create_project(false, true)
     }
 
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let mut project = Project::builder()
+        let project = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
-            .allowed_path(&self.__root.0)
-            .allowed_paths(&self.libs)
-            .allowed_paths(&self.allow_paths)
-            .include_paths(&self.include_paths)
-            .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
+            .settings(SolcConfig::builder().settings(self.solc_settings()?).build().settings)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .ignore_paths(self.ignored_file_paths.clone())
             .set_compiler_severity_filter(if self.deny_warnings {
@@ -689,22 +782,36 @@ impl Config {
             } else {
                 Severity::Error
             })
-            .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
             .set_cached(cached && !self.build_info)
             .set_build_info(!no_artifacts && self.build_info)
             .set_no_artifacts(no_artifacts)
-            .build()?;
+            .build(self.compiler_config()?)?;
 
         if self.force {
-            project.cleanup()?;
-        }
-
-        if let Some(solc) = self.ensure_solc()? {
-            project.solc = solc;
+            self.cleanup(&project)?;
         }
 
         Ok(project)
+    }
+
+    /// Cleans the project.
+    pub fn cleanup(&self, project: &Project) -> Result<(), SolcError> {
+        project.cleanup()?;
+
+        // Remove fuzz and invariant cache directories.
+        let remove_test_dir = |test_dir: &Option<PathBuf>| {
+            if let Some(test_dir) = test_dir {
+                let path = project.root().join(test_dir);
+                if path.exists() {
+                    let _ = fs::remove_dir_all(&path);
+                }
+            }
+        };
+        remove_test_dir(&self.fuzz.failure_persist_dir);
+        remove_test_dir(&self.invariant.failure_persist_dir);
+
+        Ok(())
     }
 
     /// Ensures that the configured version is installed if explicitly set
@@ -715,20 +822,19 @@ impl Config {
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
         if let Some(ref solc) = self.solc {
+            let version_manager = SolcVersionManager::default();
             let solc = match solc {
                 SolcReq::Version(version) => {
-                    let v = version.to_string();
-                    let mut solc = Solc::find_svm_installed_version(&v)?;
-                    if solc.is_none() {
+                    if let Ok(solc) = version_manager.get_installed(version) {
+                        solc
+                    } else {
                         if self.offline {
                             return Err(SolcError::msg(format!(
                                 "can't install missing solc {version} in offline mode"
                             )))
                         }
-                        Solc::blocking_install(version)?;
-                        solc = Solc::find_svm_installed_version(&v)?;
+                        version_manager.install(version)?
                     }
-                    solc
                 }
                 SolcReq::Local(solc) => {
                     if !solc.is_file() {
@@ -737,10 +843,10 @@ impl Config {
                             solc.display()
                         )))
                     }
-                    Some(Solc::new(solc))
+                    Solc::new(solc)?
                 }
             };
-            return Ok(solc)
+            return Ok(Some(solc))
         }
 
         Ok(None)
@@ -793,13 +899,26 @@ impl Config {
             .scripts(&self.script)
             .artifacts(&self.out)
             .libs(self.libs.iter())
-            .remappings(self.get_all_remappings());
+            .remappings(self.get_all_remappings())
+            .allowed_path(&self.__root.0)
+            .allowed_paths(&self.libs)
+            .allowed_paths(&self.allow_paths)
+            .include_paths(&self.include_paths);
 
         if let Some(build_info_path) = &self.build_info_path {
             builder = builder.build_infos(build_info_path);
         }
 
         builder.build_with_root(&self.__root.0)
+    }
+
+    /// Returns configuration for a compiler to use when setting up a [Project].
+    pub fn compiler_config(&self) -> Result<CompilerConfig<Solc>, SolcError> {
+        if let Some(solc) = self.ensure_solc()? {
+            Ok(CompilerConfig::Specific(solc))
+        } else {
+            Ok(CompilerConfig::AutoDetect(Arc::new(SolcVersionManager::default())))
+        }
     }
 
     /// Returns all configured [`Remappings`]
@@ -1174,7 +1293,7 @@ impl Config {
     pub fn with_root(root: impl Into<PathBuf>) -> Self {
         // autodetect paths
         let root = root.into();
-        let paths = ProjectPathsConfig::builder().build_with_root(&root);
+        let paths = ProjectPathsConfig::builder().build_with_root::<()>(&root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         Config {
             __root: paths.root.into(),
@@ -1636,7 +1755,7 @@ impl Config {
                 if let Some(version) = solc
                     .try_version()
                     .ok()
-                    .and_then(|version| self.evm_version.normalize_version(&version))
+                    .and_then(|version| self.evm_version.normalize_version_solc(&version))
                 {
                     // normalize evm_version based on the provided solc version
                     self.evm_version = version;
@@ -1649,77 +1768,36 @@ impl Config {
 }
 
 impl From<Config> for Figment {
-    fn from(mut c: Config) -> Figment {
-        let profile = Config::selected_profile();
-        let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
+    fn from(c: Config) -> Figment {
+        c.to_figment(FigmentProviders::All)
+    }
+}
 
-        // merge global foundry.toml file
-        if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            figment = Config::merge_toml_provider(
-                figment,
-                TomlFileProvider::new(None, global_toml).cached(),
-                profile.clone(),
-            );
-        }
-        // merge local foundry.toml file
-        figment = Config::merge_toml_provider(
-            figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
-                .cached(),
-            profile.clone(),
-        );
+/// Determines what providers should be used when loading the [Figment] for a [Config]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FigmentProviders {
+    /// Include all providers
+    #[default]
+    All,
+    /// Only include necessary providers that are useful for cast commands
+    ///
+    /// This will exclude more expensive providers such as remappings
+    Cast,
+    /// Only include necessary providers that are useful for anvil
+    ///
+    /// This will exclude more expensive providers such as remappings
+    Anvil,
+}
 
-        // merge environment variables
-        figment = figment
-            .merge(
-                Env::prefixed("DAPP_")
-                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .global(),
-            )
-            .merge(
-                Env::prefixed("DAPP_TEST_")
-                    .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
-                    .global(),
-            )
-            .merge(DappEnvCompatProvider)
-            .merge(EtherscanEnvProvider::default())
-            .merge(
-                Env::prefixed("FOUNDRY_")
-                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .map(|key| {
-                        let key = key.as_str();
-                        if Config::STANDALONE_SECTIONS.iter().any(|section| {
-                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
-                        }) {
-                            key.replacen('_', ".", 1).into()
-                        } else {
-                            key.into()
-                        }
-                    })
-                    .global(),
-            )
-            .select(profile.clone());
+impl FigmentProviders {
+    /// Returns true if all providers should be included
+    pub const fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
 
-        // we try to merge remappings after we've merged all other providers, this prevents
-        // redundant fs lookups to determine the default remappings that are eventually updated by
-        // other providers, like the toml file
-        let remappings = RemappingsProvider {
-            auto_detect_remappings: figment
-                .extract_inner::<bool>("auto_detect_remappings")
-                .unwrap_or(true),
-            lib_paths: figment
-                .extract_inner::<Vec<PathBuf>>("libs")
-                .map(Cow::Owned)
-                .unwrap_or_else(|_| Cow::Borrowed(&c.libs)),
-            root: &c.__root.0,
-            remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
-        };
-        let merge = figment.merge(remappings);
-
-        // normalize defaults
-        let merge = c.normalize_defaults(merge);
-
-        Figment::from(c).merge(merge).select(profile)
+    /// Returns true if this is the cast preset
+    pub const fn is_cast(&self) -> bool {
+        matches!(self, Self::Cast)
     }
 }
 
@@ -1890,7 +1968,7 @@ impl Default for Config {
             path_pattern: None,
             path_pattern_inverse: None,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
-            invariant: Default::default(),
+            invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
             ffi: false,
             prompt_timeout: 120,
@@ -1944,6 +2022,7 @@ impl Default for Config {
             doc: Default::default(),
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
+            create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
             dependencies: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
@@ -2043,10 +2122,7 @@ impl SolcReq {
     fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             SolcReq::Version(version) => Ok(version.clone()),
-            SolcReq::Local(path) => Solc::new(path).version().map_err(|err| {
-                warn!("failed to get solc version from {}: {}", path.display(), err);
-                err
-            }),
+            SolcReq::Local(path) => Solc::new(path).map(|solc| solc.version),
         }
     }
 }
@@ -2657,7 +2733,7 @@ mod tests {
     };
     use figment::error::Kind::InvalidType;
     use foundry_compilers::artifacts::{ModelCheckerEngine, YulDetails};
-    use pretty_assertions::assert_eq;
+    use similar_asserts::assert_eq;
     use std::{collections::BTreeMap, fs::File, io::Write};
     use tempfile::tempdir;
     use NamedChain::Moonbeam;
@@ -3663,7 +3739,6 @@ mod tests {
                 depth = 15
                 fail_on_revert = false
                 call_override = false
-                shrink_sequence = true
             "#,
             )?;
 
@@ -3706,7 +3781,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             jail.create_file(
                 "foundry.toml",
@@ -3717,7 +3792,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             jail.create_file(
                 "foundry.toml",
@@ -3732,7 +3807,7 @@ mod tests {
 
             jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.6.6".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 6, 6))));
             Ok(())
         });
     }
@@ -3751,7 +3826,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 12))));
 
             Ok(())
         });
@@ -3766,7 +3841,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            assert_eq!(config.solc, Some(SolcReq::Version("0.8.20".parse().unwrap())));
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 20))));
 
             Ok(())
         });
@@ -4119,7 +4194,7 @@ mod tests {
 
             let libs = config.parsed_libraries().unwrap().libs;
 
-            pretty_assertions::assert_eq!(
+            similar_asserts::assert_eq!(
                 libs,
                 BTreeMap::from([
                     (
@@ -4404,7 +4479,12 @@ mod tests {
             let loaded = Config::load().sanitized();
             assert_eq!(
                 loaded.invariant,
-                InvariantConfig { runs: 512, depth: 10, ..Default::default() }
+                InvariantConfig {
+                    runs: 512,
+                    depth: 10,
+                    failure_persist_dir: Some(PathBuf::from("cache/invariant")),
+                    ..Default::default()
+                }
             );
 
             Ok(())

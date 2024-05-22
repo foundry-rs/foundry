@@ -104,11 +104,10 @@ impl ForgeTestProfile {
                     max_fuzz_dictionary_addresses: 10_000,
                     max_fuzz_dictionary_values: 10_000,
                 },
-                shrink_sequence: true,
                 shrink_run_limit: 2usize.pow(18u32),
-                preserve_state: false,
                 max_assume_rejects: 65536,
                 gas_report_samples: 256,
+                failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
             })
             .build(output, Path::new(self.project().root()))
             .expect("Config loaded")

@@ -4,11 +4,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Block;
 use eyre::WrapErr;
-use foundry_common::{
-    provider::alloy::{ProviderBuilder, RpcUrl},
-    ALCHEMY_FREE_TIER_CUPS,
-};
-use foundry_compilers::utils::RuntimeOrHandle;
+use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::{Chain, Config};
 use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -21,7 +17,7 @@ pub struct EvmOpts {
 
     /// Fetch state over a remote instead of starting from empty state.
     #[serde(rename = "eth_rpc_url")]
-    pub fork_url: Option<RpcUrl>,
+    pub fork_url: Option<String>,
 
     /// Pins the block number for the state fork.
     pub fork_block_number: Option<u64>,
@@ -169,11 +165,11 @@ impl EvmOpts {
     ///   - mainnet if `fork_url` contains "mainnet"
     ///   - the chain if `fork_url` is set and the endpoints returned its chain id successfully
     ///   - mainnet otherwise
-    pub fn get_chain_id(&self) -> u64 {
+    pub async fn get_chain_id(&self) -> u64 {
         if let Some(id) = self.env.chain_id {
             return id;
         }
-        self.get_remote_chain_id().unwrap_or(Chain::mainnet()).id()
+        self.get_remote_chain_id().await.unwrap_or(Chain::mainnet()).id()
     }
 
     /// Returns the available compute units per second, which will be
@@ -191,7 +187,7 @@ impl EvmOpts {
     }
 
     /// Returns the chain ID from the RPC, if any.
-    pub fn get_remote_chain_id(&self) -> Option<Chain> {
+    pub async fn get_remote_chain_id(&self) -> Option<Chain> {
         if let Some(ref url) = self.fork_url {
             if url.contains("mainnet") {
                 trace!(?url, "auto detected mainnet chain");
@@ -204,7 +200,7 @@ impl EvmOpts {
                 .ok()
                 .unwrap_or_else(|| panic!("Failed to establish provider to {url}"));
 
-            if let Ok(id) = RuntimeOrHandle::new().block_on(provider.get_chain_id()) {
+            if let Ok(id) = provider.get_chain_id().await {
                 return Some(Chain::from(id));
             }
         }

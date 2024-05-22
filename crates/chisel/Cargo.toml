@@ -46,7 +46,7 @@ serde.workspace = true
 solang-parser.workspace = true
 strum = { workspace = true, features = ["derive"] }
 time = { version = "0.3", features = ["formatting"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 yansi.workspace = true
 tracing.workspace = true
 

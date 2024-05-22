@@ -1,13 +1,44 @@
 use crate::{init_tracing, TestCommand};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
 use eyre::Result;
-use foundry_common::provider::alloy::{get_http_provider, RetryProvider};
-use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
+use foundry_common::provider::{get_http_provider, RetryProvider};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
 
+fn init_script_cmd(
+    cmd: &mut TestCommand,
+    project_root: &Path,
+    target_contract: &str,
+    endpoint: Option<&str>,
+) {
+    cmd.forge_fuse();
+    cmd.set_current_dir(project_root);
+
+    cmd.args([
+        "script",
+        "-R",
+        "ds-test/=lib/",
+        "-R",
+        "cheats/=cheats/",
+        target_contract,
+        "--root",
+        project_root.to_str().unwrap(),
+        "-vvvvv",
+    ]);
+
+    if let Some(rpc_url) = endpoint {
+        cmd.args(["--fork-url", rpc_url]);
+    }
+}
 /// A helper struct to test forge script scenarios
 pub struct ScriptTester {
     pub accounts_pub: Vec<Address>,
@@ -16,6 +47,9 @@ pub struct ScriptTester {
     pub nonces: BTreeMap<u32, u64>,
     pub address_nonces: BTreeMap<Address, u64>,
     pub cmd: TestCommand,
+    pub project_root: PathBuf,
+    pub target_contract: String,
+    pub endpoint: Option<String>,
 }
 
 impl ScriptTester {
@@ -28,23 +62,10 @@ impl ScriptTester {
     ) -> Self {
         init_tracing();
         ScriptTester::copy_testdata(project_root).unwrap();
-        cmd.set_current_dir(project_root);
-
-        cmd.args([
-            "script",
-            "-R",
-            "ds-test/=lib/",
-            "-R",
-            "cheats/=cheats/",
-            target_contract,
-            "--root",
-            project_root.to_str().unwrap(),
-            "-vvvvv",
-        ]);
+        init_script_cmd(&mut cmd, project_root, target_contract, endpoint);
 
         let mut provider = None;
         if let Some(endpoint) = endpoint {
-            cmd.args(["--fork-url", endpoint]);
             provider = Some(get_http_provider(endpoint))
         }
 
@@ -63,6 +84,9 @@ impl ScriptTester {
             nonces: BTreeMap::default(),
             address_nonces: BTreeMap::default(),
             cmd,
+            project_root: project_root.to_path_buf(),
+            target_contract: target_contract.to_string(),
+            endpoint: endpoint.map(|s| s.to_string()),
         }
     }
 
@@ -117,7 +141,7 @@ impl ScriptTester {
 
             if let Some(provider) = &self.provider {
                 let nonce = provider
-                    .get_transaction_count(self.accounts_pub[index as usize], None)
+                    .get_transaction_count(self.accounts_pub[index as usize], BlockId::latest())
                     .await
                     .unwrap();
                 self.nonces.insert(index, nonce);
@@ -128,8 +152,13 @@ impl ScriptTester {
 
     pub async fn load_addresses(&mut self, addresses: &[Address]) -> &mut Self {
         for &address in addresses {
-            let nonce =
-                self.provider.as_ref().unwrap().get_transaction_count(address, None).await.unwrap();
+            let nonce = self
+                .provider
+                .as_ref()
+                .unwrap()
+                .get_transaction_count(address, BlockId::latest())
+                .await
+                .unwrap();
             self.address_nonces.insert(address, nonce);
         }
         self
@@ -169,8 +198,13 @@ impl ScriptTester {
     pub async fn assert_nonce_increment(&mut self, keys_indexes: &[(u32, u32)]) -> &mut Self {
         for &(private_key_slot, expected_increment) in keys_indexes {
             let addr = self.accounts_pub[private_key_slot as usize];
-            let nonce =
-                self.provider.as_ref().unwrap().get_transaction_count(addr, None).await.unwrap();
+            let nonce = self
+                .provider
+                .as_ref()
+                .unwrap()
+                .get_transaction_count(addr, BlockId::latest())
+                .await
+                .unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
 
             assert_eq!(
@@ -193,7 +227,7 @@ impl ScriptTester {
                 .provider
                 .as_ref()
                 .unwrap()
-                .get_transaction_count(*address, None)
+                .get_transaction_count(*address, BlockId::latest())
                 .await
                 .unwrap();
             let prev_nonce = self.address_nonces.get(address).unwrap();
@@ -231,6 +265,17 @@ impl ScriptTester {
     pub fn args(&mut self, args: &[&str]) -> &mut Self {
         self.cmd.args(args);
         self
+    }
+
+    pub fn clear(&mut self) {
+        init_script_cmd(
+            &mut self.cmd,
+            &self.project_root,
+            &self.target_contract,
+            self.endpoint.as_deref(),
+        );
+        self.nonces.clear();
+        self.address_nonces.clear();
     }
 }
 

@@ -37,13 +37,10 @@ alloy-json-rpc.workspace = true
 alloy-signer.workspace = true
 alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-contract.workspace = true
-alloy-consensus = { workspace = true, features = ["serde"] }
+alloy-consensus = { workspace = true, features = ["serde", "kzg"] }
 alloy-network.workspace = true
 alloy-sol-types.workspace = true
 alloy-chains.workspace = true
-
-ethers-core.workspace = true
-ethers-contract.workspace = true
 
 chrono.workspace = true
 evm-disassembler.workspace = true
@@ -72,7 +69,7 @@ regex = { version = "1", default-features = false }
 rpassword = "7"
 semver = "1"
 tempfile.workspace = true
-tokio = { version = "1", features = ["macros", "signal"] }
+tokio = { workspace = true, features = ["macros", "signal"] }
 tracing.workspace = true
 yansi.workspace = true
 evmole = "0.3.1"

@@ -145,6 +145,7 @@ interface Vm {
     function assertTrue(bool condition, string calldata error) external pure;
     function assume(bool condition) external pure;
     function blobBaseFee(uint256 newBlobBaseFee) external;
+    function blobhashes(bytes32[] calldata hashes) external;
     function breakpoint(string calldata char) external;
     function breakpoint(string calldata char, bool value) external;
     function broadcast() external;
@@ -178,6 +179,7 @@ interface Vm {
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language) external pure returns (uint256 privateKey);
     function difficulty(uint256 newDifficulty) external;
     function dumpState(string calldata pathToStateJson) external;
+    function ensNamehash(string calldata name) external pure returns (bytes32);
     function envAddress(string calldata name) external view returns (address value);
     function envAddress(string calldata name, string calldata delim) external view returns (address[] memory value);
     function envBool(string calldata name) external view returns (bool value);
@@ -186,7 +188,7 @@ interface Vm {
     function envBytes32(string calldata name, string calldata delim) external view returns (bytes32[] memory value);
     function envBytes(string calldata name) external view returns (bytes memory value);
     function envBytes(string calldata name, string calldata delim) external view returns (bytes[] memory value);
-    function envExists(string calldata name) external view returns (bool exists);
+    function envExists(string calldata name) external view returns (bool result);
     function envInt(string calldata name) external view returns (int256 value);
     function envInt(string calldata name, string calldata delim) external view returns (int256[] memory value);
     function envOr(string calldata name, bool defaultValue) external view returns (bool value);
@@ -231,6 +233,7 @@ interface Vm {
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
     function getBlobBaseFee() external view returns (uint256 blobBaseFee);
+    function getBlobhashes() external view returns (bytes32[] memory hashes);
     function getBlockNumber() external view returns (uint256 height);
     function getBlockTimestamp() external view returns (uint256 timestamp);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);

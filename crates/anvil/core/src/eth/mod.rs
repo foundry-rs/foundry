@@ -69,6 +69,9 @@ pub enum EthRequest {
     )]
     EthMaxPriorityFeePerGas(()),
 
+    #[cfg_attr(feature = "serde", serde(rename = "eth_blobBaseFee", with = "empty_params"))]
+    EthBlobBaseFee(()),
+
     #[cfg_attr(
         feature = "serde",
         serde(rename = "eth_accounts", alias = "eth_requestAccounts", with = "empty_params")
@@ -142,7 +145,7 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_sign", alias = "personal_sign"))]
     EthSign(Address, Bytes),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction"))]
+    #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction", with = "sequence"))]
     EthSignTransaction(Box<WithOtherFields<TransactionRequest>>),
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).

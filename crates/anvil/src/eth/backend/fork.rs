@@ -1,8 +1,8 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::db::Db, error::BlockchainError};
-use alloy_primitives::{Address, Bytes, StorageValue, B256, U256, U64};
-use alloy_provider::Provider;
+use alloy_primitives::{Address, Bytes, StorageValue, B256, U256};
+use alloy_provider::{ext::DebugApi, Provider};
 use alloy_rpc_types::{
     request::TransactionRequest, AccessListWithGasUsed, Block, BlockId,
     BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse, FeeHistory,
@@ -14,11 +14,12 @@ use alloy_rpc_types_trace::{
 };
 use alloy_transport::TransportError;
 use anvil_core::eth::transaction::{convert_to_anvil_receipt, ReceiptResponse};
-use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
+use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
+use revm::primitives::BlobExcessGasAndPrice;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -162,7 +163,7 @@ impl ClientFork {
         keys: Vec<B256>,
         block_number: Option<BlockId>,
     ) -> Result<EIP1186AccountProofResponse, TransportError> {
-        self.provider().get_proof(address, keys, block_number).await
+        self.provider().get_proof(address, keys, block_number.unwrap_or(BlockId::latest())).await
     }
 
     /// Sends `eth_call`
@@ -172,7 +173,7 @@ impl ClientFork {
         block: Option<BlockNumber>,
     ) -> Result<Bytes, TransportError> {
         let block = block.unwrap_or(BlockNumber::Latest);
-        let res = self.provider().call(request, Some(block.into())).await?;
+        let res = self.provider().call(request).block(block.into()).await?;
 
         Ok(res)
     }
@@ -184,7 +185,7 @@ impl ClientFork {
         block: Option<BlockNumber>,
     ) -> Result<u128, TransportError> {
         let block = block.unwrap_or(BlockNumber::Latest);
-        let res = self.provider().estimate_gas(request, Some(block.into())).await?;
+        let res = self.provider().estimate_gas(request, block.into()).await?;
 
         Ok(res)
     }
@@ -195,7 +196,9 @@ impl ClientFork {
         request: &WithOtherFields<TransactionRequest>,
         block: Option<BlockNumber>,
     ) -> Result<AccessListWithGasUsed, TransportError> {
-        self.provider().create_access_list(request, block.map(|b| b.into())).await
+        self.provider()
+            .create_access_list(request, block.unwrap_or(BlockNumber::Latest).into())
+            .await
     }
 
     pub async fn storage_at(
@@ -204,7 +207,9 @@ impl ClientFork {
         index: U256,
         number: Option<BlockNumber>,
     ) -> Result<StorageValue, TransportError> {
-        self.provider().get_storage_at(address, index, number.map(Into::into)).await
+        self.provider()
+            .get_storage_at(address, index, number.unwrap_or(BlockNumber::Latest).into())
+            .await
     }
 
     pub async fn logs(&self, filter: &Filter) -> Result<Vec<Log>, TransportError> {
@@ -245,12 +250,12 @@ impl ClientFork {
         blocknumber: u64,
     ) -> Result<U256, TransportError> {
         trace!(target: "backend::fork", "get_balance={:?}", address);
-        self.provider().get_balance(address, Some(blocknumber.into())).await
+        self.provider().get_balance(address, blocknumber.into()).await
     }
 
     pub async fn get_nonce(&self, address: Address, block: u64) -> Result<u64, TransportError> {
         trace!(target: "backend::fork", "get_nonce={:?}", address);
-        self.provider().get_transaction_count(address, Some(block.into())).await
+        self.provider().get_transaction_count(address, block.into()).await
     }
 
     pub async fn transaction_by_block_number_and_index(
@@ -311,10 +316,11 @@ impl ClientFork {
         }
 
         let tx = self.provider().get_transaction_by_hash(hash).await?;
-
-        let mut storage = self.storage_write();
-        storage.transactions.insert(hash, tx.clone());
-        Ok(Some(tx))
+        if let Some(tx) = tx.clone() {
+            let mut storage = self.storage_write();
+            storage.transactions.insert(hash, tx);
+        }
+        Ok(tx)
     }
 
     pub async fn trace_transaction(&self, hash: B256) -> Result<Vec<Trace>, TransportError> {
@@ -532,7 +538,7 @@ impl ClientFork {
         let mut uncles = Vec::with_capacity(block.uncles.len());
         for (uncle_idx, _) in block.uncles.iter().enumerate() {
             let uncle =
-                match self.provider().get_uncle(block_number.into(), U64::from(uncle_idx)).await? {
+                match self.provider().get_uncle(block_number.into(), uncle_idx as u64).await? {
                     Some(u) => u,
                     None => return Ok(None),
                 };
@@ -578,6 +584,10 @@ pub struct ClientForkConfig {
     pub timestamp: u64,
     /// The basefee of the forked block
     pub base_fee: Option<u128>,
+    /// Blob gas used of the forked block
+    pub blob_gas_used: Option<u128>,
+    /// Blob excess gas and price of the forked block
+    pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// request timeout
     pub timeout: Duration,
     /// request retries for spurious networks

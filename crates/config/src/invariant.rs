@@ -8,9 +8,10 @@ use crate::{
     },
 };
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Contains for invariant testing
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvariantConfig {
     /// The number of runs that must execute for each invariant test group.
     pub runs: u32,
@@ -24,19 +25,15 @@ pub struct InvariantConfig {
     /// The fuzz dictionary configuration
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
-    /// Attempt to shrink the failure case to its smallest sequence of calls
-    pub shrink_sequence: bool,
     /// The maximum number of attempts to shrink the sequence
     pub shrink_run_limit: usize,
-    /// If set to true then VM state is committed and available for next call
-    /// Useful for handlers that use cheatcodes as roll or warp
-    /// Use it with caution, introduces performance penalty.
-    pub preserve_state: bool,
     /// The maximum number of rejects via `vm.assume` which can be encountered during a single
     /// invariant run.
     pub max_assume_rejects: u32,
     /// Number of runs to execute and include in the gas report.
     pub gas_report_samples: u32,
+    /// Path where invariant failures are recorded and replayed.
+    pub failure_persist_dir: Option<PathBuf>,
 }
 
 impl Default for InvariantConfig {
@@ -47,12 +44,36 @@ impl Default for InvariantConfig {
             fail_on_revert: false,
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
-            shrink_sequence: true,
             shrink_run_limit: 2usize.pow(18_u32),
-            preserve_state: false,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
+            failure_persist_dir: None,
         }
+    }
+}
+
+impl InvariantConfig {
+    /// Creates invariant configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
+    pub fn new(cache_dir: PathBuf) -> Self {
+        InvariantConfig {
+            runs: 256,
+            depth: 15,
+            fail_on_revert: false,
+            call_override: false,
+            dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
+            shrink_run_limit: 2usize.pow(18_u32),
+            max_assume_rejects: 65536,
+            gas_report_samples: 256,
+            failure_persist_dir: Some(cache_dir),
+        }
+    }
+
+    /// Returns path to failure dir of given invariant test contract.
+    pub fn failure_dir(self, contract_name: &str) -> PathBuf {
+        self.failure_persist_dir
+            .unwrap()
+            .join("failures")
+            .join(contract_name.split(':').last().unwrap())
     }
 }
 
@@ -68,8 +89,7 @@ impl InlineConfigParser for InvariantConfig {
             return Ok(None)
         }
 
-        // self is Copy. We clone it with dereference.
-        let mut conf_clone = *self;
+        let mut conf_clone = self.clone();
 
         for pair in overrides {
             let key = pair.0;
@@ -79,8 +99,9 @@ impl InlineConfigParser for InvariantConfig {
                 "depth" => conf_clone.depth = parse_config_u32(key, value)?,
                 "fail-on-revert" => conf_clone.fail_on_revert = parse_config_bool(key, value)?,
                 "call-override" => conf_clone.call_override = parse_config_bool(key, value)?,
-                "shrink-sequence" => conf_clone.shrink_sequence = parse_config_bool(key, value)?,
-                "preserve-state" => conf_clone.preserve_state = parse_config_bool(key, value)?,
+                "failure-persist-dir" => {
+                    conf_clone.failure_persist_dir = Some(PathBuf::from(value))
+                }
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }

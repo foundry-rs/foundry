@@ -1,7 +1,7 @@
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -94,9 +94,14 @@ impl EstimateArgs {
         };
 
         let mut req = WithOtherFields::<TransactionRequest>::default()
-            .with_to(to.into())
             .with_from(from)
             .with_value(value.unwrap_or_default());
+
+        if let Some(to) = to {
+            req.set_to(to);
+        } else {
+            req.set_kind(alloy_primitives::TxKind::Create);
+        }
 
         let data = match command {
             Some(EstimateSubcommands::Create { code, sig, args, value }) => {
@@ -121,9 +126,9 @@ impl EstimateArgs {
             }
         };
 
-        req.set_input(data.into());
+        req.set_input(data);
 
-        let gas = provider.estimate_gas(&req, None).await?;
+        let gas = provider.estimate_gas(&req, BlockId::latest()).await?;
         println!("{gas}");
         Ok(())
     }

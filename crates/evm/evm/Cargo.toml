@@ -32,16 +32,14 @@ revm = { workspace = true, default-features = false, features = [
     "optional_block_gas_limit",
     "optional_no_base_fee",
     "arbitrary",
+    "c-kzg",
 ] }
 revm-inspectors.workspace = true
 
 arrayvec.workspace = true
 eyre = "0.6"
 hex.workspace = true
-itertools.workspace = true
 parking_lot = "0.12"
 proptest = "1"
-rand.workspace = true
-rayon = "1"
 thiserror = "1"
 tracing = "0.1"

@@ -5,7 +5,7 @@ use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::Result;
 use foundry_cli::{init_progress, update_progress};
-use foundry_common::provider::alloy::RetryProvider;
+use foundry_common::provider::RetryProvider;
 use futures::StreamExt;
 use std::sync::Arc;
 

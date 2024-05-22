@@ -10,7 +10,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
-    strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState},
+    strategies::{fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState},
     BaseCounterExample, CounterExample, FuzzCase, FuzzError, FuzzFixtures, FuzzTestResult,
 };
 use foundry_evm_traces::CallTraceArena;
@@ -175,15 +175,10 @@ impl FuzzedExecutor {
                 } else {
                     vec![]
                 };
-                result.counterexample = Some(CounterExample::Single(BaseCounterExample {
-                    sender: None,
-                    addr: None,
-                    signature: None,
-                    contract_name: None,
-                    traces: call.traces,
-                    calldata,
-                    args,
-                }));
+
+                result.counterexample = Some(CounterExample::Single(
+                    BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                ));
             }
             _ => {}
         }
@@ -243,9 +238,9 @@ impl FuzzedExecutor {
     /// Stores fuzz state for use with [fuzz_calldata_from_state]
     pub fn build_fuzz_state(&self) -> EvmFuzzState {
         if let Some(fork_db) = self.executor.backend.active_fork_db() {
-            build_initial_state(fork_db, self.config.dictionary)
+            EvmFuzzState::new(fork_db, self.config.dictionary)
         } else {
-            build_initial_state(self.executor.backend.mem_db(), self.config.dictionary)
+            EvmFuzzState::new(self.executor.backend.mem_db(), self.config.dictionary)
         }
     }
 }

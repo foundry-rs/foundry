@@ -19,7 +19,6 @@ use anvil_core::eth::{
 };
 use foundry_evm::{
     backend::DatabaseError,
-    inspectors::{TracingInspector, TracingInspectorConfig},
     revm::{
         interpreter::InstructionResult,
         primitives::{
@@ -29,6 +28,7 @@ use foundry_evm::{
     },
     traces::CallTraceNode,
 };
+use revm::primitives::MAX_BLOB_GAS_PER_BLOCK;
 use std::sync::Arc;
 
 /// Represents an executed transaction (transacted on the DB)
@@ -97,6 +97,8 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     pub parent_hash: B256,
     /// Cumulative gas used by all executed transactions
     pub gas_used: u128,
+    /// Cumulative blob gas used by all executed transactions
+    pub blob_gas_used: u128,
     pub enable_steps_tracing: bool,
     /// Precompiles to inject to the EVM.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
@@ -124,6 +126,10 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             None
         };
 
+        let is_cancun = self.cfg_env.handler_cfg.spec_id >= SpecId::CANCUN;
+        let excess_blob_gas = if is_cancun { self.block_env.get_blob_excess_gas() } else { None };
+        let mut cumulative_blob_gas_used = if is_cancun { Some(0u128) } else { None };
+
         for tx in self.into_iter() {
             let tx = match tx {
                 TransactionExecutionOutcome::Executed(tx) => {
@@ -132,6 +138,10 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 }
                 TransactionExecutionOutcome::Exhausted(tx) => {
                     trace!(target: "backend",  tx_gas_limit = %tx.pending_transaction.transaction.gas_limit(), ?tx,  "block gas limit exhausting, skipping transaction");
+                    continue
+                }
+                TransactionExecutionOutcome::BlobGasExhausted(tx) => {
+                    trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
                     continue
                 }
                 TransactionExecutionOutcome::Invalid(tx, _) => {
@@ -146,7 +156,19 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     continue
                 }
             };
+            if is_cancun {
+                let tx_blob_gas = tx
+                    .transaction
+                    .pending_transaction
+                    .transaction
+                    .transaction
+                    .blob_gas()
+                    .unwrap_or(0);
+                cumulative_blob_gas_used =
+                    Some(cumulative_blob_gas_used.unwrap_or(0u128).saturating_add(tx_blob_gas));
+            }
             let receipt = tx.create_receipt(&mut cumulative_gas_used);
+
             let ExecutedTransaction { transaction, logs, out, traces, exit_reason: exit, .. } = tx;
             build_logs_bloom(logs.clone(), &mut bloom);
 
@@ -168,11 +190,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 contract_address,
                 traces,
                 exit,
-                out: match out {
-                    Some(Output::Call(b)) => Some(alloy_primitives::Bytes(b.0)),
-                    Some(Output::Create(b, _)) => Some(alloy_primitives::Bytes(b.0)),
-                    _ => None,
-                },
+                out: out.map(Output::into_data),
                 nonce: tx.nonce,
                 gas_used: tx.gas_used,
             };
@@ -200,6 +218,9 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             mix_hash: Default::default(),
             nonce: Default::default(),
             base_fee,
+            parent_beacon_block_root: Default::default(),
+            blob_gas_used: cumulative_blob_gas_used,
+            excess_blob_gas: excess_blob_gas.map(|g| g as u128),
         };
 
         let block = Block::new(partial_header, transactions.clone(), ommers);
@@ -227,6 +248,8 @@ pub enum TransactionExecutionOutcome {
     Invalid(Arc<PoolTransaction>, InvalidTransactionError),
     /// Execution skipped because could exceed gas limit
     Exhausted(Arc<PoolTransaction>),
+    /// Execution skipped because it exceeded the blob gas limit
+    BlobGasExhausted(Arc<PoolTransaction>),
     /// When an error occurred during execution
     DatabaseError(Arc<PoolTransaction>, DatabaseError),
 }
@@ -244,10 +267,19 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             Err(err) => return Some(TransactionExecutionOutcome::DatabaseError(transaction, err)),
         };
         let env = self.env_for(&transaction.pending_transaction);
+
         // check that we comply with the block's gas limit
         let max_gas = self.gas_used.saturating_add(env.tx.gas_limit as u128);
         if max_gas > env.block.gas_limit.to::<u128>() {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
+        }
+
+        // check that we comply with the block's blob gas limit
+        let max_blob_gas = self.blob_gas_used.saturating_add(
+            transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0u128),
+        );
+        if max_blob_gas > MAX_BLOB_GAS_PER_BLOCK as u128 {
+            return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
         }
 
         // validate before executing
@@ -271,7 +303,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         let exec_result = {
             let mut evm =
                 foundry_evm::utils::new_evm_with_inspector(&mut *self.db, env, &mut inspector);
-            if let Some(ref factory) = self.precompile_factory {
+            if let Some(factory) = &self.precompile_factory {
                 inject_precompiles(&mut evm, factory.precompiles());
             }
 
@@ -296,9 +328,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
                         }
                         // This will correspond to prevrandao not set, and it should never happen.
                         // If it does, it's a bug.
-                        e => {
-                            panic!("Failed to execute transaction. This is a bug.\n {:?}", e)
-                        }
+                        e => panic!("failed to execute transaction: {e}"),
                     }
                 }
             }
@@ -322,7 +352,13 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
         trace!(target: "backend", ?exit_reason, ?gas_used, "[{:?}] executed with out={:?}", transaction.hash(), out);
 
+        // Track the total gas used for total gas per block checks
         self.gas_used = self.gas_used.saturating_add(gas_used as u128);
+
+        // Track the total blob gas used for total blob gas per blob checks
+        if let Some(blob_gas) = transaction.pending_transaction.transaction.transaction.blob_gas() {
+            self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas);
+        }
 
         trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", transaction.hash(), exit_reason, gas_used);
 
@@ -332,12 +368,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             out,
             gas_used: gas_used as u128,
             logs: logs.unwrap_or_default(),
-            traces: inspector
-                .tracer
-                .unwrap_or(TracingInspector::new(TracingInspectorConfig::all()))
-                .get_traces()
-                .clone()
-                .into_nodes(),
+            traces: inspector.tracer.map(|t| t.into_traces().into_nodes()).unwrap_or_default(),
             nonce,
         };
 

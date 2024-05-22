@@ -43,19 +43,20 @@ pub struct BaseCounterExample {
     pub addr: Option<Address>,
     /// The data to provide
     pub calldata: Bytes,
-    /// Function signature if it exists
-    pub signature: Option<String>,
     /// Contract name if it exists
     pub contract_name: Option<String>,
+    /// Function signature if it exists
+    pub signature: Option<String>,
+    /// Args used to call the function
+    pub args: Option<String>,
     /// Traces
     #[serde(skip)]
     pub traces: Option<CallTraceArena>,
-    #[serde(skip)]
-    pub args: Vec<DynSolValue>,
 }
 
 impl BaseCounterExample {
-    pub fn create(
+    /// Creates counter example representing a step from invariant call sequence.
+    pub fn from_invariant_call(
         sender: Address,
         addr: Address,
         bytes: &Bytes,
@@ -70,10 +71,12 @@ impl BaseCounterExample {
                         sender: Some(sender),
                         addr: Some(addr),
                         calldata: bytes.clone(),
-                        signature: Some(func.signature()),
                         contract_name: Some(name.clone()),
+                        signature: Some(func.signature()),
+                        args: Some(
+                            foundry_common::fmt::format_tokens(&args).format(", ").to_string(),
+                        ),
                         traces,
-                        args,
                     };
                 }
             }
@@ -83,10 +86,27 @@ impl BaseCounterExample {
             sender: Some(sender),
             addr: Some(addr),
             calldata: bytes.clone(),
-            signature: None,
             contract_name: None,
+            signature: None,
+            args: None,
             traces,
-            args: vec![],
+        }
+    }
+
+    /// Creates counter example for a fuzz test failure.
+    pub fn from_fuzz_call(
+        bytes: Bytes,
+        args: Vec<DynSolValue>,
+        traces: Option<CallTraceArena>,
+    ) -> Self {
+        BaseCounterExample {
+            sender: None,
+            addr: None,
+            calldata: bytes,
+            contract_name: None,
+            signature: None,
+            args: Some(foundry_common::fmt::format_tokens(&args).format(", ").to_string()),
+            traces,
         }
     }
 }
@@ -108,10 +128,14 @@ impl fmt::Display for BaseCounterExample {
         if let Some(sig) = &self.signature {
             write!(f, "calldata={sig}")?
         } else {
-            write!(f, "calldata={}", self.calldata)?
+            write!(f, "calldata={}", &self.calldata)?
         }
 
-        write!(f, " args=[{}]", foundry_common::fmt::format_tokens(&self.args).format(", "))
+        if let Some(args) = &self.args {
+            write!(f, " args=[{}]", args)
+        } else {
+            write!(f, " args=[]")
+        }
     }
 }
 

@@ -2993,6 +2993,26 @@
     },
     {
       "func": {
+        "id": "blobhashes",
+        "description": "Sets the blobhashes in the transaction.\nNot available on EVM versions before Cancun.\nIf used on unsupported EVM versions it will revert.",
+        "declaration": "function blobhashes(bytes32[] calldata hashes) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "blobhashes(bytes32[])",
+        "selector": "0x129de7eb",
+        "selectorBytes": [
+          18,
+          157,
+          231,
+          235
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "breakpoint_0",
         "description": "Writes a breakpoint to jump to in the debugger.",
         "declaration": "function breakpoint(string calldata char) external;",
@@ -3653,6 +3673,26 @@
     },
     {
       "func": {
+        "id": "ensNamehash",
+        "description": "Returns ENS namehash for provided string.",
+        "declaration": "function ensNamehash(string calldata name) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ensNamehash(string)",
+        "selector": "0x8c374c65",
+        "selectorBytes": [
+          140,
+          55,
+          76,
+          101
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "envAddress_0",
         "description": "Gets the environment variable `name` and parses it as `address`.\nReverts if the variable was not found or could not be parsed.",
         "declaration": "function envAddress(string calldata name) external view returns (address value);",
@@ -3815,7 +3855,7 @@
       "func": {
         "id": "envExists",
         "description": "Gets the environment variable `name` and returns true if it exists, else returns false.",
-        "declaration": "function envExists(string calldata name) external view returns (bool exists);",
+        "declaration": "function envExists(string calldata name) external view returns (bool result);",
         "visibility": "external",
         "mutability": "view",
         "signature": "envExists(string)",
@@ -4710,6 +4750,26 @@
       "group": "evm",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getBlobhashes",
+        "description": "Gets the blockhashes from the current transaction.\nNot available on EVM versions before Cancun.\nIf used on unsupported EVM versions it will revert.",
+        "declaration": "function getBlobhashes() external view returns (bytes32[] memory hashes);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getBlobhashes()",
+        "selector": "0xf56ff18b",
+        "selectorBytes": [
+          245,
+          111,
+          241,
+          139
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {

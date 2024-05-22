@@ -381,6 +381,18 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function prevrandao(uint256 newPrevrandao) external;
 
+    /// Sets the blobhashes in the transaction.
+    /// Not available on EVM versions before Cancun.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function blobhashes(bytes32[] calldata hashes) external;
+
+    /// Gets the blockhashes from the current transaction.
+    /// Not available on EVM versions before Cancun.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function getBlobhashes() external view returns (bytes32[] memory hashes);
+
     /// Sets `block.height`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function roll(uint256 newHeight) external;
@@ -1503,7 +1515,7 @@ interface Vm {
 
     /// Gets the environment variable `name` and returns true if it exists, else returns false.
     #[cheatcode(group = Environment)]
-    function envExists(string calldata name) external view returns (bool exists);
+    function envExists(string calldata name) external view returns (bool result);
 
     /// Gets the environment variable `name` and parses it as `bool`.
     /// Reverts if the variable was not found or could not be parsed.
@@ -2123,6 +2135,10 @@ interface Vm {
     /// Encodes a `string` value to a base64url string.
     #[cheatcode(group = Utilities)]
     function toBase64URL(string calldata data) external pure returns (string memory);
+
+    /// Returns ENS namehash for provided string.
+    #[cheatcode(group = Utilities)]
+    function ensNamehash(string calldata name) external pure returns (bytes32);
 }
 }
 

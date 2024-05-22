@@ -4,7 +4,7 @@ use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest, WithOtherFields};
 use alloy_signer::Signer;
 use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
@@ -17,7 +17,6 @@ use foundry_cli::{
 use foundry_common::{
     compile::{self},
     fmt::parse_tokens,
-    provider::alloy::estimate_eip1559_fees,
 };
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize};
 use serde_json::json;
@@ -185,7 +184,7 @@ impl CreateArgs {
             skip_is_verified_check: true,
             watch: true,
             retry: self.retry,
-            libraries: vec![],
+            libraries: self.opts.libraries.clone(),
             root: None,
             verifier: self.verifier.clone(),
             via_ir: self.opts.via_ir,
@@ -233,23 +232,26 @@ impl CreateArgs {
 
         deployer.tx.set_from(deployer_address);
         deployer.tx.set_chain_id(chain);
-
+        // `to` field must be set explicitly, cannot be None.
+        if deployer.tx.to.is_none() {
+            deployer.tx.set_create();
+        }
         deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
             Ok(nonce.to())
         } else {
-            provider.get_transaction_count(deployer_address, None).await
-        }?);
-
-        deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
-            Ok(gas_limit.to())
-        } else {
-            provider.estimate_gas(&deployer.tx, None).await
+            provider.get_transaction_count(deployer_address, BlockId::latest()).await
         }?);
 
         // set tx value if specified
         if let Some(value) = self.tx.value {
             deployer.tx.set_value(value);
         }
+
+        deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
+            Ok(gas_limit.to())
+        } else {
+            provider.estimate_gas(&deployer.tx, BlockId::latest()).await
+        }?);
 
         if is_legacy {
             let gas_price = if let Some(gas_price) = self.tx.gas_price {
@@ -259,9 +261,7 @@ impl CreateArgs {
             };
             deployer.tx.set_gas_price(gas_price);
         } else {
-            let estimate = estimate_eip1559_fees(&provider, Some(chain))
-                .await
-                .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+            let estimate = provider.estimate_eip1559_fees(None).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
             let priority_fee = if let Some(priority_fee) = self.tx.priority_gas_price {
                 priority_fee.to()
             } else {
@@ -330,7 +330,7 @@ impl CreateArgs {
             skip_is_verified_check: false,
             watch: true,
             retry: self.retry,
-            libraries: vec![],
+            libraries: self.opts.libraries.clone(),
             root: None,
             verifier: self.verifier,
             via_ir: self.opts.via_ir,
@@ -557,7 +557,7 @@ where
         };
 
         // create the tx object. Since we're deploying a contract, `to` is `None`
-        let tx = WithOtherFields::new(TransactionRequest::default().input(data.into()).to(None));
+        let tx = WithOtherFields::new(TransactionRequest::default().input(data.into()));
 
         Ok(Deployer {
             client: self.client.clone(),

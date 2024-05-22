@@ -1,9 +1,9 @@
 use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, Bytes, TxKind, B256};
 use alloy_rpc_types::{request::TransactionRequest, WithOtherFields};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{fmt::format_token_raw, provider::alloy::RpcUrl, ContractData, SELECTOR_LEN};
+use foundry_common::{fmt::format_token_raw, ContractData, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
@@ -34,7 +34,7 @@ pub struct TransactionWithMetadata {
     #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
     #[serde(skip)]
-    pub rpc: RpcUrl,
+    pub rpc: String,
     pub transaction: WithOtherFields<TransactionRequest>,
     pub additional_contracts: Vec<AdditionalContract>,
     pub is_fixed_gas_limit: bool,
@@ -59,7 +59,7 @@ impl TransactionWithMetadata {
 
     pub fn new(
         transaction: TransactionRequest,
-        rpc: RpcUrl,
+        rpc: String,
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, &ContractData>,
         decoder: &CallTraceDecoder,
@@ -71,7 +71,7 @@ impl TransactionWithMetadata {
         metadata.is_fixed_gas_limit = is_fixed_gas_limit;
 
         // Specify if any contract was directly created with this transaction
-        if let Some(to) = metadata.transaction.to {
+        if let Some(TxKind::Call(to)) = metadata.transaction.to {
             if to == DEFAULT_CREATE2_DEPLOYER {
                 metadata.set_create(
                     true,
