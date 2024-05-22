@@ -6435,16 +6435,16 @@
       "func": {
         "id": "randomUint_1",
         "description": "Returns random uin256 value between the provided range (min..=max).",
-        "declaration": "function randomUint(uint64 min, uint64 max) external returns (uint256);",
+        "declaration": "function randomUint(uint256 min, uint256 max) external returns (uint256);",
         "visibility": "external",
         "mutability": "",
-        "signature": "randomUint(uint64,uint64)",
-        "selector": "0xfd59c6b7",
+        "signature": "randomUint(uint256,uint256)",
+        "selector": "0xd61b051b",
         "selectorBytes": [
-          253,
-          89,
-          198,
-          183
+          214,
+          27,
+          5,
+          27
         ]
       },
       "group": "utilities",
