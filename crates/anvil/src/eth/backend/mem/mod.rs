@@ -650,16 +650,6 @@ impl Backend {
         self.fees.set_base_fee(basefee)
     }
 
-    /// Returns the current gas price
-    pub fn gas_price(&self) -> u128 {
-        self.fees.gas_price()
-    }
-
-    /// Returns the suggested fee cap
-    pub fn max_priority_fee_per_gas(&self) -> u128 {
-        self.fees.max_priority_fee_per_gas()
-    }
-
     /// Sets the gas price
     pub fn set_gas_price(&self, price: u128) {
         self.fees.set_gas_price(price)
@@ -1149,7 +1139,7 @@ impl Backend {
             env.block.basefee = U256::from(base);
         }
 
-        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
+        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.base_fee());
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         env.tx = TxEnv {

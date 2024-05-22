@@ -549,7 +549,7 @@ impl EthApi {
 
     /// Returns the current gas price
     pub fn gas_price(&self) -> Result<U256> {
-        Ok(U256::from(self.backend.gas_price()))
+        self.max_priority_fee_per_gas()
     }
 
     /// Returns the excess blob gas and current blob gas price
@@ -562,7 +562,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn gas_max_priority_fee_per_gas(&self) -> Result<U256> {
-        Ok(U256::from(self.backend.max_priority_fee_per_gas()))
+        self.max_priority_fee_per_gas()
     }
 
     /// Returns the base fee per blob required to send a EIP-4844 tx.
@@ -1351,7 +1351,22 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
         node_info!("eth_maxPriorityFeePerGas");
-        Ok(U256::from(self.backend.max_priority_fee_per_gas()))
+        Ok(U256::from(self.lowest_suggestion_tip().unwrap_or(1e9 as u128)))
+    }
+
+    fn lowest_suggestion_tip(&self) -> Option<u128> {
+        let fee_history_cache = self.fee_history_cache.lock();
+        let block_number = self.backend.best_number();
+        let latest_cached_block = fee_history_cache.get(&block_number);
+
+        if let Some(block) = latest_cached_block {
+            return block.rewards.iter().map(|r| *r).min().map_or(Some(1e9 as u128), Some);
+        }
+
+        let lowest_suggestion_tip =
+            fee_history_cache.values().flat_map(|b| b.rewards.clone()).min();
+
+        lowest_suggestion_tip
     }
 
     /// Creates a filter object, based on filter options, to notify when the state changes (logs).
@@ -1744,7 +1759,7 @@ impl EthApi {
                 base_fee: self.backend.base_fee(),
                 chain_id: self.backend.chain_id().to::<u64>(),
                 gas_limit: self.backend.gas_limit(),
-                gas_price: self.backend.gas_price(),
+                gas_price: self.lowest_suggestion_tip().unwrap_or(1e9 as u128),
             },
             fork_config: fork_config
                 .map(|fork| {
@@ -2427,7 +2442,7 @@ impl EthApi {
                 m.chain_id = Some(chain_id);
                 m.gas_limit = gas_limit;
                 if gas_price.is_none() {
-                    m.gas_price = self.backend.gas_price()
+                    m.gas_price = self.lowest_suggestion_tip().unwrap_or(1e9 as u128);
                 }
                 TypedTransactionRequest::Legacy(m)
             }
@@ -2436,7 +2451,7 @@ impl EthApi {
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if gas_price.is_none() {
-                    m.gas_price = self.backend.gas_price();
+                    m.gas_price = self.lowest_suggestion_tip().unwrap_or(1e9 as u128);
                 }
                 TypedTransactionRequest::EIP2930(m)
             }
@@ -2445,7 +2460,7 @@ impl EthApi {
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if max_fee_per_gas.is_none() {
-                    m.max_fee_per_gas = self.backend.gas_price();
+                    m.max_fee_per_gas = self.lowest_suggestion_tip().unwrap_or(1e9 as u128);
                 }
                 TypedTransactionRequest::EIP1559(m)
             }

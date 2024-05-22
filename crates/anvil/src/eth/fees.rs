@@ -86,15 +86,6 @@ impl FeeManager {
         (self.spec_id as u8) >= (SpecId::CANCUN as u8)
     }
 
-    /// Calculates the current gas price
-    pub fn gas_price(&self) -> u128 {
-        if self.is_eip1559() {
-            self.base_fee().saturating_add(self.suggested_priority_fee())
-        } else {
-            *self.gas_price.read()
-        }
-    }
-
     /// Calculates the current blob gas price
     pub fn blob_gas_price(&self) -> u128 {
         if self.is_eip4844() {
@@ -131,13 +122,6 @@ impl FeeManager {
         } else {
             0
         }
-    }
-
-    /// Returns the suggested fee cap
-    ///
-    /// Note: This currently returns a constant value: [Self::suggested_priority_fee]
-    pub fn max_priority_fee_per_gas(&self) -> u128 {
-        self.suggested_priority_fee()
     }
 
     /// Returns the current gas price
