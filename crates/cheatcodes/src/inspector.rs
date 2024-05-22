@@ -1115,8 +1115,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             gasLimit: gas.limit(),
             // The total gas used.
             gasTotalUsed: gas.spent(),
-            // The amount of gas used for memory expansion.
-            gasMemoryUsed: gas.memory(),
+            // DEPRECATED: The amount of gas used for memory expansion. Ref: https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939
+            gasMemoryUsed: 0,
             // The amount of gas refunded.
             gasRefunded: gas.refunded(),
             // The amount of gas remaining.
