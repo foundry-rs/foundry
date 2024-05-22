@@ -2146,7 +2146,7 @@ interface Vm {
 
     /// Returns random uin256 value between the provided range (min..=max).
     #[cheatcode(group = Utilities)]
-    function randomUint(uint64 min, uint64 max) external returns (uint256);
+    function randomUint(uint256 min, uint256 max) external returns (uint256);
 
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]

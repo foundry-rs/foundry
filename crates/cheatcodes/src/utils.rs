@@ -151,8 +151,7 @@ impl Cheatcode for randomUint_0Call {
         let Self {} = self;
         // Use thread_rng to get a random number
         let mut rng = rand::thread_rng();
-        let num: [u64; 4] = rng.gen();
-        let random_number = U256::from_limbs(num);
+        let random_number: U256 = rng.gen();
         Ok(random_number.abi_encode())
     }
 }
@@ -162,8 +161,8 @@ impl Cheatcode for randomUint_1Call {
         let Self { min, max } = self;
         // Generate random between range min..=max
         let mut rng = rand::thread_rng();
-        let num: u64 = rng.gen_range(*min..=*max);
-        let random_number = U256::from(num);
+        let range = *max - *min + U256::from(1);
+        let random_number = rng.gen::<U256>() % range + *min;
         Ok(random_number.abi_encode())
     }
 }

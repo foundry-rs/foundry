@@ -175,7 +175,7 @@ alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "899fc51", 
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "899fc51", default-features = false }
 alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "899fc51", default-features = false }
 alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "899fc51", default-features = false }
-alloy-primitives = { version = "0.7.1", features = ["getrandom"] }
+alloy-primitives = { version = "0.7.1", features = ["getrandom", "rand"] }
 alloy-dyn-abi = "0.7.1"
 alloy-json-abi = "0.7.1"
 alloy-sol-types = "0.7.1"
