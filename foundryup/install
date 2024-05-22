@@ -40,7 +40,7 @@ case $SHELL in
 *)
     echo "foundryup: could not detect shell, manually add ${FOUNDRY_BIN_DIR} to your PATH."
     exit 1
-esac
+;; esac
 
 # Only add foundryup if it isn't already in PATH.
 if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then

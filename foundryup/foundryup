@@ -34,14 +34,14 @@ main() {
         warn "unknown option: $1"
         usage
         exit 1
-    esac; shift
+    ;; esac; shift
   done
 
   # Print the banner after successfully parsing args
   banner
 
-  if [ -n "$FOUNDRYUP_PR" ]; then
-    if [ -z "$FOUNDRYUP_BRANCH" ]; then
+  if [ "$FOUNDRYUP_PR" != "" ]; then
+    if [ "$FOUNDRYUP_BRANCH" = "" ]; then
       FOUNDRYUP_BRANCH="refs/pull/$FOUNDRYUP_PR/head"
     else
       err "can't use --pr and --branch at the same time"
@@ -53,7 +53,7 @@ main() {
     need_cmd cargo
 
     # Ignore branches/versions as we do not want to modify local git state
-    if [ -n "$FOUNDRYUP_REPO" ] || [ -n "$FOUNDRYUP_BRANCH" ] || [ -n "$FOUNDRYUP_VERSION" ]; then
+    if [ "$FOUNDRYUP_REPO" != "" ] || [ "$FOUNDRYUP_BRANCH" != "" ] || [ "$FOUNDRYUP_VERSION" != "" ]; then
       warn "--branch, --version, and --repo arguments are ignored during local install"
     fi
 
@@ -86,7 +86,7 @@ main() {
     elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
       # Add v prefix
       FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
-      FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
+      FOUNDRYUP_TAG="$FOUNDRYUP_VERSION"
     fi
 
     say "installing foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
@@ -110,14 +110,14 @@ main() {
 
     uname_m=$(uname -m)
     ARCHITECTURE=$(tolower "${FOUNDRYUP_ARCH:-$uname_m}")
-    if [ "${ARCHITECTURE}" = "x86_64" ]; then
+    if [ "$ARCHITECTURE" = "x86_64" ]; then
       # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
       if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
         ARCHITECTURE="arm64" # Rosetta.
       else
         ARCHITECTURE="amd64" # Intel.
       fi
-    elif [ "${ARCHITECTURE}" = "arm64" ] ||[ "${ARCHITECTURE}" = "aarch64" ] ; then
+    elif [ "$ARCHITECTURE" = "arm64" ] ||[ "$ARCHITECTURE" = "aarch64" ] ; then
       ARCHITECTURE="arm64" # Arm.
     else
       ARCHITECTURE="amd64" # Amd.
@@ -156,7 +156,7 @@ main() {
 
       # Check if the default path of the binary is not in FOUNDRY_BIN_DIR
       which_path="$(command -v "$bin" || true)"
-      if [ -n "$which_path" ] && [ "$which_path" != "$bin_path" ]; then
+      if [ "$which_path" != "" ] && [ "$which_path" != "$bin_path" ]; then
         warn ""
         cat 1>&2 <<EOF
 There are multiple binaries with the name '$bin' present in your 'PATH'.
@@ -191,7 +191,7 @@ EOF
     ensure git checkout "origin/${FOUNDRYUP_BRANCH}"
 
     # If set, checkout specific commit from branch
-    if [ -n "$FOUNDRYUP_COMMIT" ]; then
+    if [ "$FOUNDRYUP_COMMIT" != "" ]; then
       say "installing at commit $FOUNDRYUP_COMMIT"
       ensure git checkout "$FOUNDRYUP_COMMIT"
     fi
@@ -199,7 +199,7 @@ EOF
     # Build the repo and install the binaries locally to the .foundry bin directory.
     ensure cargo build --bins --release
     for bin in "${BINS[@]}"; do
-      for try_path in target/release/$bin target/release/$bin.exe; do
+      for try_path in target/release/"$bin" target/release/"$bin".exe; do
         if [ -f "$try_path" ]; then
           [ -e "$FOUNDRY_BIN_DIR/$bin" ] && warn "overwriting existing $bin in $FOUNDRY_BIN_DIR"
           mv -f "$try_path" "$FOUNDRY_BIN_DIR"
@@ -275,7 +275,7 @@ ensure() {
 
 # Downloads $1 into $2 or stdout
 download() {
-  if [ -n "$2" ]; then
+  if [ "$2" != "" ]; then
     # output into $2
     if check_cmd curl; then
       curl -#o "$2" -L "$1"
