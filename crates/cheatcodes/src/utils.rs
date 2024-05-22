@@ -146,7 +146,7 @@ impl Cheatcode for ensNamehashCall {
     }
 }
 
-impl Cheatcode for randomUintCall {
+impl Cheatcode for randomUint_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         // Use thread_rng to get a random number
@@ -154,6 +154,25 @@ impl Cheatcode for randomUintCall {
         let num: [u64; 4] = rng.gen();
         let random_number = U256::from_limbs(num);
         Ok(random_number.abi_encode())
+    }
+}
+
+impl Cheatcode for randomUint_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { min, max } = self;
+        // Generate random between range min..=max
+        let mut rng = rand::thread_rng();
+        let num: u64 = rng.gen_range(*min..=*max);
+        let random_number = U256::from(num);
+        Ok(random_number.abi_encode())
+    }
+}
+
+impl Cheatcode for randomAddressCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        let addr = Address::random();
+        Ok(addr.abi_encode())
     }
 }
 

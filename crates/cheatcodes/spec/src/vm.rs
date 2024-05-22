@@ -2143,6 +2143,14 @@ interface Vm {
     /// Returns a random uint256 value.
     #[cheatcode(group = Utilities)]
     function randomUint() external returns (uint256);
+
+    /// Returns random uin256 value between the provided range (min..=max).
+    #[cheatcode(group = Utilities)]
+    function randomUint(uint64 min, uint64 max) external returns (uint256);
+
+    /// Returns a random `address`.
+    #[cheatcode(group = Utilities)]
+    function randomAddress() external returns (address);
 }
 }
 
