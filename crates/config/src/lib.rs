@@ -783,7 +783,7 @@ impl Config {
 
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let compiler_config = self.compiler_config()?;
+        let compiler_config = self.solc_config()?;
         let settings = SolcConfig::builder().settings(self.solc_settings()?).build().settings;
 
         self.create_project_with_compiler(cached, no_artifacts, compiler_config, settings)
@@ -798,7 +798,7 @@ impl Config {
         self.create_project_with_compiler(
             cached,
             no_artifacts,
-            CompilerConfig::Specific(Vyper::new("vyper")?),
+            self.vyper_config()?,
             self.vyper_settings()?,
         )
     }
@@ -876,15 +876,7 @@ impl Config {
                         version_manager.install(version)?
                     }
                 }
-                SolcReq::Local(solc) => {
-                    if !solc.is_file() {
-                        return Err(SolcError::msg(format!(
-                            "`solc` {} does not exist",
-                            solc.display()
-                        )))
-                    }
-                    Solc::new(solc)?
-                }
+                SolcReq::Local(solc) => Solc::new(solc)?,
             };
             return Ok(Some(solc))
         }
@@ -954,11 +946,20 @@ impl Config {
     }
 
     /// Returns configuration for a compiler to use when setting up a [Project].
-    pub fn compiler_config(&self) -> Result<CompilerConfig<Solc>, SolcError> {
+    pub fn solc_config(&self) -> Result<CompilerConfig<Solc>, SolcError> {
         if let Some(solc) = self.ensure_solc()? {
             Ok(CompilerConfig::Specific(solc))
         } else {
             Ok(CompilerConfig::AutoDetect(Arc::new(SolcVersionManager::default())))
+        }
+    }
+
+    /// Returns configuration for a compiler to use when setting up a [Project].
+    pub fn vyper_config(&self) -> Result<CompilerConfig<Vyper>, SolcError> {
+        if let Some(SolcReq::Local(path)) = &self.solc {
+            Ok(CompilerConfig::Specific(Vyper::new(path)?))
+        } else {
+            Ok(CompilerConfig::Specific(Vyper::new("vyper")?))
         }
     }
 
