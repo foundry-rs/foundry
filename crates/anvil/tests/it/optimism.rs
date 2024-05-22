@@ -1,7 +1,7 @@
 //! Tests for OP chain support.
 
 use crate::utils::http_provider_with_signer;
-use alloy_eips::{eip2718::Encodable2718, BlockId};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{b256, U128, U256};
 use alloy_provider::Provider;
