@@ -92,18 +92,18 @@ contract LastCallGasDefaultTest is LastCallGasFixture {
     function testRecordLastCallGas() public {
         _setup();
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 9, gasRefunded: 0}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
 
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 9, gasRefunded: 0}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
 
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 9, gasRefunded: 0}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
     }
 
     function testRecordGasRefund() public {
         _setup();
         _performRefund();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 216, gasMemoryUsed: 9, gasRefunded: 19900}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 216, gasMemoryUsed: 0, gasRefunded: 19900}));
     }
 }
