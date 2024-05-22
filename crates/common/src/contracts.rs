@@ -100,10 +100,10 @@ impl ContractsByArtifact {
     /// references and immutables.
     pub fn find_by_deployed_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
         self.iter().find(|(_, contract)| {
-            let Some(ref deployed_bytecode) = contract.deployed_bytecode else {
+            let Some(deployed_bytecode) = &contract.deployed_bytecode else {
                 return false;
             };
-            let Some(ref deployed_code) = deployed_bytecode.bytecode else {
+            let Some(deployed_code) = &deployed_bytecode.bytecode else {
                 return false;
             };
 
