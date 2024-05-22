@@ -9,7 +9,7 @@ use indexmap::IndexSet;
 use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
 use revm::{
     db::{CacheDB, DatabaseRef, DbAccount},
-    interpreter::{opcode, OPCODE_INFO_JUMPTABLE},
+    interpreter::opcode,
     primitives::AccountInfo,
 };
 use std::{
@@ -326,8 +326,6 @@ fn collect_push_bytes(code: &[u8]) -> Vec<[u8; 32]> {
     let mut i = 0;
     while i < code.len().min(PUSH_BYTE_ANALYSIS_LIMIT) {
         let op = code[i];
-        let _opcode_info = OPCODE_INFO_JUMPTABLE[op as usize]
-            .ok_or_else(|| eyre::eyre!("Invalid opcode: {}, Not found in jump table", op));
         if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
             let push_size = (op - opcode::PUSH1 + 1) as usize;
             let push_start = i + 1;

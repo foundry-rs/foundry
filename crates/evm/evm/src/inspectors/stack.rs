@@ -551,7 +551,7 @@ impl InspectorStack {
         let (result, address, output) = match res.result {
             ExecutionResult::Success { reason, gas_used, gas_refunded, logs: _, output } => {
                 gas.set_refund(gas_refunded as i64);
-                let _record_gas = gas.record_cost(gas_used);
+                gas.record_cost(gas_used);
                 let address = match output {
                     Output::Create(_, address) => address,
                     Output::Call(_) => None,
@@ -559,11 +559,11 @@ impl InspectorStack {
                 (reason.into(), address, output.into_data())
             }
             ExecutionResult::Halt { reason, gas_used } => {
-                let _record_gas = gas.record_cost(gas_used);
+                gas.record_cost(gas_used);
                 (reason.into(), None, Bytes::new())
             }
             ExecutionResult::Revert { gas_used, output } => {
-                let _record_gas = gas.record_cost(gas_used);
+                gas.record_cost(gas_used);
                 (InstructionResult::Revert, None, output)
             }
         };

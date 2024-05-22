@@ -5,10 +5,7 @@ use alloy_primitives::Bytes;
 use foundry_compilers::sourcemap::{SourceElement, SourceMap};
 use foundry_evm_core::utils::IcPcMap;
 use revm::{
-    interpreter::{
-        opcode::{self, PUSH1, PUSH32},
-        OPCODE_INFO_JUMPTABLE,
-    },
+    interpreter::opcode::{self, PUSH1, PUSH32},
     primitives::HashSet,
 };
 
@@ -127,9 +124,6 @@ pub fn find_anchor_branch(
         // We found a push, so we do some PC -> IC translation accounting, but we also check if
         // this push is coupled with the JUMPI we are interested in.
 
-        // Validate opcode exists in jump table
-        let _opcode_info = OPCODE_INFO_JUMPTABLE[op as usize]
-            .ok_or_else(|| eyre::eyre!("Invalid opcode: {}, Not found in jump table", op))?;
         // Check if Opcode is PUSH
         if (PUSH1..=PUSH32).contains(&op) {
             let element = if let Some(element) = source_map.get(pc - cumulative_push_size) {

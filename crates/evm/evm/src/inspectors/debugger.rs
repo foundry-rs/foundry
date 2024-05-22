@@ -9,7 +9,7 @@ use foundry_evm_core::{
 use revm::{
     interpreter::{
         opcode, CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InstructionResult,
-        Interpreter, InterpreterResult, OPCODE_INFO_JUMPTABLE,
+        Interpreter, InterpreterResult,
     },
     EvmContext, Inspector,
 };
@@ -49,9 +49,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         let pc = interp.program_counter();
         let op = interp.current_opcode();
 
-        // Get opcode information
-        let _opcode_info = OPCODE_INFO_JUMPTABLE[op as usize]
-            .ok_or_else(|| eyre::eyre!("Invalid opcode: {}, Not found in jump table", op));
         // Extract the push bytes
         let push_size = if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
             (op - opcode::PUSH0) as usize

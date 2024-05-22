@@ -1,7 +1,4 @@
-use revm::interpreter::{
-    opcode::{PUSH0, PUSH1, PUSH32},
-    OPCODE_INFO_JUMPTABLE,
-};
+use revm::interpreter::opcode::{PUSH0, PUSH1, PUSH32};
 use rustc_hash::FxHashMap;
 
 /// Maps from program counter to instruction counter.
@@ -55,9 +52,7 @@ fn make_map<const PC_FIRST: bool>(code: &[u8]) -> FxHashMap<usize, usize> {
             map.insert(ic, pc);
         }
 
-        let _op_info = OPCODE_INFO_JUMPTABLE[code[pc] as usize]
-            .ok_or_else(|| eyre::eyre!("Invalid opcode: {}, Not found in jump table", code[pc]));
-        if code[pc] >= PUSH1 && code[pc] <= PUSH32 {
+        if (PUSH1..=PUSH32).contains(&code[pc]) {
             // Skip the push bytes.
             let push_size = (code[pc] - PUSH0) as usize;
             pc += push_size;
