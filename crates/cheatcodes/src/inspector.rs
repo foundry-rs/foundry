@@ -1111,15 +1111,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // retrieve the gas usage of the last call.
         let gas = outcome.result.gas;
         self.last_call_gas = Some(crate::Vm::Gas {
-            // The gas limit of the call.
             gasLimit: gas.limit(),
-            // The total gas used.
             gasTotalUsed: gas.spent(),
-            // DEPRECATED: The amount of gas used for memory expansion. Ref: https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939
             gasMemoryUsed: 0,
-            // The amount of gas refunded.
             gasRefunded: gas.refunded(),
-            // The amount of gas remaining.
             gasRemaining: gas.remaining(),
         });
 
