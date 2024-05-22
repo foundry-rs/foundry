@@ -12,8 +12,3 @@ pub struct SoldeerDependency {
     pub url: String,
 }
 
-impl Default for SoldeerDependency {
-    fn default() -> Self {
-        SoldeerDependency { version: String::new(), url: String::new() }
-    }
-}

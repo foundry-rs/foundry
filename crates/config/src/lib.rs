@@ -395,7 +395,7 @@ pub struct Config {
     pub unchecked_cheatcode_artifacts: bool,
 
     /// Soldeer dependencies
-    pub dependencies: Option<BTreeMap<String, SoldeerDependency>>,
+    pub dependencies: Option<SoldeerConfig>,
 
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
@@ -2638,6 +2638,13 @@ pub(crate) mod from_str_lowercase {
 fn canonic(path: impl Into<PathBuf>) -> PathBuf {
     let path = path.into();
     foundry_compilers::utils::canonicalize(&path).unwrap_or(path)
+}
+
+/// Type for Soldeer configs, under dependencies tag in the foundry.toml
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SoldeerConfig(BTreeMap<String, SoldeerDependency>);
+impl SoldeerConfig {
+
 }
 
 #[cfg(test)]
