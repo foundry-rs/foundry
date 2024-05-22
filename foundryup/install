@@ -22,40 +22,41 @@ mkdir -p "$FOUNDRY_MAN_DIR"
 # Store the correct profile file (i.e. .profile for bash or .zshenv for ZSH).
 case $SHELL in
 */zsh)
-    PROFILE="${ZDOTDIR-"$HOME"}/.zshenv"
-    PREF_SHELL=zsh
-    ;;
+	PROFILE="${ZDOTDIR-"$HOME"}/.zshenv"
+	PREF_SHELL=zsh
+	;;
 */bash)
-    PROFILE=$HOME/.bashrc
-    PREF_SHELL=bash
-    ;;
+	PROFILE=$HOME/.bashrc
+	PREF_SHELL=bash
+	;;
 */fish)
-    PROFILE=$HOME/.config/fish/config.fish
-    PREF_SHELL=fish
-    ;;
+	PROFILE=$HOME/.config/fish/config.fish
+	PREF_SHELL=fish
+	;;
 */ash)
-    PROFILE=$HOME/.profile
-    PREF_SHELL=ash
-    ;;
+	PROFILE=$HOME/.profile
+	PREF_SHELL=ash
+	;;
 *)
-    echo "foundryup: could not detect shell, manually add ${FOUNDRY_BIN_DIR} to your PATH."
-    exit 1
-;; esac
+	echo "foundryup: could not detect shell, manually add ${FOUNDRY_BIN_DIR} to your PATH."
+	exit 1
+	;;
+esac
 
 # Only add foundryup if it isn't already in PATH.
 if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
-    # Add the foundryup directory to the path and ensure the old PATH variables remain.
-    # If the shell is fish, echo fish_add_path instead of export.
-    if [[ "$PREF_SHELL" == "fish" ]]; then
-        echo >> "$PROFILE" && echo "fish_add_path -a $FOUNDRY_BIN_DIR" >> "$PROFILE"
-    else
-        echo >> "$PROFILE" && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >> "$PROFILE"
-    fi
+	# Add the foundryup directory to the path and ensure the old PATH variables remain.
+	# If the shell is fish, echo fish_add_path instead of export.
+	if [[ "$PREF_SHELL" == "fish" ]]; then
+		echo >>"$PROFILE" && echo "fish_add_path -a $FOUNDRY_BIN_DIR" >>"$PROFILE"
+	else
+		echo >>"$PROFILE" && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >>"$PROFILE"
+	fi
 fi
 
 # Warn MacOS users that they may need to manually install libusb via Homebrew:
 if [[ "$OSTYPE" =~ ^darwin ]] && [[ ! -f /usr/local/opt/libusb/lib/libusb-1.0.0.dylib && ! -f /opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib ]]; then
-    echo && echo "warning: libusb not found. You may need to install it manually on MacOS via Homebrew (brew install libusb)."
+	echo && echo "warning: libusb not found. You may need to install it manually on MacOS via Homebrew (brew install libusb)."
 fi
 
 echo
