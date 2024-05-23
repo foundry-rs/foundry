@@ -101,7 +101,7 @@ use crate::etherscan::EtherscanEnvProvider;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
 pub mod soldeer;
-use soldeer::SoldeerDependency;
+use soldeer::{SoldeerConfig, SoldeerDependency};
 
 /// Foundry configuration
 ///
@@ -445,8 +445,16 @@ impl Config {
     pub const PROFILE_SECTION: &'static str = "profile";
 
     /// Standalone sections in the config which get integrated into the selected profile
-    pub const STANDALONE_SECTIONS: &'static [&'static str] =
-        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant", "labels", "dependencies"];
+    pub const STANDALONE_SECTIONS: &'static [&'static str] = &[
+        "rpc_endpoints",
+        "etherscan",
+        "fmt",
+        "doc",
+        "fuzz",
+        "invariant",
+        "labels",
+        "dependencies",
+    ];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -2714,13 +2722,6 @@ pub(crate) mod from_str_lowercase {
 fn canonic(path: impl Into<PathBuf>) -> PathBuf {
     let path = path.into();
     foundry_compilers::utils::canonicalize(&path).unwrap_or(path)
-}
-
-/// Type for Soldeer configs, under dependencies tag in the foundry.toml
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SoldeerConfig(BTreeMap<String, SoldeerDependency>);
-impl SoldeerConfig {
-
 }
 
 #[cfg(test)]
