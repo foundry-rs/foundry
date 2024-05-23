@@ -375,6 +375,7 @@ impl MultiWalletOpts {
     }
 
     pub async fn aws_signers(&self) -> Result<Option<Vec<WalletSigner>>> {
+        #[cfg(feature = "aws-kms")]
         if self.aws {
             let mut wallets = vec![];
             let aws_keys = std::env::var("AWS_KMS_KEY_IDS")
@@ -390,6 +391,7 @@ impl MultiWalletOpts {
 
             return Ok(Some(wallets));
         }
+
         Ok(None)
     }
 }
