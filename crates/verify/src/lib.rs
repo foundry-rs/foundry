@@ -293,7 +293,7 @@ impl VerifyArgs {
                 eyre::bail!("You have to provide a contract name or a valid RPC URL")
             }
             let provider = utils::get_provider(&config)?;
-            let code = provider.get_code_at(self.address, Default::default()).await?;
+            let code = provider.get_code_at(self.address).await?;
 
             let output = ProjectCompiler::new().compile(&project)?;
             let contracts = ContractsByArtifact::new(
