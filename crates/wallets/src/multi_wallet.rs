@@ -219,7 +219,7 @@ pub struct MultiWalletOpts {
     pub trezor: bool,
 
     /// Use AWS Key Management Service.
-    #[arg(long, help_heading = "Wallet options - remote")]
+    #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "aws-kms"))]
     pub aws: bool,
 }
 
