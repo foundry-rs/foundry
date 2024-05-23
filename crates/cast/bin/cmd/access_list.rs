@@ -1,18 +1,17 @@
-use alloy_network::{AnyNetwork, TransactionBuilder};
-use alloy_primitives::{Address, Bytes};
-use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
-use alloy_transport::Transport;
+use alloy_primitives::TxKind;
+use alloy_rpc_types::BlockId;
 use cast::Cast;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, parse_function_args},
+    utils::{self},
 };
 use foundry_common::ens::NameOrAddress;
-use foundry_config::{Chain, Config};
+use foundry_config::Config;
 use std::str::FromStr;
+
+use crate::tx::CastTxBuilder;
 
 /// CLI arguments for `cast access-list`.
 #[derive(Debug, Parser)]
@@ -31,14 +30,6 @@ pub struct AccessListArgs {
     /// The arguments of the function to call.
     #[arg(value_name = "ARGS")]
     args: Vec<String>,
-
-    /// The data for the transaction.
-    #[arg(
-        long,
-        value_name = "DATA",
-        conflicts_with_all = &["sig", "args"]
-    )]
-    data: Option<String>,
 
     /// The block height to query at.
     ///
@@ -59,86 +50,32 @@ pub struct AccessListArgs {
 
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
-        let AccessListArgs { to, sig, args, data, tx, eth, block, json: to_json } = self;
+        let AccessListArgs { to, sig, args, tx, eth, block, json: to_json } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
-        let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
-        let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
 
-        let to = match to {
-            Some(to) => Some(to.resolve(&provider).await?),
-            None => None,
+        let tx_kind = if let Some(to) = to {
+            TxKind::Call(to.resolve(&provider).await?)
+        } else {
+            TxKind::Create
         };
 
-        access_list(
-            &provider,
-            etherscan_api_key.as_deref(),
-            sender,
-            to,
-            sig,
-            args,
-            data,
-            tx,
-            chain,
-            block,
-            to_json,
-        )
-        .await?;
+        let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
+            .await?
+            .with_tx_kind(tx_kind)
+            .with_code_sig_and_args(None, sig, args)
+            .await?
+            .build_raw(sender)
+            .await?;
+
+        let cast = Cast::new(&provider);
+
+        let access_list: String = cast.access_list(&tx, block, to_json).await?;
+
+        println!("{}", access_list);
+
         Ok(())
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn access_list<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
-    provider: P,
-    etherscan_api_key: Option<&str>,
-    from: Address,
-    to: Option<Address>,
-    sig: Option<String>,
-    args: Vec<String>,
-    data: Option<String>,
-    tx: TransactionOpts,
-    chain: Chain,
-    block: Option<BlockId>,
-    to_json: bool,
-) -> Result<()> {
-    let mut req = WithOtherFields::<TransactionRequest>::default()
-        .with_from(from)
-        .with_value(tx.value.unwrap_or_default())
-        .with_chain_id(chain.id());
-
-    if let Some(to) = to {
-        req.set_to(to);
-    } else {
-        req.set_kind(alloy_primitives::TxKind::Create);
-    }
-
-    if let Some(gas_limit) = tx.gas_limit {
-        req.set_gas_limit(gas_limit.to());
-    }
-
-    if let Some(nonce) = tx.nonce {
-        req.set_nonce(nonce.to());
-    }
-
-    let data = if let Some(sig) = sig {
-        parse_function_args(&sig, args, to, chain, &provider, etherscan_api_key).await?.0
-    } else if let Some(data) = data {
-        // Note: `sig+args` and `data` are mutually exclusive
-        hex::decode(data)?
-    } else {
-        Vec::new()
-    };
-
-    req.set_input::<Bytes>(data.into());
-
-    let cast = Cast::new(&provider);
-
-    let access_list: String = cast.access_list(&req, block, to_json).await?;
-
-    println!("{}", access_list);
-
-    Ok(())
 }

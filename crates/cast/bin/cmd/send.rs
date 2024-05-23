@@ -142,7 +142,7 @@ impl SendTxArgs {
                 }
             }
 
-            let tx = builder.build(config.sender).await?;
+            let (tx, _) = builder.build(config.sender).await?;
 
             cast_send(provider, tx, cast_async, confirmations, to_json).await
         // Case 2:
@@ -161,7 +161,7 @@ impl SendTxArgs {
                 .signer(signer)
                 .on_provider(&provider);
 
-            let tx = builder.build(from).await?;
+            let (tx, _) = builder.build(from).await?;
 
             cast_send(provider, tx, cast_async, confirmations, to_json).await
         }

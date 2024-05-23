@@ -1,4 +1,5 @@
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
+use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
 use alloy_primitives::{Address, TxKind};
 use alloy_provider::Provider;
@@ -61,6 +62,7 @@ pub struct TxKindState {
 pub struct InputState {
     kind: TxKind,
     input: Vec<u8>,
+    func: Option<Function>,
 }
 
 /// Builder type constructing [TransactionRequest] from cast send/mktx inputs.
@@ -154,14 +156,16 @@ where
     P: Provider<T, AnyNetwork>,
     T: Transport + Clone,
 {
-    /// Accepts user-provided code, sig and args params and constructs calldata for the transaction. sig i
+    /// Accepts user-provided code, sig and args params and constructs calldata for the transaction.
+    /// If code is present, input will be set to code + encoded constructor arguments. If no code is
+    /// present, input is set to just provided arguments.
     pub async fn with_code_sig_and_args(
         self,
         code: Option<String>,
         sig: Option<String>,
         args: Vec<String>,
     ) -> Result<CastTxBuilder<T, P, InputState>> {
-        let mut args = if let Some(sig) = sig {
+        let (mut args, func) = if let Some(sig) = sig {
             parse_function_args(
                 &sig,
                 args,
@@ -171,9 +175,8 @@ where
                 self.etherscan_api_key.as_deref(),
             )
             .await?
-            .0
         } else {
-            Vec::new()
+            (Vec::new(), None)
         };
 
         let input = if let Some(code) = code {
@@ -191,7 +194,7 @@ where
             blob: self.blob,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
-            state: InputState { kind: self.state.kind, input },
+            state: InputState { kind: self.state.kind, input, func },
             _t: self._t,
         })
     }
@@ -202,17 +205,39 @@ where
     P: Provider<T, AnyNetwork>,
     T: Transport + Clone,
 {
-    /// Builds tx from the [CastTxBuilder], filling missing fields (gas, gas_price, nonce).
+    /// Builds [TransactionRequest] and fiils missing fields. Returns a transaction which is ready
+    /// to be broadcasted.
     pub async fn build(
+        self,
+        from: impl Into<NameOrAddress>,
+    ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
+        self._build(from, true).await
+    }
+
+    /// Builds [TransactionRequest] without filling missing fields. Used for read-only calls such as
+    /// eth_call, eth_estimateGas, etc
+    pub async fn build_raw(
+        self,
+        from: impl Into<NameOrAddress>,
+    ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
+        self._build(from, false).await
+    }
+
+    async fn _build(
         mut self,
         from: impl Into<NameOrAddress>,
-    ) -> Result<WithOtherFields<TransactionRequest>> {
+        fill: bool,
+    ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
         let from = from.into().resolve(&self.provider).await?;
 
         self.tx.set_kind(self.state.kind);
         self.tx.set_input(self.state.input);
         self.tx.set_from(from);
         self.tx.set_chain_id(self.chain.id());
+
+        if !fill {
+            return Ok((self.tx, self.state.func));
+        }
 
         if self.legacy && self.tx.gas_price.is_none() {
             self.tx.gas_price = Some(self.provider.get_gas_price().await?);
@@ -246,7 +271,7 @@ where
             self.tx.nonce = Some(self.provider.get_transaction_count(from).await?);
         }
 
-        Ok(self.tx)
+        Ok((self.tx, self.state.func))
     }
 }
 

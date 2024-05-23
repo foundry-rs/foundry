@@ -82,7 +82,7 @@ impl MakeTxArgs {
 
         let provider = get_provider(&config)?;
 
-        let tx = CastTxBuilder::new(provider, tx, &config)
+        let (tx, _) = CastTxBuilder::new(provider, tx, &config)
             .await?
             .with_tx_kind(tx_kind)
             .with_code_sig_and_args(code, sig, args)
