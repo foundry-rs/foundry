@@ -85,7 +85,7 @@ pub struct BindArgs {
     skip_extra_derives: bool,
 
     /// Generate bindings for the `alloy` library, instead of `ethers`.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "ethers")]
     alloy: bool,
 
     /// Generate bindings for the `ethers` library, instead of `alloy` (default, deprecated).
@@ -162,6 +162,8 @@ impl BindArgs {
     /// Returns an iterator over the JSON files and the contract name in the `artifacts` directory.
     fn get_json_files(&self, artifacts: &Path) -> impl Iterator<Item = (String, PathBuf)> {
         let filter = self.get_filter();
+
+        // TODO: Alloy filter
         json_files(artifacts)
             .filter_map(|path| {
                 // Ignore the build info JSON.

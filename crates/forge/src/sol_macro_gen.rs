@@ -154,7 +154,10 @@ impl MultiSolMacroGen {
 
         // Write Cargo.toml
         let cargo_toml_path = bindings_path.join("Cargo.toml");
-        let toml_contents = format!("[package]\nname = \"{}\"\nversion = \"{}\"\nedition = \"2021\"\n\n[dependencies]\nalloy-sol-types = \"0.7.4\"\nalloy-contract = {{ git = \"https://github.com/alloy-rs/alloy\", rev = \"64feb9b\" }}", name, version);
+        let toml_contents = format!(
+            r#"[package]\nname = \"{}\"\nversion = \"{}\"\nedition = \"2021\"\n\n[dependencies]\nalloy-sol-types = \"0.7.4\"\nalloy-contract = {{ git = \"https://github.com/alloy-rs/alloy\", rev = \"64feb9b\" }}"#,
+            name, version
+        );
         fs::write(cargo_toml_path, toml_contents).expect("Failed to write Cargo.toml");
 
         // Write src
