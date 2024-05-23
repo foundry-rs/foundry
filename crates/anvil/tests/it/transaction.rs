@@ -25,10 +25,10 @@ async fn can_transfer_eth() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
     assert!(nonce == 0);
 
-    let balance_before = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let balance_before = provider.get_balance(to).await.unwrap();
 
     let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
 
@@ -44,11 +44,11 @@ async fn can_transfer_eth() {
     assert_eq!(tx.block_number, Some(1));
     assert_eq!(tx.transaction_index, Some(0));
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
 
     assert_eq!(nonce, 1);
 
-    let to_balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let to_balance = provider.get_balance(to).await.unwrap();
 
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 }
@@ -104,7 +104,7 @@ async fn can_respect_nonces() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
     let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
     let tx = TransactionRequest::default().to(to).value(amount).from(from).nonce(nonce + 1);
@@ -150,7 +150,7 @@ async fn can_replace_transaction() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
     let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
@@ -240,7 +240,7 @@ async fn can_reject_underpriced_replacement() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
     let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
@@ -446,7 +446,7 @@ async fn can_deploy_get_code() {
         .await
         .unwrap();
 
-    let code = provider.get_code_at(greeter_addr, BlockId::latest()).await.unwrap();
+    let code = provider.get_code_at(greeter_addr).await.unwrap();
     assert!(!code.as_ref().is_empty());
 }
 
@@ -551,7 +551,7 @@ async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
 
     // explicitly set the nonce
     let tx = TransactionRequest::default()
@@ -578,7 +578,7 @@ async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
         join_all(tasks).await.into_iter().filter(|res| res.as_ref().is_ok()).count();
     assert_eq!(successful_tx, 1);
 
-    assert_eq!(provider.get_transaction_count(from, BlockId::latest()).await.unwrap(), 1u64);
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), 1u64);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -588,7 +588,7 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
 
     let wallet = handle.dev_wallets().next().unwrap();
     let from = wallet.address();
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
 
     let mut tasks = Vec::new();
 
@@ -617,7 +617,7 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
     let successful_tx =
         join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
     assert_eq!(successful_tx, 1);
-    assert_eq!(provider.get_transaction_count(from, BlockId::latest()).await.unwrap(), 1u64);
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), 1u64);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -631,7 +631,7 @@ async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let greeter_contract =
         Greeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
 
     let mut tasks = Vec::new();
 
@@ -675,7 +675,7 @@ async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let successful_tx =
         join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
     assert_eq!(successful_tx, 1);
-    assert_eq!(provider.get_transaction_count(from, BlockId::latest()).await.unwrap(), nonce + 1);
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), nonce + 1);
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_pending_transaction() {
@@ -709,7 +709,7 @@ async fn test_first_noce_is_zero() {
     let provider = handle.http_provider();
     let from = handle.dev_wallets().next().unwrap().address();
 
-    let nonce = provider.get_transaction_count(from, BlockId::pending()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
 
     assert_eq!(nonce, 0);
 }
@@ -736,7 +736,7 @@ async fn can_handle_different_sender_nonce_calculation() {
         let tx_from_first = WithOtherFields::new(tx_from_first);
         let _tx = provider.send_transaction(tx_from_first).await.unwrap();
         let nonce_from_first =
-            provider.get_transaction_count(from_first, BlockId::pending()).await.unwrap();
+            provider.get_transaction_count(from_first).block_id(BlockId::pending()).await.unwrap();
         assert_eq!(nonce_from_first, idx);
 
         let tx_from_second = TransactionRequest::default()
@@ -746,7 +746,7 @@ async fn can_handle_different_sender_nonce_calculation() {
         let tx_from_second = WithOtherFields::new(tx_from_second);
         let _tx = provider.send_transaction(tx_from_second).await.unwrap();
         let nonce_from_second =
-            provider.get_transaction_count(from_second, BlockId::pending()).await.unwrap();
+            provider.get_transaction_count(from_second).block_id(BlockId::pending()).await.unwrap();
         assert_eq!(nonce_from_second, idx);
     }
 }
@@ -768,12 +768,13 @@ async fn includes_pending_tx_for_transaction_count() {
             TransactionRequest::default().from(from).value(U256::from(1337)).to(Address::random());
         let tx = WithOtherFields::new(tx);
         let _tx = provider.send_transaction(tx).await.unwrap();
-        let nonce = provider.get_transaction_count(from, BlockId::pending()).await.unwrap();
+        let nonce =
+            provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
         assert_eq!(nonce, idx);
     }
 
     api.mine_one().await;
-    let nonce = provider.get_transaction_count(from, BlockId::pending()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
     assert_eq!(nonce, tx_count);
 }
 
@@ -792,19 +793,20 @@ async fn can_get_historic_info() {
     let tx = provider.send_transaction(tx).await.unwrap();
     let _ = tx.get_receipt().await.unwrap();
 
-    let nonce_pre = provider.get_transaction_count(from, BlockId::Number(0.into())).await.unwrap();
+    let nonce_pre =
+        provider.get_transaction_count(from).block_id(BlockId::number(0)).await.unwrap();
 
-    let nonce_post = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce_post = provider.get_transaction_count(from).await.unwrap();
 
     assert!(nonce_pre < nonce_post);
 
-    let balance_pre = provider.get_balance(from, BlockId::Number(0.into())).await.unwrap();
+    let balance_pre = provider.get_balance(from).block_id(BlockId::number(0)).await.unwrap();
 
-    let balance_post = provider.get_balance(from, BlockId::latest()).await.unwrap();
+    let balance_post = provider.get_balance(from).await.unwrap();
 
     assert!(balance_post < balance_pre);
 
-    let to_balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_pre.saturating_add(amount), to_balance);
 }
 
@@ -962,7 +964,7 @@ async fn test_tx_access_list() {
         .to(*simple_storage.address())
         .with_input(set_value_calldata.to_owned());
     let set_value_tx = WithOtherFields::new(set_value_tx);
-    let access_list = provider.create_access_list(&set_value_tx, BlockId::latest()).await.unwrap();
+    let access_list = provider.create_access_list(&set_value_tx).await.unwrap();
     // let set_value_tx = simple_storage.set_value("bar".to_string()).from(sender).tx;
     // let access_list = client.create_access_list(&set_value_tx, None).await.unwrap();
     assert_access_list_eq(
@@ -989,7 +991,7 @@ async fn test_tx_access_list() {
         .to(*multicall.address())
         .with_input(call_tx_data.to_owned());
     let call_tx = WithOtherFields::new(call_tx);
-    let access_list = provider.create_access_list(&call_tx, BlockId::latest()).await.unwrap();
+    let access_list = provider.create_access_list(&call_tx).await.unwrap();
     assert_access_list_eq(
         access_list.access_list,
         AccessList::from(vec![AccessListItem { address: other_acc, storage_keys: vec![] }]),
@@ -1009,7 +1011,7 @@ async fn test_tx_access_list() {
         .to(*multicall.address())
         .with_input(subcall_tx_calldata.to_owned());
     let subcall_tx = WithOtherFields::new(subcall_tx);
-    let access_list = provider.create_access_list(&subcall_tx, BlockId::latest()).await.unwrap();
+    let access_list = provider.create_access_list(&subcall_tx).await.unwrap();
     assert_access_list_eq(
         access_list.access_list,
         // H256::from_uint(&(1u64.into())),

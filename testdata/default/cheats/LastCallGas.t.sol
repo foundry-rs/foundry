@@ -53,10 +53,6 @@ abstract contract LastCallGasFixture is DSTest {
         (success,) = address(target).call("");
     }
 
-    function _performExpandMemory() internal view {
-        target.expandMemory(1000);
-    }
-
     function _performRefund() internal {
         target.setValue(1);
         target.resetValue();
@@ -84,12 +80,6 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
         _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21064, gasMemoryUsed: 0, gasRefunded: 0}));
     }
 
-    function testRecordGasMemory() public {
-        _setup();
-        _performExpandMemory();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 186470, gasMemoryUsed: 4994, gasRefunded: 0}));
-    }
-
     function testRecordGasRefund() public {
         _setup();
         _performRefund();
@@ -102,24 +92,18 @@ contract LastCallGasDefaultTest is LastCallGasFixture {
     function testRecordLastCallGas() public {
         _setup();
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 9, gasRefunded: 0}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
 
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 9, gasRefunded: 0}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
 
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 9, gasRefunded: 0}));
-    }
-
-    function testRecordGasMemory() public {
-        _setup();
-        _performExpandMemory();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 186470, gasMemoryUsed: 4994, gasRefunded: 0}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
     }
 
     function testRecordGasRefund() public {
         _setup();
         _performRefund();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 216, gasMemoryUsed: 9, gasRefunded: 19900}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 216, gasMemoryUsed: 0, gasRefunded: 19900}));
     }
 }

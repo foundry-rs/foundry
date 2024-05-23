@@ -48,7 +48,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
         _context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        if inputs.contract == HARDHAT_CONSOLE_ADDRESS {
+        if inputs.target_address == HARDHAT_CONSOLE_ADDRESS {
             let (res, out) = self.hardhat_log(inputs.input.to_vec());
             if res != InstructionResult::Continue {
                 return Some(CallOutcome {
