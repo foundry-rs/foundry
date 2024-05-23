@@ -1,3 +1,4 @@
+use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256};
@@ -52,15 +53,33 @@ pub async fn build_tx<
     tx: TransactionOpts,
     chain: impl Into<Chain>,
     etherscan_api_key: Option<String>,
+    blob_data: Option<Vec<u8>>,
 ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
     let chain = chain.into();
 
     let from = from.into().resolve(provider).await?;
 
+    let sidecar = blob_data
+        .map(|data| {
+            let mut coder = SidecarBuilder::<SimpleCoder>::default();
+            coder.ingest(&data);
+            coder.build()
+        })
+        .transpose()?;
+
     let mut req = WithOtherFields::<TransactionRequest>::default()
         .with_from(from)
         .with_value(tx.value.unwrap_or_default())
         .with_chain_id(chain.id());
+
+    if let Some(sidecar) = sidecar {
+        req.set_blob_sidecar(sidecar);
+        req.populate_blob_hashes();
+        req.set_max_fee_per_blob_gas(
+            // If blob_base_fee is 0, uses 1 wei as minimum.
+            tx.blob_gas_price.map_or(provider.get_blob_base_fee().await?.max(1), |g| g.to()),
+        );
+    }
 
     if let Some(to) = to {
         req.set_to(to.into().resolve(provider).await?);

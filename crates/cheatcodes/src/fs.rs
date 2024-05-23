@@ -356,9 +356,9 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
             }?;
 
             let maybe_bytecode = if deployed {
-                artifact.1.deployed_bytecode.clone()
+                artifact.1.deployed_bytecode().cloned()
             } else {
-                artifact.1.bytecode.clone()
+                artifact.1.bytecode().cloned()
             };
 
             return maybe_bytecode

@@ -169,7 +169,7 @@ impl CreateArgs {
         // since we don't know the address yet.
         let mut verify = forge_verify::VerifyArgs {
             address: Default::default(),
-            contract: self.contract.clone(),
+            contract: Some(self.contract.clone()),
             compiler_version: None,
             constructor_args,
             constructor_args_path: None,
@@ -199,7 +199,9 @@ impl CreateArgs {
         verify.etherscan.key =
             config.get_etherscan_config_with_chain(Some(chain.into()))?.map(|c| c.key);
 
-        verify.verification_provider()?.preflight_check(verify).await?;
+        let context = verify.resolve_context().await?;
+
+        verify.verification_provider()?.preflight_check(verify, context).await?;
         Ok(())
     }
 
@@ -318,7 +320,7 @@ impl CreateArgs {
             if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
         let verify = forge_verify::VerifyArgs {
             address,
-            contract: self.contract,
+            contract: Some(self.contract),
             compiler_version: None,
             constructor_args,
             constructor_args_path: None,

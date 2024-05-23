@@ -3272,6 +3272,7 @@ dependencies = [
  "foundry-evm",
  "foundry-test-utils",
  "futures",
+ "itertools 0.12.1",
  "once_cell",
  "regex",
  "reqwest",
@@ -7398,9 +7399,9 @@ checksum = "81cdd64d312baedb58e21336b31bc043b77e01cc99033ce76ef539f78e965ebc"
 
 [[package]]
 name = "svm-rs"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7c7a55b859b986daa02c731cd07758d84b1db852665e45c5cfa6698c41d17cb"
+checksum = "b19990faaaed6298d6b21984544ad941dc88d507330012fb4a6a8d4f1833de73"
 dependencies = [
  "const-hex",
  "dirs 5.0.1",
@@ -7418,9 +7419,9 @@ dependencies = [
 
 [[package]]
 name = "svm-rs-builds"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1bb4806c96207e7cde40fc238f9a1d570f3090f850a742e1e96665440615a31"
+checksum = "68be542b0720275ac352f85ab67713ae22d56bcc58d83bdebdd3eda0473a1d7f"
 dependencies = [
  "build_const",
  "const-hex",

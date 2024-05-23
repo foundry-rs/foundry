@@ -95,7 +95,7 @@ impl MakeTxArgs {
         let provider = get_provider(&config)?;
 
         let (tx, _) =
-            tx::build_tx(&provider, from, to, code, sig, args, tx, chain, api_key).await?;
+            tx::build_tx(&provider, from, to, code, sig, args, tx, chain, api_key, None).await?;
 
         let tx = tx.build(&EthereumSigner::new(signer)).await?;
 
