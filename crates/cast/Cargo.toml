@@ -52,8 +52,8 @@ rayon = "1"
 serde_json.workspace = true
 serde.workspace = true
 
-# aws
-aws-sdk-kms = { version = "1", default-features = false }
+# aws-kms
+aws-sdk-kms = { version = "1", default-features = false, optional = true }
 
 # bin
 foundry-cli.workspace = true
@@ -88,6 +88,7 @@ rustls = ["foundry-cli/rustls", "foundry-wallets/rustls"]
 openssl = ["foundry-cli/openssl"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
+aws-kms = ["foundry-wallets/aws-kms", "dep:aws-sdk-kms"]
 
 [[bench]]
 name = "vanity"

@@ -78,7 +78,7 @@ pub struct WalletOpts {
     pub trezor: bool,
 
     /// Use AWS Key Management Service.
-    #[arg(long, help_heading = "Wallet options - AWS KMS")]
+    #[arg(long, help_heading = "Wallet options - AWS KMS", hide = !cfg!(feature = "aws-kms"))]
     pub aws: bool,
 }
 

@@ -13,7 +13,6 @@ repository.workspace = true
 alloy-primitives.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
 alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
-alloy-signer-aws = { workspace = true, features = ["eip712"] }
 alloy-signer-ledger = { workspace = true, features = ["eip712"] }
 alloy-signer-trezor.workspace = true
 alloy-network.workspace = true
@@ -21,8 +20,10 @@ alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
 alloy-dyn-abi.workspace = true
 
-aws-sdk-kms = { version = "1", default-features = false }
-aws-config = "1"
+# aws-kms
+alloy-signer-aws = { workspace = true, features = ["eip712"], optional = true }
+aws-config = { version = "1", default-features = false, optional = true }
+aws-sdk-kms = { version = "1", default-features = false, optional = true }
 
 foundry-config.workspace = true
 foundry-common.workspace = true
@@ -43,4 +44,5 @@ tokio = { workspace = true, features = ["macros"] }
 
 [features]
 default = ["rustls"]
-rustls = ["aws-sdk-kms/rustls"]
+rustls = ["aws-sdk-kms?/rustls"]
+aws-kms = ["dep:alloy-signer-aws", "dep:aws-config", "dep:aws-sdk-kms"]
