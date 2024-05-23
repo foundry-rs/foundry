@@ -993,13 +993,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // RecordedAccountAccess (and all subsequent RecordedAccountAccesses) will be
             // updated with the revert status of this call, since the EVM does not mark accounts
             // as "warm" if the call from which they were accessed is reverted
+
             recorded_account_diffs_stack.push(vec![AccountAccess {
                 chainInfo: crate::Vm::ChainInfo {
                     forkId: ecx.db.active_fork_id().unwrap_or_default(),
                     chainId: U256::from(ecx.env.cfg.chain_id),
                 },
                 accessor: call.caller,
-                account: call.target_address,
+                account: call.bytecode_address,
                 kind,
                 initialized,
                 oldBalance: old_balance,
