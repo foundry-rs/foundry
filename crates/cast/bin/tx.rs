@@ -47,19 +47,27 @@ pub async fn resolve_tx_kind<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
 }
 
 /// Initial state.
+#[derive(Debug)]
 pub struct InitState;
 
 /// State with known [TxKind].
+#[derive(Debug)]
 pub struct TxKindState {
     kind: TxKind,
 }
 
 /// State with known input for the transaction.
+#[derive(Debug)]
 pub struct InputState {
     kind: TxKind,
     input: Vec<u8>,
 }
 
+/// Builder type constructing [TransactionRequest] from cast send/mktx inputs.
+///
+/// It is implemented as a stateful builder with expected state transition of [InitState] ->
+/// [TxKindState] -> [InputState].
+#[derive(Debug)]
 pub struct CastTxBuilder<T, P, S> {
     provider: P,
     tx: WithOtherFields<TransactionRequest>,
@@ -126,6 +134,7 @@ where
         })
     }
 
+    /// Sets [TxKind] for this builder and changes state to [TxKindState].
     pub fn with_tx_kind(self, kind: TxKind) -> CastTxBuilder<T, P, TxKindState> {
         CastTxBuilder {
             provider: self.provider,
@@ -145,6 +154,7 @@ where
     P: Provider<T, AnyNetwork>,
     T: Transport + Clone,
 {
+    /// Accepts user-provided code, sig and args params and constructs calldata for the transaction. sig i
     pub async fn with_code_sig_and_args(
         self,
         code: Option<String>,
