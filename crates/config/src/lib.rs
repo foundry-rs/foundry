@@ -382,12 +382,6 @@ pub struct Config {
     /// This includes what operations can be executed (read, write)
     pub fs_permissions: FsPermissions,
 
-    /// Temporary config to enable [SpecId::CANCUN]
-    ///
-    /// <https://github.com/foundry-rs/foundry/issues/5782>
-    /// Should be removed once EvmVersion Cancun is supported by solc
-    pub cancun: bool,
-
     /// Temporary config to enable [SpecId::PRAGUE]
     ///
     /// Should be removed once EvmVersion Prague is supported by solc
@@ -892,9 +886,6 @@ impl Config {
     /// Returns the [SpecId] derived from the configured [EvmVersion]
     #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
-        if self.cancun {
-            return SpecId::CANCUN
-        }
         if self.prague {
             return SpecId::PRAGUE
         }
@@ -2000,7 +1991,6 @@ impl Default for Config {
         Self {
             profile: Self::DEFAULT_PROFILE,
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
-            cancun: false,
             prague: false,
             isolate: false,
             __root: Default::default(),
