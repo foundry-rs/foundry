@@ -132,6 +132,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         fs_permissions: Default::default(),
         labels: Default::default(),
         cancun: true,
+        prague: true,
         isolate: true,
         unchecked_cheatcode_artifacts: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,

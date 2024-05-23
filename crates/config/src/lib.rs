@@ -388,6 +388,11 @@ pub struct Config {
     /// Should be removed once EvmVersion Cancun is supported by solc
     pub cancun: bool,
 
+    /// Temporary config to enable [SpecId::PRAGUE]
+    ///
+    /// Should be removed once EvmVersion Prague is supported by solc
+    pub prague: bool,
+
     /// Whether to enable call isolation.
     ///
     /// Useful for more correct gas accounting and EVM behavior in general.
@@ -889,6 +894,9 @@ impl Config {
     pub fn evm_spec_id(&self) -> SpecId {
         if self.cancun {
             return SpecId::CANCUN
+        }
+        if self.prague {
+            return SpecId::PRAGUE
         }
         evm_spec_id(&self.evm_version)
     }
@@ -1993,6 +2001,7 @@ impl Default for Config {
             profile: Self::DEFAULT_PROFILE,
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             cancun: false,
+            prague: false,
             isolate: false,
             __root: Default::default(),
             src: "src".into(),
@@ -2966,7 +2975,7 @@ mod tests {
                 test = "defaulttest"
                 src  = "defaultsrc"
                 libs = ['lib', 'node_modules']
-                
+
                 [profile.custom]
                 src = "customsrc"
             "#,
@@ -3788,7 +3797,7 @@ mod tests {
                 tx_origin = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
                 verbosity = 0
                 via_ir = false
-                
+
                 [profile.default.rpc_storage_caching]
                 chains = 'all'
                 endpoints = 'all'
@@ -4256,7 +4265,7 @@ mod tests {
                         './src/SizeAuction.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c',
                         './src/test/ChainlinkTWAP.t.sol:ChainlinkTWAP:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
                         './src/SizeAuctionDiscount.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c',
-                    ]       
+                    ]
             ",
             )?;
             let config = Config::load();
