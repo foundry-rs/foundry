@@ -131,7 +131,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         doc: Default::default(),
         fs_permissions: Default::default(),
         labels: Default::default(),
-        cancun: true,
         prague: true,
         isolate: true,
         unchecked_cheatcode_artifacts: false,
