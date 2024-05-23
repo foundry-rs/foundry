@@ -17,7 +17,7 @@ use revm::{
     inspectors::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log,
+        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, HashMap as Map, Log,
         ResultAndState, SpecId, State, StorageSlot, TransactTo, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, JournaledState,
@@ -398,7 +398,7 @@ pub struct Backend {
     /// In a way the `JournaledState` is something like a cache that
     /// 1. check if account is already loaded (hot)
     /// 2. if not load from the `Database` (this will then retrieve the account via RPC in forking
-    /// mode)
+    ///    mode)
     ///
     /// To properly initialize we store the `JournaledState` before the first fork is selected
     /// ([`DatabaseExt::select_fork`]).
@@ -761,13 +761,7 @@ impl Backend {
 
         let test_contract = match env.tx.transact_to {
             TransactTo::Call(to) => to,
-            TransactTo::Create(CreateScheme::Create) => {
-                env.tx.caller.create(env.tx.nonce.unwrap_or_default())
-            }
-            TransactTo::Create(CreateScheme::Create2 { salt }) => {
-                let code_hash = B256::from_slice(keccak256(&env.tx.data).as_slice());
-                env.tx.caller.create2(B256::from(salt), code_hash)
-            }
+            TransactTo::Create => env.tx.caller.create(env.tx.nonce.unwrap_or_default()),
         };
         self.set_test_contract(test_contract);
     }

@@ -470,7 +470,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
                 let new_dir = if folder_name == "lib" { lib_dir } else { src_dir };
                 for e in read_dir(entry.path())? {
                     let e = e?;
-                    let dest = new_dir.join(&e.file_name());
+                    let dest = new_dir.join(e.file_name());
                     eyre::ensure!(!Path::exists(&dest), "destination already exists: {:?}", dest);
                     std::fs::rename(e.path(), &dest)?;
                     remappings.push(Remapping {

@@ -486,7 +486,7 @@ impl InspectorStack {
             sender: ecx.env.tx.caller,
             original_origin: cached_env.tx.caller,
             original_sender_nonce: nonce,
-            is_create: matches!(transact_to, TransactTo::Create(_)),
+            is_create: matches!(transact_to, TransactTo::Create),
         });
         self.in_inner_context = true;
 
@@ -551,7 +551,7 @@ impl InspectorStack {
         let (result, address, output) = match res.result {
             ExecutionResult::Success { reason, gas_used, gas_refunded, logs: _, output } => {
                 gas.set_refund(gas_refunded as i64);
-                gas.record_cost(gas_used);
+                let _ = gas.record_cost(gas_used);
                 let address = match output {
                     Output::Create(_, address) => address,
                     Output::Call(_) => None,
@@ -559,11 +559,11 @@ impl InspectorStack {
                 (reason.into(), address, output.into_data())
             }
             ExecutionResult::Halt { reason, gas_used } => {
-                gas.record_cost(gas_used);
+                let _ = gas.record_cost(gas_used);
                 (reason.into(), None, Bytes::new())
             }
             ExecutionResult::Revert { gas_used, output } => {
-                gas.record_cost(gas_used);
+                let _ = gas.record_cost(gas_used);
                 (InstructionResult::Revert, None, output)
             }
         };
@@ -678,17 +678,17 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
         );
 
         if self.enable_isolation &&
-            call.context.scheme == CallScheme::Call &&
+            call.scheme == CallScheme::Call &&
             !self.in_inner_context &&
             ecx.journaled_state.depth == 1
         {
             let (result, _) = self.transact_inner(
                 ecx,
-                TransactTo::Call(call.contract),
-                call.context.caller,
+                TransactTo::Call(call.target_address),
+                call.caller,
                 call.input.clone(),
                 call.gas_limit,
-                call.transfer.value,
+                call.value.get(),
             );
             return Some(CallOutcome { result, memory_offset: call.return_memory_offset.clone() })
         }
@@ -741,7 +741,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
         if self.enable_isolation && !self.in_inner_context && ecx.journaled_state.depth == 1 {
             let (result, address) = self.transact_inner(
                 ecx,
-                TransactTo::Create(create.scheme),
+                TransactTo::Create,
                 create.caller,
                 create.init_code.clone(),
                 create.gas_limit,

@@ -2,7 +2,6 @@ use crate::tx;
 use alloy_network::{AnyNetwork, EthereumSigner};
 use alloy_primitives::{Address, U64};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::BlockId;
 use alloy_signer::Signer;
 use alloy_transport::Transport;
 use cast::Cast;
@@ -150,9 +149,7 @@ impl SendTxArgs {
             }
 
             if resend {
-                tx.nonce = Some(U64::from(
-                    provider.get_transaction_count(config.sender, BlockId::latest()).await?,
-                ));
+                tx.nonce = Some(U64::from(provider.get_transaction_count(config.sender).await?));
             }
 
             cast_send(
@@ -183,8 +180,7 @@ impl SendTxArgs {
             tx::validate_from_address(eth.wallet.from, from)?;
 
             if resend {
-                tx.nonce =
-                    Some(U64::from(provider.get_transaction_count(from, BlockId::latest()).await?));
+                tx.nonce = Some(U64::from(provider.get_transaction_count(from).await?));
             }
 
             let signer = EthereumSigner::from(signer);

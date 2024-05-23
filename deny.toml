@@ -85,4 +85,7 @@ unknown-registry = "warn"
 # Lint level for what to happen when a crate from a git repository that is not
 # in the allow list is encountered
 unknown-git = "deny"
-allow-git = ["https://github.com/alloy-rs/alloy", "https://github.com/paradigmxyz/evm-inspectors"]
+allow-git = [
+    "https://github.com/alloy-rs/alloy",
+    "https://github.com/paradigmxyz/revm-inspectors",
+]

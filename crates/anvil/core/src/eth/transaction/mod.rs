@@ -16,7 +16,7 @@ use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 use revm::{
     interpreter::InstructionResult,
-    primitives::{CreateScheme, OptimismFields, TransactTo, TxEnv},
+    primitives::{OptimismFields, TransactTo, TxEnv},
 };
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
@@ -447,7 +447,7 @@ impl PendingTransaction {
         fn transact_to(kind: &TxKind) -> TransactTo {
             match kind {
                 TxKind::Call(c) => TransactTo::Call(*c),
-                TxKind::Create => TransactTo::Create(CreateScheme::Create),
+                TxKind::Create => TransactTo::Create,
             }
         }
 

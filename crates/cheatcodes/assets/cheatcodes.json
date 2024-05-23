@@ -475,7 +475,7 @@
         {
           "name": "gasMemoryUsed",
           "ty": "uint64",
-          "description": "The amount of gas used for memory expansion."
+          "description": "DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>"
         },
         {
           "name": "gasRefunded",
