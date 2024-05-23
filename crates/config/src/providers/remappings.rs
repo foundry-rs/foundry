@@ -102,6 +102,7 @@ impl<'a> RemappingsProvider<'a> {
         trace!("get all remappings from {:?}", self.root);
         /// prioritizes remappings that are closer: shorter `path`
         ///   - ("a", "1/2") over ("a", "1/2/3")
+        ///
         /// grouped by remapping context
         fn insert_closest(
             mappings: &mut BTreeMap<Option<String>, BTreeMap<String, PathBuf>>,

@@ -134,7 +134,7 @@ where
     /// We always check:
     ///  1. if the requested value is already stored in the cache, then answer the sender
     ///  2. otherwise, fetch it via the provider but check if a request for that value is already in
-    /// progress (e.g. another Sender just requested the same account)
+    ///     progress (e.g. another Sender just requested the same account)
     fn on_request(&mut self, req: BackendRequest) {
         match req {
             BackendRequest::Basic(addr, sender) => {

@@ -398,7 +398,7 @@ pub struct Backend {
     /// In a way the `JournaledState` is something like a cache that
     /// 1. check if account is already loaded (hot)
     /// 2. if not load from the `Database` (this will then retrieve the account via RPC in forking
-    /// mode)
+    ///    mode)
     ///
     /// To properly initialize we store the `JournaledState` before the first fork is selected
     /// ([`DatabaseExt::select_fork`]).
