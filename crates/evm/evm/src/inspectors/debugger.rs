@@ -8,9 +8,8 @@ use foundry_evm_core::{
 };
 use revm::{
     interpreter::{
-        opcode::{self, spec_opcode_gas},
-        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InstructionResult, Interpreter,
-        InterpreterResult,
+        opcode, CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InstructionResult,
+        Interpreter, InterpreterResult,
     },
     EvmContext, Inspector,
 };
@@ -50,12 +49,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         let pc = interp.program_counter();
         let op = interp.current_opcode();
 
-        // Get opcode information
-        let opcode_infos = spec_opcode_gas(ecx.spec_id());
-        let opcode_info = &opcode_infos[op as usize];
-
         // Extract the push bytes
-        let push_size = if opcode_info.is_push() { (op - opcode::PUSH0) as usize } else { 0 };
+        let push_size = if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
+            (op - opcode::PUSH0) as usize
+        } else {
+            0
+        };
         let push_bytes = (push_size > 0).then(|| {
             let start = pc + 1;
             let end = start + push_size;
@@ -95,8 +94,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         self.enter(
             ecx.journaled_state.depth() as usize,
-            inputs.context.code_address,
-            inputs.context.scheme.into(),
+            inputs.bytecode_address,
+            inputs.scheme.into(),
         );
 
         None

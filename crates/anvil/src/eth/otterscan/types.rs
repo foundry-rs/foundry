@@ -135,7 +135,8 @@ impl OtsBlockDetails {
     /// This has two problems though:
     ///   - It makes the endpoint too specific to Otterscan's implementation
     ///   - It breaks the abstraction built in `OtsBlock<TX>` which computes `transaction_count`
-    ///   based on the existing list.
+    ///     based on the existing list.
+    ///
     /// Therefore we keep it simple by keeping the data in the response
     pub async fn build(block: Block, backend: &Backend) -> Result<Self> {
         if block.transactions.is_uncle() {

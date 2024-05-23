@@ -100,7 +100,7 @@ pub trait Db:
             B256::from_slice(&keccak256(code.as_ref())[..])
         };
         info.code_hash = code_hash;
-        info.code = Some(Bytecode::new_raw(alloy_primitives::Bytes(code.0)).to_checked());
+        info.code = Some(Bytecode::new_raw(alloy_primitives::Bytes(code.0)));
         self.insert_account(address, info);
         Ok(())
     }
@@ -137,9 +137,7 @@ pub trait Db:
                     code: if account.code.0.is_empty() {
                         None
                     } else {
-                        Some(
-                            Bytecode::new_raw(alloy_primitives::Bytes(account.code.0)).to_checked(),
-                        )
+                        Some(Bytecode::new_raw(alloy_primitives::Bytes(account.code.0)))
                     },
                     nonce,
                 },

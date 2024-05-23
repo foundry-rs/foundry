@@ -203,8 +203,7 @@ impl<'a> ContractRunner<'a> {
     ///
     /// Fixtures can be defined:
     /// - as storage arrays in test contract, prefixed with `fixture`
-    /// - as functions prefixed with `fixture` and followed by parameter name to be
-    /// fuzzed
+    /// - as functions prefixed with `fixture` and followed by parameter name to be fuzzed
     ///
     /// Storage array fixtures:
     /// `uint256[] public fixture_amount = [1, 2, 3];`

@@ -6,11 +6,15 @@ use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     artifacts::{BytecodeObject, ContractBytecodeSome, Libraries},
-    compilers::{solc::SolcVersionManager, Compiler, CompilerVersionManager},
+    compilers::{
+        solc::SolcVersionManager, vyper::parser::VyperParsedSource, Compiler,
+        CompilerVersionManager,
+    },
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
-    Artifact, ArtifactId, CompilerConfig, ConfigurableArtifacts, FileFilter, Project,
-    ProjectCompileOutput, ProjectPathsConfig, SolcConfig, SparseOutputFileFilter,
+    resolver::{parse::SolData, GraphEdges},
+    Artifact, ArtifactId, CompilerConfig, FileFilter, Project, ProjectCompileOutput,
+    ProjectPathsConfig, SolcConfig, SolcSparseFileFilter, SparseOutputFileFilter,
 };
 use foundry_linking::Linker;
 use num_format::{Locale, ToFormattedString};
@@ -138,7 +142,7 @@ impl<C: Compiler> ProjectCompiler<C> {
     /// Compiles the project.
     pub fn compile(
         mut self,
-        project: &Project<ConfigurableArtifacts, C>,
+        project: &Project<C>,
     ) -> Result<ProjectCompileOutput<C::CompilationError>> {
         // TODO: Avoid process::exit
         if !project.paths.has_input_files() && self.files.is_empty() {
@@ -476,7 +480,7 @@ pub struct ContractInfo {
 /// **Note:** this expects the `target_path` to be absolute
 pub fn compile_target<C: Compiler>(
     target_path: &Path,
-    project: &Project<ConfigurableArtifacts, C>,
+    project: &Project<C>,
     quiet: bool,
 ) -> Result<ProjectCompileOutput<C::CompilationError>> {
     ProjectCompiler::<C>::new().quiet(quiet).files([target_path.into()]).compile(project)
@@ -582,6 +586,28 @@ impl FileFilter for SkipBuildFilters {
                     .map_or(true, |stripped| is_match_exclude(matcher, stripped))
             }
         })
+    }
+}
+
+impl FileFilter for &SkipBuildFilters {
+    fn is_match(&self, file: &Path) -> bool {
+        (*self).is_match(file)
+    }
+}
+
+impl SparseOutputFileFilter<SolData> for SkipBuildFilters {
+    fn sparse_sources(&self, file: &Path, graph: &GraphEdges<SolData>) -> Vec<PathBuf> {
+        SolcSparseFileFilter::new(self).sparse_sources(file, graph)
+    }
+}
+
+impl SparseOutputFileFilter<VyperParsedSource> for SkipBuildFilters {
+    fn sparse_sources(&self, file: &Path, _graph: &GraphEdges<VyperParsedSource>) -> Vec<PathBuf> {
+        if self.is_match(file) {
+            vec![file.to_path_buf()]
+        } else {
+            vec![]
+        }
     }
 }
 
