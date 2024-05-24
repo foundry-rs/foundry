@@ -1190,12 +1190,14 @@ impl DatabaseExt for Backend {
                 // load it in order to reflect their state at the new block (they should explicitly
                 // be marked as persistent if it is desired to keep state between fork rolls).
                 for (addr, acc) in journaled_state.state.iter() {
-                    if acc.is_touched() && acc.is_created() {
-                        merge_journaled_state_data(
-                            *addr,
-                            journaled_state,
-                            &mut active.journaled_state,
-                        );
+                    if acc.is_created() {
+                        if acc.is_touched() {
+                            merge_journaled_state_data(
+                                *addr,
+                                journaled_state,
+                                &mut active.journaled_state,
+                            );
+                        }
                     } else {
                         let _ = active.journaled_state.load_account(*addr, &mut active.db);
                     }
