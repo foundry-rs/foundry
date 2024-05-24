@@ -17,29 +17,27 @@ impl SolMacroGen {
         Self { path, name, expansion: None }
     }
 
-    pub fn get_json_abi(&self) -> (JsonAbi, Option<String>) {
-        let json = std::fs::read(&self.path).expect("Failed to read JSON file");
+    pub fn get_json_abi(&self) -> Result<(JsonAbi, Option<String>)> {
+        let json = std::fs::read(&self.path)?;
 
         // Need to do this to get the abi in the next step.
-        let json: Value = serde_json::from_slice(&json).expect("Failed to parse JSON file");
+        let json: Value = serde_json::from_slice(&json)?;
 
         // Get the abi from the json.
         let json_abi = if let Some(abi) = json.get("abi") {
-            let json: JsonAbi =
-                serde_json::from_str(&abi.clone().to_string()).expect("Failed to parse ABI");
+            let json: JsonAbi = serde_json::from_str(&abi.clone().to_string())?;
             json
         } else {
-            panic!("No ABI found in JSON file");
+            return Err(eyre::eyre!("No ABI found in JSON file"));
         };
 
         let bytecode = if let Some(bytecode) = json.get("bytecode") {
-            tracing::info!("Found creation bytecode in JSON file");
             Some(bytecode.to_string())
         } else {
             None
         };
 
-        (json_abi, bytecode)
+        Ok((json_abi, bytecode))
     }
 }
 
@@ -53,18 +51,17 @@ impl MultiSolMacroGen {
         Self { artifacts_path: artifacts_path.to_path_buf(), instances }
     }
 
-    fn generate_bindings(&mut self) {
+    fn generate_bindings(&mut self) -> Result<()> {
         for instance in &mut self.instances {
-            let (mut json_abi, maybe_bytecode) = instance.get_json_abi();
+            let (mut json_abi, maybe_bytecode) = instance.get_json_abi()?;
 
             json_abi.dedup();
             let sol_str = json_abi.to_sol(&instance.name, None);
 
             let ident_name: Ident = Ident::new(&instance.name, Span::call_site());
 
-            let tokens = tokens_for_sol(&ident_name, &sol_str);
-            let tokens =
-                if let Ok(tokens) = tokens { tokens } else { panic!("Failed to get sol tokens") };
+            let tokens = tokens_for_sol(&ident_name, &sol_str)
+                .map_err(|e| eyre::eyre!("Failed to get sol tokens: {e}"))?;
 
             let tokens = if let Some(_bytecode) = maybe_bytecode {
                 // let bytecode_literal = syn::LitStr::new(&bytecode, Span::call_site());
@@ -87,27 +84,23 @@ impl MultiSolMacroGen {
                 }
             };
 
-            let input: Result<SolInput, syn::Error> = syn::parse2(tokens);
+            let input: SolInput =
+                syn::parse2(tokens).map_err(|e| eyre::eyre!("Failed to parse SolInput: {e}"))?;
 
-            let sol_input =
-                if let Ok(input) = input { input } else { panic!("Failed to parse SolInput") };
-
-            let SolInput { attrs: _attrs, path: _path, kind } = sol_input;
+            let SolInput { attrs: _attrs, path: _path, kind } = input;
 
             let tokens = match kind {
                 SolInputKind::Sol(file) => {
                     // TODO: Add attributes if needed to file.attrs
-
-                    match expand(file) {
-                        Ok(tokens) => tokens,
-                        Err(e) => panic!("Failed to expand SolInput: {e}"),
-                    }
+                    expand(file).map_err(|e| eyre::eyre!("Failed to expand SolInput: {e}"))?
                 }
-                _ => panic!("Not possible"),
+                _ => unreachable!(),
             };
 
             instance.expansion = Some(tokens);
         }
+
+        Ok(())
     }
 
     pub fn write_to_crate(
@@ -116,8 +109,8 @@ impl MultiSolMacroGen {
         version: &str,
         bindings_path: &Path,
         single_file: bool,
-    ) {
-        self.generate_bindings();
+    ) -> Result<()> {
+        self.generate_bindings()?;
 
         let src = bindings_path.join("src");
 
@@ -137,7 +130,9 @@ impl MultiSolMacroGen {
             alloy-contract = {{ git = "https://github.com/alloy-rs/alloy", rev = "64feb9b" }}"#,
             name, version
         );
-        fs::write(cargo_toml_path, toml_contents).expect("Failed to write Cargo.toml");
+
+        fs::write(cargo_toml_path, toml_contents)
+            .map_err(|e| eyre::eyre!("Failed to write Cargo.toml: {e}"))?;
 
         // Write src
         let mut lib_contents = if single_file {
@@ -152,7 +147,7 @@ impl MultiSolMacroGen {
 
             if !single_file {
                 let path = src.join(format!("{}.rs", name));
-                fs::write(path, contents).expect("Failed to write file");
+                fs::write(path, contents).map_err(|e| eyre::eyre!("Failed to write file: {e}"))?;
                 lib_contents += &format!("pub mod {};\n", name);
             } else {
                 lib_contents += &contents;
@@ -164,11 +159,14 @@ impl MultiSolMacroGen {
         }
 
         let lib_path = src.join("lib.rs");
-        fs::write(lib_path, lib_contents).expect("Failed to write lib.rs");
+        fs::write(lib_path, lib_contents)
+            .map_err(|e| eyre::eyre!("Failed to write lib.rs: {e}"))?;
+
+        Ok(())
     }
 
-    pub fn write_to_module(&mut self, bindings_path: &Path, single_file: bool) {
-        self.generate_bindings();
+    pub fn write_to_module(&mut self, bindings_path: &Path, single_file: bool) -> Result<()> {
+        self.generate_bindings()?;
 
         let _ = fs::create_dir_all(bindings_path);
 
@@ -182,7 +180,7 @@ impl MultiSolMacroGen {
                     name
                 ) + &instance.expansion.as_ref().unwrap().to_string();
                 fs::write(bindings_path.join(format!("{}.rs", name)), contents)
-                    .expect("Failed to write file");
+                    .map_err(|e| eyre::eyre!("Failed to write file: {e}"))?;
             } else {
                 let contents = format!(
                     "pub use {}::*;\n//! This module was autogenerated by the alloy sol!.\n//! More information can be found here <https://docs.rs/alloy-sol-macro/latest/alloy_sol_macro/macro.sol.html>.\n",
@@ -193,6 +191,9 @@ impl MultiSolMacroGen {
         }
 
         let mod_path = bindings_path.join("mod.rs");
-        fs::write(mod_path, mod_contents).expect("Failed to write mod.rs");
+        fs::write(mod_path, mod_contents)
+            .map_err(|e| eyre::eyre!("Failed to write mod.rs: {e}"))?;
+
+        Ok(())
     }
 }

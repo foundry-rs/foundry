@@ -317,7 +317,7 @@ impl BindArgs {
 
         if !self.module {
             trace!(single_file = self.single_file, "generating crate");
-            solmacrogen.write_to_crate(
+            let _ = solmacrogen.write_to_crate(
                 &self.crate_name,
                 &self.crate_version,
                 bindings_root,
@@ -325,7 +325,7 @@ impl BindArgs {
             );
         } else {
             trace!(single_file = self.single_file, "generating module");
-            solmacrogen.write_to_module(bindings_root, self.single_file);
+            let _ = solmacrogen.write_to_module(bindings_root, self.single_file);
         }
 
         Ok(())
