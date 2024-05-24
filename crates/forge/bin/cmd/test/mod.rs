@@ -161,6 +161,7 @@ impl TestArgs {
         let mut project = project.clone();
         *project.settings.output_selection_mut() =
             OutputSelection::common_output_selection(["abi".to_string()]);
+        project.no_artifacts = true;
 
         let output = project.compile_sparse(Box::new(filter.clone()))?;
 
