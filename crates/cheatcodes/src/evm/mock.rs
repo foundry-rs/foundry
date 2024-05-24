@@ -56,7 +56,7 @@ impl Cheatcode for mockCall_0Call {
         // check Solidity might perform.
         let empty_bytecode = acc.info.code.as_ref().map_or(true, Bytecode::is_empty);
         if empty_bytecode {
-            let code = Bytecode::new_raw(Bytes::from_static(&[0u8])).to_checked();
+            let code = Bytecode::new_raw(Bytes::from_static(&[0u8]));
             ccx.ecx.journaled_state.set_code(*callee, code);
         }
 

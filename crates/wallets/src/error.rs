@@ -1,9 +1,11 @@
 use alloy_signer::k256::ecdsa;
-use alloy_signer_aws::AwsSignerError;
 use alloy_signer_ledger::LedgerError;
 use alloy_signer_trezor::TrezorError;
 use alloy_signer_wallet::WalletError;
 use hex::FromHexError;
+
+#[cfg(feature = "aws-kms")]
+use alloy_signer_aws::AwsSignerError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PrivateKeyError {
@@ -22,6 +24,7 @@ pub enum WalletSignerError {
     #[error(transparent)]
     Trezor(#[from] TrezorError),
     #[error(transparent)]
+    #[cfg(feature = "aws-kms")]
     Aws(#[from] AwsSignerError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -29,6 +32,12 @@ pub enum WalletSignerError {
     InvalidHex(#[from] FromHexError),
     #[error(transparent)]
     Ecdsa(#[from] ecdsa::Error),
-    #[error("{0} cannot sign raw hashes")]
-    CannotSignRawHash(&'static str),
+    #[error("foundry was not built with support for {0} signer")]
+    UnsupportedSigner(&'static str),
+}
+
+impl WalletSignerError {
+    pub fn aws_unsupported() -> Self {
+        WalletSignerError::UnsupportedSigner("AWS KMS")
+    }
 }
