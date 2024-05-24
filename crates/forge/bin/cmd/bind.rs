@@ -3,7 +3,7 @@ use ethers_contract_abigen::{
     Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts,
 };
 use eyre::{Result, WrapErr};
-use forge::sol_macro_gen::MultiSolMacroGen;
+use forge::sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
@@ -159,11 +159,29 @@ impl BindArgs {
             .into()
     }
 
+    fn get_alloy_filter(&self) -> Filter {
+        if self.select_all {
+            // Select all json files
+            return Filter::All;
+        }
+        if !self.select.is_empty() {
+            // Return json files that match the select regex
+            return Filter::Select(self.select.clone());
+        }
+        if !self.skip.is_empty() {
+            // Exclude json files that match the skip regex
+            return Filter::Skip(self.skip.clone());
+        }
+
+        // Exclude defaults
+        Filter::skip_default(self.skip.clone())
+    }
+
     /// Returns an iterator over the JSON files and the contract name in the `artifacts` directory.
     fn get_json_files(&self, artifacts: &Path) -> impl Iterator<Item = (String, PathBuf)> {
         let filter = self.get_filter();
-
-        // TODO: Alloy filter
+        let alloy_filter = self.get_alloy_filter();
+        let is_alloy = self.alloy;
         json_files(artifacts)
             .filter_map(|path| {
                 // Ignore the build info JSON.
@@ -184,7 +202,15 @@ impl BindArgs {
 
                 Some((name, path))
             })
-            .filter(move |(name, _path)| filter.is_match(name))
+            .filter(
+                move |(name, _path)| {
+                    if is_alloy {
+                        alloy_filter.is_match(name)
+                    } else {
+                        filter.is_match(name)
+                    }
+                },
+            )
     }
 
     /// Instantiate the multi-abigen
@@ -204,6 +230,19 @@ impl BindArgs {
             .collect::<Result<Vec<_>, _>>()?;
         let multi = MultiAbigen::from_abigens(abigens);
         eyre::ensure!(!multi.is_empty(), "No contract artifacts found");
+        Ok(multi)
+    }
+
+    fn get_solmacrogen(&self, artifacts: &Path) -> Result<MultiSolMacroGen> {
+        let instances = self
+            .get_json_files(artifacts)
+            .map(|(name, path)| {
+                trace!(?path, "parsing SolMacroGen from file");
+                SolMacroGen::new(path, name)
+            })
+            .collect::<Vec<_>>();
+        let multi = MultiSolMacroGen::new(artifacts, instances);
+        eyre::ensure!(!multi.instances.is_empty(), "No contract artifacts found");
         Ok(multi)
     }
 
@@ -291,8 +330,40 @@ impl BindArgs {
 
         Ok(())
     }
+}
 
-    fn get_solmacrogen(&self, artifacts: &Path) -> Result<MultiSolMacroGen> {
-        Ok(MultiSolMacroGen::new(artifacts))
+pub enum Filter {
+    All,
+    Select(Vec<regex::Regex>),
+    Skip(Vec<regex::Regex>),
+}
+
+impl Filter {
+    pub fn is_match(&self, name: &str) -> bool {
+        match self {
+            Filter::All => true,
+            Filter::Select(regexes) => regexes.iter().any(|regex| regex.is_match(name)),
+            Filter::Skip(regexes) => !regexes.iter().any(|regex| regex.is_match(name)),
+        }
+    }
+
+    pub fn skip_default(skip: Vec<regex::Regex>) -> Self {
+        let default_skip = [
+            ".*Test.*",
+            ".*Script",
+            "console[2]?",
+            "CommonBase",
+            "Components",
+            "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Style|Invariant|Assertions|Toml|Storage(Safe)?)",
+            "[Vv]m.*",
+            "IMulticall3",
+        ]
+        .iter()
+        .map(|pattern| regex::Regex::new(pattern).unwrap())
+        .collect::<Vec<_>>();
+
+        let mut skip = skip;
+        skip.extend(default_skip);
+        Filter::Skip(skip)
     }
 }

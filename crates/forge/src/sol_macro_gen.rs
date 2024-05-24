@@ -1,7 +1,8 @@
 use alloy_json_abi::JsonAbi;
 use alloy_sol_macro_expander::expand::expand;
 use alloy_sol_macro_input::{tokens_for_sol, SolInput, SolInputKind};
-use foundry_common::fs::{self, json_files};
+use eyre::Result;
+use foundry_common::fs;
 use proc_macro2::{Ident, Span, TokenStream};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -48,38 +49,8 @@ pub struct MultiSolMacroGen {
 }
 
 impl MultiSolMacroGen {
-    pub fn new(artifacts_path: &Path) -> Self {
-        let artifacts_path = artifacts_path.to_path_buf();
-        let mut instances = Vec::new();
-
-        let abi_files = json_files(&artifacts_path)
-            .filter_map(|path| {
-                // Ignore the build info JSON.
-                if path.to_str()?.contains("/build-info/") {
-                    return None;
-                }
-
-                // We don't want `.metadata.json` files.
-                let stem = path.file_stem()?.to_str()?;
-                if stem.ends_with(".metadata") {
-                    return None;
-                }
-
-                let name = stem.split('.').next().unwrap();
-
-                // Best effort identifier cleanup.
-                let name = name.replace(char::is_whitespace, "").replace('-', "_");
-
-                Some((name, path))
-            })
-            .collect::<Vec<_>>();
-
-        for (name, path) in abi_files {
-            let instance = SolMacroGen::new(path, name);
-            instances.push(instance);
-        }
-
-        Self { artifacts_path, instances }
+    pub fn new(artifacts_path: &Path, instances: Vec<SolMacroGen>) -> Self {
+        Self { artifacts_path: artifacts_path.to_path_buf(), instances }
     }
 
     fn generate_bindings(&mut self) {
@@ -155,7 +126,15 @@ impl MultiSolMacroGen {
         // Write Cargo.toml
         let cargo_toml_path = bindings_path.join("Cargo.toml");
         let toml_contents = format!(
-            r#"[package]\nname = \"{}\"\nversion = \"{}\"\nedition = \"2021\"\n\n[dependencies]\nalloy-sol-types = \"0.7.4\"\nalloy-contract = {{ git = \"https://github.com/alloy-rs/alloy\", rev = \"64feb9b\" }}"#,
+            r#"
+            [package]
+            name = "{}"
+            version = "{}"
+            edition = "2021"
+
+            [dependencies]
+            alloy-sol-types = "0.7.4"
+            alloy-contract = {{ git = "https://github.com/alloy-rs/alloy", rev = "64feb9b" }}"#,
             name, version
         );
         fs::write(cargo_toml_path, toml_contents).expect("Failed to write Cargo.toml");
