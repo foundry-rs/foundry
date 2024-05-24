@@ -79,7 +79,7 @@ impl ForgeTestProfile {
         SolcConfig::builder().settings(settings).build()
     }
 
-    pub fn test_opts<E>(&self, output: &ProjectCompileOutput<E>) -> TestOptions {
+    pub fn test_opts<E>(&self, output: &ProjectCompileOutput<E>, root: &Path) -> TestOptions {
         TestOptionsBuilder::default()
             .fuzz(FuzzConfig {
                 runs: 256,
@@ -113,7 +113,7 @@ impl ForgeTestProfile {
                 gas_report_samples: 256,
                 failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
             })
-            .build(output, &self.root())
+            .build(output, root)
             .expect("Config loaded")
     }
 
@@ -188,7 +188,7 @@ impl<C: Compiler> ForgeTestData<C> {
         let project = config.resolve_project().unwrap();
         let evm_opts = profile.evm_opts();
         let output = get_compiled(&project);
-        let test_opts = profile.test_opts(&output);
+        let test_opts = profile.test_opts(&output, project.root());
 
         Self { project, output, test_opts, evm_opts, config, profile }
     }
