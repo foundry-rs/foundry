@@ -110,7 +110,7 @@ use crate::etherscan::EtherscanEnvProvider;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
 pub mod soldeer;
-use soldeer::{SoldeerConfig};
+use soldeer::SoldeerConfig;
 
 /// Foundry configuration
 ///

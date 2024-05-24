@@ -18,7 +18,7 @@ forgesoldeer!(install_dependency, |prj, cmd| {
     // meaning that the dependencies were installed correctly
     let path_dep_forge =
         prj.root().join("dependencies").join("forge-std-1.8.1").join("foundry.toml");
-        assert!(path_dep_forge.exists());
+    assert!(path_dep_forge.exists());
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
