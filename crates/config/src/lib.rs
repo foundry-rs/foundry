@@ -875,7 +875,15 @@ impl Config {
                         version_manager.install(version)?
                     }
                 }
-                SolcReq::Local(solc) => Solc::new(solc)?,
+                SolcReq::Local(solc) => {
+                    if !solc.is_file() {
+                        return Err(SolcError::msg(format!(
+                            "`solc` {} does not exist",
+                            solc.display()
+                        )))
+                    }
+                    Solc::new(solc)?
+                }
             };
             return Ok(Some(solc))
         }
