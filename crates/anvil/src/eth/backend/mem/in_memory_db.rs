@@ -48,8 +48,7 @@ impl Db for MemDb {
                     code
                 } else {
                     self.inner.code_by_hash_ref(v.info.code_hash)?
-                }
-                .to_checked();
+                };
                 Ok((
                     k,
                     SerializableAccountRecord {
@@ -147,7 +146,7 @@ mod tests {
 
         let mut dump_db = MemDb::default();
 
-        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
+        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code"));
 
         dump_db.insert_account(
             test_addr,
@@ -184,7 +183,7 @@ mod tests {
         let test_addr2: Address =
             Address::from_str("0x70997970c51812dc3a010c7d01b50e0d17dc79c8").unwrap();
 
-        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
+        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code"));
 
         let mut db = MemDb::default();
 

@@ -3,7 +3,7 @@
 use crate::constants::*;
 use foundry_compilers::{artifacts::Metadata, remappings::Remapping, ConfigurableContractArtifact};
 use foundry_config::{
-    parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, SolidityErrorCode,
+    parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,
 };
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
@@ -546,18 +546,27 @@ forgetest_init!(can_clean_config, |prj, cmd| {
     assert!(!artifact.exists());
 });
 
-// checks that `clean` removes fuzz cache dir
-forgetest_init!(can_clean_fuzz_cache, |prj, cmd| {
-    let config = Config { fuzz: FuzzConfig::new("cache/fuzz".into()), ..Default::default() };
+// checks that `clean` removes fuzz and invariant cache dirs
+forgetest_init!(can_clean_test_cache, |prj, cmd| {
+    let config = Config {
+        fuzz: FuzzConfig::new("cache/fuzz".into()),
+        invariant: InvariantConfig::new("cache/invariant".into()),
+        ..Default::default()
+    };
     prj.write_config(config);
     // default test contract is written in custom out directory
-    let cache_dir = prj.root().join("cache/fuzz");
-    let _ = fs::create_dir(cache_dir.clone());
-    assert!(cache_dir.exists());
+    let fuzz_cache_dir = prj.root().join("cache/fuzz");
+    let _ = fs::create_dir(fuzz_cache_dir.clone());
+    let invariant_cache_dir = prj.root().join("cache/invariant");
+    let _ = fs::create_dir(invariant_cache_dir.clone());
+
+    assert!(fuzz_cache_dir.exists());
+    assert!(invariant_cache_dir.exists());
 
     cmd.forge_fuse().arg("clean");
     cmd.output();
-    assert!(!cache_dir.exists());
+    assert!(!fuzz_cache_dir.exists());
+    assert!(!invariant_cache_dir.exists());
 });
 
 // checks that extra output works

@@ -1,5 +1,5 @@
 use crate::executors::{invariant::error::FailedInvariantCaseData, Executor};
-use alloy_primitives::U256;
+use alloy_primitives::{Address, Bytes, U256};
 use foundry_evm_core::constants::CALLER;
 use foundry_evm_fuzz::invariant::BasicTxDetails;
 use proptest::bits::{BitSetLike, VarBitSet};
@@ -97,12 +97,19 @@ pub(crate) fn shrink_sequence(
     let mut shrinker = CallSequenceShrinker::new(calls.len());
     for _ in 0..failed_case.shrink_run_limit {
         // Check candidate sequence result.
-        match check_sequence(failed_case, executor.clone(), calls, shrinker.current().collect()) {
+        match check_sequence(
+            executor.clone(),
+            calls,
+            shrinker.current().collect(),
+            failed_case.addr,
+            failed_case.func.clone(),
+            failed_case.fail_on_revert,
+        ) {
             // If candidate sequence still fails then shrink more if possible.
-            Ok(false) if !shrinker.simplify() => break,
+            Ok((false, _)) if !shrinker.simplify() => break,
             // If candidate sequence pass then restore last removed call and shrink other
             // calls if possible.
-            Ok(true) if !shrinker.complicate() => break,
+            Ok((true, _)) if !shrinker.complicate() => break,
             _ => {}
         }
     }
@@ -110,43 +117,43 @@ pub(crate) fn shrink_sequence(
     Ok(shrinker.current().map(|idx| &calls[idx]).cloned().collect())
 }
 
-/// Checks if the shrinked sequence fails test, if it does then we can try simplifying more.
-fn check_sequence(
-    failed_case: &FailedInvariantCaseData,
+/// Checks if the given call sequence breaks the invariant.
+/// Used in shrinking phase for checking candidate sequences and in replay failures phase to test
+/// persisted failures.
+/// Returns the result of invariant check and if sequence was entirely applied.
+pub fn check_sequence(
     mut executor: Executor,
     calls: &[BasicTxDetails],
     sequence: Vec<usize>,
-) -> eyre::Result<bool> {
-    let mut sequence_failed = false;
-    // Apply the shrinked candidate sequence.
+    test_address: Address,
+    test_function: Bytes,
+    fail_on_revert: bool,
+) -> eyre::Result<(bool, bool)> {
+    // Apply the call sequence.
     for call_index in sequence {
-        let (sender, (addr, bytes)) = &calls[call_index];
-        let call_result =
-            executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
-        if call_result.reverted && failed_case.fail_on_revert {
+        let tx = &calls[call_index];
+        let call_result = executor.call_raw_committing(
+            tx.sender,
+            tx.call_details.target,
+            tx.call_details.calldata.clone(),
+            U256::ZERO,
+        )?;
+        if call_result.reverted && fail_on_revert {
             // Candidate sequence fails test.
             // We don't have to apply remaining calls to check sequence.
-            sequence_failed = true;
-            break;
+            return Ok((false, false));
         }
     }
-    // Return without checking the invariant if we already have failing sequence.
-    if sequence_failed {
-        return Ok(false);
-    };
 
-    // Check the invariant for candidate sequence.
-    // If sequence fails then we can continue with shrinking - the removed call does not affect
-    // failure.
-    //
-    // If sequence doesn't fail then we have to restore last removed call and continue with next
-    // call - removed call is a required step for reproducing the failure.
-    let mut call_result =
-        executor.call_raw(CALLER, failed_case.addr, failed_case.func.clone(), U256::ZERO)?;
-    Ok(executor.is_raw_call_success(
-        failed_case.addr,
-        Cow::Owned(call_result.state_changeset.take().unwrap()),
-        &call_result,
-        false,
+    // Check the invariant for call sequence.
+    let mut call_result = executor.call_raw(CALLER, test_address, test_function, U256::ZERO)?;
+    Ok((
+        executor.is_raw_call_success(
+            test_address,
+            Cow::Owned(call_result.state_changeset.take().unwrap()),
+            &call_result,
+            false,
+        ),
+        true,
     ))
 }

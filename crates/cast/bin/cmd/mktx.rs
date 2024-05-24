@@ -2,7 +2,6 @@ use crate::tx;
 use alloy_network::{eip2718::Encodable2718, EthereumSigner, TransactionBuilder};
 use alloy_primitives::U64;
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockId;
 use alloy_signer::Signer;
 use clap::Parser;
 use eyre::Result;
@@ -90,14 +89,13 @@ impl MakeTxArgs {
         tx::validate_from_address(eth.wallet.from, from)?;
 
         if resend {
-            tx.nonce =
-                Some(U64::from(provider.get_transaction_count(from, BlockId::latest()).await?));
+            tx.nonce = Some(U64::from(provider.get_transaction_count(from).await?));
         }
 
         let provider = get_provider(&config)?;
 
         let (tx, _) =
-            tx::build_tx(&provider, from, to, code, sig, args, tx, chain, api_key).await?;
+            tx::build_tx(&provider, from, to, code, sig, args, tx, chain, api_key, None).await?;
 
         let tx = tx.build(&EthereumSigner::new(signer)).await?;
 

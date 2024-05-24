@@ -1242,7 +1242,7 @@ impl EthApi {
         Err(BlockchainError::RpcUnimplemented)
     }
 
-    /// Introduced in EIP-1159 for getting information on the appropriate priority fee to use.
+    /// Introduced in EIP-1559 for getting information on the appropriate priority fee to use.
     ///
     /// Handler for ETH RPC call: `eth_feeHistory`
     pub async fn fee_history(
@@ -2668,6 +2668,10 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::FatalExternalError |
                 InstructionResult::OutOfFunds |
                 InstructionResult::CallTooDeep => Ok(Self::EvmError(exit)),
+                // Handle Revm EOF InstructionResults: Not supported yet
+                InstructionResult::ReturnContractInNotInitEOF |
+                InstructionResult::EOFOpcodeDisabledInLegacy |
+                InstructionResult::EOFFunctionStackOverflow => Ok(Self::EvmError(exit)),
             },
         }
     }
