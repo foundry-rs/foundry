@@ -44,7 +44,7 @@ use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
 };
-use alloy_trie::{HashBuilder, Nibbles};
+use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::{
     eth::{
         block::{Block, BlockInfo},
@@ -2226,7 +2226,7 @@ impl Backend {
             let account = db.get(&address).cloned().unwrap_or_default();
 
             let mut builder = HashBuilder::default()
-                .with_proof_retainer(vec![Nibbles::unpack(keccak256(address))]);
+                .with_proof_retainer(ProofRetainer::new(vec![Nibbles::unpack(keccak256(address))]));
 
             for (key, account) in trie_accounts(db) {
                 builder.add_leaf(key, &account);
@@ -2508,7 +2508,7 @@ pub fn transaction_build(
 pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<Bytes>> {
     let keys: Vec<_> = keys.iter().map(|key| Nibbles::unpack(keccak256(key))).collect();
 
-    let mut builder = HashBuilder::default().with_proof_retainer(keys.clone());
+    let mut builder = HashBuilder::default().with_proof_retainer(ProofRetainer::new(keys.clone()));
 
     for (key, value) in trie_storage(storage) {
         builder.add_leaf(key, &value);
