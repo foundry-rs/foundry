@@ -1182,11 +1182,15 @@ impl DatabaseExt for Backend {
                     merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
 
-                // ensure all previously loaded accounts are present in the journaled state to
+                // Ensure all previously loaded accounts are present in the journaled state to
                 // prevent issues in the new journalstate, e.g. assumptions that accounts are loaded
-                // if the account is not touched, we reload it, if it's touched we clone it
+                // if the account is not touched, we reload it, if it's touched we clone it.
+                //
+                // Special case for accounts that are not created: we don't merge their state but
+                // load it in order to reflect their state at the new block (they should explicitly
+                // be marked as persistent if it is desired to keep state between fork rolls).
                 for (addr, acc) in journaled_state.state.iter() {
-                    if acc.is_touched() {
+                    if acc.is_touched() && acc.is_created() {
                         merge_journaled_state_data(
                             *addr,
                             journaled_state,
