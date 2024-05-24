@@ -38,7 +38,7 @@ use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -110,7 +110,7 @@ use crate::etherscan::EtherscanEnvProvider;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
 pub mod soldeer;
-use soldeer::{SoldeerConfig, SoldeerDependency};
+use soldeer::{SoldeerConfig};
 
 /// Foundry configuration
 ///

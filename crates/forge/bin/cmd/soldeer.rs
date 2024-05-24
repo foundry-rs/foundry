@@ -32,6 +32,6 @@ mod tests {
 
     #[test]
     fn test_soldeer_version() {
-        assert_eq!(soldeer::run(Subcommands::VersionDryRun(VersionDryRun {})).is_err(), false);
+        assert!(soldeer::run(Subcommands::VersionDryRun(VersionDryRun {})).is_ok());
     }
 }

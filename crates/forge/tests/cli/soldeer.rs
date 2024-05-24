@@ -18,7 +18,7 @@ forgesoldeer!(install_dependency, |prj, cmd| {
     // meaning that the dependencies were installed correctly
     let path_dep_forge =
         prj.root().join("dependencies").join("forge-std-1.8.1").join("foundry.toml");
-    assert_eq!(path_dep_forge.exists(), true);
+        assert!(path_dep_forge.exists());
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
@@ -60,7 +60,7 @@ forge-std = { version = "1.8.1" }
 "#;
     let foundry_file = prj.root().join("foundry.toml");
 
-    let mut file = OpenOptions::new().write(true).append(true).open(&foundry_file).unwrap();
+    let mut file = OpenOptions::new().append(true).open(&foundry_file).unwrap();
 
     if let Err(e) = write!(file, "{}", foundry_updates) {
         eprintln!("Couldn't write to file: {}", e);
@@ -73,7 +73,7 @@ forge-std = { version = "1.8.1" }
     // meaning that the dependencies were installed correctly
     let path_dep_forge =
         prj.root().join("dependencies").join("forge-std-1.8.1").join("foundry.toml");
-    assert_eq!(path_dep_forge.exists(), true);
+    assert!(path_dep_forge.exists());
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
@@ -115,7 +115,7 @@ forge-std = "1.8.1"
 "#;
     let foundry_file = prj.root().join("foundry.toml");
 
-    let mut file = OpenOptions::new().write(true).append(true).open(&foundry_file).unwrap();
+    let mut file = OpenOptions::new().append(true).open(&foundry_file).unwrap();
 
     if let Err(e) = write!(file, "{}", foundry_updates) {
         eprintln!("Couldn't write to file: {}", e);
@@ -128,7 +128,7 @@ forge-std = "1.8.1"
     // meaning that the dependencies were installed correctly
     let path_dep_forge =
         prj.root().join("dependencies").join("forge-std-1.8.1").join("foundry.toml");
-    assert_eq!(path_dep_forge.exists(), true);
+    assert!(path_dep_forge.exists());
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
@@ -167,7 +167,7 @@ forgesoldeer!(login, |prj, cmd| {
 
     // On login, we can only check if the prompt is displayed in the stdout
     let stdout = String::from_utf8(output.stdout).expect("Could not parse the output");
-    assert_eq!(stdout.contains("Please enter your email"), true);
+    assert!(stdout.contains("Please enter your email"));
 });
 
 fn read_file_to_string(path: &Path) -> String {
