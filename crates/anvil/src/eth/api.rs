@@ -1354,8 +1354,12 @@ impl EthApi {
         Ok(U256::from(self.lowest_suggestion_tip().unwrap_or(1e9 as u128)))
     }
 
+    /// Returns the suggested fee cap
     fn lowest_suggestion_tip(&self) -> Option<u128> {
-        let fee_history_cache = self.fee_history_cache.lock();
+        let fee_history_cache = {
+            let history = self.fee_history_cache.lock();
+            history.clone()
+        };
         let block_number = self.backend.best_number();
         let latest_cached_block = fee_history_cache.get(&block_number);
 
@@ -1759,7 +1763,7 @@ impl EthApi {
                 base_fee: self.backend.base_fee(),
                 chain_id: self.backend.chain_id().to::<u64>(),
                 gas_limit: self.backend.gas_limit(),
-                gas_price: self.lowest_suggestion_tip().unwrap_or(1e9 as u128),
+                gas_price: self.backend.fees().base_fee().saturating_add(1e9 as u128),
             },
             fork_config: fork_config
                 .map(|fork| {
