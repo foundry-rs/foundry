@@ -363,7 +363,7 @@ contract Foo {}
 
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
-    assert!(cmd.stderr_lossy().contains("No such file or directory"));
+    assert!(cmd.stderr_lossy().contains("`solc` this/solc/does/not/exist does not exist"));
 
     // `OTHER_SOLC_VERSION` was installed in previous step, so we can use the path to this directly
     let local_solc =
