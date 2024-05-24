@@ -1,3 +1,4 @@
+use crate::tx::CastTxBuilder;
 use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types::BlockId;
 use cast::Cast;
@@ -12,8 +13,6 @@ use foundry_compilers::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
 use std::str::FromStr;
-
-use crate::tx::CastTxBuilder;
 
 /// CLI arguments for `cast call`.
 #[derive(Debug, Parser)]

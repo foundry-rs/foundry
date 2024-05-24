@@ -1,3 +1,4 @@
+use crate::tx::CastTxBuilder;
 use alloy_primitives::{TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -10,8 +11,6 @@ use foundry_cli::{
 use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
 use std::str::FromStr;
-
-use crate::tx::CastTxBuilder;
 
 /// CLI arguments for `cast estimate`.
 #[derive(Debug, Parser)]

@@ -1,3 +1,4 @@
+use crate::tx::CastTxBuilder;
 use alloy_primitives::TxKind;
 use alloy_rpc_types::BlockId;
 use cast::Cast;
@@ -5,13 +6,11 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self},
+    utils,
 };
 use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
 use std::str::FromStr;
-
-use crate::tx::CastTxBuilder;
 
 /// CLI arguments for `cast access-list`.
 #[derive(Debug, Parser)]
