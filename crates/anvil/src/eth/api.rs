@@ -1360,7 +1360,7 @@ impl EthApi {
         let latest_cached_block = fee_history_cache.get(&block_number);
 
         if let Some(block) = latest_cached_block {
-            return block.rewards.iter().map(|r| *r).min().map_or(Some(1e9 as u128), Some);
+            return block.rewards.iter().copied().min().map_or(Some(1e9 as u128), Some);
         }
 
         let lowest_suggestion_tip =
