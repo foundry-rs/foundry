@@ -252,7 +252,7 @@ impl BindArgs {
             return self.check_ethers(artifacts, bindings_root);
         }
 
-        // TODO(yash): check alloy bindings
+        let _ = self.check_alloy(artifacts, bindings_root);
         Ok(())
     }
 
@@ -279,6 +279,24 @@ impl BindArgs {
             bindings.ensure_consistent_module(bindings_root, self.single_file)?;
         }
         println!("OK.");
+        Ok(())
+    }
+
+    fn check_alloy(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
+        let bindings = self.get_solmacrogen(artifacts)?;
+        println!("Checking bindings for {} contracts", bindings.instances.len());
+        if !self.module {
+            // Check crate consistency
+            return bindings.check_crate_consistency(
+                &self.crate_name,
+                &self.crate_version,
+                bindings_root,
+                self.single_file,
+                !self.skip_cargo_toml,
+            );
+        } else {
+            // Check module consistency
+        }
         Ok(())
     }
 

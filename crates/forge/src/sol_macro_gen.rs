@@ -1,7 +1,7 @@
 use alloy_json_abi::JsonAbi;
 use alloy_sol_macro_expander::expand::expand;
 use alloy_sol_macro_input::{tokens_for_sol, SolInput, SolInputKind};
-use eyre::Result;
+use eyre::{Ok, Result};
 use foundry_common::fs;
 use proc_macro2::{Ident, Span, TokenStream};
 use serde_json::Value;
@@ -177,6 +177,49 @@ alloy-contract = {{ git = "https://github.com/alloy-rs/alloy", rev = "64feb9b" }
         let mod_path = bindings_path.join("mod.rs");
         fs::write(mod_path, mod_contents)
             .map_err(|e| eyre::eyre!("Failed to write mod.rs: {e}"))?;
+
+        Ok(())
+    }
+
+    pub fn check_crate_consistency(
+        &self,
+        name: &str,
+        version: &str,
+        crate_path: &Path,
+        single_file: bool,
+        check_cargo_toml: bool,
+    ) -> Result<()> {
+        if check_cargo_toml {
+            self.check_cargo_toml(name, version, crate_path)?;
+        }
+
+        Ok(())
+    }
+
+    fn check_cargo_toml(&self, name: &str, version: &str, crate_path: &Path) -> Result<()> {
+        eyre::ensure!(crate_path.is_dir(), "Crate path must be a directory");
+
+        let cargo_toml_path = crate_path.join("Cargo.toml");
+
+        eyre::ensure!(cargo_toml_path.is_file(), "Cargo.toml must exist");
+        let cargo_toml_contents = fs::read_to_string(cargo_toml_path)
+            .map_err(|e| eyre::eyre!("Failed to read Cargo.toml: {e}"))?;
+
+        let name_check = &format!("name = \"{}\"", name);
+        let version_check = &format!("version = \"{}\"", version);
+        let sol_types_check = &format!("alloy-sol-types = \"0.7.4\"");
+        let alloy_contract_check = &format!(
+            "alloy-contract = {{ git = \"https://github.com/alloy-rs/alloy\", rev = \"64feb9b\" }}"
+        );
+        let toml_consistent = cargo_toml_contents.contains(name_check) &&
+            cargo_toml_contents.contains(version_check) &&
+            cargo_toml_contents.contains(sol_types_check) &&
+            cargo_toml_contents.contains(alloy_contract_check);
+        eyre::ensure!(
+                toml_consistent,
+                format!("The contents of Cargo.toml do not match the expected output of the newest `ethers::Abigen` version.\
+This indicates that the existing bindings are outdated and need to be generated again.")
+            );
 
         Ok(())
     }
