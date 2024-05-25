@@ -252,7 +252,7 @@ impl BindArgs {
             return self.check_ethers(artifacts, bindings_root);
         }
 
-        return self.check_alloy(artifacts, bindings_root);
+        self.check_alloy(artifacts, bindings_root)
     }
 
     fn check_ethers(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
@@ -283,7 +283,7 @@ impl BindArgs {
 
     fn check_alloy(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
         let mut bindings = self.get_solmacrogen(artifacts)?;
-        let _ = bindings.generate_bindings()?;
+        bindings.generate_bindings()?;
         println!("Checking bindings for {} contracts", bindings.instances.len());
         let _ = bindings.check_consistency(
             &self.crate_name,
