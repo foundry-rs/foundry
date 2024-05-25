@@ -196,7 +196,7 @@ impl PreprocessedState {
 
         let mut target_id: Option<ArtifactId> = None;
 
-        // Find target artfifact id by name and path in compilation artifacts.
+        // Find target artifact id by name and path in compilation artifacts.
         for (id, contract) in output.artifact_ids().filter(|(id, _)| id.source == target_path) {
             if let Some(name) = &target_name {
                 if id.name != *name {

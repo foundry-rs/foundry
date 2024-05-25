@@ -409,7 +409,7 @@ pub struct PendingTransaction {
     pub transaction: MaybeImpersonatedTransaction,
     /// the recovered sender of this transaction
     sender: Address,
-    /// hash of `transaction`, so it can easily be reused with encoding and hashing agan
+    /// hash of `transaction`, so it can easily be reused with encoding and hashing again
     hash: TxHash,
 }
 
