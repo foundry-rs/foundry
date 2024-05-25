@@ -549,7 +549,15 @@ impl EthApi {
 
     /// Returns the current gas price
     pub fn gas_price(&self) -> Result<U256> {
-        self.max_priority_fee_per_gas()
+        let gas = if self.backend.is_eip1559() {
+            self.backend
+                .base_fee()
+                .saturating_add(self.lowest_suggestion_tip().unwrap_or(1e9 as u128))
+        } else {
+            self.backend.fees().raw_gas_price()
+        };
+
+        Ok(U256::from(gas))
     }
 
     /// Returns the excess blob gas and current blob gas price
@@ -1354,7 +1362,7 @@ impl EthApi {
         Ok(U256::from(self.lowest_suggestion_tip().unwrap_or(1e9 as u128)))
     }
 
-    /// Returns the suggested fee cap
+    /// Returns the suggested fee cap.
     fn lowest_suggestion_tip(&self) -> Option<u128> {
         let fee_history_cache = {
             let history = self.fee_history_cache.lock();
@@ -1763,7 +1771,7 @@ impl EthApi {
                 base_fee: self.backend.base_fee(),
                 chain_id: self.backend.chain_id().to::<u64>(),
                 gas_limit: self.backend.gas_limit(),
-                gas_price: self.backend.fees().base_fee().saturating_add(1e9 as u128),
+                gas_price: self.gas_price().unwrap().to::<u128>(),
             },
             fork_config: fork_config
                 .map(|fork| {
@@ -2446,7 +2454,7 @@ impl EthApi {
                 m.chain_id = Some(chain_id);
                 m.gas_limit = gas_limit;
                 if gas_price.is_none() {
-                    m.gas_price = self.lowest_suggestion_tip().unwrap_or(1e9 as u128);
+                    m.gas_price = self.gas_price().unwrap().to::<u128>();
                 }
                 TypedTransactionRequest::Legacy(m)
             }
@@ -2455,7 +2463,7 @@ impl EthApi {
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if gas_price.is_none() {
-                    m.gas_price = self.lowest_suggestion_tip().unwrap_or(1e9 as u128);
+                    m.gas_price = self.gas_price().unwrap().to::<u128>();
                 }
                 TypedTransactionRequest::EIP2930(m)
             }
@@ -2464,7 +2472,7 @@ impl EthApi {
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if max_fee_per_gas.is_none() {
-                    m.max_fee_per_gas = self.lowest_suggestion_tip().unwrap_or(1e9 as u128);
+                    m.max_fee_per_gas = self.gas_price().unwrap().to::<u128>();
                 }
                 TypedTransactionRequest::EIP1559(m)
             }

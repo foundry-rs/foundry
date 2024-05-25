@@ -1139,7 +1139,9 @@ impl Backend {
             env.block.basefee = U256::from(base);
         }
 
-        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.base_fee());
+        let gas_price = gas_price
+            .or(max_fee_per_gas)
+            .unwrap_or_else(|| self.fees().raw_gas_price().saturating_add(1e9 as u128));
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         env.tx = TxEnv {
