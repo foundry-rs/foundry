@@ -114,6 +114,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         rpc_storage_caching: StorageCachingConfig {
             chains: CachedChains::None,
             endpoints: CachedEndpoints::Remote,
+            no_storage_caching: true,
         },
         no_storage_caching: true,
         no_rpc_rate_limit: true,

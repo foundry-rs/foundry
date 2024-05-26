@@ -73,11 +73,15 @@ impl CheatsConfig {
         let available_artifacts =
             if config.unchecked_cheatcode_artifacts { None } else { available_artifacts };
 
+        // Propagate storage caching config to cheats config.
+        let mut rpc_storage_caching = config.rpc_storage_caching.clone();
+        rpc_storage_caching.no_storage_caching = config.no_storage_caching;
+
         Self {
             ffi: evm_opts.ffi,
             always_use_create_2_factory: evm_opts.always_use_create_2_factory,
             prompt_timeout: Duration::from_secs(config.prompt_timeout),
-            rpc_storage_caching: config.rpc_storage_caching.clone(),
+            rpc_storage_caching,
             rpc_endpoints,
             paths: config.project_paths(),
             fs_permissions: config.fs_permissions.clone().joined(&config.__root),
