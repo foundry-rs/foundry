@@ -12,14 +12,12 @@ pub struct StorageCachingConfig {
     pub chains: CachedChains,
     /// Endpoints to cache.
     pub endpoints: CachedEndpoints,
-    /// Disables the use of RPC caching.
-    pub no_storage_caching: bool,
 }
 
 impl StorageCachingConfig {
     /// Whether caching should be enabled for the endpoint
     pub fn enable_for_endpoint(&self, endpoint: impl AsRef<str>) -> bool {
-        !self.no_storage_caching && self.endpoints.is_match(endpoint)
+        self.endpoints.is_match(endpoint)
     }
 
     /// Whether caching should be enabled for the chain id
@@ -28,7 +26,7 @@ impl StorageCachingConfig {
         if [99, 1337, 31337].contains(&chain_id) {
             return false
         }
-        !self.no_storage_caching && self.chains.is_match(chain_id)
+        self.chains.is_match(chain_id)
     }
 }
 
@@ -246,11 +244,7 @@ mod tests {
 
         assert_eq!(
             w.rpc_storage_caching,
-            StorageCachingConfig {
-                chains: CachedChains::All,
-                endpoints: CachedEndpoints::Remote,
-                no_storage_caching: false
-            }
+            StorageCachingConfig { chains: CachedChains::All, endpoints: CachedEndpoints::Remote }
         );
 
         let s = r#"rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}"#;
@@ -265,7 +259,6 @@ mod tests {
                     Chain::from_id(999999)
                 ]),
                 endpoints: CachedEndpoints::All,
-                no_storage_caching: false
             }
         )
     }
