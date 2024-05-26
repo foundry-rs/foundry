@@ -1364,19 +1364,15 @@ impl EthApi {
 
     /// Returns the suggested fee cap.
     fn lowest_suggestion_tip(&self) -> Option<u128> {
-        let fee_history_cache = {
-            let history = self.fee_history_cache.lock();
-            history.clone()
-        };
         let block_number = self.backend.best_number();
-        let latest_cached_block = fee_history_cache.get(&block_number);
+        let latest_cached_block = self.fee_history_cache.lock().get(&block_number).cloned();
 
         if let Some(block) = latest_cached_block {
             return block.rewards.iter().copied().min().map_or(Some(1e9 as u128), Some);
         }
 
         let lowest_suggestion_tip =
-            fee_history_cache.values().flat_map(|b| b.rewards.clone()).min();
+            self.fee_history_cache.lock().values().flat_map(|b| b.rewards.clone()).min();
 
         lowest_suggestion_tip
     }
