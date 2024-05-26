@@ -64,7 +64,7 @@ pub(crate) fn assert_invariants(
     let mut call_result = executor.call_raw(
         CALLER,
         invariant_contract.address,
-        func.abi_encode_input(&[]).expect("invariant should have no inputs").into(),
+        func.abi_encode_input(&[])?.into(),
         U256::ZERO,
     )?;
 

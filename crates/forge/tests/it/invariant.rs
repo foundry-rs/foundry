@@ -219,6 +219,16 @@ async fn test_invariant() {
                     None,
                     None,
                 )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkTest",
+                vec![(
+                    "invariant_fork_handler_block()",
+                    false,
+                    Some("revert: too many blocks mined".into()),
+                    None,
+                    None,
+                )],
             )
         ]),
     );
@@ -629,5 +639,32 @@ async fn test_invariant_scrape_values() {
                 )],
             ),
         ]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_roll_fork_handler() {
+    let mut opts = TEST_DATA_DEFAULT.test_opts.clone();
+    opts.fuzz.seed = Some(U256::from(119u32));
+
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantRollFork.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options = opts.clone();
+    runner.test_options.invariant.failure_persist_dir =
+        Some(tempfile::tempdir().unwrap().into_path());
+
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkTest",
+            vec![(
+                "invariant_fork_handler_block()",
+                false,
+                Some("revert: too many blocks mined".into()),
+                None,
+                None,
+            )],
+        )]),
     );
 }

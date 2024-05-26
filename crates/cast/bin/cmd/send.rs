@@ -1,7 +1,7 @@
-use crate::tx;
+use crate::tx::{self, CastTxBuilder};
 use alloy_network::{AnyNetwork, EthereumSigner};
-use alloy_primitives::{Address, U64};
 use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rpc_types::{TransactionRequest, WithOtherFields};
 use alloy_signer::Signer;
 use alloy_transport::Transport;
 use cast::Cast;
@@ -12,7 +12,7 @@ use foundry_cli::{
     utils,
 };
 use foundry_common::{cli_warn, ens::NameOrAddress};
-use foundry_config::{Chain, Config};
+use foundry_config::Config;
 use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast send`.
@@ -41,10 +41,6 @@ pub struct SendTxArgs {
     /// Print the transaction receipt as JSON.
     #[arg(long, short, help_heading = "Display options")]
     json: bool,
-
-    /// Reuse the latest nonce for the sender account.
-    #[arg(long, conflicts_with = "nonce")]
-    resend: bool,
 
     #[command(subcommand)]
     command: Option<SendTxSubcommands>,
@@ -88,10 +84,9 @@ impl SendTxArgs {
             mut sig,
             cast_async,
             mut args,
-            mut tx,
+            tx,
             confirmations,
             json: to_json,
-            resend,
             command,
             unlocked,
             path,
@@ -112,17 +107,16 @@ impl SendTxArgs {
             None
         };
 
-        tx::validate_to_address(&code, &to)?;
-
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
-        let chain = utils::get_chain(config.chain, &provider).await?;
-        let api_key = config.get_etherscan_api_key(Some(chain));
+        let tx_kind = tx::resolve_tx_kind(&provider, &code, &to).await?;
 
-        let to = match to {
-            Some(to) => Some(to.resolve(&provider).await?),
-            None => None,
-        };
+        let builder = CastTxBuilder::new(&provider, tx, &config)
+            .await?
+            .with_tx_kind(tx_kind)
+            .with_code_sig_and_args(code, sig, args)
+            .await?
+            .with_blob_data(blob_data)?;
 
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
@@ -148,26 +142,9 @@ impl SendTxArgs {
                 }
             }
 
-            if resend {
-                tx.nonce = Some(U64::from(provider.get_transaction_count(config.sender).await?));
-            }
+            let (tx, _) = builder.build(config.sender).await?;
 
-            cast_send(
-                provider,
-                config.sender,
-                to,
-                code,
-                sig,
-                args,
-                tx,
-                chain,
-                api_key,
-                cast_async,
-                confirmations,
-                to_json,
-                blob_data,
-            )
-            .await
+            cast_send(provider, tx, cast_async, confirmations, to_json).await
         // Case 2:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -179,54 +156,25 @@ impl SendTxArgs {
 
             tx::validate_from_address(eth.wallet.from, from)?;
 
-            if resend {
-                tx.nonce = Some(U64::from(provider.get_transaction_count(from).await?));
-            }
-
             let signer = EthereumSigner::from(signer);
-            let provider =
-                ProviderBuilder::<_, _, AnyNetwork>::default().signer(signer).on_provider(provider);
+            let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
+                .signer(signer)
+                .on_provider(&provider);
 
-            cast_send(
-                provider,
-                from,
-                to,
-                code,
-                sig,
-                args,
-                tx,
-                chain,
-                api_key,
-                cast_async,
-                confirmations,
-                to_json,
-                blob_data,
-            )
-            .await
+            let (tx, _) = builder.build(from).await?;
+
+            cast_send(provider, tx, cast_async, confirmations, to_json).await
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     provider: P,
-    from: Address,
-    to: Option<Address>,
-    code: Option<String>,
-    sig: Option<String>,
-    args: Vec<String>,
-    tx: TransactionOpts,
-    chain: Chain,
-    etherscan_api_key: Option<String>,
+    tx: WithOtherFields<TransactionRequest>,
     cast_async: bool,
     confs: u64,
     to_json: bool,
-    blob_data: Option<Vec<u8>>,
 ) -> Result<()> {
-    let (tx, _) =
-        tx::build_tx(&provider, from, to, code, sig, args, tx, chain, etherscan_api_key, blob_data)
-            .await?;
-
     let cast = Cast::new(provider);
     let pending_tx = cast.send(tx).await?;
 

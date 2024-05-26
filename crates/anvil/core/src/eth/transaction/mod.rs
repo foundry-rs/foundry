@@ -2,8 +2,9 @@
 
 use crate::eth::transaction::optimism::{DepositTransaction, DepositTransactionRequest};
 use alloy_consensus::{
+    transaction::eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
     AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, TxEip1559, TxEip2930,
-    TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy, TxReceipt,
+    TxEnvelope, TxLegacy, TxReceipt,
 };
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256};
