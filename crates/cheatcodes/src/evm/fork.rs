@@ -338,7 +338,8 @@ fn create_fork_request<DB: DatabaseExt>(
     let mut evm_opts = ccx.state.config.evm_opts.clone();
     evm_opts.fork_block_number = block;
     let fork = CreateFork {
-        enable_caching: ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
+        enable_caching: !ccx.state.config.no_storage_caching &&
+            ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         env: (*ccx.ecx.env).clone(),
         evm_opts,

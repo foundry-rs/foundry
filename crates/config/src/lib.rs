@@ -3689,7 +3689,7 @@ mod tests {
                             Chain::optimism_mainnet(),
                             Chain::from_id(999999)
                         ]),
-                        endpoints: CachedEndpoints::All
+                        endpoints: CachedEndpoints::All,
                     },
                     use_literal_content: false,
                     bytecode_hash: BytecodeHash::Ipfs,
