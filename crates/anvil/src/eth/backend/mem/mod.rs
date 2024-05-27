@@ -44,7 +44,7 @@ use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
 };
-use alloy_trie::{HashBuilder, Nibbles};
+use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::{
     eth::{
         block::{Block, BlockInfo},
@@ -67,8 +67,8 @@ use foundry_evm::{
         db::CacheDB,
         interpreter::InstructionResult,
         primitives::{
-            BlockEnv, CfgEnvWithHandlerCfg, CreateScheme, EnvWithHandlerCfg, ExecutionResult,
-            Output, SpecId, TransactTo, TxEnv, KECCAK_EMPTY,
+            BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ExecutionResult, Output, SpecId,
+            TransactTo, TxEnv, KECCAK_EMPTY,
         },
     },
     utils::new_evm_with_inspector_ref,
@@ -1160,7 +1160,7 @@ impl Backend {
             max_fee_per_blob_gas: max_fee_per_blob_gas.map(U256::from),
             transact_to: match to {
                 Some(addr) => TransactTo::Call(*addr),
-                None => TransactTo::Create(CreateScheme::Create),
+                None => TransactTo::Create,
             },
             value: value.unwrap_or_default(),
             data: input.into_input().unwrap_or_default(),
@@ -1169,6 +1169,7 @@ impl Backend {
             access_list: access_list.unwrap_or_default().flattened(),
             blob_hashes: blob_versioned_hashes.unwrap_or_default(),
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
+            ..Default::default()
         };
 
         if env.block.basefee == revm::primitives::U256::ZERO {
@@ -2225,7 +2226,7 @@ impl Backend {
             let account = db.get(&address).cloned().unwrap_or_default();
 
             let mut builder = HashBuilder::default()
-                .with_proof_retainer(vec![Nibbles::unpack(keccak256(address))]);
+                .with_proof_retainer(ProofRetainer::new(vec![Nibbles::unpack(keccak256(address))]));
 
             for (key, account) in trie_accounts(db) {
                 builder.add_leaf(key, &account);
@@ -2401,7 +2402,7 @@ impl TransactionValidator for Backend {
 
             // Ensure the tx does not exceed the max blobs per block.
             if blob_count > MAX_BLOBS_PER_BLOCK {
-                return Err(InvalidTransactionError::TooManyBlobs)
+                return Err(InvalidTransactionError::TooManyBlobs(MAX_BLOBS_PER_BLOCK, blob_count))
             }
 
             // Check for any blob validation errors
@@ -2507,7 +2508,7 @@ pub fn transaction_build(
 pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<Bytes>> {
     let keys: Vec<_> = keys.iter().map(|key| Nibbles::unpack(keccak256(key))).collect();
 
-    let mut builder = HashBuilder::default().with_proof_retainer(keys.clone());
+    let mut builder = HashBuilder::default().with_proof_retainer(ProofRetainer::new(keys.clone()));
 
     for (key, value) in trie_storage(storage) {
         builder.add_leaf(key, &value);

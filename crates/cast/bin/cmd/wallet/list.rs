@@ -22,7 +22,7 @@ pub struct ListArgs {
     trezor: bool,
 
     /// List accounts from AWS KMS.
-    #[arg(long)]
+    #[arg(long, hide = !cfg!(feature = "aws-kms"))]
     aws: bool,
 
     /// List all configured accounts.

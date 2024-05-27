@@ -48,8 +48,7 @@ impl Db for ForkedDatabase {
                     code
                 } else {
                     db.code_by_hash(v.info.code_hash)?
-                }
-                .to_checked();
+                };
                 Ok((
                     k,
                     SerializableAccountRecord {

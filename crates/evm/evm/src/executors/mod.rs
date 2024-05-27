@@ -26,7 +26,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
-    interpreter::{return_ok, CreateScheme, InstructionResult},
+    interpreter::{return_ok, InstructionResult},
     primitives::{
         BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output, ResultAndState,
         SpecId, TransactTo, TxEnv,
@@ -92,7 +92,7 @@ impl Executor {
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
             revm::primitives::AccountInfo {
-                code: Some(Bytecode::new_raw(Bytes::from_static(&[0])).to_checked()),
+                code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
                 ..Default::default()
             },
         );
@@ -386,7 +386,7 @@ impl Executor {
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         assert!(
-            matches!(env.tx.transact_to, TransactTo::Create(_)),
+            matches!(env.tx.transact_to, TransactTo::Create),
             "Expected create transaction, got {:?}",
             env.tx.transact_to
         );
@@ -419,7 +419,7 @@ impl Executor {
         value: U256,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
-        let env = self.build_test_env(from, TransactTo::Create(CreateScheme::Create), code, value);
+        let env = self.build_test_env(from, TransactTo::Create, code, value);
         self.deploy_with_env(env, rd)
     }
 
@@ -674,9 +674,6 @@ pub struct RawCallResult {
     /// Scripted transactions generated from this call
     pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
-    ///
-    /// This is only present if the changed state was not committed to the database (i.e. if you
-    /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
     /// The `revm::Env` after the call
     pub env: EnvWithHandlerCfg,

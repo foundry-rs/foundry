@@ -364,19 +364,22 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
             return maybe_bytecode
                 .ok_or_else(|| fmt_err!("No bytecode for contract. Is it abstract or unlinked?"));
         } else {
-            match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
-                (Some(file), Some(contract_name)) => {
-                    PathBuf::from(format!("{file}/{contract_name}.json"))
-                }
-                (None, Some(contract_name)) => {
-                    PathBuf::from(format!("{contract_name}.sol/{contract_name}.json"))
-                }
-                (Some(file), None) => {
-                    let name = file.replace(".sol", "");
-                    PathBuf::from(format!("{file}/{name}.json"))
-                }
-                _ => return Err(fmt_err!("Invalid artifact path")),
-            }
+            let path_in_artifacts =
+                match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
+                    (Some(file), Some(contract_name)) => {
+                        PathBuf::from(format!("{file}/{contract_name}.json"))
+                    }
+                    (None, Some(contract_name)) => {
+                        PathBuf::from(format!("{contract_name}.sol/{contract_name}.json"))
+                    }
+                    (Some(file), None) => {
+                        let name = file.replace(".sol", "");
+                        PathBuf::from(format!("{file}/{name}.json"))
+                    }
+                    _ => return Err(fmt_err!("Invalid artifact path")),
+                };
+
+            state.config.paths.artifacts.join(path_in_artifacts)
         }
     };
 

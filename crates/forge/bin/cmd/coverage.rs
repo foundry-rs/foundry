@@ -8,7 +8,6 @@ use forge::{
         CoverageReport, CoverageReporter, DebugReporter, LcovReporter, SummaryReporter,
     },
     opts::EvmOpts,
-    revm::primitives::SpecId,
     utils::IcPcMap,
     MultiContractRunnerBuilder, TestOptions,
 };
@@ -89,7 +88,7 @@ impl CoverageArgs {
 
         let (project, output) = self.build(&config)?;
         p_println!(!self.test.build_args().silent => "Analysing contracts...");
-        let report = self.prepare(&config, output.clone())?;
+        let report = self.prepare(&project, output.clone())?;
 
         p_println!(!self.test.build_args().silent => "Running tests...");
         self.collect(project, output, report, Arc::new(config), evm_opts).await
@@ -142,8 +141,8 @@ impl CoverageArgs {
 
     /// Builds the coverage report.
     #[instrument(name = "prepare", skip_all)]
-    fn prepare(&self, config: &Config, output: ProjectCompileOutput) -> Result<CoverageReport> {
-        let project_paths = config.project_paths();
+    fn prepare(&self, project: &Project, output: ProjectCompileOutput) -> Result<CoverageReport> {
+        let project_paths = &project.paths;
 
         // Extract artifacts
         let (artifacts, sources) = output.into_artifacts_with_sources();
@@ -231,10 +230,7 @@ impl CoverageArgs {
                 // TODO: Creation bytecode as well
                 (
                     id.clone(),
-                    (
-                        IcPcMap::new(SpecId::LATEST, bytecodes.0.as_ref()),
-                        IcPcMap::new(SpecId::LATEST, bytecodes.1.as_ref()),
-                    ),
+                    (IcPcMap::new(bytecodes.0.as_ref()), IcPcMap::new(bytecodes.1.as_ref())),
                 )
             })
             .collect();

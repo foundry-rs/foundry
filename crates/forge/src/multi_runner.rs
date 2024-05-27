@@ -6,7 +6,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_cli::{init_test_suite_progress, init_tests_progress};
 use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
-use foundry_compilers::{artifacts::Libraries, Artifact, ArtifactId, ProjectCompileOutput};
+use foundry_compilers::{artifacts::Libraries, Artifact, ArtifactId, ProjectCompileOutput, Solc};
 use foundry_config::Config;
 use foundry_evm::{
     backend::Backend, decode::RevertDecoder, executors::ExecutorBuilder, fork::CreateFork,
@@ -232,8 +232,10 @@ impl MultiContractRunner {
         let identifier = artifact_id.identifier();
         let mut span_name = identifier.as_str();
 
-        let linker =
-            Linker::new(self.config.project_paths().root, self.output.artifact_ids().collect());
+        let linker = Linker::new(
+            self.config.project_paths::<Solc>().root,
+            self.output.artifact_ids().collect(),
+        );
         let linked_contracts = linker.get_linked_artifacts(&contract.libraries).unwrap_or_default();
         let known_contracts = Arc::new(ContractsByArtifact::new(linked_contracts));
 

@@ -78,11 +78,7 @@ pub fn replay_run(
     let invariant_result = executor.call_raw(
         CALLER,
         invariant_contract.address,
-        invariant_contract
-            .invariant_function
-            .abi_encode_input(&[])
-            .expect("invariant should have no inputs")
-            .into(),
+        invariant_contract.invariant_function.abi_encode_input(&[])?.into(),
         U256::ZERO,
     )?;
     traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));

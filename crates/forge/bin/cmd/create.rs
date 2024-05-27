@@ -4,7 +4,7 @@ use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest, WithOtherFields};
 use alloy_signer::Signer;
 use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
@@ -241,7 +241,7 @@ impl CreateArgs {
         deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
             Ok(nonce.to())
         } else {
-            provider.get_transaction_count(deployer_address, BlockId::latest()).await
+            provider.get_transaction_count(deployer_address).await
         }?);
 
         // set tx value if specified
@@ -252,7 +252,7 @@ impl CreateArgs {
         deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
             Ok(gas_limit.to())
         } else {
-            provider.estimate_gas(&deployer.tx, BlockId::latest()).await
+            provider.estimate_gas(&deployer.tx).await
         }?);
 
         if is_legacy {

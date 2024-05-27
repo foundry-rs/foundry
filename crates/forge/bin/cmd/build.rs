@@ -3,7 +3,9 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters};
-use foundry_compilers::{Project, ProjectCompileOutput, SolcSparseFileFilter};
+use foundry_compilers::{
+    compilers::Compiler, Project, ProjectCompileOutput, SparseOutputFileFilter,
+};
 use foundry_config::{
     figment::{
         self,
@@ -11,7 +13,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile, Provider,
     },
-    Config,
+    with_resolved_project, Config,
 };
 use serde::Serialize;
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -75,32 +77,54 @@ pub struct BuildArgs {
 }
 
 impl BuildArgs {
-    pub fn run(self) -> Result<ProjectCompileOutput> {
+    pub fn run(self) -> Result<()> {
         let mut config = self.try_load_config_emit_warnings()?;
-        let mut project = config.project()?;
 
         if install::install_missing_dependencies(&mut config, self.args.silent) &&
             config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
-            project = config.project()?;
         }
 
+        with_resolved_project!(config, |project| {
+            let project = project?;
+
+            let filter = if let Some(ref skip) = self.skip {
+                if !skip.is_empty() {
+                    let filter = SkipBuildFilters::new(skip.clone(), project.root().clone())?;
+                    Some(filter)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            self.run_with_project(project, filter)?;
+        });
+
+        Ok(())
+    }
+
+    pub fn run_with_project<C: Compiler>(
+        &self,
+        project: Project<C>,
+        filter: Option<impl SparseOutputFileFilter<C::ParsedSource> + 'static>,
+    ) -> Result<ProjectCompileOutput<C::CompilationError>>
+    where
+        C::CompilationError: Clone,
+    {
         let mut compiler = ProjectCompiler::new()
             .print_names(self.names)
             .print_sizes(self.sizes)
             .quiet(self.format_json)
             .bail(!self.format_json);
-        if let Some(skip) = self.skip {
-            if !skip.is_empty() {
-                let filter = SolcSparseFileFilter::new(SkipBuildFilters::new(
-                    skip.clone(),
-                    project.root().to_path_buf(),
-                )?);
-                compiler = compiler.filter(Box::new(filter));
-            }
+
+        if let Some(filter) = filter {
+            compiler = compiler.filter(Box::new(filter));
         }
+
         let output = compiler.compile(&project)?;
 
         if self.format_json {

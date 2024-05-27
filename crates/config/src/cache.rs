@@ -5,12 +5,12 @@ use number_prefix::NumberPrefix;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, fmt::Formatter, str::FromStr};
 
-/// Settings to configure caching of remote
+/// Settings to configure caching of remote.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageCachingConfig {
-    /// chains to cache
+    /// Chains to cache.
     pub chains: CachedChains,
-    /// endpoints to cache
+    /// Endpoints to cache.
     pub endpoints: CachedEndpoints,
 }
 
@@ -258,7 +258,7 @@ mod tests {
                     Chain::optimism_mainnet(),
                     Chain::from_id(999999)
                 ]),
-                endpoints: CachedEndpoints::All
+                endpoints: CachedEndpoints::All,
             }
         )
     }
