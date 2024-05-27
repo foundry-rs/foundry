@@ -77,7 +77,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             failure_persist_dir: Some("test-cache/fuzz".into()),
             ..Default::default()
         },
-        max_test_threads: None,
         ffi: true,
         always_use_create_2_factory: false,
         prompt_timeout: 0,

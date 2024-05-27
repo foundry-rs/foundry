@@ -109,6 +109,11 @@ pub struct TestArgs {
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
 
+    /// Max concurrent threads to use.
+    /// Default value is the number of available CPUs.
+    #[arg(long)]
+    pub max_threads: Option<u64>,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -230,6 +235,13 @@ impl TestArgs {
         // Set up the project.
         let mut project = config.project()?;
 
+        // Set number of threads to use executing tests.
+        // If not specified then the number of threads determined by rayon will be used.
+        if let Some(test_threads) = self.max_threads {
+            trace!(target: "forge::test", "running tests with {} max threads", test_threads);
+            rayon::ThreadPoolBuilder::new().num_threads(test_threads as usize).build_global()?;
+        }
+
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
             config.auto_detect_remappings
@@ -237,15 +249,6 @@ impl TestArgs {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
             project = config.project()?;
-        }
-
-        // Set number of threads to use for running tests.
-        // If not specified then the number of threads determined by rayon will be used.
-        if let Some(test_threads) = config.max_test_threads {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(test_threads as usize)
-                .build_global()
-                .unwrap();
         }
 
         let mut filter = self.filter(&config);

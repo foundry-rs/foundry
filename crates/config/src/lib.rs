@@ -243,9 +243,6 @@ pub struct Config {
     pub fuzz: FuzzConfig,
     /// Configuration for invariant testing
     pub invariant: InvariantConfig,
-    /// Max concurrent threads to use for running tests.
-    /// Default value is the number of CPU available.
-    pub max_test_threads: Option<u64>,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
@@ -1966,7 +1963,6 @@ impl Default for Config {
             path_pattern_inverse: None,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: InvariantConfig::new("cache/invariant".into()),
-            max_test_threads: None,
             always_use_create_2_factory: false,
             ffi: false,
             prompt_timeout: 120,
