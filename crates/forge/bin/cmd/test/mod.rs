@@ -639,7 +639,7 @@ fn list(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_config::Chain;
+    use foundry_config::{Chain, InvariantConfig};
     use foundry_test_utils::forgetest_async;
 
     #[test]
@@ -676,6 +676,13 @@ mod tests {
     }
 
     forgetest_async!(gas_report_fuzz_invariant, |prj, _cmd| {
+        // speed up test by running with depth of 15
+        let config = Config {
+            invariant: { InvariantConfig { depth: 15, ..Default::default() } },
+            ..Default::default()
+        };
+        prj.write_config(config);
+
         prj.insert_ds_test();
         prj.add_source(
             "Contracts.sol",
