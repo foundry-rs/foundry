@@ -95,8 +95,8 @@ impl DocArgs {
 
         let mut builder = DocBuilder::new(
             root.clone(),
-            config.project_paths().sources,
-            config.project_paths().libraries,
+            project.paths.sources,
+            project.paths.libraries,
             self.include_libraries,
         )
         .with_should_build(self.build)

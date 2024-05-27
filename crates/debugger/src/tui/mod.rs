@@ -13,7 +13,6 @@ use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
 };
-use revm::primitives::SpecId;
 use std::{
     collections::{BTreeMap, HashMap},
     io,
@@ -71,8 +70,8 @@ impl Debugger {
                 Some((
                     contract_name.to_owned(),
                     (
-                        PcIcMap::new(SpecId::LATEST, contract.bytecode.bytes()?),
-                        PcIcMap::new(SpecId::LATEST, contract.deployed_bytecode.bytes()?),
+                        PcIcMap::new(contract.bytecode.bytes()?),
+                        PcIcMap::new(contract.deployed_bytecode.bytes()?),
                     ),
                 ))
             })

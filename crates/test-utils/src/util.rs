@@ -5,7 +5,7 @@ use foundry_compilers::{
     cache::CompilerCache,
     error::Result as SolcResult,
     project_util::{copy_dir, TempProject},
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
@@ -409,7 +409,7 @@ pub struct TestProject<T: ArtifactOutput = ConfigurableArtifacts> {
     /// The directory in which this test executable is running.
     exe_root: PathBuf,
     /// The project in which the test should run.
-    inner: Arc<TempProject<T>>,
+    inner: Arc<TempProject<Solc, T>>,
 }
 
 impl TestProject {

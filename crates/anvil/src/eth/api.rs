@@ -31,7 +31,7 @@ use crate::{
     revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::TxEip4844Variant;
+use alloy_consensus::transaction::eip4844::TxEip4844Variant;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::eip2718::Decodable2718;
@@ -1242,7 +1242,7 @@ impl EthApi {
         Err(BlockchainError::RpcUnimplemented)
     }
 
-    /// Introduced in EIP-1159 for getting information on the appropriate priority fee to use.
+    /// Introduced in EIP-1559 for getting information on the appropriate priority fee to use.
     ///
     /// Handler for ETH RPC call: `eth_feeHistory`
     pub async fn fee_history(
@@ -2668,6 +2668,10 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::FatalExternalError |
                 InstructionResult::OutOfFunds |
                 InstructionResult::CallTooDeep => Ok(Self::EvmError(exit)),
+                // Handle Revm EOF InstructionResults: Not supported yet
+                InstructionResult::ReturnContractInNotInitEOF |
+                InstructionResult::EOFOpcodeDisabledInLegacy |
+                InstructionResult::EOFFunctionStackOverflow => Ok(Self::EvmError(exit)),
             },
         }
     }
