@@ -222,6 +222,13 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn execute_tests(self) -> Result<TestOutcome> {
+        // Set number of max threads to execute tests.
+        // If not specified then the number of threads determined by rayon will be used.
+        if let Some(test_threads) = self.max_threads {
+            trace!(target: "forge::test", "execute tests with {} max threads", test_threads);
+            rayon::ThreadPoolBuilder::new().num_threads(test_threads as usize).build_global()?;
+        }
+
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -236,13 +243,6 @@ impl TestArgs {
 
         // Set up the project.
         let mut project = config.project()?;
-
-        // Set number of threads to use executing tests.
-        // If not specified then the number of threads determined by rayon will be used.
-        if let Some(test_threads) = self.max_threads {
-            trace!(target: "forge::test", "running tests with {} max threads", test_threads);
-            rayon::ThreadPoolBuilder::new().num_threads(test_threads as usize).build_global()?;
-        }
 
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config, self.build_args().silent) &&
