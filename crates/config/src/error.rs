@@ -209,7 +209,7 @@ impl FromStr for SolidityErrorCode {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let code = match s {
             "unreachable" => SolidityErrorCode::Unreachable,
-            "unused-return" => SolidityErrorCode::UnnamedReturnVariable,
+            "unnamed-return" => SolidityErrorCode::UnnamedReturnVariable,
             "unused-param" => SolidityErrorCode::UnusedFunctionParameter,
             "unused-var" => SolidityErrorCode::UnusedLocalVariable,
             "code-size" => SolidityErrorCode::ContractExceeds24576Bytes,
