@@ -81,15 +81,15 @@ impl ValueTree for IntValueTree {
 /// Value tree for signed ints (up to int256).
 /// The strategy combines 3 different strategies, each assigned a specific weight:
 /// 1. Generate purely random value in a range. This will first choose bit size uniformly (up `bits`
-/// param). Then generate a value for this bit size.
+///    param). Then generate a value for this bit size.
 /// 2. Generate a random value around the edges (+/- 3 around min, 0 and max possible value)
 /// 3. Generate a value from a predefined fixtures set
 ///
 /// To define int fixtures:
-/// - return an array of possible values for a parameter named `amount` declare a function
-/// `function fixture_amount() public returns (int32[] memory)`.
+/// - return an array of possible values for a parameter named `amount` declare a function `function
+///   fixture_amount() public returns (int32[] memory)`.
 /// - use `amount` named parameter in fuzzed test in order to include fixtures in fuzzed values
-/// `function testFuzz_int32(int32 amount)`.
+///   `function testFuzz_int32(int32 amount)`.
 ///
 /// If fixture is not a valid int type then error is raised and random value generated.
 #[derive(Debug)]

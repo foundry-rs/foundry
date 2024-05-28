@@ -131,7 +131,7 @@ impl TransactionWithMetadata {
 
         let Some(data) = self.transaction.input.input() else { return Ok(()) };
         let Some(info) = info else { return Ok(()) };
-        let Some(bytecode) = info.bytecode.as_ref() else { return Ok(()) };
+        let Some(bytecode) = info.bytecode() else { return Ok(()) };
 
         // `create2` transactions are prefixed by a 32 byte salt.
         let creation_code = if is_create2 {

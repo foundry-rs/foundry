@@ -9,7 +9,7 @@ use foundry_compilers::{
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     fs_permissions::{FsAccessPermission, PathPermission},
-    Config, FsPermissions, FuzzConfig, InvariantConfig, SolcReq,
+    Config, FsPermissions, FuzzConfig, InvariantConfig, Language, SolcReq,
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
@@ -131,10 +131,11 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         doc: Default::default(),
         fs_permissions: Default::default(),
         labels: Default::default(),
-        cancun: true,
+        prague: true,
         isolate: true,
         unchecked_cheatcode_artifacts: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
+        lang: Language::Solidity,
         __non_exhaustive: (),
         __warnings: vec![],
     };
@@ -361,7 +362,7 @@ contract Foo {}
 
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
-    assert!(cmd.stderr_lossy().contains("this/solc/does/not/exist does not exist"));
+    assert!(cmd.stderr_lossy().contains("`solc` this/solc/does/not/exist does not exist"));
 
     // `OTHER_SOLC_VERSION` was installed in previous step, so we can use the path to this directly
     let local_solc =

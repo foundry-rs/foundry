@@ -9,8 +9,8 @@ use indexmap::IndexSet;
 use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
 use revm::{
     db::{CacheDB, DatabaseRef, DbAccount},
-    interpreter::opcode::{self, spec_opcode_gas},
-    primitives::{AccountInfo, SpecId},
+    interpreter::opcode,
+    primitives::AccountInfo,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -217,7 +217,7 @@ impl FuzzDictionary {
             // Insert push bytes
             if let Some(code) = account_info.code.clone() {
                 self.insert_address(*address, collected);
-                for push_byte in collect_push_bytes(code.bytes()) {
+                for push_byte in collect_push_bytes(&code.bytes()) {
                     self.insert_value(push_byte, collected);
                 }
             }
@@ -267,18 +267,18 @@ impl FuzzDictionary {
     /// If collected samples limit is reached then values are inserted as regular values.
     pub fn insert_sample_values(&mut self, sample_values: Vec<DynSolValue>, limit: u32) {
         for sample in sample_values {
-            let sample_type = sample.as_type().unwrap();
-            let sample_value = sample.as_word().unwrap().into();
-
-            if let Some(values) = self.sample_values.get_mut(&sample_type) {
-                if values.len() < limit as usize {
-                    values.insert(sample_value);
+            if let (Some(sample_type), Some(sample_value)) = (sample.as_type(), sample.as_word()) {
+                let sample_value = sample_value.into();
+                if let Some(values) = self.sample_values.get_mut(&sample_type) {
+                    if values.len() < limit as usize {
+                        values.insert(sample_value);
+                    } else {
+                        // Insert as state value (will be removed at the end of the run).
+                        self.insert_value(sample_value, true);
+                    }
                 } else {
-                    // Insert as state value (will be removed at the end of the run).
-                    self.insert_value(sample_value, true);
+                    self.sample_values.entry(sample_type).or_default().insert(sample_value);
                 }
-            } else {
-                self.sample_values.entry(sample_type).or_default().insert(sample_value);
             }
         }
     }
@@ -323,11 +323,10 @@ fn collect_push_bytes(code: &[u8]) -> Vec<[u8; 32]> {
     let mut bytes: Vec<[u8; 32]> = Vec::new();
     // We use [SpecId::LATEST] since we do not really care what spec it is - we are not interested
     // in gas costs.
-    let opcode_infos = spec_opcode_gas(SpecId::LATEST);
     let mut i = 0;
     while i < code.len().min(PUSH_BYTE_ANALYSIS_LIMIT) {
         let op = code[i];
-        if opcode_infos[op as usize].is_push() {
+        if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
             let push_size = (op - opcode::PUSH1 + 1) as usize;
             let push_start = i + 1;
             let push_end = push_start + push_size;

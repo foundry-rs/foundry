@@ -4,7 +4,7 @@ use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest, WithOtherFields};
 use alloy_signer::Signer;
 use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
@@ -169,7 +169,7 @@ impl CreateArgs {
         // since we don't know the address yet.
         let mut verify = forge_verify::VerifyArgs {
             address: Default::default(),
-            contract: self.contract.clone(),
+            contract: Some(self.contract.clone()),
             compiler_version: None,
             constructor_args,
             constructor_args_path: None,
@@ -199,7 +199,9 @@ impl CreateArgs {
         verify.etherscan.key =
             config.get_etherscan_config_with_chain(Some(chain.into()))?.map(|c| c.key);
 
-        verify.verification_provider()?.preflight_check(verify).await?;
+        let context = verify.resolve_context().await?;
+
+        verify.verification_provider()?.preflight_check(verify, context).await?;
         Ok(())
     }
 
@@ -239,7 +241,7 @@ impl CreateArgs {
         deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
             Ok(nonce.to())
         } else {
-            provider.get_transaction_count(deployer_address, BlockId::latest()).await
+            provider.get_transaction_count(deployer_address).await
         }?);
 
         // set tx value if specified
@@ -250,7 +252,7 @@ impl CreateArgs {
         deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
             Ok(gas_limit.to())
         } else {
-            provider.estimate_gas(&deployer.tx, BlockId::latest()).await
+            provider.estimate_gas(&deployer.tx).await
         }?);
 
         if is_legacy {
@@ -318,7 +320,7 @@ impl CreateArgs {
             if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
         let verify = forge_verify::VerifyArgs {
             address,
-            contract: self.contract,
+            contract: Some(self.contract),
             compiler_version: None,
             constructor_args,
             constructor_args_path: None,

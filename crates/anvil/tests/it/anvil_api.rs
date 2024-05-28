@@ -87,10 +87,10 @@ async fn can_impersonate_account() {
     let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
     assert_eq!(res.from, impersonate);
 
-    let nonce = provider.get_transaction_count(impersonate, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(impersonate).await.unwrap();
     assert_eq!(nonce, 1);
 
-    let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance, val);
 
     api.anvil_stop_impersonating_account(impersonate).await.unwrap();
@@ -125,10 +125,10 @@ async fn can_auto_impersonate_account() {
     let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
     assert_eq!(res.from, impersonate);
 
-    let nonce = provider.get_transaction_count(impersonate, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(impersonate).await.unwrap();
     assert_eq!(nonce, 1);
 
-    let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance, val);
 
     api.anvil_auto_impersonate_account(false).await.unwrap();
@@ -169,7 +169,7 @@ async fn can_impersonate_contract() {
     let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
     assert_eq!(res.from, impersonate);
 
-    let balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance, val);
 
     api.anvil_stop_impersonating_account(impersonate).await.unwrap();
@@ -188,24 +188,24 @@ async fn can_impersonate_gnosis_safe() {
     // <https://help.safe.global/en/articles/40824-i-don-t-remember-my-safe-address-where-can-i-find-it>
     let safe = address!("A063Cb7CFd8E57c30c788A0572CBbf2129ae56B6");
 
-    let code = provider.get_code_at(safe, BlockId::default()).await.unwrap();
+    let code = provider.get_code_at(safe).await.unwrap();
     assert!(!code.is_empty());
 
     api.anvil_impersonate_account(safe).await.unwrap();
 
-    let code = provider.get_code_at(safe, BlockId::default()).await.unwrap();
+    let code = provider.get_code_at(safe).await.unwrap();
     assert!(!code.is_empty());
 
     let balance = U256::from(1e18 as u64);
     // fund the impersonated account
     api.anvil_set_balance(safe, balance).await.unwrap();
 
-    let on_chain_balance = provider.get_balance(safe, BlockId::latest()).await.unwrap();
+    let on_chain_balance = provider.get_balance(safe).await.unwrap();
     assert_eq!(on_chain_balance, balance);
 
     api.anvil_stop_impersonating_account(safe).await.unwrap();
 
-    let code = provider.get_code_at(safe, BlockId::default()).await.unwrap();
+    let code = provider.get_code_at(safe).await.unwrap();
     // code is added back after stop impersonating
     assert!(!code.is_empty());
 }
@@ -234,7 +234,7 @@ async fn can_impersonate_multiple_accounts() {
     let res0 = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
     assert_eq!(res0.from, impersonate0);
 
-    let nonce = provider.get_transaction_count(impersonate0, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(impersonate0).await.unwrap();
     assert_eq!(nonce, 1);
 
     let receipt = provider.get_transaction_receipt(res0.transaction_hash).await.unwrap().unwrap();
@@ -250,7 +250,7 @@ async fn can_impersonate_multiple_accounts() {
 
     assert_eq!(res1.from, impersonate1);
 
-    let nonce = provider.get_transaction_count(impersonate1, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(impersonate1).await.unwrap();
     assert_eq!(nonce, 1);
 
     let receipt = provider.get_transaction_receipt(res1.transaction_hash).await.unwrap().unwrap();

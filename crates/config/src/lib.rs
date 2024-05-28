@@ -15,16 +15,21 @@ use figment::{
 };
 use foundry_compilers::{
     artifacts::{
-        output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
-        Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, OptimizerDetails,
-        RevertStrings, Settings, SettingsMetadata, Severity,
+        output_selection::{ContractOutputSelection, OutputSelection},
+        serde_helpers, BytecodeHash, DebuggingSettings, Libraries, ModelCheckerSettings,
+        ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings, Settings, SettingsMetadata,
+        Severity,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
-    compilers::{solc::SolcVersionManager, CompilerVersionManager},
+    compilers::{
+        solc::SolcVersionManager,
+        vyper::{Vyper, VyperSettings},
+        Compiler, CompilerVersionManager,
+    },
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
-    CompilerConfig, ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc,
-    SolcConfig,
+    CompilerConfig, ConfigurableArtifacts, EvmVersion, Project, ProjectBuilder, ProjectPathsConfig,
+    Solc, SolcConfig,
 };
 use inflector::Inflector;
 use regex::Regex;
@@ -81,6 +86,10 @@ pub use figment;
 
 /// config providers
 pub mod providers;
+
+/// compilers supported by foundry
+pub mod language;
+pub use language::Language;
 
 use crate::{
     error::ExtractConfigError,
@@ -373,11 +382,10 @@ pub struct Config {
     /// This includes what operations can be executed (read, write)
     pub fs_permissions: FsPermissions,
 
-    /// Temporary config to enable [SpecId::CANCUN]
+    /// Temporary config to enable [SpecId::PRAGUE]
     ///
-    /// <https://github.com/foundry-rs/foundry/issues/5782>
-    /// Should be removed once EvmVersion Cancun is supported by solc
-    pub cancun: bool,
+    /// Should be removed once EvmVersion Prague is supported by solc
+    pub prague: bool,
 
     /// Whether to enable call isolation.
     ///
@@ -396,6 +404,10 @@ pub struct Config {
 
     /// CREATE2 salt to use for the library deployment in scripts.
     pub create2_library_salt: B256,
+
+    /// Compiler to use
+    #[serde(with = "from_str_lowercase")]
+    pub lang: Language,
 
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
@@ -757,6 +769,11 @@ impl Config {
         self.create_project(self.cache, false)
     }
 
+    /// Configures [Project] with [Vyper] compiler.
+    pub fn vyper_project(&self) -> Result<Project<Vyper>, SolcError> {
+        self.create_vyper_project(self.cache, false)
+    }
+
     /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
     /// cache.
     pub fn ephemeral_no_artifacts_project(&self) -> Result<Project, SolcError> {
@@ -765,10 +782,38 @@ impl Config {
 
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let project = Project::builder()
+        let compiler_config = self.solc_config()?;
+        let settings = SolcConfig::builder().settings(self.solc_settings()?).build().settings;
+
+        self.create_project_with_compiler(cached, no_artifacts, compiler_config, settings)
+    }
+
+    /// Creates a [Project] with the given `cached` and `no_artifacts` flags
+    pub fn create_vyper_project(
+        &self,
+        cached: bool,
+        no_artifacts: bool,
+    ) -> Result<Project<Vyper>, SolcError> {
+        self.create_project_with_compiler(
+            cached,
+            no_artifacts,
+            self.vyper_config()?,
+            self.vyper_settings()?,
+        )
+    }
+
+    /// Creates a [Project] with a given [CompilerConfig].
+    pub fn create_project_with_compiler<C: Compiler>(
+        &self,
+        cached: bool,
+        no_artifacts: bool,
+        compiler_config: CompilerConfig<C>,
+        settings: C::Settings,
+    ) -> Result<Project<C>, SolcError> {
+        let project = ProjectBuilder::<ConfigurableArtifacts, C>::new(Default::default())
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
-            .settings(SolcConfig::builder().settings(self.solc_settings()?).build().settings)
+            .settings(settings)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .ignore_paths(self.ignored_file_paths.clone())
             .set_compiler_severity_filter(if self.deny_warnings {
@@ -780,7 +825,7 @@ impl Config {
             .set_cached(cached && !self.build_info)
             .set_build_info(!no_artifacts && self.build_info)
             .set_no_artifacts(no_artifacts)
-            .build(self.compiler_config()?)?;
+            .build(compiler_config)?;
 
         if self.force {
             self.cleanup(&project)?;
@@ -790,7 +835,7 @@ impl Config {
     }
 
     /// Cleans the project.
-    pub fn cleanup(&self, project: &Project) -> Result<(), SolcError> {
+    pub fn cleanup<C: Compiler>(&self, project: &Project<C>) -> Result<(), SolcError> {
         project.cleanup()?;
 
         // Remove fuzz and invariant cache directories.
@@ -849,8 +894,8 @@ impl Config {
     /// Returns the [SpecId] derived from the configured [EvmVersion]
     #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
-        if self.cancun {
-            return SpecId::CANCUN
+        if self.prague {
+            return SpecId::PRAGUE
         }
         evm_spec_id(&self.evm_version)
     }
@@ -881,11 +926,12 @@ impl Config {
     /// # Example
     ///
     /// ```
+    /// use foundry_compilers::Solc;
     /// use foundry_config::Config;
     /// let config = Config::load_with_root(".").sanitized();
-    /// let paths = config.project_paths();
+    /// let paths = config.project_paths::<Solc>();
     /// ```
-    pub fn project_paths(&self) -> ProjectPathsConfig {
+    pub fn project_paths<C>(&self) -> ProjectPathsConfig<C> {
         let mut builder = ProjectPathsConfig::builder()
             .cache(self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
@@ -907,11 +953,20 @@ impl Config {
     }
 
     /// Returns configuration for a compiler to use when setting up a [Project].
-    pub fn compiler_config(&self) -> Result<CompilerConfig<Solc>, SolcError> {
+    pub fn solc_config(&self) -> Result<CompilerConfig<Solc>, SolcError> {
         if let Some(solc) = self.ensure_solc()? {
             Ok(CompilerConfig::Specific(solc))
         } else {
             Ok(CompilerConfig::AutoDetect(Arc::new(SolcVersionManager::default())))
+        }
+    }
+
+    /// Returns configuration for a compiler to use when setting up a [Project].
+    pub fn vyper_config(&self) -> Result<CompilerConfig<Vyper>, SolcError> {
+        if let Some(SolcReq::Local(path)) = &self.solc {
+            Ok(CompilerConfig::Specific(Vyper::new(path)?))
+        } else {
+            Ok(CompilerConfig::Specific(Vyper::new("vyper")?))
         }
     }
 
@@ -1235,6 +1290,23 @@ impl Config {
         }
 
         Ok(settings)
+    }
+
+    /// Returns the configured [VyperSettings] that includes:
+    /// - evm version
+    pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
+        Ok(VyperSettings {
+            evm_version: Some(self.evm_version),
+            optimize: None,
+            bytecode_metadata: None,
+            // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
+            // those for now. It should be enough to run tests and deploy contracts.
+            output_selection: OutputSelection::common_output_selection([
+                "abi".to_string(),
+                "evm.bytecode".to_string(),
+                "evm.deployedBytecode".to_string(),
+            ]),
+        })
     }
 
     /// Returns the default figment
@@ -1927,7 +1999,7 @@ impl Default for Config {
         Self {
             profile: Self::DEFAULT_PROFILE,
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
-            cancun: false,
+            prague: false,
             isolate: false,
             __root: Default::default(),
             src: "src".into(),
@@ -2017,6 +2089,7 @@ impl Default for Config {
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
+            lang: Language::Solidity,
             __non_exhaustive: (),
             __warnings: vec![],
         }
@@ -2709,6 +2782,23 @@ fn canonic(path: impl Into<PathBuf>) -> PathBuf {
     foundry_compilers::utils::canonicalize(&path).unwrap_or(path)
 }
 
+/// Executes the given closure with a [Project] configured via the given [Config].
+#[macro_export]
+macro_rules! with_resolved_project {
+    ($config:ident, |$prj:ident| $e:expr) => {
+        match $config.lang {
+            foundry_config::Language::Solidity => {
+                let $prj = $config.project();
+                $e
+            }
+            foundry_config::Language::Vyper => {
+                let $prj = $config.vyper_project();
+                $e
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2849,7 +2939,7 @@ mod tests {
     fn test_default_test_path() {
         figment::Jail::expect_with(|_| {
             let config = Config::default();
-            let paths_config = config.project_paths();
+            let paths_config = config.project_paths::<Solc>();
             assert_eq!(paths_config.tests, PathBuf::from(r"test"));
             Ok(())
         });
@@ -2883,7 +2973,7 @@ mod tests {
                 test = "defaulttest"
                 src  = "defaultsrc"
                 libs = ['lib', 'node_modules']
-                
+
                 [profile.custom]
                 src = "customsrc"
             "#,
@@ -2916,7 +3006,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            let paths_config = config.project_paths();
+            let paths_config = config.project_paths::<Solc>();
             assert_eq!(paths_config.tests, PathBuf::from(r"mytest"));
             Ok(())
         });
@@ -3599,7 +3689,7 @@ mod tests {
                             Chain::optimism_mainnet(),
                             Chain::from_id(999999)
                         ]),
-                        endpoints: CachedEndpoints::All
+                        endpoints: CachedEndpoints::All,
                     },
                     use_literal_content: false,
                     bytecode_hash: BytecodeHash::Ipfs,
@@ -3705,7 +3795,7 @@ mod tests {
                 tx_origin = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
                 verbosity = 0
                 via_ir = false
-                
+
                 [profile.default.rpc_storage_caching]
                 chains = 'all'
                 endpoints = 'all'
@@ -4173,7 +4263,7 @@ mod tests {
                         './src/SizeAuction.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c',
                         './src/test/ChainlinkTWAP.t.sol:ChainlinkTWAP:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
                         './src/SizeAuctionDiscount.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c',
-                    ]       
+                    ]
             ",
             )?;
             let config = Config::load();

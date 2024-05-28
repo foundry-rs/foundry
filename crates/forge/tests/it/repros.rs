@@ -326,3 +326,6 @@ test_repro!(6634; |config| {
 });
 
 test_repro!(7481);
+
+// https://github.com/foundry-rs/foundry/issues/5739
+test_repro!(5739);

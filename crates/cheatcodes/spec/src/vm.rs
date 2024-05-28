@@ -102,7 +102,7 @@ interface Vm {
         uint64 gasLimit;
         /// The total gas used.
         uint64 gasTotalUsed;
-        /// The amount of gas used for memory expansion.
+        /// DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>
         uint64 gasMemoryUsed;
         /// The amount of gas refunded.
         int64 gasRefunded;

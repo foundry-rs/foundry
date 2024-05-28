@@ -361,8 +361,8 @@ impl ScriptArgs {
 
         // From artifacts
         for (artifact, contract) in known_contracts.iter() {
-            let Some(bytecode) = &contract.bytecode else { continue };
-            let Some(deployed_bytecode) = &contract.deployed_bytecode else { continue };
+            let Some(bytecode) = contract.bytecode() else { continue };
+            let Some(deployed_bytecode) = contract.deployed_bytecode() else { continue };
             bytecodes.push((artifact.name.clone(), bytecode, deployed_bytecode));
         }
 
