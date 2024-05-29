@@ -110,6 +110,11 @@ pub struct TestArgs {
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
 
+    /// Max concurrent threads to use.
+    /// Default value is the number of available CPUs.
+    #[arg(long)]
+    pub max_threads: Option<u64>,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -217,6 +222,13 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn execute_tests(self) -> Result<TestOutcome> {
+        // Set number of max threads to execute tests.
+        // If not specified then the number of threads determined by rayon will be used.
+        if let Some(test_threads) = self.max_threads {
+            trace!(target: "forge::test", "execute tests with {} max threads", test_threads);
+            rayon::ThreadPoolBuilder::new().num_threads(test_threads as usize).build_global()?;
+        }
+
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -627,7 +639,7 @@ fn list(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_config::Chain;
+    use foundry_config::{Chain, InvariantConfig};
     use foundry_test_utils::forgetest_async;
 
     #[test]
@@ -664,6 +676,13 @@ mod tests {
     }
 
     forgetest_async!(gas_report_fuzz_invariant, |prj, _cmd| {
+        // speed up test by running with depth of 15
+        let config = Config {
+            invariant: { InvariantConfig { depth: 15, ..Default::default() } },
+            ..Default::default()
+        };
+        prj.write_config(config);
+
         prj.insert_ds_test();
         prj.add_source(
             "Contracts.sol",

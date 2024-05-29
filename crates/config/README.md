@@ -189,12 +189,13 @@ include_push_bytes = true
 
 [invariant]
 runs = 256
-depth = 15
+depth = 500
 fail_on_revert = false
 call_override = false
 dictionary_weight = 80
 include_storage = true
 include_push_bytes = true
+shrink_run_limit = 5000
 
 [fmt]
 line_length = 100

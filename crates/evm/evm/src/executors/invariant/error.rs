@@ -64,7 +64,7 @@ pub struct FailedInvariantCaseData {
     /// Inner fuzzing Sequence coming from overriding calls.
     pub inner_sequence: Vec<Option<BasicTxDetails>>,
     /// Shrink run limit
-    pub shrink_run_limit: usize,
+    pub shrink_run_limit: u32,
     /// Fail on revert, used to check sequence when shrinking.
     pub fail_on_revert: bool,
 }

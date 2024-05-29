@@ -3812,9 +3812,10 @@ mod tests {
 
                 [invariant]
                 runs = 256
-                depth = 15
+                depth = 500
                 fail_on_revert = false
                 call_override = false
+                shrink_run_limit = 5000
             "#,
             )?;
 
