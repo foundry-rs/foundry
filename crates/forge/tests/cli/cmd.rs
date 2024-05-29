@@ -1702,7 +1702,6 @@ forgetest_init!(can_build_names_repeatedly, |prj, cmd| {
 
 // <https://github.com/foundry-rs/foundry/issues/6816>
 forgetest_init!(can_inspect_counter_pretty, |prj, cmd| {
-    cmd.env("RUST_LOG", "trace");
     cmd.args(["inspect", "src/Counter.sol:Counter", "abi", "--pretty"]);
     let output = cmd.stdout_lossy();
     assert_eq!(
