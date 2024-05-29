@@ -284,6 +284,7 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
 }
 
 fn add_storage_layout_output<C: Compiler>(project: &mut Project<C>) {
+    project.artifacts.additional_values.storage_layout = true;
     project.settings.update_output_selection(|selection| {
         selection.0.values_mut().for_each(|contract_selection| {
             contract_selection
