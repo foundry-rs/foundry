@@ -3295,6 +3295,7 @@ dependencies = [
  "k256",
  "p256",
  "parking_lot",
+ "rand",
  "revm",
  "rustc-hash",
  "semver 1.0.23",
