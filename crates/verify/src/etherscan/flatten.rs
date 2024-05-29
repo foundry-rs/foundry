@@ -4,8 +4,11 @@ use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
 use foundry_compilers::{
     artifacts::{BytecodeHash, Source},
-    compilers::{solc::SolcVersionManager, Compiler, CompilerVersionManager},
-    AggregatedCompilerOutput, SolcInput,
+    compilers::{
+        solc::{SolcCompiler, SolcLanguage, SolcVersionedInput},
+        Compiler, CompilerInput,
+    },
+    AggregatedCompilerOutput, Solc,
 };
 use semver::{BuildMetadata, Version};
 use std::{collections::BTreeMap, path::Path};
@@ -67,17 +70,17 @@ impl EtherscanFlattenedSource {
         version: &Version,
         contract_path: &Path,
     ) -> Result<()> {
-        let vm = SolcVersionManager::default();
         let version = strip_build_meta(version.clone());
-        let solc = vm.get_or_install(&version)?;
+        let solc = Solc::find_or_install(&version)?;
 
-        let input = SolcInput {
-            language: "Solidity".to_string(),
-            sources: BTreeMap::from([("contract.sol".into(), Source::new(content))]),
-            settings: Default::default(),
-        };
+        let input = SolcVersionedInput::build(
+            BTreeMap::from([("contract.sol".into(), Source::new(content))]),
+            Default::default(),
+            SolcLanguage::Solidity,
+            version.clone(),
+        );
 
-        let out = Compiler::compile(&solc, &input)?;
+        let out = SolcCompiler::Specific(solc).compile(&input)?;
         if out.errors.iter().any(|e| e.is_error()) {
             let mut o = AggregatedCompilerOutput::default();
             o.extend(version, out);

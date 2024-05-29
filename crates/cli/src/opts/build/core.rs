@@ -3,7 +3,11 @@ use crate::{opts::CompilerArgs, utils::LoadConfig};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::{
-    artifacts::RevertStrings, remappings::Remapping, utils::canonicalized, Project,
+    artifacts::RevertStrings,
+    compilers::{multi::MultiCompiler, solc::SolcCompiler},
+    remappings::Remapping,
+    utils::canonicalized,
+    Project,
 };
 use foundry_config::{
     figment,
@@ -132,9 +136,19 @@ impl CoreBuildArgs {
     /// This loads the `foundry_config::Config` for the current workspace (see
     /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]
-    pub fn project(&self) -> Result<Project> {
+    pub fn project(&self) -> Result<Project<MultiCompiler>> {
         let config = self.try_load_config_emit_warnings()?;
         Ok(config.project()?)
+    }
+
+    /// Returns the `Project` for the current workspace
+    ///
+    /// This loads the `foundry_config::Config` for the current workspace (see
+    /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
+    /// [`foundry_config::Config::project()`]
+    pub fn solc_project(&self) -> Result<Project<SolcCompiler>> {
+        let config = self.try_load_config_emit_warnings()?;
+        Ok(config.solc_project()?)
     }
 
     /// Returns the remappings to add to the config

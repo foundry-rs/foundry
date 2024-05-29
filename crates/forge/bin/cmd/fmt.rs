@@ -3,7 +3,7 @@ use eyre::Result;
 use forge_fmt::{format_to, parse, print_diagnostics_report};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
 use foundry_common::{fs, glob::expand_globs, term::cli_warn};
-use foundry_compilers::{Solc, SOLC_EXTENSIONS};
+use foundry_compilers::{compilers::solc::SolcLanguage, SOLC_EXTENSIONS};
 use foundry_config::impl_figment_convert_basic;
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
@@ -60,7 +60,7 @@ impl FmtArgs {
             [] => {
                 // Retrieve the project paths, and filter out the ignored ones.
                 let project_paths: Vec<PathBuf> = config
-                    .project_paths::<Solc>()
+                    .project_paths::<SolcLanguage>()
                     .input_files_iter()
                     .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
                     .collect();

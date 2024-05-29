@@ -8,8 +8,9 @@ use eyre::{OptionExt, Result};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     artifacts::{output_selection::OutputSelection, Metadata, Source},
-    compilers::{solc::SolcVersionManager, CompilerVersionManager},
-    CompilerConfig, Graph, Project,
+    compilers::solc::SolcCompiler,
+    resolver::parse::SolData,
+    Graph, Project, Solc,
 };
 use foundry_config::Config;
 use semver::Version;
@@ -19,7 +20,7 @@ use std::{fmt, path::PathBuf, str::FromStr};
 #[derive(Debug, Clone)]
 pub struct VerificationContext {
     pub config: Config,
-    pub project: Project,
+    pub project: Project<SolcCompiler>,
     pub target_path: PathBuf,
     pub target_name: String,
     pub compiler_version: Version,
@@ -32,13 +33,11 @@ impl VerificationContext {
         compiler_version: Version,
         config: Config,
     ) -> Result<Self> {
-        let mut project = config.project()?;
+        let mut project = config.solc_project()?;
         project.no_artifacts = true;
 
-        // Set project's compiler to always use resolved version.
-        let vm = SolcVersionManager::default();
-        let solc = vm.get_or_install(&compiler_version)?;
-        project.compiler_config = CompilerConfig::Specific(solc);
+        let solc = Solc::find_or_install(&compiler_version)?;
+        project.compiler = SolcCompiler::Specific(solc);
 
         Ok(Self { config, project, target_name, target_path, compiler_version })
     }
@@ -83,7 +82,7 @@ impl VerificationContext {
     pub fn get_target_imports(&self) -> Result<Vec<PathBuf>> {
         let mut sources = self.project.paths.read_input_files()?;
         sources.insert(self.target_path.clone(), Source::read(&self.target_path)?);
-        let graph = Graph::resolve_sources(&self.project.paths, sources)?;
+        let graph = Graph::<SolData>::resolve_sources(&self.project.paths, sources)?;
 
         Ok(graph.imports(&self.target_path).into_iter().cloned().collect())
     }

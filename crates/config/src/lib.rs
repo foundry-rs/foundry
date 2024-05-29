@@ -22,14 +22,14 @@ use foundry_compilers::{
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
-        solc::SolcVersionManager,
+        multi::{MultiCompiler, MultiCompilerSettings},
+        solc::SolcCompiler,
         vyper::{Vyper, VyperSettings},
-        Compiler, CompilerVersionManager,
+        Compiler,
     },
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
-    CompilerConfig, ConfigurableArtifacts, EvmVersion, Project, ProjectBuilder, ProjectPathsConfig,
-    Solc, SolcConfig,
+    ConfigurableArtifacts, EvmVersion, Project, ProjectBuilder, ProjectPathsConfig, Solc,
 };
 use inflector::Inflector;
 use regex::Regex;
@@ -42,7 +42,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
 };
 
 // Macros useful for creating a figment.
@@ -193,6 +192,7 @@ pub struct Config {
     /// **Note** for backwards compatibility reasons this also accepts solc_version from the toml
     /// file, see [`BackwardsCompatProvider`]
     pub solc: Option<SolcReq>,
+    pub vyper: Option<PathBuf>,
     /// whether to autodetect the solc compiler version to use
     pub auto_detect_solc: bool,
     /// Offline mode, if set, network access (downloading solc) is disallowed.
@@ -765,52 +765,52 @@ impl Config {
     /// let config = Config::load_with_root(".").sanitized();
     /// let project = config.project();
     /// ```
-    pub fn project(&self) -> Result<Project, SolcError> {
+    pub fn project(&self) -> Result<Project<MultiCompiler>, SolcError> {
         self.create_project(self.cache, false)
     }
 
-    /// Configures [Project] with [Vyper] compiler.
-    pub fn vyper_project(&self) -> Result<Project<Vyper>, SolcError> {
-        self.create_vyper_project(self.cache, false)
+    pub fn solc_project(&self) -> Result<Project<SolcCompiler>, SolcError> {
+        self.create_solc_project(self.cache, false)
     }
 
     /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
     /// cache.
-    pub fn ephemeral_no_artifacts_project(&self) -> Result<Project, SolcError> {
+    pub fn ephemeral_no_artifacts_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
         self.create_project(false, true)
     }
 
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let compiler_config = self.solc_config()?;
-        let settings = SolcConfig::builder().settings(self.solc_settings()?).build().settings;
-
-        self.create_project_with_compiler(cached, no_artifacts, compiler_config, settings)
+        Ok(self.create_project_with_compiler(
+            cached,
+            no_artifacts,
+            self.compiler()?,
+            self.compiler_settings()?,
+        )?)
     }
 
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
-    pub fn create_vyper_project(
+    pub fn create_solc_project(
         &self,
         cached: bool,
         no_artifacts: bool,
-    ) -> Result<Project<Vyper>, SolcError> {
-        self.create_project_with_compiler(
+    ) -> Result<Project<SolcCompiler>, SolcError> {
+        Ok(self.create_project_with_compiler(
             cached,
             no_artifacts,
-            self.vyper_config()?,
-            self.vyper_settings()?,
-        )
+            self.solc_compiler()?,
+            self.solc_settings()?,
+        )?)
     }
 
-    /// Creates a [Project] with a given [CompilerConfig].
     pub fn create_project_with_compiler<C: Compiler>(
         &self,
         cached: bool,
         no_artifacts: bool,
-        compiler_config: CompilerConfig<C>,
+        compiler: C,
         settings: C::Settings,
     ) -> Result<Project<C>, SolcError> {
-        let project = ProjectBuilder::<ConfigurableArtifacts, C>::new(Default::default())
+        let project = ProjectBuilder::<C>::default()
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
             .settings(settings)
@@ -825,7 +825,7 @@ impl Config {
             .set_cached(cached && !self.build_info)
             .set_build_info(!no_artifacts && self.build_info)
             .set_no_artifacts(no_artifacts)
-            .build(compiler_config)?;
+            .build(compiler)?;
 
         if self.force {
             self.cleanup(&project)?;
@@ -861,10 +861,9 @@ impl Config {
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
         if let Some(ref solc) = self.solc {
-            let version_manager = SolcVersionManager::default();
             let solc = match solc {
                 SolcReq::Version(version) => {
-                    if let Ok(solc) = version_manager.get_installed(version) {
+                    if let Some(solc) = Solc::find_svm_installed_version(version.to_string())? {
                         solc
                     } else {
                         if self.offline {
@@ -872,7 +871,7 @@ impl Config {
                                 "can't install missing solc {version} in offline mode"
                             )))
                         }
-                        version_manager.install(version)?
+                        Solc::blocking_install(version)?
                     }
                 }
                 SolcReq::Local(solc) => {
@@ -953,21 +952,31 @@ impl Config {
     }
 
     /// Returns configuration for a compiler to use when setting up a [Project].
-    pub fn solc_config(&self) -> Result<CompilerConfig<Solc>, SolcError> {
+    pub fn solc_compiler(&self) -> Result<SolcCompiler, SolcError> {
         if let Some(solc) = self.ensure_solc()? {
-            Ok(CompilerConfig::Specific(solc))
+            Ok(SolcCompiler::Specific(solc))
         } else {
-            Ok(CompilerConfig::AutoDetect(Arc::new(SolcVersionManager::default())))
+            Ok(SolcCompiler::AutoDetect)
         }
     }
 
-    /// Returns configuration for a compiler to use when setting up a [Project].
-    pub fn vyper_config(&self) -> Result<CompilerConfig<Vyper>, SolcError> {
-        if let Some(SolcReq::Local(path)) = &self.solc {
-            Ok(CompilerConfig::Specific(Vyper::new(path)?))
+    pub fn vyper_compiler(&self) -> Result<Option<Vyper>, SolcError> {
+        let vyper = if let Some(path) = &self.vyper {
+            Some(Vyper::new(path)?)
         } else {
-            Ok(CompilerConfig::Specific(Vyper::new("vyper")?))
-        }
+            Vyper::new("vyper").ok()
+        };
+
+        Ok(vyper)
+    }
+
+    /// Returns configuration for a compiler to use when setting up a [Project].
+    pub fn compiler(&self) -> Result<MultiCompiler, SolcError> {
+        Ok(MultiCompiler { solc: self.solc_compiler()?, vyper: self.vyper_compiler()? })
+    }
+
+    pub fn compiler_settings(&self) -> Result<MultiCompilerSettings, SolcError> {
+        Ok(MultiCompilerSettings { solc: self.solc_settings()?, vyper: self.vyper_settings()? })
     }
 
     /// Returns all configured [`Remappings`]
@@ -2017,6 +2026,7 @@ impl Default for Config {
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             solc: None,
+            vyper: None,
             auto_detect_solc: true,
             offline: false,
             optimizer: true,

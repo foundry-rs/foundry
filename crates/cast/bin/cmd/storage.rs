@@ -19,16 +19,15 @@ use foundry_common::{
     ens::NameOrAddress,
 };
 use foundry_compilers::{
-    artifacts::StorageLayout,
-    compilers::{solc::SolcVersionManager, CompilerVersionManager},
-    Artifact, CompilerConfig, ConfigurableContractArtifact, Project,
+    artifacts::StorageLayout, compilers::solc::SolcCompiler, Artifact,
+    ConfigurableContractArtifact, Project, Solc,
 };
 use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
     impl_figment_convert_cast, Config,
 };
 use semver::Version;
-use std::{str::FromStr, sync::Arc};
+use std::str::FromStr;
 
 /// The minimum Solc version for outputting storage layouts.
 ///
@@ -102,7 +101,7 @@ impl StorageArgs {
         }
 
         // Check if we're in a forge project and if we can find the address' code
-        let mut project = build.project()?;
+        let mut project = build.solc_project()?;
         if project.paths.has_input_files() {
             // Find in artifacts and pretty print
             add_storage_layout_output(&mut project);
@@ -142,11 +141,10 @@ impl StorageArgs {
         let mut project = etherscan_project(metadata, root_path)?;
         add_storage_layout_output(&mut project);
 
-        let vm = SolcVersionManager::default();
-        project.compiler_config = if auto_detect {
-            CompilerConfig::AutoDetect(Arc::new(vm))
+        project.compiler = if auto_detect {
+            SolcCompiler::AutoDetect
         } else {
-            CompilerConfig::Specific(vm.get_or_install(&version)?)
+            SolcCompiler::Specific(Solc::find_or_install(&version)?)
         };
 
         // Compile
@@ -160,8 +158,8 @@ impl StorageArgs {
             if is_storage_layout_empty(&artifact.storage_layout) && auto_detect {
                 // try recompiling with the minimum version
                 eprintln!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.");
-                let solc = SolcVersionManager::default().get_or_install(&MIN_SOLC)?;
-                project.compiler_config = CompilerConfig::Specific(solc);
+                let solc = Solc::find_or_install(&MIN_SOLC)?;
+                project.compiler = SolcCompiler::Specific(solc);
                 if let Ok(output) = ProjectCompiler::new().quiet(true).compile(&project) {
                     out = output;
                     let (_, new_artifact) = out
@@ -284,7 +282,7 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
     Ok(())
 }
 
-fn add_storage_layout_output(project: &mut Project) {
+fn add_storage_layout_output(project: &mut Project<SolcCompiler>) {
     project.artifacts.additional_values.storage_layout = true;
     let output_selection = project.artifacts.output_selection();
     project.settings.push_all(output_selection);

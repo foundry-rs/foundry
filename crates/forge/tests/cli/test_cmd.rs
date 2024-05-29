@@ -1,6 +1,7 @@
 //! Contains various tests for `forge test`.
 
 use alloy_primitives::U256;
+use foundry_common::fs::read_to_string;
 use foundry_config::{Config, FuzzConfig};
 use foundry_test_utils::{
     rpc,
@@ -266,6 +267,7 @@ contract ContractTest is DSTest {
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.wipe_contracts();
+
     prj.add_source(
         "Contract.sol",
         r"

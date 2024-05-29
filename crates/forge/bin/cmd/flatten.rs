@@ -39,7 +39,7 @@ impl FlattenArgs {
         let mut config = build_args.try_load_config_emit_warnings()?;
         // `Flattener` uses the typed AST for better flattening results.
         config.ast = true;
-        let project = config.ephemeral_no_artifacts_project()?;
+        let project = config.create_solc_project(false, true)?;
 
         let target_path = dunce::canonicalize(target_path)?;
         let compiler_output = compile_target(&target_path, &project, false);

@@ -3,9 +3,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters};
-use foundry_compilers::{
-    compilers::Compiler, Project, ProjectCompileOutput, SparseOutputFileFilter,
-};
+use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::{
     figment::{
         self,
@@ -13,7 +11,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile, Provider,
     },
-    with_resolved_project, Config,
+    Config,
 };
 use serde::Serialize;
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -77,7 +75,7 @@ pub struct BuildArgs {
 }
 
 impl BuildArgs {
-    pub fn run(self) -> Result<()> {
+    pub fn run(self) -> Result<ProjectCompileOutput> {
         let mut config = self.try_load_config_emit_warnings()?;
 
         if install::install_missing_dependencies(&mut config, self.args.silent) &&
@@ -87,43 +85,20 @@ impl BuildArgs {
             config = self.load_config();
         }
 
-        with_resolved_project!(config, |project| {
-            let project = project?;
+        let project = config.project()?;
 
-            let filter = if let Some(ref skip) = self.skip {
-                if !skip.is_empty() {
-                    let filter = SkipBuildFilters::new(skip.clone(), project.root().clone())?;
-                    Some(filter)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            self.run_with_project(project, filter)?;
-        });
-
-        Ok(())
-    }
-
-    pub fn run_with_project<C: Compiler>(
-        &self,
-        project: Project<C>,
-        filter: Option<impl SparseOutputFileFilter<C::ParsedSource> + 'static>,
-    ) -> Result<ProjectCompileOutput<C::CompilationError>>
-    where
-        C::CompilationError: Clone,
-    {
         let mut compiler = ProjectCompiler::new()
             .print_names(self.names)
             .print_sizes(self.sizes)
             .quiet(self.format_json)
             .bail(!self.format_json);
 
-        if let Some(filter) = filter {
-            compiler = compiler.filter(Box::new(filter));
-        }
+        if let Some(ref skip) = self.skip {
+            if !skip.is_empty() {
+                let filter = SkipBuildFilters::new(skip.clone(), project.root().clone())?;
+                compiler = compiler.filter(Box::new(filter));
+            }
+        };
 
         let output = compiler.compile(&project)?;
 
