@@ -781,12 +781,12 @@ impl Config {
 
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        Ok(self.create_project_with_compiler(
+        self.create_project_with_compiler(
             cached,
             no_artifacts,
             self.compiler()?,
             self.compiler_settings()?,
-        )?)
+        )
     }
 
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
@@ -795,12 +795,12 @@ impl Config {
         cached: bool,
         no_artifacts: bool,
     ) -> Result<Project<SolcCompiler>, SolcError> {
-        Ok(self.create_project_with_compiler(
+        self.create_project_with_compiler(
             cached,
             no_artifacts,
             self.solc_compiler()?,
             self.solc_settings()?,
-        )?)
+        )
     }
 
     pub fn create_project_with_compiler<C: Compiler>(

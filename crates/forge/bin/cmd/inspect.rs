@@ -70,8 +70,6 @@ impl InspectArgs {
         }
         let output = compiler.compile(&project)?;
 
-        println!("{:?} {:?}", project, output);
-
         // Find the artifact
         let artifact = output.find_contract(&contract).ok_or_else(|| {
             eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
