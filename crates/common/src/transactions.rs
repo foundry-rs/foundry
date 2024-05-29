@@ -1,6 +1,9 @@
 //! wrappers for transactions
+use std::ops::{Deref, DerefMut};
+
+use alloy_consensus::TxEnvelope;
 use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_rpc_types::{AnyTransactionReceipt, BlockId, WithOtherFields};
+use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest, WithOtherFields};
 use alloy_transport::Transport;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
@@ -92,5 +95,59 @@ mod tests {
 
         assert_eq!(extract_revert_reason(error_string_1), Some("Transaction too old".to_string()));
         assert_eq!(extract_revert_reason(error_string_2), None);
+    }
+}
+
+/// Used for broadcasting transactions
+/// A transaction can either be a TransactionRequest waiting to be signed
+/// or a TxEnvelope, already signed
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TransactionMaybeSigned {
+    /// if tx is already signed, this is equal to `signed_tx` stripped of its signature
+    pub tx: TransactionRequest,
+    /// the signed transaction
+    pub signed_tx: Option<TxEnvelope>,
+}
+
+impl TransactionMaybeSigned {
+    /// Creates a new (unsigned) transaction for broadcast
+    pub fn new(tx: TransactionRequest) -> Self {
+        Self { tx, signed_tx: None }
+    }
+
+    /// Creates a new signed transaction for broadcast
+    pub fn new_signed(tx: TxEnvelope) -> Self {
+        Self { tx: tx.clone().into(), signed_tx: Some(tx) }
+    }
+}
+
+impl From<TransactionRequest> for TransactionMaybeSigned {
+    fn from(tx: TransactionRequest) -> Self {
+        Self::new(tx)
+    }
+}
+
+impl From<TxEnvelope> for TransactionMaybeSigned {
+    fn from(envelope: TxEnvelope) -> Self {
+        Self { tx: envelope.clone().into(), signed_tx: Some(envelope) }
+    }
+}
+
+impl Into<TransactionRequest> for TransactionMaybeSigned {
+    fn into(self) -> TransactionRequest {
+        self.tx
+    }
+}
+
+impl Deref for TransactionMaybeSigned {
+    type Target = TransactionRequest;
+    fn deref(&self) -> &Self::Target {
+        &self.tx
+    }
+}
+
+impl DerefMut for TransactionMaybeSigned {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.tx
     }
 }
