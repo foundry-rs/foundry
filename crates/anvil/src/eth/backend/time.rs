@@ -15,14 +15,25 @@ pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
 pub struct TimeManager {
     /// tracks the overall applied timestamp offset
     offset: Arc<RwLock<i128>>,
-    /// The timestamp of the last block header
+    /// The timestamp of the last block header.
+    ///
+    /// Interpreted as seconds
     last_timestamp: Arc<RwLock<u64>>,
     /// Contains the next timestamp to use
     /// if this is set then the next time `[TimeManager::current_timestamp()]` is called this value
     /// will be taken and returned. After which the `offset` will be updated accordingly
+    ///
+    /// Interpreted as seconds
     next_exact_timestamp: Arc<RwLock<Option<u64>>>,
     /// The interval to use when determining the next block's timestamp
+    ///
+    /// Interpreted as milliseconds
     interval: Arc<RwLock<Option<u64>>>,
+    /// The wall clock timestamp with precision upto milliseconds
+    ///
+    /// This keeps track of the current timestamp in milliseconds, which is helpful for interval
+    /// mining with < 1000ms block times.
+    wall_clock_timestamp: Arc<RwLock<Option<u64>>>,
 }
 
 // === impl TimeManager ===
@@ -34,6 +45,7 @@ impl TimeManager {
             offset: Default::default(),
             next_exact_timestamp: Default::default(),
             interval: Default::default(),
+            wall_clock_timestamp: Default::default(),
         };
         time_manager.reset(start_timestamp);
         time_manager
@@ -46,6 +58,7 @@ impl TimeManager {
         *self.last_timestamp.write() = start_timestamp;
         *self.offset.write() = (start_timestamp as i128) - current;
         self.next_exact_timestamp.write().take();
+        *self.wall_clock_timestamp.write() = Some(start_timestamp.saturating_mul(1000)); // Since, wall_clock_timestamp is in milliseconds
     }
 
     pub fn offset(&self) -> i128 {
@@ -68,7 +81,7 @@ impl TimeManager {
         self.add_offset(seconds as i128)
     }
 
-    /// Sets the exact timestamp to use in the next block
+    /// Sets the exact timestamp (`next_exact_timestamp`) to use in the next block
     /// Fails if it's before (or at the same time) the last timestamp
     pub fn set_next_block_timestamp(&self, timestamp: u64) -> Result<(), BlockchainError> {
         trace!(target: "time", "override next timestamp {}", timestamp);
@@ -81,7 +94,7 @@ impl TimeManager {
         Ok(())
     }
 
-    /// Sets an interval to use when computing the next timestamp
+    /// Sets an interval (in milliseconds) to use when computing the next timestamp
     ///
     /// If an interval already exists, this will update the interval, otherwise a new interval will
     /// be set starting with the current timestamp.
@@ -100,21 +113,51 @@ impl TimeManager {
         }
     }
 
+    /// Updates `wall_clock_timestamp` by `interval_ms`
+    pub fn update_wall_clock_timestamp_by_interval(&self, interval_ms: u64) {
+        let current_wall_timestamp = self.wall_clock_timestamp.read().unwrap();
+        self.update_wall_clock_timestamp(current_wall_timestamp.saturating_add(interval_ms));
+    }
+
+    /// Updates `wall_clock_timestamp` to the given timestamp (milliseconds precision)
+    pub fn update_wall_clock_timestamp(&self, timestamp: u64) {
+        *self.wall_clock_timestamp.write() = Some(timestamp);
+    }
+
     /// Computes the next timestamp without updating internals
-    fn compute_next_timestamp(&self) -> (u64, Option<i128>) {
-        let current = duration_since_unix_epoch().as_secs() as i128;
+    fn compute_next_timestamp(&self, update_wall: bool) -> (u64, Option<i128>) {
+        let current = duration_since_unix_epoch().as_secs() as i128; // TODO(yash): Getting current time here as seconds.
         let last_timestamp = *self.last_timestamp.read();
 
+        // TODO(yash): NOTE - interval in the TimeManager is always None even if --block-time has
+        // been used.
+        let interval = *self.interval.read();
         let (mut next_timestamp, update_offset) =
             if let Some(next) = *self.next_exact_timestamp.read() {
+                if update_wall {
+                    self.update_wall_clock_timestamp(next);
+                }
                 (next, true)
-            } else if let Some(interval) = *self.interval.read() {
-                (last_timestamp.saturating_add(interval), false)
+            } else if let Some(interval) = interval {
+                let wall_clock_timestamp = if update_wall {
+                    self.update_wall_clock_timestamp_by_interval(interval);
+                    self.wall_clock_timestamp.read().unwrap()
+                } else {
+                    let current_wall = self.wall_clock_timestamp.read().unwrap();
+                    current_wall.saturating_add(interval)
+                };
+                let next_timestamp = (wall_clock_timestamp as f64 / 1000.0).floor() as u64;
+
+                (next_timestamp, false)
             } else {
-                (current.saturating_add(self.offset()) as u64, false)
+                let next = current.saturating_add(self.offset()) as u64;
+                if update_wall {
+                    self.update_wall_clock_timestamp(next);
+                }
+                (next, false)
             };
         // Ensures that the timestamp is always increasing
-        if next_timestamp <= last_timestamp {
+        if next_timestamp < last_timestamp {
             next_timestamp = last_timestamp + 1;
         }
         let next_offset = update_offset.then_some((next_timestamp as i128) - current);
@@ -122,8 +165,8 @@ impl TimeManager {
     }
 
     /// Returns the current timestamp and updates the underlying offset and interval accordingly
-    pub fn next_timestamp(&self) -> u64 {
-        let (next_timestamp, next_offset) = self.compute_next_timestamp();
+    pub fn next_timestamp_as_secs(&self) -> u64 {
+        let (next_timestamp, next_offset) = self.compute_next_timestamp(true);
         // Make sure we reset the `next_exact_timestamp`
         self.next_exact_timestamp.write().take();
         if let Some(next_offset) = next_offset {
@@ -135,7 +178,7 @@ impl TimeManager {
 
     /// Returns the current timestamp for a call that does _not_ update the value
     pub fn current_call_timestamp(&self) -> u64 {
-        let (next_timestamp, _) = self.compute_next_timestamp();
+        let (next_timestamp, _) = self.compute_next_timestamp(false);
         next_timestamp
     }
 }

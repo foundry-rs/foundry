@@ -244,8 +244,10 @@ impl Backend {
             precompile_factory,
         };
 
-        if let Some(interval_block_time) = automine_block_time {
-            backend.update_interval_mine_block_time(interval_block_time);
+        if let Some(interval) = automine_block_time {
+            // Set interval in TimeManager as milliseconds.
+            backend.time.set_block_timestamp_interval((interval).as_millis().try_into().unwrap());
+            backend.update_interval_mine_block_time(interval);
         }
 
         // Note: this can only fail in forking mode, in which case we can't recover
@@ -944,7 +946,7 @@ impl Backend {
             env.block.number = env.block.number.saturating_add(U256::from(1));
             env.block.basefee = U256::from(current_base_fee);
             env.block.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
-            env.block.timestamp = U256::from(self.time.next_timestamp());
+            env.block.timestamp = U256::from(self.time.next_timestamp_as_secs());
 
             let best_hash = self.blockchain.storage.read().best_hash;
 
