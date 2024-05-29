@@ -225,3 +225,4 @@ tower-http = "0.5"
 
 [patch.crates-io]
 foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "a00c659" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers", rev = "423cd7b" }
