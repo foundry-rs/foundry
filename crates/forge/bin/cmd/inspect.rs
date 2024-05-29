@@ -70,7 +70,7 @@ impl InspectArgs {
         }
         let output = compiler.compile(&project)?;
 
-        println!("{:?}", output);
+        println!("{:?} {:?}", project, output);
 
         // Find the artifact
         let artifact = output.find_contract(&contract).ok_or_else(|| {
