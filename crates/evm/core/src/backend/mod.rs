@@ -4,12 +4,14 @@ use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     fork::{CreateFork, ForkId, MultiFork},
     snapshot::Snapshots,
-    utils::configure_tx_env,
+    utils::{configure_tx_env, new_evm_with_inspector},
     InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{keccak256, uint, Address, B256, U256};
-use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
+use alloy_primitives::{b256, keccak256, Address, TxKind, B256, U256};
+use alloy_rpc_types::{
+    Block, BlockNumberOrTag, BlockTransactions, Transaction, TransactionRequest, WithOtherFields,
+};
 use alloy_serde::WithOtherFields;
 use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
@@ -201,6 +203,17 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt<Backend>,
     ) -> eyre::Result<()>;
+
+    /// Executes a given TransactionRequest, commits the new state to the DB
+    fn transact_from_tx<I: InspectorExt<Backend>>(
+        &mut self,
+        transaction: TransactionRequest,
+        env: &Env,
+        journaled_state: &mut JournaledState,
+        inspector: &mut I,
+    ) -> eyre::Result<()>
+    where
+        Self: Sized;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork_id(&self) -> Option<LocalForkId>;
@@ -1218,6 +1231,63 @@ impl DatabaseExt for Backend {
             &persistent_accounts,
             inspector,
         )
+    }
+
+    fn transact_from_tx<I: InspectorExt<Backend>>(
+        &mut self,
+        tx: TransactionRequest,
+        env: &Env,
+        journaled_state: &mut JournaledState,
+        inspector: &mut I,
+    ) -> eyre::Result<()> {
+        trace!(?tx, "execute signed transaction");
+
+        let mut env = env.clone();
+
+        env.tx.caller =
+            tx.from.ok_or_else(|| eyre::eyre!("transact_from_tx: No `from` field found"))?;
+        env.tx.gas_limit =
+            tx.gas.ok_or_else(|| eyre::eyre!("transact_from_tx: No `gas` field found"))? as u64;
+        env.tx.gas_price = U256::from(tx.gas_price.unwrap_or_default());
+        env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(U256::from);
+        env.tx.nonce = tx.nonce;
+        env.tx.access_list = tx
+            .access_list
+            .clone()
+            .unwrap_or_default()
+            .0
+            .into_iter()
+            .map(|item| {
+                (
+                    item.address,
+                    item.storage_keys
+                        .into_iter()
+                        .map(|key| alloy_primitives::U256::from_be_bytes(key.0))
+                        .collect(),
+                )
+            })
+            .collect();
+        env.tx.value =
+            tx.value.ok_or_else(|| eyre::eyre!("transact_from_tx: No `value` field found"))?;
+        env.tx.data = tx.input.into_input().unwrap_or_default();
+        env.tx.transact_to = match tx.to {
+            Some(TxKind::Call(a)) => TransactTo::Call(a),
+            Some(TxKind::Create) => TransactTo::create(),
+            None => TransactTo::create(),
+        };
+
+        self.commit(journaled_state.state.clone());
+
+        let res = {
+            let db = self.clone();
+            let env = self.env_with_handler_cfg(env.clone());
+            new_evm_with_inspector(db, env, inspector).transact()?
+        };
+
+        self.commit(res.state);
+        update_state(&mut journaled_state.state, self, None)?;
+
+        Ok(())
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {

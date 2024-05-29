@@ -4,12 +4,12 @@ use crate::{
     verify::VerifyBundle,
 };
 use alloy_primitives::{hex, Address, TxHash};
-use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
+use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest, WithOtherFields};
 use alloy_serde::WithOtherFields;
 use eyre::{ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::{now, Git};
-use foundry_common::{fs, shell, SELECTOR_LEN};
+use foundry_common::{fs, shell, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -353,7 +353,7 @@ impl ScriptSequence {
     }
 
     /// Returns the list of the transactions without the metadata.
-    pub fn transactions(&self) -> impl Iterator<Item = &WithOtherFields<TransactionRequest>> {
+    pub fn transactions(&self) -> impl Iterator<Item = &WithOtherFields<TransactionMaybeSigned>> {
         self.transactions.iter().map(|tx| tx.tx())
     }
 

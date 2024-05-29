@@ -3,11 +3,12 @@ use crate::{
     verify::BroadcastedState, ScriptArgs, ScriptConfig,
 };
 use alloy_chains::Chain;
+use alloy_consensus::TxEnvelope;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{IntoTransactionRequest, TransactionRequest, WithOtherFields};
 use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
@@ -16,7 +17,7 @@ use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     provider::{get_http_provider, try_get_http_provider, RetryProvider},
-    shell,
+    shell, TransactionMaybeSigned,
 };
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
@@ -27,7 +28,7 @@ use std::{
 };
 
 pub async fn estimate_gas<P, T>(
-    tx: &mut WithOtherFields<TransactionRequest>,
+    tx: &mut WithOtherFields<TransactionMaybeSigned>,
     provider: &P,
     estimate_multiplier: u64,
 ) -> Result<()>
@@ -39,8 +40,9 @@ where
     // set in the request and omit the estimate altogether, so we remove it here
     tx.gas = None;
 
+    let t = tx.clone().into_transaction_request();
     tx.set_gas_limit(
-        provider.estimate_gas(tx).await.wrap_err("Failed to estimate gas for tx")? *
+        provider.estimate_gas(&t).await.wrap_err("Failed to estimate gas for tx")? *
             estimate_multiplier as u128 /
             100,
     );
@@ -55,7 +57,7 @@ pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64
 
 pub async fn send_transaction(
     provider: Arc<RetryProvider>,
-    mut tx: WithOtherFields<TransactionRequest>,
+    mut tx: WithOtherFields<TransactionMaybeSigned>,
     kind: SendTransactionKind<'_>,
     sequential_broadcast: bool,
     is_fixed_gas_limit: bool,
@@ -84,15 +86,19 @@ pub async fn send_transaction(
             debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
 
             // Submit the transaction
-            provider.send_transaction(tx).await?
+            provider.send_transaction(tx.into_transaction_request()).await?
         }
         SendTransactionKind::Raw(signer) => {
             debug!("sending transaction: {:?}", tx);
 
-            let signed = tx.build(signer).await?;
+            let signed = tx.into_transaction_request().build(signer).await?;
 
             // Submit the raw transaction
             provider.send_raw_transaction(signed.encoded_2718().as_ref()).await?
+        }
+        SendTransactionKind::Signed(tx) => {
+            debug!("sending transaction: {:?}", tx);
+            provider.send_raw_transaction(tx.encoded_2718().as_ref()).await?
         }
     };
 
@@ -103,7 +109,8 @@ pub async fn send_transaction(
 #[derive(Clone)]
 pub enum SendTransactionKind<'a> {
     Unlocked(Address),
-    Raw(&'a EthereumWallet),
+    Raw(&'a EthereumSigner),
+    Signed(TxEnvelope),
 }
 
 /// Represents how to send _all_ transactions
@@ -111,7 +118,7 @@ pub enum SendTransactionsKind {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(HashSet<Address>),
     /// Send a signed transaction via `eth_sendRawTransaction`
-    Raw(HashMap<Address, EthereumWallet>),
+    Raw(HashMap<Address, EthereumSigner>, Vec<TxEnvelope>),
 }
 
 impl SendTransactionsKind {
@@ -126,10 +133,17 @@ impl SendTransactionsKind {
                 }
                 Ok(SendTransactionKind::Unlocked(*addr))
             }
-            Self::Raw(wallets) => {
+            Self::Raw(wallets, signed_txs) => {
                 if let Some(wallet) = wallets.get(addr) {
                     Ok(SendTransactionKind::Raw(wallet))
                 } else {
+                    for tx in signed_txs {
+                        let sender = tx.recover_signer()?;
+                        if sender == *addr {
+                            return Ok(SendTransactionKind::Signed(tx.clone()))
+                        }
+                    }
+
                     bail!("No matching signer for {:?} found", addr)
                 }
             }
@@ -137,10 +151,19 @@ impl SendTransactionsKind {
     }
 
     /// How many signers are set
-    pub fn signers_count(&self) -> usize {
+    pub fn signers_count(&self) -> Result<usize> {
         match self {
-            Self::Unlocked(addr) => addr.len(),
-            Self::Raw(signers) => signers.len(),
+            Self::Unlocked(addr) => Ok(addr.len()),
+            Self::Raw(signers, signed_txs) => {
+                let mut len = signers.len();
+                for tx in signed_txs {
+                    let from = tx.recover_signer()?;
+                    if signers.get(&from).is_none() {
+                        len += 1;
+                    }
+                }
+                Ok(len)
+            }
         }
     }
 }
@@ -185,16 +208,24 @@ impl BundledState {
 
     /// Broadcasts transactions from all sequences.
     pub async fn broadcast(mut self) -> Result<BroadcastedState> {
-        let required_addresses = self
-            .sequence
-            .sequences()
-            .iter()
-            .flat_map(|sequence| {
-                sequence
-                    .transactions()
-                    .map(|tx| (tx.from().expect("No sender for onchain transaction!")))
-            })
-            .collect::<HashSet<_>>();
+        let (required_addresses, signed_txs): (Vec<Option<Address>>, Vec<Option<TxEnvelope>>) =
+            self.sequence
+                .sequences()
+                .iter()
+                .flat_map(|sequence| {
+                    sequence.transactions().map(|tx| {
+                        if tx.signed_tx.is_some() {
+                            (None, tx.signed_tx.clone())
+                        } else {
+                            (Some(tx.from.expect("No sender for onchain transaction!")), None)
+                        }
+                    })
+                })
+                .unzip();
+
+        let required_addresses =
+            required_addresses.into_iter().filter_map(|a| a).collect::<HashSet<Address>>();
+        let signed_txs = signed_txs.into_iter().filter_map(|a| a).collect::<Vec<TxEnvelope>>();
 
         if required_addresses.contains(&Config::DEFAULT_SENDER) {
             eyre::bail!(
@@ -227,7 +258,7 @@ impl BundledState {
                 .map(|(addr, signer)| (addr, EthereumWallet::new(signer)))
                 .collect();
 
-            SendTransactionsKind::Raw(signers)
+            SendTransactionsKind::Raw(signers, signed_txs)
         };
 
         let progress = ScriptProgress::default();
@@ -280,7 +311,7 @@ impl BundledState {
                     .skip(already_broadcasted)
                     .map(|tx_with_metadata| {
                         let tx = tx_with_metadata.tx();
-                        let from = tx.from().expect("No sender for onchain transaction!");
+                        let from = tx.from.expect("No sender for onchain transaction!");
 
                         let kind = send_kind.for_sender(&from)?;
                         let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
@@ -289,7 +320,7 @@ impl BundledState {
                         tx.set_chain_id(sequence.chain);
 
                         // Set TxKind::Create explicityly to satify `check_reqd_fields` in alloy
-                        if tx.to().is_none() {
+                        if tx.to.is_none() {
                             tx.set_create();
                         }
 
@@ -315,7 +346,7 @@ impl BundledState {
                 // Or if we need to invoke eth_estimateGas before sending transactions.
                 let sequential_broadcast = estimate_via_rpc ||
                     self.args.slow ||
-                    send_kind.signers_count() != 1 ||
+                    send_kind.signers_count()? != 1 ||
                     !has_batch_support(sequence.chain);
 
                 // We send transactions and wait for receipts in batches.

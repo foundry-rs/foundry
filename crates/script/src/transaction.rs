@@ -4,7 +4,7 @@ use alloy_primitives::{hex, Address, Bytes, TxKind, B256};
 use alloy_rpc_types::request::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{fmt::format_token_raw, ContractData, SELECTOR_LEN};
+use foundry_common::{fmt::format_token_raw, ContractData, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
@@ -36,7 +36,7 @@ pub struct TransactionWithMetadata {
     pub arguments: Option<Vec<String>>,
     #[serde(skip)]
     pub rpc: String,
-    pub transaction: WithOtherFields<TransactionRequest>,
+    pub transaction: WithOtherFields<TransactionMaybeSigned>,
     pub additional_contracts: Vec<AdditionalContract>,
     pub is_fixed_gas_limit: bool,
 }
@@ -54,12 +54,12 @@ fn default_vec_of_strings() -> Option<Vec<String>> {
 }
 
 impl TransactionWithMetadata {
-    pub fn from_tx_request(transaction: TransactionRequest) -> Self {
+    pub fn from_tx_request(transaction: TransactionMaybeSigned) -> Self {
         Self { transaction: WithOtherFields::new(transaction), ..Default::default() }
     }
 
     pub fn new(
-        transaction: TransactionRequest,
+        transaction: TransactionMaybeSigned,
         rpc: String,
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, &ContractData>,
@@ -208,11 +208,11 @@ impl TransactionWithMetadata {
         Ok(())
     }
 
-    pub fn tx(&self) -> &WithOtherFields<TransactionRequest> {
+    pub fn tx(&self) -> &WithOtherFields<TransactionMaybeSigned> {
         &self.transaction
     }
 
-    pub fn tx_mut(&mut self) -> &mut WithOtherFields<TransactionRequest> {
+    pub fn tx_mut(&mut self) -> &mut WithOtherFields<TransactionMaybeSigned> {
         &mut self.transaction
     }
 

@@ -7133,6 +7133,26 @@
     },
     {
       "func": {
+        "id": "sendRawTransaction",
+        "description": "takes a signed transaction as `bytes` and executes it",
+        "declaration": "function sendRawTransaction(bytes calldata data) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "sendRawTransaction(bytes)",
+        "selector": "0xbc03d9f7",
+        "selectorBytes": [
+          188,
+          3,
+          217,
+          247
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "serializeAddress_0",
         "description": "See `serializeJson`.",
         "declaration": "function serializeAddress(string calldata objectKey, string calldata valueKey, address value) external returns (string memory json);",

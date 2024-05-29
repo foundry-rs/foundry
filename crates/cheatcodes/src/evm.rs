@@ -1,8 +1,10 @@
 //! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use crate::{BroadcastableTransaction, Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
@@ -564,6 +566,28 @@ impl Cheatcode for stopAndReturnStateDiffCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         get_state_diff(state)
+    }
+}
+
+impl Cheatcode for sendRawTransactionCall {
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let mut data = self.data.as_ref();
+        let tx = TxEnvelope::decode(&mut data).map_err(|err| fmt_err!("{err}"))?;
+
+        if ccx.state.broadcast.is_some() {
+            ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
+                rpc: ccx.db.active_fork_url(),
+                transaction: tx.clone().into(),
+            });
+        }
+
+        ccx.ecx.db.transact_from_tx(
+            tx.into(),
+            &ccx.ecx.env,
+            &mut ccx.ecx.journaled_state,
+            ccx.state,
+        )?;
+        Ok(Default::default())
     }
 }
 

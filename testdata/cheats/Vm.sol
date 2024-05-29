@@ -352,6 +352,7 @@ interface Vm {
     function rpc(string calldata method, string calldata params) external returns (bytes memory data);
     function rpc(string calldata urlOrAlias, string calldata method, string calldata params) external returns (bytes memory data);
     function selectFork(uint256 forkId) external;
+    function sendRawTransaction(bytes calldata data) external;
     function serializeAddress(string calldata objectKey, string calldata valueKey, address value) external returns (string memory json);
     function serializeAddress(string calldata objectKey, string calldata valueKey, address[] calldata values) external returns (string memory json);
     function serializeBool(string calldata objectKey, string calldata valueKey, bool value) external returns (string memory json);
