@@ -19,8 +19,9 @@ use foundry_common::{
     ens::NameOrAddress,
 };
 use foundry_compilers::{
-    artifacts::StorageLayout, compilers::solc::SolcCompiler, Artifact,
-    ConfigurableContractArtifact, Project, Solc,
+    artifacts::StorageLayout,
+    compilers::{solc::SolcCompiler, Compiler, CompilerSettings},
+    Artifact, ConfigurableContractArtifact, Project, Solc,
 };
 use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
@@ -101,7 +102,7 @@ impl StorageArgs {
         }
 
         // Check if we're in a forge project and if we can find the address' code
-        let mut project = build.solc_project()?;
+        let mut project = build.project()?;
         if project.paths.has_input_files() {
             // Find in artifacts and pretty print
             add_storage_layout_output(&mut project);
@@ -282,10 +283,14 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
     Ok(())
 }
 
-fn add_storage_layout_output(project: &mut Project<SolcCompiler>) {
-    project.artifacts.additional_values.storage_layout = true;
-    let output_selection = project.artifacts.output_selection();
-    project.settings.push_all(output_selection);
+fn add_storage_layout_output<C: Compiler>(project: &mut Project<C>) {
+    project.settings.update_output_selection(|selection| {
+        selection.0.values_mut().for_each(|contract_selection| {
+            contract_selection
+                .values_mut()
+                .for_each(|selection| selection.push("storageLayout".to_string()))
+        });
+    })
 }
 
 fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {

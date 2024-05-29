@@ -29,7 +29,7 @@ use foundry_compilers::{
     },
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
-    ConfigurableArtifacts, EvmVersion, Project, ProjectBuilder, ProjectPathsConfig, Solc,
+    ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc,
 };
 use inflector::Inflector;
 use regex::Regex;
@@ -192,6 +192,7 @@ pub struct Config {
     /// **Note** for backwards compatibility reasons this also accepts solc_version from the toml
     /// file, see [`BackwardsCompatProvider`]
     pub solc: Option<SolcReq>,
+    /// The Vyper instance to use if any.
     pub vyper: Option<PathBuf>,
     /// whether to autodetect the solc compiler version to use
     pub auto_detect_solc: bool,
@@ -769,10 +770,6 @@ impl Config {
         self.create_project(self.cache, false)
     }
 
-    pub fn solc_project(&self) -> Result<Project<SolcCompiler>, SolcError> {
-        self.create_solc_project(self.cache, false)
-    }
-
     /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
     /// cache.
     pub fn ephemeral_no_artifacts_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
@@ -781,39 +778,10 @@ impl Config {
 
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        self.create_project_with_compiler(
-            cached,
-            no_artifacts,
-            self.compiler()?,
-            self.compiler_settings()?,
-        )
-    }
-
-    /// Creates a [Project] with the given `cached` and `no_artifacts` flags
-    pub fn create_solc_project(
-        &self,
-        cached: bool,
-        no_artifacts: bool,
-    ) -> Result<Project<SolcCompiler>, SolcError> {
-        self.create_project_with_compiler(
-            cached,
-            no_artifacts,
-            self.solc_compiler()?,
-            self.solc_settings()?,
-        )
-    }
-
-    pub fn create_project_with_compiler<C: Compiler>(
-        &self,
-        cached: bool,
-        no_artifacts: bool,
-        compiler: C,
-        settings: C::Settings,
-    ) -> Result<Project<C>, SolcError> {
-        let project = ProjectBuilder::<C>::default()
+        let project = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
-            .settings(settings)
+            .settings(self.compiler_settings()?)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .ignore_paths(self.ignored_file_paths.clone())
             .set_compiler_severity_filter(if self.deny_warnings {
@@ -825,7 +793,7 @@ impl Config {
             .set_cached(cached && !self.build_info)
             .set_build_info(!no_artifacts && self.build_info)
             .set_no_artifacts(no_artifacts)
-            .build(compiler)?;
+            .build(self.compiler()?)?;
 
         if self.force {
             self.cleanup(&project)?;
@@ -960,6 +928,7 @@ impl Config {
         }
     }
 
+    /// Returns configured [Vyper] compiler.
     pub fn vyper_compiler(&self) -> Result<Option<Vyper>, SolcError> {
         let vyper = if let Some(path) = &self.vyper {
             Some(Vyper::new(path)?)
@@ -975,6 +944,7 @@ impl Config {
         Ok(MultiCompiler { solc: self.solc_compiler()?, vyper: self.vyper_compiler()? })
     }
 
+    /// Returns configured [MultiCompilerSettings].
     pub fn compiler_settings(&self) -> Result<MultiCompilerSettings, SolcError> {
         Ok(MultiCompilerSettings { solc: self.solc_settings()?, vyper: self.vyper_settings()? })
     }
@@ -2790,23 +2760,6 @@ pub(crate) mod from_str_lowercase {
 fn canonic(path: impl Into<PathBuf>) -> PathBuf {
     let path = path.into();
     foundry_compilers::utils::canonicalize(&path).unwrap_or(path)
-}
-
-/// Executes the given closure with a [Project] configured via the given [Config].
-#[macro_export]
-macro_rules! with_resolved_project {
-    ($config:ident, |$prj:ident| $e:expr) => {
-        match $config.lang {
-            foundry_config::Language::Solidity => {
-                let $prj = $config.project();
-                $e
-            }
-            foundry_config::Language::Vyper => {
-                let $prj = $config.vyper_project();
-                $e
-            }
-        }
-    };
 }
 
 #[cfg(test)]

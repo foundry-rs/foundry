@@ -373,7 +373,7 @@ impl VerifyBytecodeArgs {
     }
 
     fn build_project(&self, config: &Config) -> Result<Bytes> {
-        let project = config.solc_project()?;
+        let project = config.project()?;
         let mut compiler = ProjectCompiler::new();
 
         if let Some(skip) = &self.skip {

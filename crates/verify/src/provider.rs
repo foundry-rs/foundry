@@ -8,8 +8,7 @@ use eyre::{OptionExt, Result};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     artifacts::{output_selection::OutputSelection, Metadata, Source},
-    compilers::solc::SolcCompiler,
-    resolver::parse::SolData,
+    compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler, CompilerSettings},
     Graph, Project, Solc,
 };
 use foundry_config::Config;
@@ -20,7 +19,7 @@ use std::{fmt, path::PathBuf, str::FromStr};
 #[derive(Debug, Clone)]
 pub struct VerificationContext {
     pub config: Config,
-    pub project: Project<SolcCompiler>,
+    pub project: Project,
     pub target_path: PathBuf,
     pub target_name: String,
     pub compiler_version: Version,
@@ -33,11 +32,11 @@ impl VerificationContext {
         compiler_version: Version,
         config: Config,
     ) -> Result<Self> {
-        let mut project = config.solc_project()?;
+        let mut project = config.project()?;
         project.no_artifacts = true;
 
         let solc = Solc::find_or_install(&compiler_version)?;
-        project.compiler = SolcCompiler::Specific(solc);
+        project.compiler.solc = SolcCompiler::Specific(solc);
 
         Ok(Self { config, project, target_name, target_path, compiler_version })
     }
@@ -45,8 +44,9 @@ impl VerificationContext {
     /// Compiles target contract requesting only ABI and returns it.
     pub fn get_target_abi(&self) -> Result<JsonAbi> {
         let mut project = self.project.clone();
-        project.settings.output_selection =
-            OutputSelection::common_output_selection(["abi".to_string()]);
+        project.settings.update_output_selection(|selection| {
+            *selection = OutputSelection::common_output_selection(["abi".to_string()])
+        });
 
         let output = ProjectCompiler::new()
             .quiet(true)
@@ -63,8 +63,9 @@ impl VerificationContext {
     /// Compiles target file requesting only metadata and returns it.
     pub fn get_target_metadata(&self) -> Result<Metadata> {
         let mut project = self.project.clone();
-        project.settings.output_selection =
-            OutputSelection::common_output_selection(["metadata".to_string()]);
+        project.settings.update_output_selection(|selection| {
+            *selection = OutputSelection::common_output_selection(["metadata".to_string()]);
+        });
 
         let output = ProjectCompiler::new()
             .quiet(true)
@@ -82,7 +83,8 @@ impl VerificationContext {
     pub fn get_target_imports(&self) -> Result<Vec<PathBuf>> {
         let mut sources = self.project.paths.read_input_files()?;
         sources.insert(self.target_path.clone(), Source::read(&self.target_path)?);
-        let graph = Graph::<SolData>::resolve_sources(&self.project.paths, sources)?;
+        let graph =
+            Graph::<MultiCompilerParsedSource>::resolve_sources(&self.project.paths, sources)?;
 
         Ok(graph.imports(&self.target_path).into_iter().cloned().collect())
     }

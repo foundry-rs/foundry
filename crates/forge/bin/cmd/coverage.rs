@@ -17,11 +17,7 @@ use foundry_cli::{
 };
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
-    artifacts::{
-        contract::CompactContractBytecode, Ast, CompactBytecode, CompactDeployedBytecode,
-        Error as SolcError,
-    },
-    compilers::solc::SolcCompiler,
+    artifacts::{contract::CompactContractBytecode, Ast, CompactBytecode, CompactDeployedBytecode},
     sourcemap::SourceMap,
     Artifact, Project, ProjectCompileOutput,
 };
@@ -99,12 +95,9 @@ impl CoverageArgs {
     }
 
     /// Builds the project.
-    fn build(
-        &self,
-        config: &Config,
-    ) -> Result<(Project<SolcCompiler>, ProjectCompileOutput<SolcError>)> {
+    fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
         // Set up the project
-        let mut project = config.create_solc_project(false, false)?;
+        let mut project = config.create_project(false, false)?;
         if self.ir_minimum {
             // TODO: How to detect solc version if the user does not specify a solc version in
             // config  case1: specify local installed solc ?
@@ -131,12 +124,12 @@ impl CoverageArgs {
             // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
             // And also in new releases of solidity:
             // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
-            project.settings = project.settings.with_via_ir_minimum_optimization()
+            project.settings.solc = project.settings.solc.with_via_ir_minimum_optimization()
         } else {
-            project.settings.optimizer.disable();
-            project.settings.optimizer.runs = None;
-            project.settings.optimizer.details = None;
-            project.settings.via_ir = None;
+            project.settings.solc.optimizer.disable();
+            project.settings.solc.optimizer.runs = None;
+            project.settings.solc.optimizer.details = None;
+            project.settings.solc.via_ir = None;
         }
 
         let output = ProjectCompiler::default()
@@ -148,11 +141,7 @@ impl CoverageArgs {
 
     /// Builds the coverage report.
     #[instrument(name = "prepare", skip_all)]
-    fn prepare(
-        &self,
-        project: &Project<SolcCompiler>,
-        output: ProjectCompileOutput<SolcError>,
-    ) -> Result<CoverageReport> {
+    fn prepare(&self, project: &Project, output: ProjectCompileOutput) -> Result<CoverageReport> {
         let project_paths = &project.paths;
 
         // Extract artifacts
@@ -301,8 +290,8 @@ impl CoverageArgs {
     /// Runs tests, collects coverage data and generates the final report.
     async fn collect(
         self,
-        project: Project<SolcCompiler>,
-        output: ProjectCompileOutput<SolcError>,
+        project: Project,
+        output: ProjectCompileOutput,
         mut report: CoverageReport,
         config: Arc<Config>,
         evm_opts: EvmOpts,

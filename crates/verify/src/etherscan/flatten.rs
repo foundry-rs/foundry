@@ -21,7 +21,7 @@ impl EtherscanSourceProvider for EtherscanFlattenedSource {
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<(String, String, CodeFormat)> {
-        let metadata = context.project.settings.metadata.as_ref();
+        let metadata = context.project.settings.solc.metadata.as_ref();
         let bch = metadata.and_then(|m| m.bytecode_hash).unwrap_or_default();
 
         eyre::ensure!(
@@ -30,8 +30,13 @@ impl EtherscanSourceProvider for EtherscanFlattenedSource {
             bch,
         );
 
-        let source =
-            context.project.flatten(&context.target_path).wrap_err("Failed to flatten contract")?;
+        let source = context
+            .project
+            .paths
+            .clone()
+            .with_language::<SolcLanguage>()
+            .flatten(&context.target_path)
+            .wrap_err("Failed to flatten contract")?;
 
         if !args.force {
             // solc dry run of flattened code

@@ -283,7 +283,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
         let mut version = None;
 
         let path_or_name = parts.next().unwrap();
-        if path_or_name.contains(".") {
+        if path_or_name.contains('.') {
             file = Some(PathBuf::from(path_or_name));
             if let Some(name_or_version) = parts.next() {
                 if name_or_version.contains('.') {
