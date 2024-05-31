@@ -399,9 +399,7 @@ impl InspectorStack {
             labels: self
                 .cheatcodes
                 .as_ref()
-                .map(|cheatcodes| {
-                    cheatcodes.labels.clone().into_iter().map(|l| (l.0, l.1)).collect()
-                })
+                .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
             traces: self.tracer.map(|tracer| tracer.get_traces().clone()),
             debug: self.debugger.map(|debugger| debugger.arena),

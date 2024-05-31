@@ -1,7 +1,7 @@
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
-use cast::revm::primitives::EnvWithHandlerCfg;
+use cast::{revm::primitives::EnvWithHandlerCfg, traces::TraceKind};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -215,13 +215,10 @@ impl RunArgs {
 
             if let Some(to) = tx.to {
                 trace!(tx=?tx.hash, to=?to, "executing call transaction");
-                TraceResult::from(executor.commit_tx_with_env(env)?)
+                TraceResult::from_raw(executor.commit_tx_with_env(env)?, TraceKind::Execution)
             } else {
                 trace!(tx=?tx.hash, "executing create transaction");
-                match executor.deploy_with_env(env, None) {
-                    Ok(res) => TraceResult::from(res),
-                    Err(err) => TraceResult::try_from(err)?,
-                }
+                TraceResult::try_from(executor.deploy_with_env(env, None))?
             }
         };
 
