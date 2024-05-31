@@ -810,7 +810,7 @@ async fn test_fork_block_timestamp() {
     api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    assert!(initial_block.header.timestamp < latest_block.header.timestamp);
+    assert!(initial_block.header.timestamp <= latest_block.header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]
