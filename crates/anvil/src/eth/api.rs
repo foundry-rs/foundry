@@ -1845,12 +1845,12 @@ impl EthApi {
         Ok(true)
     }
 
-    /// Sets an interval for the block timestamp
+    /// Sets an interval for the block timestamp in milliseconds
     ///
     /// Handler for RPC call: `anvil_setBlockTimestampInterval`
-    pub fn evm_set_block_timestamp_interval(&self, seconds: u64) -> Result<()> {
+    pub fn evm_set_block_timestamp_interval(&self, milliseconds: u64) -> Result<()> {
         node_info!("anvil_setBlockTimestampInterval");
-        self.backend.time().set_block_timestamp_interval(seconds);
+        self.backend.time().set_block_timestamp_interval(milliseconds);
         Ok(())
     }
 

@@ -129,13 +129,11 @@ impl TimeManager {
         let current = duration_since_unix_epoch().as_secs() as i128; // TODO(yash): Getting current time here as seconds.
         let last_timestamp = *self.last_timestamp.read();
 
-        // TODO(yash): NOTE - interval in the TimeManager is always None even if --block-time has
-        // been used.
         let interval = *self.interval.read();
         let (mut next_timestamp, update_offset) =
             if let Some(next) = *self.next_exact_timestamp.read() {
                 if update_wall {
-                    self.update_wall_clock_timestamp(next);
+                    self.update_wall_clock_timestamp(next * 1000); // Needs to be in ms
                 }
                 (next, true)
             } else if let Some(interval) = interval {
@@ -152,7 +150,7 @@ impl TimeManager {
             } else {
                 let next = current.saturating_add(self.offset()) as u64;
                 if update_wall {
-                    self.update_wall_clock_timestamp(next);
+                    self.update_wall_clock_timestamp(next * 1000); // Needs to be in ms
                 }
                 (next, false)
             };
