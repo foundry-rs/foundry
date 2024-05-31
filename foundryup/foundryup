@@ -227,17 +227,19 @@ The installer for Foundry.
 
 Update or revert to a specific Foundry version with ease.
 
+By default, the latest nightly version is installed from built binaries.
+
 USAGE:
     foundryup <OPTIONS>
 
 OPTIONS:
     -h, --help      Print help information
-    -v, --version   Install a specific version
-    -b, --branch    Install a specific branch
-    -P, --pr        Install a specific Pull Request
-    -C, --commit    Install a specific commit
-    -r, --repo      Install from a remote GitHub repo (uses default branch if no other options are set)
-    -p, --path      Install a local repository
+    -v, --version   Install a specific version from built binaries
+    -b, --branch    Build and install a specific branch
+    -P, --pr        Build and install a specific Pull Request
+    -C, --commit    Build and install a specific commit
+    -r, --repo      Build and install from a remote GitHub repo (uses default branch if no other options are set)
+    -p, --path      Build and install a local repository
     -j, --jobs      Number of CPUs to use for building Foundry (default: all CPUs)
     --arch          Install a specific architecture (supports amd64 and arm64)
     --platform      Install a specific platform (supports win32, linux, and darwin)
