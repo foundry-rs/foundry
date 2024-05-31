@@ -50,6 +50,16 @@ contract NestedContract {
     }
 }
 
+contract SimpleCall {
+    function call() public {}
+}
+
+contract ProxyWithDelegateCall {
+    function delegateCall(SimpleCall simpleCall) public {
+        address(simpleCall).delegatecall(abi.encodeWithSignature("call()"));
+    }
+}
+
 contract ExpectCallTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
@@ -248,6 +258,14 @@ contract ExpectCallTest is DSTest {
         vm.expectRevert();
         vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
         this.exposed_callTargetNTimes(target, 5, 5, 1);
+    }
+
+    /// Ensure expectCall works for Proxy DelegateCalls. Ref: <https://github.com/foundry-rs/foundry/issues/8015>
+    function testExpectCallForProxyDelegateCall() public {
+        ProxyWithDelegateCall proxyWithDelegateCall = new ProxyWithDelegateCall();
+        SimpleCall simpleCall = new SimpleCall();
+        vm.expectCall(address(simpleCall), abi.encodeWithSignature("call()"));
+        proxyWithDelegateCall.delegateCall(simpleCall);
     }
 }
 

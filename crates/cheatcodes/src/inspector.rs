@@ -820,8 +820,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Handle expected calls
 
         // Grab the different calldatas expected.
-        if let Some(expected_calls_for_target) =
-            self.expected_calls.get_mut(&call.bytecode_address)
+        if let Some(expected_calls_for_target) = self.expected_calls.get_mut(&call.bytecode_address)
         {
             // Match every partial/full calldata
             for (calldata, (expected, actual_count)) in expected_calls_for_target {
