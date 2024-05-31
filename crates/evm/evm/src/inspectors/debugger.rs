@@ -37,9 +37,7 @@ impl Debugger {
     pub fn exit(&mut self) {
         if let Some(parent_id) = self.arena.arena[self.head].parent {
             let DebugNode { depth, address, kind, .. } = self.arena.arena[parent_id];
-            self.context = address;
-            self.head =
-                self.arena.push_node(DebugNode { depth, address, kind, ..Default::default() });
+            self.enter(depth, address, kind);
         }
     }
 }
@@ -59,7 +57,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             let start = pc + 1;
             let end = start + push_size;
             let slice = &interp.contract.bytecode.bytecode()[start..end];
-            assert!(slice.len() <= 32);
+            debug_assert!(slice.len() <= 32);
             let mut array = ArrayVec::new();
             array.try_extend_from_slice(slice).unwrap();
             array
