@@ -3249,7 +3249,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.2.8"
-source = "git+https://github.com/foundry-rs/block-explorers?rev=037fa36#037fa368c0a831c862a492cfb6583e85a5fc4e98"
+source = "git+https://github.com/foundry-rs/block-explorers?rev=1216cf2#1216cf269c107a5cb4065bec4d269367c273ede1"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -3401,8 +3401,8 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.5.1"
-source = "git+https://github.com/foundry-rs/compilers?rev=7c184f8#7c184f862488de63253f10b16264597576240c78"
+version = "0.5.2"
+source = "git+https://github.com/foundry-rs/compilers?rev=b9d9e78#b9d9e781a77c14372d2727607236c53f692040eb"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3413,7 +3413,7 @@ dependencies = [
  "fs_extra",
  "futures-util",
  "home",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "md-5",
  "memmap2 0.9.4",
  "once_cell",
@@ -4695,6 +4695,15 @@ name = "itertools"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
 dependencies = [
  "either",
 ]
