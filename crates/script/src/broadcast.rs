@@ -14,7 +14,10 @@ use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
-use foundry_common::provider::{get_http_provider, try_get_http_provider, RetryProvider};
+use foundry_common::{
+    provider::{get_http_provider, try_get_http_provider, RetryProvider},
+    shell,
+};
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
@@ -386,6 +389,9 @@ impl BundledState {
             ));
             seq_progress.inner.write().finish();
         }
+
+        shell::println("\n\n==========================")?;
+        shell::println("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
 
         Ok(BroadcastedState {
             args: self.args,
