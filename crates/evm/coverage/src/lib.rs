@@ -319,9 +319,9 @@ pub struct SourceLocation {
     /// The contract this source range is in.
     pub contract_name: Arc<str>,
     /// Start byte in the source code.
-    pub start: usize,
+    pub start: u32,
     /// Number of bytes in the source code.
-    pub length: Option<usize>,
+    pub length: Option<u32>,
     /// The line in the source code.
     pub line: usize,
 }
