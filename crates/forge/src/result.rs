@@ -199,6 +199,8 @@ pub struct SuiteResult {
     /// Libraries used to link test contract.
     pub libraries: Libraries,
     /// Contracts linked with correct libraries.
+    ///
+    /// This is cleared at the end of the test run if coverage is not enabled.
     #[serde(skip)]
     pub known_contracts: ContractsByArtifact,
 }
@@ -215,8 +217,10 @@ impl SuiteResult {
     }
 
     /// Frees memory that is not used for the final output.
-    pub fn keep_only_results(&mut self) {
-        ContractsByArtifact::clear(&mut self.known_contracts);
+    pub fn clear_unneeded(&mut self) {
+        if !self.test_results.values().any(|r| r.coverage.is_some()) {
+            ContractsByArtifact::clear(&mut self.known_contracts);
+        }
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.

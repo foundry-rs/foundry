@@ -453,10 +453,6 @@ impl TestArgs {
                 // processing the remaining tests and print the suite summary.
                 any_test_failed |= result.status == TestStatus::Failure;
 
-                if result.traces.is_empty() {
-                    continue;
-                }
-
                 // Clear the addresses and labels from previous runs.
                 decoder.clear_addresses();
                 decoder
@@ -524,8 +520,8 @@ impl TestArgs {
             // Print suite summary.
             shell::println(suite_result.summary())?;
 
-            // Free memory.
-            suite_result.keep_only_results();
+            // Free memory if it's not needed.
+            suite_result.clear_unneeded();
 
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
