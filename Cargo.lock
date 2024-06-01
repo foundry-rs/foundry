@@ -3503,7 +3503,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "arrayvec",
- "const-hex",
  "eyre",
  "foundry-cheatcodes",
  "foundry-common",
