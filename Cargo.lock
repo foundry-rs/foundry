@@ -3249,7 +3249,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.2.8"
-source = "git+https://github.com/foundry-rs/block-explorers?rev=1216cf2#1216cf269c107a5cb4065bec4d269367c273ede1"
+source = "git+https://github.com/foundry-rs/block-explorers?rev=2790381#27903815ecb0bc017efe48eaf386854fdef0205e"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
