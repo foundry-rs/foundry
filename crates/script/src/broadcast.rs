@@ -1,7 +1,7 @@
 use super::receipts;
 use crate::{
-    build::LinkedBuildData, sequence::ScriptSequenceKind, verify::BroadcastedState, ScriptArgs,
-    ScriptConfig,
+    build::LinkedBuildData, progress::ScriptProgress, sequence::ScriptSequenceKind,
+    verify::BroadcastedState, ScriptArgs, ScriptConfig,
 };
 use alloy_chains::Chain;
 use alloy_eips::eip2718::Encodable2718;
@@ -13,14 +13,8 @@ use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::ScriptWallets;
-use foundry_cli::{
-    init_progress, update_progress,
-    utils::{has_batch_support, has_different_gas_calc},
-};
-use foundry_common::{
-    provider::{get_http_provider, try_get_http_provider, RetryProvider},
-    shell,
-};
+use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
+use foundry_common::provider::{get_http_provider, try_get_http_provider, RetryProvider};
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
@@ -160,14 +154,17 @@ pub struct BundledState {
 
 impl BundledState {
     pub async fn wait_for_pending(mut self) -> Result<Self> {
+        let progress = ScriptProgress::default();
+        let progress_ref = &progress;
         let futs = self
             .sequence
             .sequences_mut()
             .iter_mut()
-            .map(|sequence| async move {
+            .enumerate()
+            .map(|(sequence_idx, sequence)| async move {
                 let rpc_url = sequence.rpc_url();
                 let provider = Arc::new(get_http_provider(rpc_url));
-                receipts::wait_for_pending(provider, sequence).await
+                receipts::wait_for_pending(provider, sequence_idx, sequence, progress_ref).await
             })
             .collect::<Vec<_>>();
 
@@ -229,11 +226,15 @@ impl BundledState {
             SendTransactionsKind::Raw(signers)
         };
 
+        let progress = ScriptProgress::default();
+
         for i in 0..self.sequence.sequences().len() {
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
             let provider = Arc::new(try_get_http_provider(sequence.rpc_url())?);
             let already_broadcasted = sequence.receipts.len();
+
+            let seq_progress = progress.get_sequence_progress(i, sequence);
 
             if already_broadcasted < sequence.transactions.len() {
                 let is_legacy = Chain::from(sequence.chain).is_legacy() || self.args.legacy;
@@ -313,8 +314,6 @@ impl BundledState {
                     send_kind.signers_count() != 1 ||
                     !has_batch_support(sequence.chain);
 
-                let pb = init_progress!(transactions, "txes");
-
                 // We send transactions and wait for receipts in batches.
                 let batch_size = if sequential_broadcast { 1 } else { self.args.batch_size };
                 let mut index = already_broadcasted;
@@ -322,11 +321,11 @@ impl BundledState {
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                     let mut pending_transactions = vec![];
 
-                    shell::println(format!(
-                        "##\nSending transactions [{} - {}].",
+                    seq_progress.inner.write().set_status(&format!(
+                        "Sending transactions [{} - {}]",
                         batch_number * batch_size,
                         batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
-                    ))?;
+                    ));
                     for (tx, kind, is_fixed_gas_limit) in batch {
                         let fut = send_transaction(
                             provider.clone(),
@@ -351,7 +350,7 @@ impl BundledState {
                             self.sequence.save(true, false)?;
                             sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                            update_progress!(pb, index - already_broadcasted);
+                            seq_progress.inner.write().tx_sent(tx_hash);
                             index += 1;
                         }
 
@@ -359,17 +358,15 @@ impl BundledState {
                         self.sequence.save(true, false)?;
                         sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                        shell::println("##\nWaiting for receipts.")?;
-                        receipts::clear_pendings(provider.clone(), sequence, None).await?;
+                        seq_progress.inner.write().set_status("Waiting for receipts");
+                        receipts::clear_pendings(provider.clone(), sequence, None, &seq_progress)
+                            .await?;
                     }
                     // Checkpoint save
                     self.sequence.save(true, false)?;
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                 }
             }
-
-            shell::println("\n\n==========================")?;
-            shell::println("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
 
             let (total_gas, total_gas_price, total_paid) =
                 sequence.receipts.iter().fold((0, 0, 0), |acc, receipt| {
@@ -381,12 +378,13 @@ impl BundledState {
             let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u128, 9)
                 .unwrap_or_else(|_| "N/A".to_string());
 
-            shell::println(format!(
-                "Total Paid: {} ETH ({} gas * avg {} gwei)",
+            seq_progress.inner.write().set_status(&format!(
+                "Total Paid: {} ETH ({} gas * avg {} gwei)\n",
                 paid.trim_end_matches('0'),
                 total_gas,
                 avg_gas_price.trim_end_matches('0').trim_end_matches('.')
-            ))?;
+            ));
+            seq_progress.inner.write().finish();
         }
 
         Ok(BroadcastedState {

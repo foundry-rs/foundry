@@ -1,10 +1,10 @@
 use super::sequence::ScriptSequence;
+use crate::progress::{ScriptProgress, SequenceProgress};
 use alloy_chains::Chain;
 use alloy_primitives::{utils::format_units, TxHash, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::Result;
-use foundry_cli::{init_progress, update_progress};
 use foundry_common::provider::RetryProvider;
 use futures::StreamExt;
 use std::sync::Arc;
@@ -30,13 +30,17 @@ impl From<AnyTransactionReceipt> for TxStatus {
 /// the deploy sequence's pending vector
 pub async fn wait_for_pending(
     provider: Arc<RetryProvider>,
+    sequence_idx: usize,
     deployment_sequence: &mut ScriptSequence,
+    progress: &ScriptProgress,
 ) -> Result<()> {
     if deployment_sequence.pending.is_empty() {
         return Ok(());
     }
-    println!("##\nChecking previously pending transactions.");
-    clear_pendings(provider, deployment_sequence, None).await
+
+    let progress = progress.get_sequence_progress(sequence_idx, deployment_sequence);
+    progress.inner.write().set_status("Checking previously pending transactions");
+    clear_pendings(provider, deployment_sequence, None, &progress).await
 }
 
 /// Traverses a set of pendings and either finds receipts, or clears them from
@@ -54,6 +58,7 @@ pub async fn clear_pendings(
     provider: Arc<RetryProvider>,
     deployment_sequence: &mut ScriptSequence,
     tx_hashes: Option<Vec<TxHash>>,
+    progress: &SequenceProgress,
 ) -> Result<()> {
     let to_query = tx_hashes.unwrap_or_else(|| deployment_sequence.pending.clone());
 
@@ -65,27 +70,29 @@ pub async fn clear_pendings(
     let mut tasks = futures::stream::iter(futs).buffer_unordered(10);
 
     let mut errors: Vec<String> = vec![];
-    let mut receipts = Vec::<AnyTransactionReceipt>::with_capacity(count);
-
-    // set up progress bar
-    let mut pos = 0;
-    let pb = init_progress!(deployment_sequence.pending, "receipts");
-    pb.set_position(pos);
 
     while let Some((tx_hash, result)) = tasks.next().await {
         match result {
             Err(err) => {
-                errors.push(format!("Failure on receiving a receipt for {tx_hash:?}:\n{err}"))
+                errors.push(format!("Failure on receiving a receipt for {tx_hash:?}:\n{err}"));
+
+                progress.inner.write().finish_tx_spinner(tx_hash);
             }
             Ok(TxStatus::Dropped) => {
                 // We want to remove it from pending so it will be re-broadcast.
                 deployment_sequence.remove_pending(tx_hash);
                 errors.push(format!("Transaction dropped from the mempool: {tx_hash:?}"));
+
+                progress.inner.write().finish_tx_spinner(tx_hash);
             }
             Ok(TxStatus::Success(receipt)) => {
                 trace!(tx_hash=?tx_hash, "received tx receipt");
+
+                let msg = format_receipt(deployment_sequence.chain.into(), &receipt);
+                progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
+
                 deployment_sequence.remove_pending(receipt.transaction_hash);
-                receipts.push(receipt);
+                deployment_sequence.add_receipt(receipt);
             }
             Ok(TxStatus::Revert(receipt)) => {
                 // consider:
@@ -93,21 +100,13 @@ pub async fn clear_pendings(
                 // un-resumable. Is this desirable on reverts?
                 warn!(tx_hash=?tx_hash, "Transaction Failure");
                 deployment_sequence.remove_pending(receipt.transaction_hash);
+
+                let msg = format_receipt(deployment_sequence.chain.into(), &receipt);
+                progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
+
                 errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash));
             }
         }
-        // update the progress bar
-        update_progress!(pb, pos);
-        pos += 1;
-    }
-
-    // sort receipts by blocks asc and index
-    receipts.sort_by_key(|r| (r.block_number, r.transaction_index));
-
-    // print all receipts
-    for receipt in receipts {
-        print_receipt(deployment_sequence.chain.into(), &receipt);
-        deployment_sequence.add_receipt(receipt);
     }
 
     // print any errors
@@ -151,11 +150,11 @@ async fn check_tx_status(
 }
 
 /// Prints parts of the receipt to stdout
-pub fn print_receipt(chain: Chain, receipt: &AnyTransactionReceipt) {
+pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
     let gas_used = receipt.gas_used;
     let gas_price = receipt.effective_gas_price;
-    foundry_common::shell::println(format!(
-        "\n##### {chain}\n{status}Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n",
+    format!(
+        "\n##### {chain}\n{status}Hash: {tx_hash:?}{caddr}\nBlock: {bn}\n{gas}\n\n",
         status = if !receipt.inner.inner.inner.receipt.status {
             "❌  [Failed]"
         } else {
@@ -180,6 +179,5 @@ pub fn print_receipt(chain: Chain, receipt: &AnyTransactionReceipt) {
                 gas_price.trim_end_matches('0').trim_end_matches('.')
             )
         },
-    ))
-    .expect("could not print receipt");
+    )
 }
