@@ -412,8 +412,8 @@ impl<'a> ContractVisitor<'a> {
         SourceLocation {
             source_id: self.source_id,
             contract_name: self.contract_name.clone(),
-            start: loc.start,
-            length: loc.length,
+            start: loc.start as u32,
+            length: loc.length.map(|x| x as u32),
             line: self.source[..loc.start].lines().count(),
         }
     }

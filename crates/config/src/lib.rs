@@ -810,7 +810,7 @@ impl Config {
         compiler_config: CompilerConfig<C>,
         settings: C::Settings,
     ) -> Result<Project<C>, SolcError> {
-        let project = ProjectBuilder::<ConfigurableArtifacts, C>::new(Default::default())
+        let project = ProjectBuilder::<C>::new(Default::default())
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
             .settings(settings)
