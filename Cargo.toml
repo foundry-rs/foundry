@@ -82,17 +82,17 @@ scrypt.opt-level = 3
 [profile.local]
 inherits = "dev"
 opt-level = 1
+debug-assertions = false
 strip = "debuginfo"
 panic = "abort"
 codegen-units = 16
 
 # Like release, but with full debug symbols and with stack unwinds. Useful for e.g. `perf`.
 [profile.debug-fast]
-inherits = "release"
+inherits = "local"
 debug = true
 strip = "none"
 panic = "unwind"
-incremental = false
 
 # Optimized release profile.
 [profile.release]
@@ -216,6 +216,7 @@ num-format = "0.4.4"
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 tempfile = "3.10"
 tokio = "1"
+rayon = "1"
 
 axum = "0.7"
 hyper = "1.0"

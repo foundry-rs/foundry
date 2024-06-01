@@ -256,7 +256,7 @@ impl CoverageReporter for BytecodeReporter {
                 }
             }
             fs::write(
-                self.destdir.join(contract_id.contract_name.clone()).with_extension("asm"),
+                self.destdir.join(&*contract_id.contract_name).with_extension("asm"),
                 formatted,
             )?;
         }
