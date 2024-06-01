@@ -214,6 +214,11 @@ impl SuiteResult {
         Self { duration, test_results, warnings, libraries, known_contracts }
     }
 
+    /// Frees memory that is not used for the final output.
+    pub fn keep_only_results(&mut self) {
+        ContractsByArtifact::clear(&mut self.known_contracts);
+    }
+
     /// Returns an iterator over all individual succeeding tests and their names.
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status == TestStatus::Success)

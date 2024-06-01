@@ -69,6 +69,11 @@ impl ContractsByArtifact {
         Self(Arc::new(map))
     }
 
+    /// Clears all contracts.
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
     /// Finds a contract which has a similar bytecode as `code`.
     pub fn find_by_creation_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
         self.iter().find(|(_, contract)| {
