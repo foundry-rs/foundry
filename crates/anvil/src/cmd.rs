@@ -46,21 +46,21 @@ pub struct NodeArgs {
     pub timestamp: Option<u64>,
 
     /// BIP39 mnemonic phrase used for generating accounts.
-    /// Cannot be used if `mnemonic_random` or `mnemonic_seed` are used
+    /// Cannot be used if `mnemonic_random` or `mnemonic_seed` are used.
     #[arg(long, short, conflicts_with_all = &["mnemonic_seed", "mnemonic_random"])]
     pub mnemonic: Option<String>,
 
     /// Automatically generates a BIP39 mnemonic phrase, and derives accounts from it.
-    /// Cannot be used with other `mnemonic` options
+    /// Cannot be used with other `mnemonic` options.
     /// You can specify the number of words you want in the mnemonic.
     /// [default: 12]
     #[arg(long, conflicts_with_all = &["mnemonic", "mnemonic_seed"], default_missing_value = "12", num_args(0..=1))]
     pub mnemonic_random: Option<usize>,
 
     /// Generates a BIP39 mnemonic phrase from a given seed
-    /// Cannot be used with other `mnemonic` options
+    /// Cannot be used with other `mnemonic` options.
     ///
-    /// CAREFUL: this is NOT SAFE and should only be used for testing.
+    /// CAREFUL: This is NOT SAFE and should only be used for testing.
     /// Never use the private keys generated in production.
     #[arg(long = "mnemonic-seed-unsafe", conflicts_with_all = &["mnemonic", "mnemonic_random"])]
     pub mnemonic_seed: Option<u64>,

@@ -19,6 +19,42 @@ use std::{collections::BTreeMap, ops::Deref, str::FromStr, sync::Arc};
 const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] =
     hex!("730000000000000000000000000000000000000000");
 
+/// Subset of [CompactBytecode] excluding sourcemaps.
+#[allow(missing_docs)]
+#[derive(Debug, Clone)]
+pub struct BytecodeData {
+    pub object: Option<BytecodeObject>,
+    pub link_references: BTreeMap<String, BTreeMap<String, Vec<Offsets>>>,
+    pub immutable_references: BTreeMap<String, Vec<Offsets>>,
+}
+
+impl BytecodeData {
+    fn bytes(&self) -> Option<&Bytes> {
+        self.object.as_ref().and_then(|b| b.as_bytes())
+    }
+}
+
+impl From<CompactBytecode> for BytecodeData {
+    fn from(bytecode: CompactBytecode) -> Self {
+        Self {
+            object: Some(bytecode.object),
+            link_references: bytecode.link_references,
+            immutable_references: BTreeMap::new(),
+        }
+    }
+}
+
+impl From<CompactDeployedBytecode> for BytecodeData {
+    fn from(bytecode: CompactDeployedBytecode) -> Self {
+        let (object, link_references) = if let Some(compact) = bytecode.bytecode {
+            (Some(compact.object), compact.link_references)
+        } else {
+            (None, BTreeMap::new())
+        };
+        Self { object, link_references, immutable_references: bytecode.immutable_references }
+    }
+}
+
 /// Container for commonly used contract data.
 #[derive(Debug)]
 pub struct ContractData {
@@ -27,9 +63,9 @@ pub struct ContractData {
     /// Contract ABI.
     pub abi: JsonAbi,
     /// Contract creation code.
-    pub bytecode: Option<CompactBytecode>,
+    pub bytecode: Option<BytecodeData>,
     /// Contract runtime code.
-    pub deployed_bytecode: Option<CompactDeployedBytecode>,
+    pub deployed_bytecode: Option<BytecodeData>,
 }
 
 impl ContractData {
@@ -60,10 +96,16 @@ impl ContractsByArtifact {
             .into_iter()
             .filter_map(|(id, artifact)| {
                 let name = id.name.clone();
-
                 let CompactContractBytecode { abi, bytecode, deployed_bytecode } = artifact;
-
-                Some((id, ContractData { name, abi: abi?, bytecode, deployed_bytecode }))
+                Some((
+                    id,
+                    ContractData {
+                        name,
+                        abi: abi?,
+                        bytecode: bytecode.map(Into::into),
+                        deployed_bytecode: deployed_bytecode.map(Into::into),
+                    },
+                ))
             })
             .collect();
         Self(Arc::new(map))
@@ -103,11 +145,11 @@ impl ContractsByArtifact {
             let Some(deployed_bytecode) = &contract.deployed_bytecode else {
                 return false;
             };
-            let Some(deployed_code) = &deployed_bytecode.bytecode else {
+            let Some(deployed_code) = &deployed_bytecode.object else {
                 return false;
             };
 
-            let len = match deployed_code.object {
+            let len = match deployed_code {
                 BytecodeObject::Bytecode(ref bytes) => bytes.len(),
                 BytecodeObject::Unlinked(ref bytes) => bytes.len() / 2,
             };
@@ -120,7 +162,7 @@ impl ContractsByArtifact {
             let mut ignored = deployed_bytecode
                 .immutable_references
                 .values()
-                .chain(deployed_code.link_references.values().flat_map(|v| v.values()))
+                .chain(deployed_bytecode.link_references.values().flat_map(|v| v.values()))
                 .flatten()
                 .cloned()
                 .collect::<Vec<_>>();
@@ -129,7 +171,7 @@ impl ContractsByArtifact {
             // ignore it as it includes library address determined at runtime.
             // See https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries and
             // https://github.com/NomicFoundation/hardhat/blob/af7807cf38842a4f56e7f4b966b806e39631568a/packages/hardhat-verify/src/internal/solc/bytecode.ts#L172
-            let has_call_protection = match deployed_code.object {
+            let has_call_protection = match deployed_code {
                 BytecodeObject::Bytecode(ref bytes) => {
                     bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
                 }
@@ -154,7 +196,7 @@ impl ContractsByArtifact {
             for offset in ignored {
                 let right = offset.start as usize;
 
-                let matched = match deployed_code.object {
+                let matched = match deployed_code {
                     BytecodeObject::Bytecode(ref bytes) => bytes[left..right] == code[left..right],
                     BytecodeObject::Unlinked(ref bytes) => {
                         if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..right * 2]) {
@@ -173,7 +215,7 @@ impl ContractsByArtifact {
             }
 
             if left < code.len() {
-                match deployed_code.object {
+                match deployed_code {
                     BytecodeObject::Bytecode(ref bytes) => bytes[left..] == code[left..],
                     BytecodeObject::Unlinked(ref bytes) => {
                         if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..]) {
