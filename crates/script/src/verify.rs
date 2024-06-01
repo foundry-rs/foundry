@@ -112,7 +112,7 @@ impl VerifyBundle {
             if data.split_at(create2_offset).1.starts_with(bytecode) {
                 let constructor_args = data.split_at(create2_offset + bytecode.len()).1.to_vec();
 
-                if artifact.source.extension() == Some("vy") {
+                if artifact.source.extension().map_or(false, |e| e.to_str() == Some("vy")) {
                     warn!("Skipping verification of Vyper contract: {}", artifact.name);
                 }
 
