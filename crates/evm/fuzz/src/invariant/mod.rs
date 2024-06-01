@@ -28,15 +28,21 @@ impl FuzzRunIdentifiedContracts {
     }
 
     /// Returns fuzzed contract abi and fuzzed function from address and provided calldata.
+    ///
     /// Used to decode return values and logs in order to add values into fuzz dictionary.
-    pub fn fuzzed_artifacts(&self, tx: &BasicTxDetails) -> (Option<JsonAbi>, Option<Function>) {
-        match self.targets.lock().get(&tx.call_details.target) {
-            Some((_, abi, _)) => (
-                Some(abi.to_owned()),
-                abi.functions().find(|f| f.selector() == tx.call_details.calldata[..4]).cloned(),
-            ),
+    pub fn with_fuzzed_artifacts(
+        &self,
+        tx: &BasicTxDetails,
+        f: impl FnOnce(Option<&JsonAbi>, Option<&Function>),
+    ) {
+        let targets = self.targets.lock();
+        let (abi, abi_f) = match targets.get(&tx.call_details.target) {
+            Some((_, abi, _)) => {
+                (Some(abi), abi.functions().find(|f| f.selector() == tx.call_details.calldata[..4]))
+            }
             None => (None, None),
-        }
+        };
+        f(abi, abi_f);
     }
 }
 

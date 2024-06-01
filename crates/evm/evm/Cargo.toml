@@ -43,7 +43,6 @@ revm-inspectors.workspace = true
 
 arrayvec.workspace = true
 eyre = "0.6"
-hex.workspace = true
 parking_lot = "0.12"
 proptest = "1"
 thiserror = "1"

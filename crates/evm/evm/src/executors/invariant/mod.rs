@@ -321,8 +321,8 @@ impl<'a> InvariantExecutor<'a> {
             Ok(())
         });
 
-        trace!(target: "forge::test::invariant::fuzz_fixtures", "{:?}", fuzz_fixtures);
-        trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.dictionary_read().values().iter().map(hex::encode).collect::<Vec<_>>());
+        trace!(?fuzz_fixtures);
+        trace!(state_len = fuzz_state.dictionary_read().len());
 
         let (reverts, error) = failures.into_inner().into_inner();
 
@@ -678,10 +678,9 @@ fn collect_data(
     }
 
     // Collect values from fuzzed call result and add them to fuzz dictionary.
-    let (fuzzed_contract_abi, fuzzed_function) = fuzzed_contracts.fuzzed_artifacts(tx);
     fuzz_state.collect_values_from_call(
-        fuzzed_contract_abi.as_ref(),
-        fuzzed_function.as_ref(),
+        fuzzed_contracts,
+        tx,
         &call_result.result,
         &call_result.logs,
         &*state_changeset,
