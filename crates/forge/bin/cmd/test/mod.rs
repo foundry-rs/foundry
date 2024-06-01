@@ -392,12 +392,12 @@ impl TestArgs {
         let mut outcome = TestOutcome::empty(self.allow_failure);
 
         let mut any_test_failed = false;
-        for (contract_name, suite_result) in rx {
+        for (contract_name, mut suite_result) in rx {
             let tests = &suite_result.test_results;
 
             // Set up trace identifiers.
-            let known_contracts = suite_result.known_contracts.clone();
-            let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
+            let known_contracts = &suite_result.known_contracts;
+            let mut identifier = TraceIdentifiers::new().with_local(known_contracts);
 
             // Avoid using etherscan for gas report as we decode more traces and this will be
             // expensive.
@@ -407,7 +407,7 @@ impl TestArgs {
 
             // Build the trace decoder.
             let mut builder = CallTraceDecoderBuilder::new()
-                .with_known_contracts(&known_contracts)
+                .with_known_contracts(known_contracts)
                 .with_verbosity(verbosity);
             // Signatures are of no value for gas reports.
             if !self.gas_report {
@@ -452,10 +452,6 @@ impl TestArgs {
                 // We shouldn't break out of the outer loop directly here so that we finish
                 // processing the remaining tests and print the suite summary.
                 any_test_failed |= result.status == TestStatus::Failure;
-
-                if result.traces.is_empty() {
-                    continue;
-                }
 
                 // Clear the addresses and labels from previous runs.
                 decoder.clear_addresses();
@@ -523,6 +519,9 @@ impl TestArgs {
 
             // Print suite summary.
             shell::println(suite_result.summary())?;
+
+            // Free memory if it's not needed.
+            suite_result.clear_unneeded();
 
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);

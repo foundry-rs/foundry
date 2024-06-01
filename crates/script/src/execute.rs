@@ -73,13 +73,13 @@ impl LinkedState {
             args,
             script_config,
             script_wallets,
-            build_data,
             execution_data: ExecutionData {
                 func,
                 calldata,
                 bytecode: bytecode.clone(),
-                abi: target_contract.abi,
+                abi: target_contract.abi.clone(),
             },
+            build_data,
         })
     }
 }

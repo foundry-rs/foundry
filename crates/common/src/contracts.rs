@@ -10,11 +10,7 @@ use foundry_compilers::{
     },
     ArtifactId,
 };
-use std::{
-    collections::BTreeMap,
-    ops::{Deref, DerefMut},
-    str::FromStr,
-};
+use std::{collections::BTreeMap, ops::Deref, str::FromStr, sync::Arc};
 
 /// Libraries' runtime code always starts with the following instruction:
 /// `PUSH20 0x0000000000000000000000000000000000000000`
@@ -60,7 +56,7 @@ impl From<CompactDeployedBytecode> for BytecodeData {
 }
 
 /// Container for commonly used contract data.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ContractData {
     /// Contract name.
     pub name: String,
@@ -88,7 +84,7 @@ type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a ContractData);
 
 /// Wrapper type that maps an artifact to a contract ABI and bytecode.
 #[derive(Clone, Default, Debug)]
-pub struct ContractsByArtifact(pub BTreeMap<ArtifactId, ContractData>);
+pub struct ContractsByArtifact(Arc<BTreeMap<ArtifactId, ContractData>>);
 
 impl ContractsByArtifact {
     /// Creates a new instance by collecting all artifacts with present bytecode from an iterator.
@@ -96,26 +92,28 @@ impl ContractsByArtifact {
     /// It is recommended to use this method with an output of
     /// [foundry_linking::Linker::get_linked_artifacts].
     pub fn new(artifacts: impl IntoIterator<Item = (ArtifactId, CompactContractBytecode)>) -> Self {
-        Self(
-            artifacts
-                .into_iter()
-                .filter_map(|(id, artifact)| {
-                    let name = id.name.clone();
+        let map = artifacts
+            .into_iter()
+            .filter_map(|(id, artifact)| {
+                let name = id.name.clone();
+                let CompactContractBytecode { abi, bytecode, deployed_bytecode } = artifact;
+                Some((
+                    id,
+                    ContractData {
+                        name,
+                        abi: abi?,
+                        bytecode: bytecode.map(Into::into),
+                        deployed_bytecode: deployed_bytecode.map(Into::into),
+                    },
+                ))
+            })
+            .collect();
+        Self(Arc::new(map))
+    }
 
-                    let CompactContractBytecode { abi, bytecode, deployed_bytecode } = artifact;
-
-                    Some((
-                        id,
-                        ContractData {
-                            name,
-                            abi: abi?,
-                            bytecode: bytecode.map(Into::into),
-                            deployed_bytecode: deployed_bytecode.map(Into::into),
-                        },
-                    ))
-                })
-                .collect(),
-        )
+    /// Clears all contracts.
+    pub fn clear(&mut self) {
+        *self = Self::default();
     }
 
     /// Finds a contract which has a similar bytecode as `code`.
@@ -273,12 +271,6 @@ impl Deref for ContractsByArtifact {
 
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-impl DerefMut for ContractsByArtifact {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
     }
 }
 
