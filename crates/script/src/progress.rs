@@ -1,10 +1,16 @@
-use crate::sequence::ScriptSequence;
+use crate::{
+    receipts::{check_tx_status, format_receipt, TxStatus},
+    sequence::ScriptSequence,
+};
 use alloy_chains::Chain;
 use alloy_primitives::B256;
-use foundry_cli::init_progress;
+use eyre::Result;
+use foundry_cli::utils::init_progress;
+use foundry_common::provider::RetryProvider;
+use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Write, sync::Arc, time::Duration};
 use yansi::Paint;
 
 /// State of [ProgressBar]s displayed for the given [ScriptSequence].
@@ -25,9 +31,8 @@ pub struct SequenceProgressState {
 impl SequenceProgressState {
     pub fn new(sequence_idx: usize, sequence: &ScriptSequence, multi: MultiProgress) -> Self {
         let mut template = "{spinner:.green}".to_string();
-        template.push_str(
-            format!(" Sequence #{} on {}", sequence_idx + 1, Chain::from(sequence.chain)).as_str(),
-        );
+        write!(template, " Sequence #{} on {}", sequence_idx + 1, Chain::from(sequence.chain))
+            .unwrap();
         template.push_str("{msg}");
 
         let top_spinner = ProgressBar::new_spinner()
@@ -36,12 +41,12 @@ impl SequenceProgressState {
 
         let txs = multi.insert_after(
             &top_spinner,
-            init_progress!(sequence.transactions, "txes").with_prefix("    "),
+            init_progress(sequence.transactions.len() as u64, "txes").with_prefix("    "),
         );
 
         let receipts = multi.insert_after(
             &txs,
-            init_progress!(sequence.transactions, "receipts").with_prefix("    "),
+            init_progress(sequence.transactions.len() as u64, "receipts").with_prefix("    "),
         );
 
         top_spinner.enable_steady_tick(Duration::from_millis(100));
@@ -152,5 +157,89 @@ impl ScriptProgress {
         let progress = SequenceProgress::new(sequence_idx, sequence, self.multi.clone());
         self.state.write().insert(sequence_idx, progress.clone());
         progress
+    }
+
+    /// Traverses a set of pendings and either finds receipts, or clears them from
+    /// the deployment sequence.
+    ///
+    /// For each `tx_hash`, we check if it has confirmed. If it has
+    /// confirmed, we push the receipt (if successful) or push an error (if
+    /// revert). If the transaction has not confirmed, but can be found in the
+    /// node's mempool, we wait for its receipt to be available. If the transaction
+    /// has not confirmed, and cannot be found in the mempool, we remove it from
+    /// the `deploy_sequence.pending` vector so that it will be rebroadcast in
+    /// later steps.
+    pub async fn wait_for_pending(
+        &self,
+        sequence_idx: usize,
+        deployment_sequence: &mut ScriptSequence,
+        provider: &RetryProvider,
+    ) -> Result<()> {
+        if deployment_sequence.pending.is_empty() {
+            return Ok(());
+        }
+
+        let count = deployment_sequence.pending.len();
+        let seq_progress = self.get_sequence_progress(sequence_idx, deployment_sequence);
+
+        seq_progress.inner.write().set_status("Waiting for pending transactions");
+
+        trace!("Checking status of {count} pending transactions");
+
+        let futs =
+            deployment_sequence.pending.clone().into_iter().map(|tx| check_tx_status(provider, tx));
+        let mut tasks = futures::stream::iter(futs).buffer_unordered(10);
+
+        let mut errors: Vec<String> = vec![];
+
+        while let Some((tx_hash, result)) = tasks.next().await {
+            match result {
+                Err(err) => {
+                    errors.push(format!("Failure on receiving a receipt for {tx_hash:?}:\n{err}"));
+
+                    seq_progress.inner.write().finish_tx_spinner(tx_hash);
+                }
+                Ok(TxStatus::Dropped) => {
+                    // We want to remove it from pending so it will be re-broadcast.
+                    deployment_sequence.remove_pending(tx_hash);
+                    errors.push(format!("Transaction dropped from the mempool: {tx_hash:?}"));
+
+                    seq_progress.inner.write().finish_tx_spinner(tx_hash);
+                }
+                Ok(TxStatus::Success(receipt)) => {
+                    trace!(tx_hash=?tx_hash, "received tx receipt");
+
+                    let msg = format_receipt(deployment_sequence.chain.into(), &receipt);
+                    seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
+
+                    deployment_sequence.remove_pending(receipt.transaction_hash);
+                    deployment_sequence.add_receipt(receipt);
+                }
+                Ok(TxStatus::Revert(receipt)) => {
+                    // consider:
+                    // if this is not removed from pending, then the script becomes
+                    // un-resumable. Is this desirable on reverts?
+                    warn!(tx_hash=?tx_hash, "Transaction Failure");
+                    deployment_sequence.remove_pending(receipt.transaction_hash);
+
+                    let msg = format_receipt(deployment_sequence.chain.into(), &receipt);
+                    seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
+
+                    errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash));
+                }
+            }
+        }
+
+        // print any errors
+        if !errors.is_empty() {
+            let mut error_msg = errors.join("\n");
+            if !deployment_sequence.pending.is_empty() {
+                error_msg += "\n\n Add `--resume` to your command to try and continue broadcasting
+        the transactions."
+            }
+            eyre::bail!(error_msg);
+        }
+
+        Ok(())
     }
 }

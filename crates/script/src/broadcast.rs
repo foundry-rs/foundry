@@ -1,4 +1,3 @@
-use super::receipts;
 use crate::{
     build::LinkedBuildData, progress::ScriptProgress, sequence::ScriptSequenceKind,
     verify::BroadcastedState, ScriptArgs, ScriptConfig,
@@ -167,7 +166,7 @@ impl BundledState {
             .map(|(sequence_idx, sequence)| async move {
                 let rpc_url = sequence.rpc_url();
                 let provider = Arc::new(get_http_provider(rpc_url));
-                receipts::wait_for_pending(provider, sequence_idx, sequence, progress_ref).await
+                progress_ref.wait_for_pending(sequence_idx, sequence, &provider).await
             })
             .collect::<Vec<_>>();
 
@@ -361,9 +360,7 @@ impl BundledState {
                         self.sequence.save(true, false)?;
                         sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                        seq_progress.inner.write().set_status("Waiting for receipts");
-                        receipts::clear_pendings(provider.clone(), sequence, None, &seq_progress)
-                            .await?;
+                        progress.wait_for_pending(i, sequence, &provider).await?
                     }
                     // Checkpoint save
                     self.sequence.save(true, false)?;
