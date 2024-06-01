@@ -189,7 +189,7 @@ impl<E: Send + Sync> MultiContractRunner<E> {
             self.output.artifact_ids().collect(),
         );
         let linked_contracts = linker.get_linked_artifacts(&contract.libraries).unwrap_or_default();
-        let known_contracts = Arc::new(ContractsByArtifact::new(linked_contracts));
+        let known_contracts = ContractsByArtifact::new(linked_contracts);
 
         let cheats_config = CheatsConfig::new(
             &self.config,

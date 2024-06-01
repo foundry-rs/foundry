@@ -91,15 +91,15 @@ impl SessionSource {
                 // Map the source location of the final statement of the `run()` function to its
                 // corresponding runtime program counter
                 let final_pc = {
-                    let offset = source_loc.start();
-                    let length = source_loc.end() - source_loc.start();
+                    let offset = source_loc.start() as u32;
+                    let length = (source_loc.end() - source_loc.start()) as u32;
                     contract
                         .get_source_map_deployed()
                         .unwrap()
                         .unwrap()
                         .into_iter()
                         .zip(InstructionIter::new(&deployed_bytecode))
-                        .filter(|(s, _)| s.offset == offset && s.length == length)
+                        .filter(|(s, _)| s.offset() == offset && s.length() == length)
                         .map(|(_, i)| i.pc)
                         .max()
                         .unwrap_or_default()

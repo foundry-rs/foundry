@@ -206,7 +206,9 @@ impl<'a> InvariantExecutor<'a> {
             let mut assume_rejects_counter = 0;
 
             while current_run < self.config.depth {
-                let tx = inputs.last().expect("no input generated");
+                let tx = inputs.last().ok_or_else(|| {
+                    TestCaseError::fail("No input generated to call fuzzed target.")
+                })?;
 
                 // Execute call from the randomly generated sequence and commit state changes.
                 let call_result = executor
@@ -216,7 +218,9 @@ impl<'a> InvariantExecutor<'a> {
                         tx.call_details.calldata.clone(),
                         U256::ZERO,
                     )
-                    .expect("could not make raw evm call");
+                    .map_err(|e| {
+                        TestCaseError::fail(format!("Could not make raw evm call: {}", e))
+                    })?;
 
                 if call_result.result.as_ref() == MAGIC_ASSUME {
                     inputs.pop();
@@ -229,8 +233,7 @@ impl<'a> InvariantExecutor<'a> {
                     }
                 } else {
                     // Collect data for fuzzing from the state changeset.
-                    let mut state_changeset =
-                        call_result.state_changeset.to_owned().expect("no changesets");
+                    let mut state_changeset = call_result.state_changeset.to_owned().unwrap();
 
                     if !&call_result.reverted {
                         collect_data(
@@ -318,8 +321,8 @@ impl<'a> InvariantExecutor<'a> {
             Ok(())
         });
 
-        trace!(target: "forge::test::invariant::fuzz_fixtures", "{:?}", fuzz_fixtures);
-        trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.dictionary_read().values().iter().map(hex::encode).collect::<Vec<_>>());
+        trace!(?fuzz_fixtures);
+        trace!(state_len = fuzz_state.dictionary_read().len());
 
         let (reverts, error) = failures.into_inner().into_inner();
 
@@ -675,10 +678,9 @@ fn collect_data(
     }
 
     // Collect values from fuzzed call result and add them to fuzz dictionary.
-    let (fuzzed_contract_abi, fuzzed_function) = fuzzed_contracts.fuzzed_artifacts(tx);
     fuzz_state.collect_values_from_call(
-        fuzzed_contract_abi.as_ref(),
-        fuzzed_function.as_ref(),
+        fuzzed_contracts,
+        tx,
         &call_result.result,
         &call_result.logs,
         &*state_changeset,
