@@ -14,6 +14,16 @@ impl PcIcMap {
         Self { inner: make_map::<true>(code) }
     }
 
+    /// Returns the length of the map.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns `true` if the map is empty.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
     /// Returns the instruction counter for the given program counter.
     pub fn get(&self, pc: usize) -> Option<usize> {
         self.inner.get(&pc).copied()
@@ -31,6 +41,16 @@ impl IcPcMap {
     /// Creates a new `IcPcMap` for the given code.
     pub fn new(code: &[u8]) -> Self {
         Self { inner: make_map::<false>(code) }
+    }
+
+    /// Returns the length of the map.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns `true` if the map is empty.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 
     /// Returns the program counter for the given instruction counter.
