@@ -1,5 +1,6 @@
 //! Test outcomes.
 
+use crate::gas_report::GasReport;
 use alloy_primitives::{Address, Log};
 use foundry_common::{
     evm::Breakpoints, get_contract_name, get_file_name, shell, ContractsByArtifact,
@@ -16,12 +17,9 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::{self, Write},
-    sync::Arc,
     time::Duration,
 };
 use yansi::Paint;
-
-use crate::gas_report::GasReport;
 
 /// The aggregated result of a test run.
 #[derive(Clone, Debug)]
@@ -202,7 +200,7 @@ pub struct SuiteResult {
     pub libraries: Libraries,
     /// Contracts linked with correct libraries.
     #[serde(skip)]
-    pub known_contracts: Arc<ContractsByArtifact>,
+    pub known_contracts: ContractsByArtifact,
 }
 
 impl SuiteResult {
@@ -211,7 +209,7 @@ impl SuiteResult {
         test_results: BTreeMap<String, TestResult>,
         warnings: Vec<String>,
         libraries: Libraries,
-        known_contracts: Arc<ContractsByArtifact>,
+        known_contracts: ContractsByArtifact,
     ) -> Self {
         Self { duration, test_results, warnings, libraries, known_contracts }
     }

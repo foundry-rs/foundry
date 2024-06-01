@@ -12,7 +12,6 @@ use semver::Version;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
     time::Duration,
 };
 
@@ -50,7 +49,7 @@ pub struct CheatsConfig {
     /// Artifacts which are guaranteed to be fresh (either recompiled or cached).
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
-    pub available_artifacts: Option<Arc<ContractsByArtifact>>,
+    pub available_artifacts: Option<ContractsByArtifact>,
     /// Version of the script/test contract which is currently running.
     pub running_version: Option<Version>,
 }
@@ -60,7 +59,7 @@ impl CheatsConfig {
     pub fn new(
         config: &Config,
         evm_opts: EvmOpts,
-        available_artifacts: Option<Arc<ContractsByArtifact>>,
+        available_artifacts: Option<ContractsByArtifact>,
         script_wallets: Option<ScriptWallets>,
         running_version: Option<Version>,
     ) -> Self {

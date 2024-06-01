@@ -44,7 +44,7 @@ use foundry_evm::{
 };
 use foundry_wallets::MultiWalletOpts;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 use yansi::Paint;
 
 mod broadcast;
@@ -591,7 +591,7 @@ impl ScriptConfig {
                         CheatsConfig::new(
                             &self.config,
                             self.evm_opts.clone(),
-                            Some(Arc::new(known_contracts)),
+                            Some(known_contracts),
                             Some(script_wallets),
                             Some(target.version),
                         )
