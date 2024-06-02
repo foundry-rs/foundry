@@ -379,6 +379,14 @@ impl TestArgs {
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
         let known_contracts = runner.known_contracts.clone();
 
+        // Run tests.
+        let (tx, rx) = channel::<(String, SuiteResult)>();
+        let timer = Instant::now();
+        let handle = tokio::task::spawn_blocking({
+            let filter = filter.clone();
+            move || runner.test(&filter, tx)
+        });
+
         // Set up trace identifiers.
         let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
 
@@ -399,15 +407,7 @@ impl TestArgs {
                 config.offline,
             )?);
         }
-        let decoder = builder.build();
-
-        // Run tests.
-        let (tx, rx) = channel::<(String, SuiteResult)>();
-        let timer = Instant::now();
-        let handle = tokio::task::spawn_blocking({
-            let filter = filter.clone();
-            move || runner.test(&filter, tx)
-        });
+        let mut decoder = builder.build();
 
         let mut gas_report = self
             .gas_report
@@ -419,7 +419,8 @@ impl TestArgs {
         for (contract_name, suite_result) in rx {
             let tests = &suite_result.test_results;
 
-            let mut decoder = decoder.clone();
+            // Clear the addresses and labels from previous test.
+            decoder.clear_addresses();
 
             // We identify addresses if we're going to print *any* trace or gas report.
             let identify_addresses = verbosity >= 3 || self.gas_report || self.debug.is_some();
@@ -525,13 +526,13 @@ impl TestArgs {
 
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
-            outcome.last_run_decoder = Some(decoder);
 
             // Stop processing the remaining suites if any test failed and `fail_fast` is set.
             if self.fail_fast && any_test_failed {
                 break;
             }
         }
+        outcome.last_run_decoder = Some(decoder);
         let duration = timer.elapsed();
 
         trace!(target: "forge::test", len=outcome.results.len(), %any_test_failed, "done with results");
