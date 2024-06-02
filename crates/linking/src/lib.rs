@@ -138,14 +138,16 @@ impl<'a> Linker<'a> {
         libraries: Libraries,
         sender: Address,
         mut nonce: u64,
-        target: &'a ArtifactId,
+        targets: impl IntoIterator<Item = &'a ArtifactId>,
     ) -> Result<LinkOutput, LinkerError> {
         // Library paths in `link_references` keys are always stripped, so we have to strip
         // user-provided paths to be able to match them correctly.
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
 
         let mut needed_libraries = BTreeSet::new();
-        self.collect_dependencies(target, &mut needed_libraries)?;
+        for target in targets {
+            self.collect_dependencies(target, &mut needed_libraries)?;
+        }
 
         let mut libs_to_deploy = Vec::new();
 
@@ -324,7 +326,7 @@ mod tests {
             let linker = Linker::new(self.project.root(), self.output.artifact_ids().collect());
             for (id, identifier) in self.iter_linking_targets(&linker) {
                 let output = linker
-                    .link_with_nonce_or_address(Default::default(), sender, initial_nonce, id)
+                    .link_with_nonce_or_address(Default::default(), sender, initial_nonce, [id])
                     .expect("Linking failed");
                 self.validate_assertions(identifier, output);
             }

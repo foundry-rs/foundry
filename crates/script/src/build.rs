@@ -81,7 +81,7 @@ impl BuildData {
                 known_libraries,
                 script_config.evm_opts.sender,
                 script_config.sender_nonce,
-                &self.target,
+                [&self.target],
             )?;
 
             (output.libraries, ScriptPredeployLibraries::Default(output.libs_to_deploy))
