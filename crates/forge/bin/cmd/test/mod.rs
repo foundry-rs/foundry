@@ -399,7 +399,7 @@ impl TestArgs {
                 config.offline,
             )?);
         }
-        let mut decoder = builder.build();
+        let decoder = builder.build();
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -419,8 +419,7 @@ impl TestArgs {
         for (contract_name, suite_result) in rx {
             let tests = &suite_result.test_results;
 
-            // Clear the addresses and labels from previous tests.
-            decoder.clear_addresses();
+            let mut decoder = decoder.clone();
 
             // We identify addresses if we're going to print *any* trace or gas report.
             let identify_addresses = verbosity >= 3 || self.gas_report || self.debug.is_some();
