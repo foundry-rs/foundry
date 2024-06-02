@@ -44,10 +44,10 @@ use std::{
 };
 
 /// When running tests, we deploy all external libraries present in the project. To avoid additional
-/// libraries affecting nonces of senders used in tests, we are using separsate address to
+/// libraries affecting nonces of senders used in tests, we are using separate address to
 /// predeploy libraries.
 ///
-/// address(uint160(uint256(keccak256("foundry library deployer"))))
+/// `address(uint160(uint256(keccak256("foundry library deployer"))))`
 pub const LIBRARY_DEPLOYER: Address = address!("1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
 
 /// A type that executes all tests of a contract

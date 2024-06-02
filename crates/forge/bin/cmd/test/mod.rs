@@ -379,6 +379,28 @@ impl TestArgs {
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
         let known_contracts = runner.known_contracts.clone();
 
+        // Set up trace identifiers.
+        let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
+
+        // Avoid using etherscan for gas report as we decode more traces and this will be
+        // expensive.
+        if !self.gas_report {
+            identifier = identifier.with_etherscan(&config, remote_chain_id)?;
+        }
+
+        // Build the trace decoder.
+        let mut builder = CallTraceDecoderBuilder::new()
+            .with_known_contracts(&known_contracts)
+            .with_verbosity(verbosity);
+        // Signatures are of no value for gas reports.
+        if !self.gas_report {
+            builder = builder.with_signature_identifier(SignaturesIdentifier::new(
+                Config::foundry_cache_dir(),
+                config.offline,
+            )?);
+        }
+        let mut decoder = builder.build();
+
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
@@ -397,27 +419,8 @@ impl TestArgs {
         for (contract_name, suite_result) in rx {
             let tests = &suite_result.test_results;
 
-            // Set up trace identifiers.
-            let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
-
-            // Avoid using etherscan for gas report as we decode more traces and this will be
-            // expensive.
-            if !self.gas_report {
-                identifier = identifier.with_etherscan(&config, remote_chain_id)?;
-            }
-
-            // Build the trace decoder.
-            let mut builder = CallTraceDecoderBuilder::new()
-                .with_known_contracts(&known_contracts)
-                .with_verbosity(verbosity);
-            // Signatures are of no value for gas reports.
-            if !self.gas_report {
-                builder = builder.with_signature_identifier(SignaturesIdentifier::new(
-                    Config::foundry_cache_dir(),
-                    config.offline,
-                )?);
-            }
-            let mut decoder = builder.build();
+            // Clear the addresses and labels from previous tests.
+            decoder.clear_addresses();
 
             // We identify addresses if we're going to print *any* trace or gas report.
             let identify_addresses = verbosity >= 3 || self.gas_report || self.debug.is_some();
