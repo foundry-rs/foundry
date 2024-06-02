@@ -5,10 +5,8 @@ use cast::{revm::primitives::EnvWithHandlerCfg, traces::TraceKind};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    init_progress,
     opts::RpcOpts,
-    update_progress,
-    utils::{handle_traces, TraceResult},
+    utils::{handle_traces, init_progress, TraceResult},
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::EvmVersion;
@@ -153,7 +151,7 @@ impl RunArgs {
             println!("Executing previous transactions from the block.");
 
             if let Some(block) = block {
-                let pb = init_progress!(block.transactions, "tx");
+                let pb = init_progress(block.transactions.len() as u64, "tx");
                 pb.set_position(0);
 
                 let BlockTransactions::Full(txs) = block.transactions else {
@@ -167,7 +165,7 @@ impl RunArgs {
                     if is_known_system_sender(tx.from) ||
                         tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                     {
-                        update_progress!(pb, index);
+                        pb.set_position((index + 1) as u64);
                         continue;
                     }
                     if tx.hash == tx_hash {
@@ -202,7 +200,7 @@ impl RunArgs {
                         }
                     }
 
-                    update_progress!(pb, index);
+                    pb.set_position((index + 1) as u64);
                 }
             }
         }
