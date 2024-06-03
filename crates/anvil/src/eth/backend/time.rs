@@ -85,7 +85,7 @@ impl TimeManager {
     /// Fails if it's before (or at the same time) the last timestamp
     pub fn set_next_block_timestamp(&self, timestamp: u64) -> Result<(), BlockchainError> {
         trace!(target: "time", "override next timestamp {}", timestamp);
-        if timestamp <= *self.last_timestamp.read() {
+        if timestamp < *self.last_timestamp.read() {
             return Err(BlockchainError::TimestampError(format!(
                 "{timestamp} is lower than or equal to previous block's timestamp"
             )))
