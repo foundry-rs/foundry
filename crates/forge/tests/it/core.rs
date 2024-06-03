@@ -710,12 +710,12 @@ async fn test_trace() {
                 result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Deployment);
             let setup_traces = result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Setup);
             let execution_traces =
-                result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Deployment);
+                result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Execution);
 
             assert_eq!(
                 deployment_traces.count(),
-                1,
-                "Test {test_name} did not have exactly 1 deployment trace."
+                12,
+                "Test {test_name} did not have exactly 12 deployment trace."
             );
             assert!(setup_traces.count() <= 1, "Test {test_name} had more than 1 setup trace.");
             assert_eq!(

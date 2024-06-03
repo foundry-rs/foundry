@@ -536,11 +536,6 @@ impl Backend {
     /// This will also grant cheatcode access to the test account
     pub fn set_test_contract(&mut self, acc: Address) -> &mut Self {
         trace!(?acc, "setting test account");
-        // toggle the previous sender
-        if let Some(current) = self.inner.test_contract_address.take() {
-            self.remove_persistent_account(&current);
-            self.revoke_cheatcode_access(&acc);
-        }
 
         self.add_persistent_account(acc);
         self.allow_cheatcode_access(acc);
