@@ -143,15 +143,15 @@ pub fn find_anchor_branch(
                 let push_bytes = &bytecode[push_bytes_start..push_bytes_start + push_size];
                 let mut pc_bytes = [0u8; 8];
                 pc_bytes[8 - push_size..].copy_from_slice(push_bytes);
-                let pc = u64::from_be_bytes(pc_bytes);
-                let pc = usize::try_from(pc).expect("PC is too big");
+                let pc_jump = u64::from_be_bytes(pc_bytes);
+                let pc_jump = usize::try_from(pc_jump).expect("PC is too big");
                 anchors = Some((
                     ItemAnchor {
                         item_id,
                         // The first branch is the opcode directly after JUMPI
                         instruction: pc + 2,
                     },
-                    ItemAnchor { item_id, instruction: pc },
+                    ItemAnchor { item_id, instruction: pc_jump },
                 ));
             }
         }
