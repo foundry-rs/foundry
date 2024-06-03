@@ -137,7 +137,7 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.2.8", default-features = false }
+foundry-block-explorers = { version = "0.3.0", default-features = false }
 foundry-compilers = { version = "0.6.0", default-features = false }
 
 ## revm
@@ -223,6 +223,3 @@ hyper = "1.0"
 reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
 tower-http = "0.5"
-
-[patch.crates-io]
-foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers", rev = "d6f34f7" }
