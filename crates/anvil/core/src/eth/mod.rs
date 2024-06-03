@@ -581,7 +581,7 @@ pub enum EthRequest {
         feature = "serde",
         serde(rename = "anvil_setBlockTimestampInterval", with = "sequence")
     )]
-    EvmSetBlockTimeStampInterval(u64),
+    EvmSetBlockTimeStampInterval(f64),
 
     /// Removes a `anvil_setBlockTimestampInterval` if it exists
     #[cfg_attr(

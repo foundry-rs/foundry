@@ -358,8 +358,7 @@ async fn test_timestamp_interval() {
     let provider = handle.http_provider();
 
     api.evm_mine(None).await.unwrap();
-    let interval = 1000; // 1s
-    let interval_secs = (interval as f64 / 1000.0) as u64;
+    let interval: f64 = 1.0; // 1s
 
     for _ in 0..5 {
         let block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
@@ -370,7 +369,7 @@ async fn test_timestamp_interval() {
 
         let new_block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
 
-        assert_eq!(new_block.header.timestamp, block.header.timestamp + interval_secs);
+        assert_eq!(new_block.header.timestamp, block.header.timestamp + interval as u64);
     }
 
     let block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
@@ -386,7 +385,7 @@ async fn test_timestamp_interval() {
 
     let block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
     // interval also works after setting the next timestamp manually
-    assert_eq!(block.header.timestamp, next_timestamp + interval_secs);
+    assert_eq!(block.header.timestamp, next_timestamp + interval as u64);
 
     assert!(api.evm_remove_block_timestamp_interval().unwrap());
 
@@ -399,7 +398,7 @@ async fn test_timestamp_interval() {
     api.evm_mine(None).await.unwrap();
     let another_block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
     // check interval is disabled
-    assert!(another_block.header.timestamp - new_block.header.timestamp < interval);
+    assert!(another_block.header.timestamp - new_block.header.timestamp <= interval as u64);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2341>

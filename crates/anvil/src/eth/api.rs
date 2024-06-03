@@ -1848,9 +1848,14 @@ impl EthApi {
     /// Sets an interval for the block timestamp in milliseconds
     ///
     /// Handler for RPC call: `anvil_setBlockTimestampInterval`
-    pub fn evm_set_block_timestamp_interval(&self, milliseconds: u64) -> Result<()> {
+    pub fn evm_set_block_timestamp_interval(&self, seconds: f64) -> Result<()> {
         node_info!("anvil_setBlockTimestampInterval");
-        self.backend.time().set_block_timestamp_interval(milliseconds);
+        if seconds == 0.0 {
+            return Err(BlockchainError::Message("interval cannot be zero".to_string()));
+        }
+        let dur = Duration::try_from_secs_f64(seconds)
+            .map_err(|_| BlockchainError::Message("Cannot convert f64 to Duration".to_string()))?;
+        self.backend.time().set_block_timestamp_interval(dur.as_millis() as u64);
         Ok(())
     }
 
