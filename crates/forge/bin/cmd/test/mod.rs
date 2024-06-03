@@ -317,11 +317,12 @@ impl TestArgs {
             *test_pattern = Some(debug_test_pattern.clone());
         }
 
+        let libraries = runner.libraries.clone();
         let outcome = self.run_tests(runner, config, verbosity, &filter).await?;
 
         if should_debug {
             // Get first non-empty suite result. We will have only one such entry
-            let Some((suite_result, test_result)) = outcome
+            let Some((_, test_result)) = outcome
                 .results
                 .iter()
                 .find(|(_, r)| !r.test_results.is_empty())
@@ -333,7 +334,7 @@ impl TestArgs {
             let sources = ContractSources::from_project_output(
                 output_clone.as_ref().unwrap(),
                 project.root(),
-                &suite_result.libraries,
+                &libraries,
             )?;
 
             // Run the debugger.
@@ -381,6 +382,7 @@ impl TestArgs {
         }
 
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
+        let known_contracts = runner.known_contracts.clone();
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -390,6 +392,28 @@ impl TestArgs {
             move || runner.test(&filter, tx)
         });
 
+        // Set up trace identifiers.
+        let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
+
+        // Avoid using etherscan for gas report as we decode more traces and this will be
+        // expensive.
+        if !self.gas_report {
+            identifier = identifier.with_etherscan(&config, remote_chain_id)?;
+        }
+
+        // Build the trace decoder.
+        let mut builder = CallTraceDecoderBuilder::new()
+            .with_known_contracts(&known_contracts)
+            .with_verbosity(verbosity);
+        // Signatures are of no value for gas reports.
+        if !self.gas_report {
+            builder = builder.with_signature_identifier(SignaturesIdentifier::new(
+                Config::foundry_cache_dir(),
+                config.offline,
+            )?);
+        }
+        let mut decoder = builder.build();
+
         let mut gas_report = self
             .gas_report
             .then(|| GasReport::new(config.gas_reports.clone(), config.gas_reports_ignore.clone()));
@@ -397,31 +421,11 @@ impl TestArgs {
         let mut outcome = TestOutcome::empty(self.allow_failure);
 
         let mut any_test_failed = false;
-        for (contract_name, mut suite_result) in rx {
+        for (contract_name, suite_result) in rx {
             let tests = &suite_result.test_results;
 
-            // Set up trace identifiers.
-            let known_contracts = &suite_result.known_contracts;
-            let mut identifier = TraceIdentifiers::new().with_local(known_contracts);
-
-            // Avoid using etherscan for gas report as we decode more traces and this will be
-            // expensive.
-            if !self.gas_report {
-                identifier = identifier.with_etherscan(&config, remote_chain_id)?;
-            }
-
-            // Build the trace decoder.
-            let mut builder = CallTraceDecoderBuilder::new()
-                .with_known_contracts(known_contracts)
-                .with_verbosity(verbosity);
-            // Signatures are of no value for gas reports.
-            if !self.gas_report {
-                builder = builder.with_signature_identifier(SignaturesIdentifier::new(
-                    Config::foundry_cache_dir(),
-                    config.offline,
-                )?);
-            }
-            let mut decoder = builder.build();
+            // Clear the addresses and labels from previous test.
+            decoder.clear_addresses();
 
             // We identify addresses if we're going to print *any* trace or gas report.
             let identify_addresses = verbosity >= 3 || self.gas_report || self.debug.is_some();
@@ -525,18 +529,15 @@ impl TestArgs {
             // Print suite summary.
             shell::println(suite_result.summary())?;
 
-            // Free memory if it's not needed.
-            suite_result.clear_unneeded();
-
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
-            outcome.last_run_decoder = Some(decoder);
 
             // Stop processing the remaining suites if any test failed and `fail_fast` is set.
             if self.fail_fast && any_test_failed {
                 break;
             }
         }
+        outcome.last_run_decoder = Some(decoder);
         let duration = timer.elapsed();
 
         trace!(target: "forge::test", len=outcome.results.len(), %any_test_failed, "done with results");

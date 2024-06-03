@@ -246,6 +246,8 @@ impl CoverageArgs {
             .set_coverage(true)
             .build(&root, output, env, evm_opts)?;
 
+        let known_contracts = runner.known_contracts.clone();
+
         let outcome = self
             .test
             .run_tests(runner, config.clone(), verbosity, &self.test.filter(&config))
@@ -257,12 +259,10 @@ impl CoverageArgs {
             for result in suite.test_results.values() {
                 let Some(hit_maps) = result.coverage.as_ref() else { continue };
                 for map in hit_maps.0.values() {
-                    if let Some((id, _)) =
-                        suite.known_contracts.find_by_deployed_code(&map.bytecode)
-                    {
+                    if let Some((id, _)) = known_contracts.find_by_deployed_code(&map.bytecode) {
                         hits.push((id, map, true));
                     } else if let Some((id, _)) =
-                        suite.known_contracts.find_by_creation_code(&map.bytecode)
+                        known_contracts.find_by_creation_code(&map.bytecode)
                     {
                         hits.push((id, map, false));
                     }
