@@ -3118,7 +3118,7 @@ dependencies = [
  "solang-parser",
  "strum",
  "svm-rs",
- "syn 2.0.64",
+ "syn 2.0.66",
  "tempfile",
  "thiserror",
  "tikv-jemallocator",

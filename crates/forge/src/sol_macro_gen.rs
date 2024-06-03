@@ -1,3 +1,13 @@
+//! SolMacroGen and MultiSolMacroGen
+//!
+//! This type encapsulates the logic for expansion of a Rust TokenStream from Solidity tokens. It
+//! uses the `expand` method from `alloy_sol_macro_expander` underneath.
+//!
+//! It holds info such as `path` to the ABI file, `name` of the file and the rust binding being
+//! generated, and lastly the `expansion` itself, i.e the Rust binding for the provided ABI.
+//!
+//! It contains methods to read the json abi, generate rust bindings from the abi and ultimately
+//! write the bindings to a crate or modules.
 use alloy_json_abi::JsonAbi;
 use alloy_sol_macro_expander::expand::expand;
 use alloy_sol_macro_input::{tokens_for_sol, SolInput, SolInputKind};
