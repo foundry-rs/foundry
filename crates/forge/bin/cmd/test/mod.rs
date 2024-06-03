@@ -21,7 +21,7 @@ use foundry_common::{
 };
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
-    compilers::{multi::MultiCompilerLanguage, CompilationError, CompilerSettings, Language},
+    compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
     utils::source_files_iter,
 };
 use foundry_config::{
@@ -353,9 +353,9 @@ impl TestArgs {
     }
 
     /// Run all tests that matches the filter predicate from a test runner
-    pub async fn run_tests<E: CompilationError>(
+    pub async fn run_tests(
         &self,
-        mut runner: MultiContractRunner<E>,
+        mut runner: MultiContractRunner,
         config: Arc<Config>,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
@@ -620,8 +620,8 @@ impl Provider for TestArgs {
 }
 
 /// Lists all matching tests
-fn list<E: CompilationError>(
-    runner: MultiContractRunner<E>,
+fn list(
+    runner: MultiContractRunner,
     filter: &ProjectPathsAwareFilter,
     json: bool,
 ) -> Result<TestOutcome> {

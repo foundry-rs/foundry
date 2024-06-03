@@ -7,10 +7,7 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
-use foundry_compilers::{
-    artifacts::Libraries, compilers::multi::MultiCompilerError, Artifact, ArtifactId,
-    ProjectCompileOutput, Solc,
-};
+use foundry_compilers::{artifacts::Libraries, Artifact, ArtifactId, ProjectCompileOutput};
 use foundry_config::Config;
 use foundry_evm::{
     backend::Backend, decode::RevertDecoder, executors::ExecutorBuilder, fork::CreateFork,
@@ -38,7 +35,7 @@ pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
-pub struct MultiContractRunner<E = MultiCompilerError> {
+pub struct MultiContractRunner {
     /// Mapping of contract name to JsonAbi, creation bytecode and library bytecode which
     /// needs to be deployed & linked against
     pub contracts: DeployableContracts,
@@ -72,7 +69,7 @@ pub struct MultiContractRunner<E = MultiCompilerError> {
     pub libraries: Libraries,
 }
 
-impl<E: Send + Sync> MultiContractRunner<E> {
+impl MultiContractRunner {
     /// Returns an iterator over all contracts that match the filter.
     pub fn matching_contracts<'a>(
         &'a self,
@@ -322,7 +319,7 @@ impl MultiContractRunnerBuilder {
         output: ProjectCompileOutput<E>,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
-    ) -> Result<MultiContractRunner<E>> {
+    ) -> Result<MultiContractRunner> {
         let output = output.with_stripped_file_prefixes(root);
         let linker = Linker::new(root, output.artifact_ids().collect());
 
