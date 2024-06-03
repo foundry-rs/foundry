@@ -4,6 +4,7 @@ use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::Result;
 use foundry_common::provider::RetryProvider;
+use std::time::Duration;
 
 /// Convenience enum for internal signalling of transaction status
 pub enum TxStatus {
@@ -40,6 +41,7 @@ pub async fn check_tx_status(
         // If the tx is present in the mempool, run the pending tx future, and
         // assume the next drop is really really real
         Ok(PendingTransactionBuilder::new(provider, hash)
+            .with_timeout(Some(Duration::from_secs(120)))
             .get_receipt()
             .await
             .map_or(TxStatus::Dropped, |r| r.into()))
