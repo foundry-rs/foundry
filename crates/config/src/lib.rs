@@ -810,7 +810,7 @@ impl Config {
         compiler_config: CompilerConfig<C>,
         settings: C::Settings,
     ) -> Result<Project<C>, SolcError> {
-        let project = ProjectBuilder::<ConfigurableArtifacts, C>::new(Default::default())
+        let project = ProjectBuilder::<C>::new(Default::default())
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
             .settings(settings)
@@ -3689,7 +3689,7 @@ mod tests {
                             Chain::optimism_mainnet(),
                             Chain::from_id(999999)
                         ]),
-                        endpoints: CachedEndpoints::All
+                        endpoints: CachedEndpoints::All,
                     },
                     use_literal_content: false,
                     bytecode_hash: BytecodeHash::Ipfs,
@@ -3812,9 +3812,10 @@ mod tests {
 
                 [invariant]
                 runs = 256
-                depth = 15
+                depth = 500
                 fail_on_revert = false
                 call_override = false
+                shrink_run_limit = 5000
             "#,
             )?;
 

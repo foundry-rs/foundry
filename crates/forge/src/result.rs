@@ -1,5 +1,6 @@
 //! Test outcomes.
 
+use crate::gas_report::GasReport;
 use alloy_primitives::{Address, Log};
 use foundry_common::{
     evm::Breakpoints, get_contract_name, get_file_name, shell, ContractsByArtifact,
@@ -16,12 +17,9 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::{self, Write},
-    sync::Arc,
     time::Duration,
 };
 use yansi::Paint;
-
-use crate::gas_report::GasReport;
 
 /// The aggregated result of a test run.
 #[derive(Clone, Debug)]
@@ -201,8 +199,10 @@ pub struct SuiteResult {
     /// Libraries used to link test contract.
     pub libraries: Libraries,
     /// Contracts linked with correct libraries.
+    ///
+    /// This is cleared at the end of the test run if coverage is not enabled.
     #[serde(skip)]
-    pub known_contracts: Arc<ContractsByArtifact>,
+    pub known_contracts: ContractsByArtifact,
 }
 
 impl SuiteResult {
@@ -211,9 +211,16 @@ impl SuiteResult {
         test_results: BTreeMap<String, TestResult>,
         warnings: Vec<String>,
         libraries: Libraries,
-        known_contracts: Arc<ContractsByArtifact>,
+        known_contracts: ContractsByArtifact,
     ) -> Self {
         Self { duration, test_results, warnings, libraries, known_contracts }
+    }
+
+    /// Frees memory that is not used for the final output.
+    pub fn clear_unneeded(&mut self) {
+        if !self.test_results.values().any(|r| r.coverage.is_some()) {
+            ContractsByArtifact::clear(&mut self.known_contracts);
+        }
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.

@@ -1,15 +1,15 @@
-use alloy_network::TransactionBuilder;
-use alloy_primitives::U256;
+use crate::tx::CastTxBuilder;
+use alloy_primitives::{TxKind, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    opts::{EtherscanOpts, RpcOpts},
-    utils::{self, parse_ether_value, parse_function_args},
+    opts::{EthereumOpts, TransactionOpts},
+    utils::{self, parse_ether_value},
 };
 use foundry_common::ens::NameOrAddress;
-use foundry_config::{figment::Figment, Config};
+use foundry_config::Config;
 use std::str::FromStr;
 
 /// CLI arguments for `cast estimate`.
@@ -25,32 +25,20 @@ pub struct EstimateArgs {
     /// The arguments of the function to call.
     args: Vec<String>,
 
-    /// The sender account.
-    #[arg(
-        short,
-        long,
-        value_parser = NameOrAddress::from_str,
-        default_value = "0x0000000000000000000000000000000000000000",
-        env = "ETH_FROM",
-    )]
-    from: NameOrAddress,
-
-    /// Ether to send in the transaction.
+    /// The block height to query at.
     ///
-    /// Either specified in wei, or as a string with a unit type:
-    ///
-    /// Examples: 1ether, 10gwei, 0.01ether
-    #[arg(long, value_parser = parse_ether_value)]
-    value: Option<U256>,
-
-    #[command(flatten)]
-    rpc: RpcOpts,
-
-    #[command(flatten)]
-    etherscan: EtherscanOpts,
+    /// Can also be the tags earliest, finalized, safe, latest, or pending.
+    #[arg(long, short = 'B')]
+    block: Option<BlockId>,
 
     #[command(subcommand)]
     command: Option<EstimateSubcommands>,
+
+    #[command(flatten)]
+    tx: TransactionOpts,
+
+    #[command(flatten)]
+    eth: EthereumOpts,
 }
 
 #[derive(Debug, Parser)]
@@ -79,56 +67,44 @@ pub enum EstimateSubcommands {
 
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
-        let EstimateArgs { from, to, sig, args, value, rpc, etherscan, command } = self;
+        let EstimateArgs { to, mut sig, mut args, mut tx, block, eth, command } = self;
 
-        let figment = Figment::from(Config::figment()).merge(etherscan).merge(rpc);
-        let config = Config::try_from(figment)?;
+        let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
-        let chain = utils::get_chain(config.chain, &provider).await?;
-        let api_key = config.get_etherscan_api_key(Some(chain));
+        let sender = eth.wallet.sender().await;
 
-        let from = from.resolve(&provider).await?;
-        let to = match to {
-            Some(to) => Some(to.resolve(&provider).await?),
-            None => None,
-        };
-
-        let mut req = WithOtherFields::<TransactionRequest>::default()
-            .with_from(from)
-            .with_value(value.unwrap_or_default());
-
-        if let Some(to) = to {
-            req.set_to(to);
+        let tx_kind = if let Some(to) = to {
+            TxKind::Call(to.resolve(&provider).await?)
         } else {
-            req.set_kind(alloy_primitives::TxKind::Create);
-        }
-
-        let data = match command {
-            Some(EstimateSubcommands::Create { code, sig, args, value }) => {
-                if let Some(value) = value {
-                    req.set_value(value);
-                }
-
-                let mut data = hex::decode(code)?;
-
-                if let Some(s) = sig {
-                    let (mut constructor_args, _) =
-                        parse_function_args(&s, args, to, chain, &provider, api_key.as_deref())
-                            .await?;
-                    data.append(&mut constructor_args);
-                }
-
-                data
-            }
-            _ => {
-                let sig = sig.ok_or_else(|| eyre::eyre!("Function signature must be provided."))?;
-                parse_function_args(&sig, args, to, chain, &provider, api_key.as_deref()).await?.0
-            }
+            TxKind::Create
         };
 
-        req.set_input(data);
+        let code = if let Some(EstimateSubcommands::Create {
+            code,
+            sig: create_sig,
+            args: create_args,
+            value,
+        }) = command
+        {
+            sig = create_sig;
+            args = create_args;
+            if let Some(value) = value {
+                tx.value = Some(value);
+            }
+            Some(code)
+        } else {
+            None
+        };
 
-        let gas = provider.estimate_gas(&req).await?;
+        let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
+            .await?
+            .with_tx_kind(tx_kind)
+            .with_code_sig_and_args(code, sig, args)
+            .await?
+            .build_raw(sender)
+            .await?;
+
+        let gas = provider.estimate_gas(&tx).block_id(block.unwrap_or_default()).await?;
         println!("{gas}");
         Ok(())
     }
@@ -141,6 +117,6 @@ mod tests {
     #[test]
     fn parse_estimate_value() {
         let args: EstimateArgs = EstimateArgs::parse_from(["foundry-cli", "--value", "100"]);
-        assert!(args.value.is_some());
+        assert!(args.tx.value.is_some());
     }
 }

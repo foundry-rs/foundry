@@ -20,6 +20,7 @@ use foundry_evm_core::{
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
+use rustc_hash::FxHashMap;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 
 mod precompiles;
@@ -108,7 +109,7 @@ pub struct CallTraceDecoder {
     pub receive_contracts: Vec<Address>,
 
     /// All known functions.
-    pub functions: HashMap<Selector, Vec<Function>>,
+    pub functions: FxHashMap<Selector, Vec<Function>>,
     /// All known events.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// Revert decoder. Contains all known custom errors.

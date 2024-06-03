@@ -6393,6 +6393,66 @@
     },
     {
       "func": {
+        "id": "randomAddress",
+        "description": "Returns a random `address`.",
+        "declaration": "function randomAddress() external returns (address);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "randomAddress()",
+        "selector": "0xd5bee9f5",
+        "selectorBytes": [
+          213,
+          190,
+          233,
+          245
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomUint_0",
+        "description": "Returns a random uint256 value.",
+        "declaration": "function randomUint() external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "randomUint()",
+        "selector": "0x25124730",
+        "selectorBytes": [
+          37,
+          18,
+          71,
+          48
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomUint_1",
+        "description": "Returns random uin256 value between the provided range (min..=max).",
+        "declaration": "function randomUint(uint256 min, uint256 max) external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "randomUint(uint256,uint256)",
+        "selector": "0xd61b051b",
+        "selectorBytes": [
+          214,
+          27,
+          5,
+          27
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "readCallers",
         "description": "Reads the current `msg.sender` and `tx.origin` from state and reports if there is any active caller modification.",
         "declaration": "function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);",

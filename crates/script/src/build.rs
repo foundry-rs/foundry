@@ -146,10 +146,9 @@ impl LinkedBuildData {
     }
 
     /// Fetches target bytecode from linked contracts.
-    pub fn get_target_contract(&self) -> Result<ContractData> {
+    pub fn get_target_contract(&self) -> Result<&ContractData> {
         self.known_contracts
             .get(&self.build_data.target)
-            .cloned()
             .ok_or_eyre("target not found in linked artifacts")
     }
 }

@@ -674,9 +674,6 @@ pub struct RawCallResult {
     /// Scripted transactions generated from this call
     pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
-    ///
-    /// This is only present if the changed state was not committed to the database (i.e. if you
-    /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
     /// The `revm::Env` after the call
     pub env: EnvWithHandlerCfg,

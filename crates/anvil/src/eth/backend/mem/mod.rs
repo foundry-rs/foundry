@@ -44,7 +44,7 @@ use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
 };
-use alloy_trie::{HashBuilder, Nibbles};
+use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::{
     eth::{
         block::{Block, BlockInfo},
@@ -650,16 +650,6 @@ impl Backend {
         self.fees.set_base_fee(basefee)
     }
 
-    /// Returns the current gas price
-    pub fn gas_price(&self) -> u128 {
-        self.fees.gas_price()
-    }
-
-    /// Returns the suggested fee cap
-    pub fn max_priority_fee_per_gas(&self) -> u128 {
-        self.fees.max_priority_fee_per_gas()
-    }
-
     /// Sets the gas price
     pub fn set_gas_price(&self, price: u128) {
         self.fees.set_gas_price(price)
@@ -1149,7 +1139,9 @@ impl Backend {
             env.block.basefee = U256::from(base);
         }
 
-        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
+        let gas_price = gas_price
+            .or(max_fee_per_gas)
+            .unwrap_or_else(|| self.fees().raw_gas_price().saturating_add(1e9 as u128));
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         env.tx = TxEnv {
@@ -2226,7 +2218,7 @@ impl Backend {
             let account = db.get(&address).cloned().unwrap_or_default();
 
             let mut builder = HashBuilder::default()
-                .with_proof_retainer(vec![Nibbles::unpack(keccak256(address))]);
+                .with_proof_retainer(ProofRetainer::new(vec![Nibbles::unpack(keccak256(address))]));
 
             for (key, account) in trie_accounts(db) {
                 builder.add_leaf(key, &account);
@@ -2508,7 +2500,7 @@ pub fn transaction_build(
 pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<Bytes>> {
     let keys: Vec<_> = keys.iter().map(|key| Nibbles::unpack(keccak256(key))).collect();
 
-    let mut builder = HashBuilder::default().with_proof_retainer(keys.clone());
+    let mut builder = HashBuilder::default().with_proof_retainer(ProofRetainer::new(keys.clone()));
 
     for (key, value) in trie_storage(storage) {
         builder.add_leaf(key, &value);

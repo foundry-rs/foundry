@@ -40,7 +40,6 @@ use std::{
     borrow::Cow,
     cmp::min,
     collections::{BTreeMap, HashMap},
-    sync::Arc,
     time::Instant,
 };
 
@@ -258,7 +257,7 @@ impl<'a> ContractRunner<'a> {
         mut self,
         filter: &dyn TestFilter,
         test_options: &TestOptions,
-        known_contracts: Arc<ContractsByArtifact>,
+        known_contracts: ContractsByArtifact,
         handle: &tokio::runtime::Handle,
     ) -> SuiteResult {
         info!("starting tests");
