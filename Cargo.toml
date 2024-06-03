@@ -138,7 +138,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.2.8", default-features = false }
-foundry-compilers = { version = "0.5.2", default-features = false }
+foundry-compilers = { version = "0.6.0", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -225,5 +225,4 @@ tower = "0.4"
 tower-http = "0.5"
 
 [patch.crates-io]
-foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "b9d9e78" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers", rev = "2790381" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers", rev = "d6f34f7" }
