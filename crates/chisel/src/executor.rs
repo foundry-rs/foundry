@@ -1401,11 +1401,7 @@ impl<'a> Iterator for InstructionIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::{
-        compilers::{solc::SolcVersionManager, CompilerVersionManager},
-        error::SolcError,
-        Solc,
-    };
+    use foundry_compilers::{error::SolcError, Solc};
     use semver::Version;
     use std::sync::Mutex;
 
@@ -1690,8 +1686,7 @@ mod tests {
         for _ in 0..3 {
             let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
             if !*is_preinstalled {
-                let solc = SolcVersionManager::default()
-                    .get_or_install(&version.parse().unwrap())
+                let solc = Solc::find_or_install(&version.parse().unwrap())
                     .map(|solc| (solc.version.clone(), solc));
                 match solc {
                     Ok((v, solc)) => {
@@ -1712,9 +1707,7 @@ mod tests {
             }
         }
 
-        let solc = SolcVersionManager::default()
-            .get_or_install(&Version::new(0, 8, 19))
-            .expect("could not install solc");
+        let solc = Solc::find_or_install(&Version::new(0, 8, 19)).expect("could not install solc");
         SessionSource::new(solc, Default::default())
     }
 

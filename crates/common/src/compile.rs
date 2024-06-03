@@ -6,15 +6,11 @@ use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     artifacts::{BytecodeObject, ContractBytecodeSome, Libraries},
-    compilers::{
-        solc::SolcVersionManager, vyper::parser::VyperParsedSource, Compiler,
-        CompilerVersionManager,
-    },
+    compilers::{solc::SolcCompiler, Compiler},
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
-    resolver::{parse::SolData, GraphEdges},
-    Artifact, ArtifactId, CompilerConfig, FileFilter, Project, ProjectCompileOutput,
-    ProjectPathsConfig, SolcConfig, SolcSparseFileFilter, SparseOutputFileFilter,
+    Artifact, ArtifactId, FileFilter, Project, ProjectBuilder, ProjectCompileOutput,
+    ProjectPathsConfig, Solc, SolcConfig, SparseOutputFileFilter,
 };
 use foundry_linking::Linker;
 use num_format::{Locale, ToFormattedString};
@@ -521,7 +517,10 @@ pub async fn compile_from_source(
 }
 
 /// Creates a [Project] from an Etherscan source.
-pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> Result<Project> {
+pub fn etherscan_project(
+    metadata: &Metadata,
+    target_path: impl AsRef<Path>,
+) -> Result<Project<SolcCompiler>> {
     let target_path = dunce::canonicalize(target_path.as_ref())?;
     let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
@@ -553,17 +552,16 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
         .build_with_root(sources_path);
 
     let v = metadata.compiler_version()?;
-    let vm = SolcVersionManager::default();
-    let solc = vm.get_or_install(&v)?;
+    let solc = Solc::find_or_install(&v)?;
 
-    let compiler_config = CompilerConfig::Specific(solc);
+    let compiler = SolcCompiler::Specific(solc);
 
-    Ok(Project::builder()
+    Ok(ProjectBuilder::<SolcCompiler>::default()
         .settings(SolcConfig::builder().settings(settings).build().settings)
         .paths(paths)
         .ephemeral()
         .no_artifacts()
-        .build(compiler_config)?)
+        .build(compiler)?)
 }
 
 /// Bundles multiple `SkipBuildFilter` into a single `FileFilter`
@@ -592,22 +590,6 @@ impl FileFilter for SkipBuildFilters {
 impl FileFilter for &SkipBuildFilters {
     fn is_match(&self, file: &Path) -> bool {
         (*self).is_match(file)
-    }
-}
-
-impl SparseOutputFileFilter<SolData> for SkipBuildFilters {
-    fn sparse_sources(&self, file: &Path, graph: &GraphEdges<SolData>) -> Vec<PathBuf> {
-        SolcSparseFileFilter::new(self).sparse_sources(file, graph)
-    }
-}
-
-impl SparseOutputFileFilter<VyperParsedSource> for SkipBuildFilters {
-    fn sparse_sources(&self, file: &Path, _graph: &GraphEdges<VyperParsedSource>) -> Vec<PathBuf> {
-        if self.is_match(file) {
-            vec![file.to_path_buf()]
-        } else {
-            vec![]
-        }
     }
 }
 

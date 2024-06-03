@@ -97,7 +97,7 @@ impl CoverageArgs {
     /// Builds the project.
     fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
         // Set up the project
-        let mut project = config.ephemeral_no_artifacts_project()?;
+        let mut project = config.create_project(false, false)?;
         if self.ir_minimum {
             // TODO: How to detect solc version if the user does not specify a solc version in
             // config  case1: specify local installed solc ?
@@ -124,12 +124,12 @@ impl CoverageArgs {
             // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
             // And also in new releases of solidity:
             // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
-            project.settings = project.settings.with_via_ir_minimum_optimization()
+            project.settings.solc = project.settings.solc.with_via_ir_minimum_optimization()
         } else {
-            project.settings.optimizer.disable();
-            project.settings.optimizer.runs = None;
-            project.settings.optimizer.details = None;
-            project.settings.via_ir = None;
+            project.settings.solc.optimizer.disable();
+            project.settings.solc.optimizer.runs = None;
+            project.settings.solc.optimizer.details = None;
+            project.settings.solc.via_ir = None;
         }
 
         let output = ProjectCompiler::default()

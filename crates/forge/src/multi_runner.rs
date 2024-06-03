@@ -313,10 +313,10 @@ impl MultiContractRunnerBuilder {
 
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
-    pub fn build(
+    pub fn build<E>(
         self,
         root: &Path,
-        output: ProjectCompileOutput,
+        output: ProjectCompileOutput<E>,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {

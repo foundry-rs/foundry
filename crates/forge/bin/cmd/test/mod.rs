@@ -20,8 +20,9 @@ use foundry_common::{
     shell,
 };
 use foundry_compilers::{
-    artifacts::output_selection::OutputSelection, utils::source_files_iter, SolcSparseFileFilter,
-    SOLC_EXTENSIONS,
+    artifacts::output_selection::OutputSelection,
+    compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
+    utils::source_files_iter,
 };
 use foundry_config::{
     figment,
@@ -157,10 +158,11 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
     ) -> Result<BTreeSet<PathBuf>> {
         let mut project = config.create_project(true, true)?;
-        project.settings.output_selection =
-            OutputSelection::common_output_selection(["abi".to_string()]);
+        project.settings.update_output_selection(|selection| {
+            *selection = OutputSelection::common_output_selection(["abi".to_string()]);
+        });
 
-        let output = project.compile_sparse(Box::new(SolcSparseFileFilter::new(filter.clone())))?;
+        let output = project.compile_sparse(Box::new(filter.clone()))?;
 
         if output.has_compiler_errors() {
             println!("{}", output);
@@ -210,7 +212,10 @@ impl TestArgs {
         }
 
         // Always recompile all sources to ensure that `getCode` cheatcode can use any artifact.
-        test_sources.extend(source_files_iter(project.paths.sources, SOLC_EXTENSIONS));
+        test_sources.extend(source_files_iter(
+            project.paths.sources,
+            MultiCompilerLanguage::FILE_EXTENSIONS,
+        ));
 
         Ok(test_sources)
     }
