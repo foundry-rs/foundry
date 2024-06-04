@@ -2,7 +2,7 @@ use crate::{
     executors::{Executor, RawCallResult},
     inspectors::Fuzzer,
 };
-use alloy_primitives::{Address, FixedBytes, U256};
+use alloy_primitives::{Address, FixedBytes, Selector, U256};
 use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -491,6 +491,8 @@ impl<'a> InvariantExecutor<'a> {
             self.call_sol_default(to, &IInvariantTest::targetSendersCall {}).targetedSenders;
         let excluded_senders =
             self.call_sol_default(to, &IInvariantTest::excludeSendersCall {}).excludedSenders;
+        let sender_filters = SenderFilters::new(targeted_senders, excluded_senders);
+
         let selected =
             self.call_sol_default(to, &IInvariantTest::targetContractsCall {}).targetedContracts;
         let excluded =
@@ -498,20 +500,16 @@ impl<'a> InvariantExecutor<'a> {
 
         let mut contracts: TargetedContracts = self
             .setup_contracts
-            .clone()
-            .into_iter()
-            .filter(|(addr, (identifier, _))| {
+            .iter()
+            .filter(|&(addr, (identifier, _))| {
                 *addr != to &&
                     *addr != CHEATCODE_ADDRESS &&
                     *addr != HARDHAT_CONSOLE_ADDRESS &&
                     (selected.is_empty() || selected.contains(addr)) &&
-                    (self.artifact_filters.targeted.is_empty() ||
-                        self.artifact_filters.targeted.contains_key(identifier)) &&
                     (excluded.is_empty() || !excluded.contains(addr)) &&
-                    (self.artifact_filters.excluded.is_empty() ||
-                        !self.artifact_filters.excluded.contains(identifier))
+                    self.artifact_filters.matches(identifier)
             })
-            .map(|(addr, (identifier, abi))| (addr, (identifier, abi, vec![])))
+            .map(|(addr, (identifier, abi))| (*addr, (identifier.clone(), abi.clone(), vec![])))
             .collect();
 
         self.target_interfaces(to, &mut contracts)?;
@@ -523,10 +521,7 @@ impl<'a> InvariantExecutor<'a> {
             eyre::bail!("No contracts to fuzz.");
         }
 
-        Ok((
-            SenderFilters::new(targeted_senders, excluded_senders),
-            FuzzRunIdentifiedContracts::new(contracts, selected.is_empty()),
-        ))
+        Ok((sender_filters, FuzzRunIdentifiedContracts::new(contracts, selected.is_empty())))
     }
 
     /// Extends the contracts and selectors to fuzz with the addresses and ABIs specified in
@@ -586,26 +581,18 @@ impl<'a> InvariantExecutor<'a> {
         address: Address,
         targeted_contracts: &mut TargetedContracts,
     ) -> Result<()> {
-        let some_abi_selectors = self
-            .artifact_filters
-            .targeted
-            .iter()
-            .filter(|(_, selectors)| !selectors.is_empty())
-            .collect::<BTreeMap<_, _>>();
-
         for (address, (identifier, _)) in self.setup_contracts.iter() {
-            if let Some(selectors) = some_abi_selectors.get(identifier) {
-                self.add_address_with_functions(
-                    *address,
-                    (*selectors).clone(),
-                    targeted_contracts,
-                )?;
+            if let Some(selectors) = self.artifact_filters.targeted.get(identifier) {
+                if selectors.is_empty() {
+                    continue;
+                }
+                self.add_address_with_functions(*address, selectors, targeted_contracts)?;
             }
         }
 
         let selectors = self.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
         for IInvariantTest::FuzzSelector { addr, selectors } in selectors.targetedSelectors {
-            self.add_address_with_functions(addr, selectors, targeted_contracts)?;
+            self.add_address_with_functions(addr, &selectors, targeted_contracts)?;
         }
         Ok(())
     }
@@ -614,14 +601,14 @@ impl<'a> InvariantExecutor<'a> {
     fn add_address_with_functions(
         &self,
         address: Address,
-        bytes4_array: Vec<FixedBytes<4>>,
+        selectors: &[Selector],
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
         if let Some((name, abi, address_selectors)) = targeted_contracts.get_mut(&address) {
             // The contract is already part of our filter, and all we do is specify that we're
             // only looking at specific functions coming from `bytes4_array`.
-            for selector in bytes4_array {
-                address_selectors.push(get_function(name, &selector, abi)?);
+            for &selector in selectors {
+                address_selectors.push(get_function(name, selector, abi).cloned()?);
             }
         } else {
             let (name, abi) = self.setup_contracts.get(&address).ok_or_else(|| {
@@ -630,9 +617,9 @@ impl<'a> InvariantExecutor<'a> {
                 )
             })?;
 
-            let functions = bytes4_array
-                .into_iter()
-                .map(|selector| get_function(name, &selector, abi))
+            let functions = selectors
+                .iter()
+                .map(|&selector| get_function(name, selector, abi).cloned())
                 .collect::<Result<Vec<_>, _>>()?;
 
             targeted_contracts.insert(address, (name.to_string(), abi.clone(), functions));

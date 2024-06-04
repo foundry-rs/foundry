@@ -105,31 +105,26 @@ impl FuzzedExecutor {
                         traces.borrow_mut().push(call_traces);
                     }
 
-                    if let Some(prev) = coverage.take() {
-                        // Safety: If `Option::or` evaluates to `Some`, then `call.coverage` must
-                        // necessarily also be `Some`
-                        coverage.replace(Some(prev.merge(case.coverage.unwrap())));
-                    } else {
-                        coverage.replace(case.coverage);
+                    match &mut *coverage.borrow_mut() {
+                        Some(prev) => prev.merge(case.coverage.unwrap()),
+                        opt => *opt = case.coverage,
                     }
 
                     Ok(())
                 }
                 FuzzOutcome::CounterExample(CounterExampleOutcome {
-                    exit_reason,
-                    counterexample: _counterexample,
+                    exit_reason: status,
+                    counterexample: outcome,
                     ..
                 }) => {
-                    let status = exit_reason;
                     // We cannot use the calldata returned by the test runner in `TestError::Fail`,
                     // since that input represents the last run case, which may not correspond with
                     // our failure - when a fuzz case fails, proptest will try
                     // to run at least one more case to find a minimal failure
                     // case.
-                    let call_res = _counterexample.1.result.clone();
-                    *counterexample.borrow_mut() = _counterexample;
-                    // HACK: we have to use an empty string here to denote `None`
-                    let reason = rd.maybe_decode(&call_res, Some(status));
+                    let reason = rd.maybe_decode(&outcome.1.result, Some(status));
+                    *counterexample.borrow_mut() = outcome;
+                    // HACK: we have to use an empty string here to denote `None`.
                     Err(TestCaseError::fail(reason.unwrap_or_default()))
                 }
             }
