@@ -108,7 +108,10 @@ impl BindArgs {
         }
 
         if !self.alloy {
-            eprintln!("Warning: Generate bindings for the `alloy` library, instead of `ethers`. Use `--alloy`");
+            eprintln!(
+                "Warning: `--ethers` (default) bindings are deprecated and will be removed in the future. \
+                 Consider using `--alloy` instead."
+            );
         }
 
         let config = self.try_load_config_emit_warnings()?;
