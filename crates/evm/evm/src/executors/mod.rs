@@ -50,7 +50,7 @@ pub use tracing::TracingExecutor;
 sol! {
     interface ITest {
         function setUp() external;
-        function failed() external view returns (bool);
+        function failed() external view returns (bool failed);
     }
 }
 
@@ -515,8 +515,7 @@ impl Executor {
             let executor =
                 Executor::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
             let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
-            if let Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { _0: failed } }) =
-                call
+            if let Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { failed } }) = call
             {
                 debug!(failed, "DSTest::failed()");
                 success = !failed;

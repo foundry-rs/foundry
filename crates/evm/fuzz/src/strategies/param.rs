@@ -139,9 +139,9 @@ pub fn fuzz_param_from_state(
 
     // Convert the value based on the parameter type
     match *param {
-        DynSolType::Address => value()
-            .prop_map(move |value| DynSolValue::Address(Address::from_word(value)))
-            .boxed(),
+        DynSolType::Address => {
+            value().prop_map(move |value| DynSolValue::Address(Address::from_word(value))).boxed()
+        }
         DynSolType::Function => value()
             .prop_map(move |value| {
                 DynSolValue::Function(alloy_primitives::Function::from_word(value))
