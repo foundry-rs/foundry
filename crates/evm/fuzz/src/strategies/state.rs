@@ -130,7 +130,7 @@ impl FuzzDictionary {
         let collected = false;
         for (address, account) in db_state {
             // Insert basic account information
-            self.insert_value(address.into_word().into(), collected);
+            self.insert_value(address.into_word(), collected);
             // Insert push bytes
             self.insert_push_bytes_values(address, &account.info, collected);
             // Insert storage values.
@@ -147,7 +147,7 @@ impl FuzzDictionary {
         // otherwise we can't select random data for state fuzzing.
         if self.values().is_empty() {
             // Prefill with a random address.
-            self.insert_value(Address::random().into_word().into(), false);
+            self.insert_value(Address::random().into_word(), false);
         }
     }
 
@@ -212,7 +212,7 @@ impl FuzzDictionary {
         let collected = true;
         for (address, account) in state_changeset {
             // Insert basic account information.
-            self.insert_value(address.into_word().into(), collected);
+            self.insert_value(address.into_word(), collected);
             // Insert push bytes.
             self.insert_push_bytes_values(address, &account.info, collected);
             // Insert storage values.
@@ -323,7 +323,6 @@ impl FuzzDictionary {
     ) {
         for sample in sample_values {
             if let (Some(sample_type), Some(sample_value)) = (sample.as_type(), sample.as_word()) {
-                let sample_value = sample_value.into();
                 if let Some(values) = self.sample_values.get_mut(&sample_type) {
                     if values.len() < limit as usize {
                         values.insert(sample_value);
