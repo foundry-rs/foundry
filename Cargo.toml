@@ -83,6 +83,7 @@ scrypt.opt-level = 3
 inherits = "dev"
 opt-level = 1
 debug-assertions = false
+overflow-checks = false
 strip = "debuginfo"
 panic = "abort"
 codegen-units = 16
@@ -186,6 +187,7 @@ alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
 ## misc
+ahash = "0.8"
 arrayvec = "0.7"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [
