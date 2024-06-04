@@ -209,7 +209,7 @@ impl MultiContractRunner {
         if !enabled!(tracing::Level::TRACE) {
             span_name = get_contract_name(&identifier);
         }
-        let _guard = info_span!("run_tests", name = span_name).entered();
+        let _guard = debug_span!("run_suite", name = span_name).entered();
 
         debug!("start executing all tests in contract");
 
