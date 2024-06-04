@@ -331,16 +331,16 @@ impl BindArgs {
 
         if !self.module {
             trace!(single_file = self.single_file, "generating crate");
-            let _ = solmacrogen.write_to_crate(
+            solmacrogen.write_to_crate(
                 &self.crate_name,
                 &self.crate_version,
                 bindings_root,
                 self.single_file,
                 self.alloy_version.to_owned(),
-            );
+            )?;
         } else {
             trace!(single_file = self.single_file, "generating module");
-            let _ = solmacrogen.write_to_module(bindings_root, self.single_file);
+            solmacrogen.write_to_module(bindings_root, self.single_file)?;
         }
 
         Ok(())
