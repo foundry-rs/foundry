@@ -188,6 +188,9 @@ alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
 ## misc
+proc-macro2 = "1.0.82"
+quote = "1.0"
+syn = "2.0"
 arrayvec = "0.7"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [

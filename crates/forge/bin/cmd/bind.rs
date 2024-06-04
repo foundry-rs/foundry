@@ -104,13 +104,7 @@ impl BindArgs {
         }
 
         if !self.alloy {
-            eprintln!("Warning: ethers bindings are deprecated and will be removed in the future");
-            /*
-            eprintln!(
-                "Warning: `--ethers` (default) bindings are deprecated and will be removed in the future. \
-                 Consider using `--alloy` instead."
-            );
-            */
+            eprintln!("Warning: Generate bindings for the `alloy` library, instead of `ethers`. Use `--alloy`");
         }
 
         let config = self.try_load_config_emit_warnings()?;
@@ -285,14 +279,14 @@ impl BindArgs {
         let mut bindings = self.get_solmacrogen(artifacts)?;
         bindings.generate_bindings()?;
         println!("Checking bindings for {} contracts", bindings.instances.len());
-        let _ = bindings.check_consistency(
+        bindings.check_consistency(
             &self.crate_name,
             &self.crate_version,
             bindings_root,
             self.single_file,
             !self.skip_cargo_toml,
             self.module,
-        );
+        )?;
         println!("OK.");
         Ok(())
     }
