@@ -354,8 +354,8 @@ impl FuzzDictionary {
 
     pub fn revert(&mut self) {
         // Revert new values collected during the run.
-        for value_index in self.new_values.iter() {
-            self.state_values.swap_remove_index(value_index.to_owned());
+        for &value_index in &self.new_values {
+            self.state_values.swap_remove_index(value_index);
         }
         for address_index in self.new_addreses.iter() {
             self.addresses.swap_remove_index(address_index.to_owned());
