@@ -110,13 +110,14 @@ pub(crate) fn can_continue(
 ) -> Result<RichInvariantResults> {
     let mut call_results = None;
 
-    // Detect handler assertion failures first.
-    let handlers_failed = targeted_contracts.targets.lock().iter().any(|contract| {
-        !executor.is_success(*contract.0, false, Cow::Borrowed(state_changeset), false)
-    });
+    let handlers_succeeded = || {
+        targeted_contracts.targets.lock().iter().all(|(address, ..)| {
+            executor.is_success(*address, false, Cow::Borrowed(state_changeset), false)
+        })
+    };
 
-    // Assert invariants IF the call did not revert and the handlers did not fail.
-    if !call_result.reverted && !handlers_failed {
+    // Assert invariants if the call did not revert and the handlers did not fail.
+    if !call_result.reverted && handlers_succeeded() {
         if let Some(traces) = call_result.traces {
             run_traces.push(traces);
         }
