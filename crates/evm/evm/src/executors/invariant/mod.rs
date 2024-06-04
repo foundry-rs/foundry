@@ -235,7 +235,7 @@ impl<'a> InvariantExecutor<'a> {
                     // Collect data for fuzzing from the state changeset.
                     let mut state_changeset = call_result.state_changeset.to_owned().unwrap();
 
-                    if !&call_result.reverted {
+                    if !call_result.reverted {
                         collect_data(
                             &mut state_changeset,
                             &targeted_contracts,

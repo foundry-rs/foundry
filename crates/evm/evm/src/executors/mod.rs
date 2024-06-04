@@ -16,7 +16,8 @@ use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
     backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult},
     constants::{
-        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE,
+        CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
+        DEFAULT_CREATE2_DEPLOYER_CODE,
     },
     debug::DebugArena,
     decode::RevertDecoder,
@@ -93,6 +94,9 @@ impl Executor {
             CHEATCODE_ADDRESS,
             revm::primitives::AccountInfo {
                 code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
+                // Also set the code hash manually so that it's not computed later.
+                // The code hash value does not matter, as long as it's not zero or `KECCAK_EMPTY`.
+                code_hash: CHEATCODE_CONTRACT_HASH,
                 ..Default::default()
             },
         );

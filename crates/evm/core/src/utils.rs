@@ -235,9 +235,21 @@ where
     DB: revm::Database,
     I: InspectorExt<DB>,
 {
+    let revm::primitives::EnvWithHandlerCfg { env, handler_cfg } = env;
+
     // NOTE: We could use `revm::Evm::builder()` here, but on the current patch it has some
     // performance issues.
-    let revm::primitives::EnvWithHandlerCfg { env, handler_cfg } = env;
+    /*
+    revm::Evm::builder()
+        .with_db(db)
+        .with_env(env)
+        .with_external_context(inspector)
+        .with_handler_cfg(handler_cfg)
+        .append_handler_register(revm::inspector_handle_register)
+        .append_handler_register(create2_handler_register)
+        .build()
+    */
+
     let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);

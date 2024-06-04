@@ -839,7 +839,7 @@ impl Backend {
 
         let db = self.db.read().await;
         let mut inspector = Inspector::default();
-        let mut evm = self.new_evm_with_inspector_ref(&*db, env, &mut inspector);
+        let mut evm = self.new_evm_with_inspector_ref(&**db, env, &mut inspector);
         let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
