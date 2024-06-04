@@ -29,6 +29,7 @@ impl Default for MemDb {
 
 impl DatabaseRef for MemDb {
     type Error = DatabaseError;
+
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic_ref(&self.inner, address)
     }
