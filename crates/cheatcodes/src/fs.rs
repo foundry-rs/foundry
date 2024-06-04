@@ -376,7 +376,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                         let name = file.replace(".sol", "");
                         PathBuf::from(format!("{file}/{name}.json"))
                     }
-                    _ => return Err(fmt_err!("Invalid artifact path")),
+                    _ => bail!("invalid artifact path"),
                 };
 
             state.config.paths.artifacts.join(path_in_artifacts)

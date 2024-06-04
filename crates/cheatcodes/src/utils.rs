@@ -215,7 +215,7 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     digest: &B256,
 ) -> Result {
     let Some(script_wallets) = &ccx.state.script_wallets else {
-        return Err("no wallets are available".into());
+        bail!("no wallets are available");
     };
 
     let mut script_wallets = script_wallets.inner.lock();
@@ -229,21 +229,15 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     } else if signers.len() == 1 {
         *signers.keys().next().unwrap()
     } else {
-        return Err("could not determine signer".into());
+        bail!("could not determine signer");
     };
 
     let wallet = signers
         .get(&signer)
         .ok_or_else(|| fmt_err!("signer with address {signer} is not available"))?;
 
-    let sig =
-        foundry_common::block_on(wallet.sign_hash(digest)).map_err(|err| fmt_err!("{err}"))?;
-
-    debug_assert_eq!(
-        sig.recover_address_from_prehash(digest).map_err(|err| fmt_err!("{err}"))?,
-        signer
-    );
-
+    let sig = foundry_common::block_on(wallet.sign_hash(digest))?;
+    debug_assert_eq!(sig.recover_address_from_prehash(digest)?, signer);
     Ok(encode_vrs(sig))
 }
 
