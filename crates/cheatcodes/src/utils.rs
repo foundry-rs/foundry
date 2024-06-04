@@ -90,10 +90,10 @@ impl Cheatcode for deriveKey_3Call {
 impl Cheatcode for rememberKeyCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey } = self;
-        let key = parse_private_key(privateKey)?;
-        let address = LocalWallet::from(key.clone()).address();
+        let wallet = parse_wallet(privateKey)?;
+        let address = wallet.address();
         if let Some(script_wallets) = &ccx.state.script_wallets {
-            script_wallets.add_signer(key.to_bytes())?;
+            script_wallets.add_local_signer(wallet);
         }
         Ok(address.abi_encode())
     }
