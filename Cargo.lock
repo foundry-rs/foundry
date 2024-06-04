@@ -3079,6 +3079,7 @@ dependencies = [
  "forge-doc",
  "forge-fmt",
  "forge-script",
+ "forge-sol-macro-gen",
  "forge-verify",
  "foundry-block-explorers",
  "foundry-cli",
@@ -3102,9 +3103,7 @@ dependencies = [
  "parking_lot",
  "paste",
  "path-slash",
- "proc-macro2",
  "proptest",
- "quote",
  "rayon",
  "regex",
  "reqwest",
@@ -3118,7 +3117,6 @@ dependencies = [
  "solang-parser",
  "strum",
  "svm-rs",
- "syn 2.0.66",
  "tempfile",
  "thiserror",
  "tikv-jemallocator",
@@ -3215,6 +3213,21 @@ dependencies = [
  "tempfile",
  "tracing",
  "yansi",
+]
+
+[[package]]
+name = "forge-sol-macro-gen"
+version = "0.2.0"
+dependencies = [
+ "alloy-json-abi",
+ "alloy-sol-macro-expander",
+ "alloy-sol-macro-input",
+ "eyre",
+ "foundry-common",
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn 2.0.66",
 ]
 
 [[package]]

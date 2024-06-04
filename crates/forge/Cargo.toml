@@ -49,6 +49,7 @@ forge-doc.workspace = true
 forge-fmt.workspace = true
 forge-verify.workspace = true
 forge-script.workspace = true
+forge-sol-macro-gen.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
 
@@ -65,9 +66,6 @@ alloy-sol-macro-expander = { workspace = true, features = ["json"] }
 alloy-consensus.workspace = true
 alloy-chains.workspace = true
 
-proc-macro2.workspace = true
-quote.workspace = true
-syn.workspace = true
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"

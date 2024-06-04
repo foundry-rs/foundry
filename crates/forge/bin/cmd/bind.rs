@@ -3,7 +3,7 @@ use ethers_contract_abigen::{
     Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts,
 };
 use eyre::{Result, WrapErr};
-use forge::sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
+use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
