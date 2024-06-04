@@ -160,7 +160,7 @@ impl<'a> ContractRunner<'a> {
             }
         };
 
-        // Reset `self.sender`s, `CALLER`s and LIBRARY_DEPLOYER's balance to the initial balance.
+        // Reset `self.sender`s, `CALLER`s and `LIBRARY_DEPLOYER`'s balance to the initial balance.
         self.executor.set_balance(self.sender, self.initial_balance)?;
         self.executor.set_balance(CALLER, self.initial_balance)?;
         self.executor.set_balance(LIBRARY_DEPLOYER, self.initial_balance)?;
