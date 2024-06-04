@@ -785,12 +785,6 @@ impl std::ops::DerefMut for CallResult {
     }
 }
 
-/// Calculates the initial gas stipend for a transaction
-fn calc_stipend(calldata: &[u8], spec: SpecId) -> u64 {
-    let non_zero_data_cost = if SpecId::enabled(spec, SpecId::ISTANBUL) { 16 } else { 68 };
-    calldata.iter().fold(21000, |sum, byte| sum + if *byte == 0 { 4 } else { non_zero_data_cost })
-}
-
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
 fn convert_executed_result(
     env: EnvWithHandlerCfg,
@@ -809,7 +803,13 @@ fn convert_executed_result(
         }
         ExecutionResult::Halt { reason, gas_used } => (reason.into(), 0_u64, gas_used, None),
     };
-    let stipend = calc_stipend(&env.tx.data, env.handler_cfg.spec_id);
+    let stipend = revm::interpreter::gas::validate_initial_tx_gas(
+        env.spec_id(),
+        &env.tx.data,
+        env.tx.transact_to.is_create(),
+        &env.tx.access_list,
+        &env.tx.eof_initcodes,
+    );
 
     let result = match &out {
         Some(Output::Call(data)) => data.clone(),
