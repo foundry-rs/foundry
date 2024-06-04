@@ -230,6 +230,7 @@ alloy-contract = {{ git = "https://github.com/alloy-rs/alloy", rev = "64feb9b" }
     ///
     /// Returns `Ok(())` if the generated bindings are up to date, otherwise it returns
     /// `Err(_)`.
+    #[allow(clippy::too_many_arguments)]
     pub fn check_consistency(
         &self,
         name: &str,
