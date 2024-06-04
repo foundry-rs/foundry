@@ -93,10 +93,10 @@ pub struct FuzzDictionary {
     addresses: IndexSet<Address>,
     /// Configuration for the dictionary.
     config: FuzzDictionaryConfig,
-    /// New keys added to the dictionary since container initialization.
-    new_values: IndexSet<[u8; 32]>,
-    /// New addresses added to the dictionary since container initialization.
-    new_addreses: IndexSet<Address>,
+    /// New key indexes added to the dictionary since container initialization.
+    new_values: Vec<usize>,
+    /// New address indexes added to the dictionary since container initialization.
+    new_addreses: Vec<usize>,
     /// Sample typed values that are collected from call result and used across invariant runs.
     sample_values: HashMap<DynSolType, IndexSet<[u8; 32]>>,
 }
@@ -288,24 +288,24 @@ impl FuzzDictionary {
     }
 
     /// Insert address into fuzz dictionary.
-    /// If address is newly collected then it is removed at the end of current run.
+    /// If address is newly collected then it is removed by index at the end of current run.
     fn insert_address(&mut self, address: Address, collected: bool) {
-        if self.addresses.len() < self.config.max_fuzz_dictionary_addresses &&
-            self.addresses.insert(address) &&
-            collected
-        {
-            self.new_addreses.insert(address);
+        if self.addresses.len() < self.config.max_fuzz_dictionary_addresses {
+            let (index, new_address) = self.addresses.insert_full(address);
+            if new_address && collected {
+                self.new_addreses.push(index);
+            }
         }
     }
 
     /// Insert raw value into fuzz dictionary.
-    /// If value is newly collected then it is removed at the end of current run.
+    /// If value is newly collected then it is removed by index at the end of current run.
     fn insert_value(&mut self, value: [u8; 32], collected: bool) {
-        if self.state_values.len() < self.config.max_fuzz_dictionary_values &&
-            self.state_values.insert(value) &&
-            collected
-        {
-            self.new_values.insert(value);
+        if self.state_values.len() < self.config.max_fuzz_dictionary_values {
+            let (index, new_value) = self.state_values.insert_full(value);
+            if new_value && collected {
+                self.new_values.push(index);
+            }
         }
     }
 
@@ -354,11 +354,11 @@ impl FuzzDictionary {
 
     pub fn revert(&mut self) {
         // Revert new values collected during the run.
-        for key in self.new_values.iter() {
-            self.state_values.swap_remove(key);
+        for value_index in self.new_values.iter() {
+            self.state_values.swap_remove_index(value_index.to_owned());
         }
-        for address in self.new_addreses.iter() {
-            self.addresses.swap_remove(address);
+        for address_index in self.new_addreses.iter() {
+            self.addresses.swap_remove_index(address_index.to_owned());
         }
 
         self.new_values.clear();
