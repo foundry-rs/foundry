@@ -88,6 +88,10 @@ pub struct BindArgs {
     #[arg(long, conflicts_with = "ethers")]
     alloy: bool,
 
+    /// Specify the alloy version to use for `alloy_sol_types`
+    #[arg(long, default_value = "0.7.4", value_name = "ALLOY_VERSION")]
+    alloy_version: String,
+
     /// Generate bindings for the `ethers` library, instead of `alloy` (default, deprecated).
     #[arg(long)]
     ethers: bool,
@@ -286,6 +290,7 @@ impl BindArgs {
             self.single_file,
             !self.skip_cargo_toml,
             self.module,
+            self.alloy_version.to_owned(),
         )?;
         println!("OK.");
         Ok(())
@@ -331,6 +336,7 @@ impl BindArgs {
                 &self.crate_version,
                 bindings_root,
                 self.single_file,
+                self.alloy_version.to_owned(),
             );
         } else {
             trace!(single_file = self.single_file, "generating module");

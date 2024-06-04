@@ -111,6 +111,7 @@ impl MultiSolMacroGen {
         version: &str,
         bindings_path: &Path,
         single_file: bool,
+        alloy_version: String,
     ) -> Result<()> {
         self.generate_bindings()?;
 
@@ -127,9 +128,9 @@ version = "{}"
 edition = "2021"
 
 [dependencies]
-alloy-sol-types = "0.7.4"
+alloy-sol-types = "{}"
 alloy-contract = {{ git = "https://github.com/alloy-rs/alloy", rev = "64feb9b" }}"#,
-            name, version
+            name, version, alloy_version
         );
 
         fs::write(cargo_toml_path, toml_contents)
@@ -237,9 +238,10 @@ alloy-contract = {{ git = "https://github.com/alloy-rs/alloy", rev = "64feb9b" }
         single_file: bool,
         check_cargo_toml: bool,
         is_mod: bool,
+        alloy_version: String,
     ) -> Result<()> {
         if check_cargo_toml {
-            self.check_cargo_toml(name, version, crate_path)?;
+            self.check_cargo_toml(name, version, crate_path, alloy_version)?;
         }
 
         let mut super_contents = if is_mod {
@@ -300,7 +302,13 @@ alloy-contract = {{ git = "https://github.com/alloy-rs/alloy", rev = "64feb9b" }
         Ok(())
     }
 
-    fn check_cargo_toml(&self, name: &str, version: &str, crate_path: &Path) -> Result<()> {
+    fn check_cargo_toml(
+        &self,
+        name: &str,
+        version: &str,
+        crate_path: &Path,
+        alloy_version: String,
+    ) -> Result<()> {
         eyre::ensure!(crate_path.is_dir(), "Crate path must be a directory");
 
         let cargo_toml_path = crate_path.join("Cargo.toml");
@@ -311,7 +319,7 @@ alloy-contract = {{ git = "https://github.com/alloy-rs/alloy", rev = "64feb9b" }
 
         let name_check = &format!("name = \"{}\"", name);
         let version_check = &format!("version = \"{}\"", version);
-        let sol_types_check = "alloy-sol-types = \"0.7.4\"";
+        let sol_types_check = &format!("alloy-sol-types = \"{}\"", alloy_version);
         let alloy_contract_check =
             "alloy-contract = {{ git = \"https://github.com/alloy-rs/alloy\", rev = \"64feb9b\" }}";
         let toml_consistent = cargo_toml_contents.contains(name_check) &&
