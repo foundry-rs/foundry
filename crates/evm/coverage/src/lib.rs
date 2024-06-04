@@ -155,15 +155,19 @@ impl CoverageReport {
 pub struct HitMaps(pub HashMap<B256, HitMap>);
 
 impl HitMaps {
-    pub fn merge(mut self, other: HitMaps) -> Self {
-        for (code_hash, hit_map) in other.0.into_iter() {
+    pub fn merge(&mut self, other: HitMaps) {
+        for (code_hash, hit_map) in other.0 {
             if let Some(HitMap { hits: extra_hits, .. }) = self.insert(code_hash, hit_map) {
-                for (pc, hits) in extra_hits.into_iter() {
+                for (pc, hits) in extra_hits {
                     self.entry(code_hash)
                         .and_modify(|map| *map.hits.entry(pc).or_default() += hits);
                 }
             }
         }
+    }
+
+    pub fn merged(mut self, other: HitMaps) -> Self {
+        self.merge(other);
         self
     }
 }

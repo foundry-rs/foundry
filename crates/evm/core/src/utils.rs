@@ -1,9 +1,8 @@
 pub use crate::ic::*;
 use crate::{constants::DEFAULT_CREATE2_DEPLOYER, InspectorExt};
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, FixedBytes, U256};
+use alloy_primitives::{Address, Selector, U256};
 use alloy_rpc_types::{Block, Transaction};
-use eyre::ContextCompat;
 use foundry_config::NamedChain;
 use revm::{
     db::WrapDatabaseRef,
@@ -61,15 +60,14 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
 }
 
 /// Given an ABI and selector, it tries to find the respective function.
-pub fn get_function(
+pub fn get_function<'a>(
     contract_name: &str,
-    selector: &FixedBytes<4>,
-    abi: &JsonAbi,
-) -> eyre::Result<Function> {
+    selector: Selector,
+    abi: &'a JsonAbi,
+) -> eyre::Result<&'a Function> {
     abi.functions()
-        .find(|func| func.selector().as_slice() == selector.as_slice())
-        .cloned()
-        .wrap_err(format!("{contract_name} does not have the selector {selector:?}"))
+        .find(|func| func.selector() == selector)
+        .ok_or_else(|| eyre::eyre!("{contract_name} does not have the selector {selector}"))
 }
 
 /// Configures the env for the transaction

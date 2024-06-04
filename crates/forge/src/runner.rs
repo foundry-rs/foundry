@@ -877,7 +877,7 @@ impl<'a> ContractRunner<'a> {
 fn merge_coverages(mut coverage: Option<HitMaps>, other: Option<HitMaps>) -> Option<HitMaps> {
     let old_coverage = std::mem::take(&mut coverage);
     match (old_coverage, other) {
-        (Some(old_coverage), Some(other)) => Some(old_coverage.merge(other)),
+        (Some(old_coverage), Some(other)) => Some(old_coverage.merged(other)),
         (None, Some(other)) => Some(other),
         (Some(old_coverage), None) => Some(old_coverage),
         (None, None) => None,

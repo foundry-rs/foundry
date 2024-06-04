@@ -68,13 +68,13 @@ pub(crate) fn assert_invariants(
         U256::ZERO,
     )?;
 
-    let is_err = !executor.is_raw_call_success(
+    let success = executor.is_raw_call_success(
         invariant_contract.address,
         Cow::Owned(call_result.state_changeset.take().unwrap()),
         &call_result,
         false,
     );
-    if is_err {
+    if !success {
         // We only care about invariants which we haven't broken yet.
         if invariant_failures.error.is_none() {
             let case_data = FailedInvariantCaseData::new(

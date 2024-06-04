@@ -89,7 +89,7 @@ pub(crate) fn shrink_sequence(
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
     let error_call_result =
-        executor.call_raw(CALLER, failed_case.addr, failed_case.func.clone(), U256::ZERO)?;
+        executor.call_raw(CALLER, failed_case.addr, failed_case.calldata.clone(), U256::ZERO)?;
     if error_call_result.reverted {
         return Ok(vec![]);
     }
@@ -102,7 +102,7 @@ pub(crate) fn shrink_sequence(
             calls,
             shrinker.current().collect(),
             failed_case.addr,
-            failed_case.func.clone(),
+            failed_case.calldata.clone(),
             failed_case.fail_on_revert,
         ) {
             // If candidate sequence still fails then shrink more if possible.
@@ -126,7 +126,7 @@ pub fn check_sequence(
     calls: &[BasicTxDetails],
     sequence: Vec<usize>,
     test_address: Address,
-    test_function: Bytes,
+    calldata: Bytes,
     fail_on_revert: bool,
 ) -> eyre::Result<(bool, bool)> {
     // Apply the call sequence.
@@ -146,7 +146,7 @@ pub fn check_sequence(
     }
 
     // Check the invariant for call sequence.
-    let mut call_result = executor.call_raw(CALLER, test_address, test_function, U256::ZERO)?;
+    let mut call_result = executor.call_raw(CALLER, test_address, calldata, U256::ZERO)?;
     Ok((
         executor.is_raw_call_success(
             test_address,
