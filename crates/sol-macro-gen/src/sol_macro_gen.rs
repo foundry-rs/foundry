@@ -8,6 +8,7 @@
 //!
 //! It contains methods to read the json abi, generate rust bindings from the abi and ultimately
 //! write the bindings to a crate or modules.
+
 use alloy_json_abi::JsonAbi;
 use alloy_sol_macro_expander::expand::expand;
 use alloy_sol_macro_input::{tokens_for_sol, SolInput, SolInputKind};
