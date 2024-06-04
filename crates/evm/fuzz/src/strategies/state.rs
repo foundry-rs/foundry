@@ -357,8 +357,8 @@ impl FuzzDictionary {
         for &value_index in &self.new_values {
             self.state_values.swap_remove_index(value_index);
         }
-        for address_index in self.new_addreses.iter() {
-            self.addresses.swap_remove_index(address_index.to_owned());
+        for &address_index in &self.new_addreses {
+            self.addresses.swap_remove_index(address_index);
         }
 
         self.new_values.clear();
