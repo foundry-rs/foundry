@@ -343,9 +343,7 @@ impl MultiContractRunnerBuilder {
         let mut deployable_contracts = DeployableContracts::default();
 
         for (id, contract) in linked_contracts.iter() {
-            let Some(abi) = contract.abi.as_ref() else {
-                continue;
-            };
+            let Some(abi) = &contract.abi else { continue };
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&

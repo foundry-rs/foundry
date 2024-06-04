@@ -316,7 +316,7 @@ impl ContractSources {
                     format!("failed to read artifact source file for `{}`", id.identifier())
                 })?;
                 let linked = linker.link(&id, libraries)?;
-                let contract = compact_to_contract(linked)?;
+                let contract = compact_to_contract(linked.into_contract_bytecode())?;
                 sources.insert(&id, file_id, source_code, contract);
             } else {
                 warn!(id = id.identifier(), "source not found");
