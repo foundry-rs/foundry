@@ -65,7 +65,7 @@ class Expanded:
         self.partition = partition
 
 
-is_pr = False and os.environ.get("EVENT_NAME") == "pull_request"
+is_pr = os.environ.get("EVENT_NAME") == "pull_request"
 t_linux_x86 = Target("ubuntu-latest", "x86_64-unknown-linux-gnu", "linux-amd64")
 # TODO: Figure out how to make this work
 # t_linux_arm = Target("ubuntu-latest", "aarch64-unknown-linux-gnu", "linux-aarch64")
