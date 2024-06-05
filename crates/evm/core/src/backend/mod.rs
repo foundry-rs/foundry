@@ -414,8 +414,6 @@ pub struct Backend {
     inner: BackendInner,
 }
 
-// === impl Backend ===
-
 impl Backend {
     /// Creates a new Backend with a spawned multi fork thread.
     pub fn spawn(fork: Option<CreateFork>) -> Self {
@@ -933,8 +931,6 @@ impl Backend {
         Ok(None)
     }
 }
-
-// === impl a bunch of `revm::Database` adjacent implementations ===
 
 impl DatabaseExt for Backend {
     fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
@@ -1514,8 +1510,6 @@ pub struct Fork {
     journaled_state: JournaledState,
 }
 
-// === impl Fork ===
-
 impl Fork {
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
@@ -1586,8 +1580,6 @@ pub struct BackendInner {
     /// All accounts that are allowed to execute cheatcodes
     pub cheatcode_access_accounts: HashSet<Address>,
 }
-
-// === impl BackendInner ===
 
 impl BackendInner {
     pub fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {

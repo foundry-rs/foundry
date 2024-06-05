@@ -17,8 +17,6 @@ pub struct FsPermissions {
     pub permissions: Vec<PathPermission>,
 }
 
-// === impl FsPermissions ===
-
 impl FsPermissions {
     /// Creates anew instance with the given `permissions`
     pub fn new(permissions: impl IntoIterator<Item = PathPermission>) -> Self {
@@ -108,8 +106,6 @@ pub struct PathPermission {
     pub path: PathBuf,
 }
 
-// === impl PathPermission ===
-
 impl PathPermission {
     /// Returns a new permission for the path and the given access
     pub fn new(path: impl Into<PathBuf>, access: FsAccessPermission) -> Self {
@@ -173,8 +169,6 @@ pub enum FsAccessPermission {
     /// Only writing is allowed
     Write,
 }
-
-// === impl FsAccessPermission ===
 
 impl FsAccessPermission {
     /// Returns true if the access is allowed

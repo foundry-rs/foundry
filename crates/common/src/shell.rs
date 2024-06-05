@@ -70,8 +70,6 @@ pub struct Shell {
     verbosity: Verbosity,
 }
 
-// === impl Shell ===
-
 impl Shell {
     /// Creates a new shell instance
     pub fn new(output: ShellOut, verbosity: Verbosity) -> Self {
@@ -210,8 +208,6 @@ pub enum ShellOut {
     Stream,
 }
 
-// === impl ShellOut ===
-
 impl ShellOut {
     /// Creates a new shell that writes to memory
     pub fn memory() -> Self {
@@ -293,8 +289,6 @@ pub enum Verbosity {
     /// print nothing
     Silent,
 }
-
-// === impl Verbosity ===
 
 impl Verbosity {
     /// Returns true if json mode

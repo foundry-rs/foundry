@@ -23,8 +23,6 @@ pub struct BackendSnapshot<T> {
     pub env: Env,
 }
 
-// === impl BackendSnapshot ===
-
 impl<T> BackendSnapshot<T> {
     /// Takes a new snapshot
     pub fn new(db: T, journaled_state: JournaledState, env: Env) -> Self {

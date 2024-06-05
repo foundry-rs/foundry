@@ -25,8 +25,6 @@ pub struct ServerConfig {
     pub no_cors: bool,
 }
 
-// === impl ServerConfig ===
-
 impl ServerConfig {
     /// Sets the "allow origin" header for cors
     pub fn with_allow_origin(mut self, allow_origin: impl Into<HeaderValueWrapper>) -> Self {

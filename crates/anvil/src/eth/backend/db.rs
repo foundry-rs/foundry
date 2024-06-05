@@ -266,8 +266,6 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
 /// Represents a state at certain point
 pub struct StateDb(pub(crate) Box<dyn MaybeFullDatabase + Send + Sync>);
 
-// === impl StateDB ===
-
 impl StateDb {
     pub fn new(db: impl MaybeFullDatabase + Send + Sync + 'static) -> Self {
         Self(Box::new(db))
@@ -321,8 +319,6 @@ pub struct SerializableState {
     /// The best block number of the state, can be different from block number (Arbitrum chain).
     pub best_block_number: Option<U64>,
 }
-
-// === impl SerializableState ===
 
 impl SerializableState {
     /// Loads the `Genesis` object from the given json file path

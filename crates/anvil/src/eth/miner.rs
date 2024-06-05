@@ -27,8 +27,6 @@ pub struct Miner {
     inner: Arc<MinerInner>,
 }
 
-// === impl Miner ===
-
 impl Miner {
     /// Returns a new miner with that operates in the given `mode`
     pub fn new(mode: MiningMode) -> Self {
@@ -79,8 +77,6 @@ pub struct MinerInner {
     waker: AtomicWaker,
 }
 
-// === impl MinerInner ===
-
 impl MinerInner {
     /// Call the waker again
     fn wake(&self) {
@@ -111,8 +107,6 @@ pub enum MiningMode {
     /// A miner that constructs a new block every `interval` tick
     FixedBlockTime(FixedBlockTimeMiner),
 }
-
-// === impl MiningMode ===
 
 impl MiningMode {
     pub fn instant(max_transactions: usize, listener: Receiver<TxHash>) -> Self {
@@ -151,8 +145,6 @@ pub struct FixedBlockTimeMiner {
     interval: Interval,
 }
 
-// === impl FixedBlockTimeMiner ===
-
 impl FixedBlockTimeMiner {
     /// Creates a new instance with an interval of `duration`
     pub fn new(duration: Duration) -> Self {
@@ -184,8 +176,6 @@ pub struct ReadyTransactionMiner {
     /// Receives hashes of transactions that are ready
     rx: Fuse<Receiver<TxHash>>,
 }
-
-// === impl ReadyTransactionMiner ===
 
 impl ReadyTransactionMiner {
     fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {

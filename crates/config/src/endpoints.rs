@@ -15,8 +15,6 @@ pub struct RpcEndpoints {
     endpoints: BTreeMap<String, RpcEndpointConfig>,
 }
 
-// === impl RpcEndpoints ===
-
 impl RpcEndpoints {
     /// Creates a new list of endpoints
     pub fn new(
@@ -131,8 +129,6 @@ pub enum RpcEndpoint {
     /// **Note:** this contains the endpoint as is, like `https://eth-mainnet.alchemyapi.io/v2/${API_KEY}` or `${EPC_ENV_VAR}`
     Env(String),
 }
-
-// === impl RpcEndpoint ===
 
 impl RpcEndpoint {
     /// Returns the url variant
@@ -340,8 +336,6 @@ pub struct ResolvedRpcEndpoints {
     /// alias
     endpoints: BTreeMap<String, Result<String, UnresolvedEnvVarError>>,
 }
-
-// === impl ResolvedEndpoints ===
 
 impl ResolvedRpcEndpoints {
     /// Returns true if there's an endpoint that couldn't be resolved

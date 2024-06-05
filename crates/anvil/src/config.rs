@@ -350,8 +350,6 @@ Genesis Timestamp
     }
 }
 
-// === impl NodeConfig ===
-
 impl NodeConfig {
     /// Returns a new config intended to be used in tests, which does not print and binds to a
     /// random, free port by setting it to `0`
@@ -1178,8 +1176,6 @@ pub struct PruneStateHistoryConfig {
     pub enabled: bool,
     pub max_memory_history: Option<usize>,
 }
-
-// === impl PruneStateHistoryConfig ===
 
 impl PruneStateHistoryConfig {
     /// Returns `true` if writing state history is supported

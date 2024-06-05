@@ -197,8 +197,6 @@ pub struct ScriptArgs {
     pub retry: RetryArgs,
 }
 
-// === impl ScriptArgs ===
-
 impl ScriptArgs {
     async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets =
