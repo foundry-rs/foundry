@@ -23,7 +23,7 @@ pub struct Parsed<'a> {
 }
 
 /// Parse source code
-pub fn parse(src: &str) -> Result<Parsed, Vec<Diagnostic>> {
+pub fn parse(src: &str) -> Result<Parsed<'_>, Vec<Diagnostic>> {
     let (pt, comments) = solang_parser::parse(src, 0)?;
     let comments = Comments::new(comments, src);
     let (inline_config_items, invalid_inline_config_items): (Vec<_>, Vec<_>) =
@@ -35,7 +35,7 @@ pub fn parse(src: &str) -> Result<Parsed, Vec<Diagnostic>> {
 /// Format parsed code
 pub fn format_to<W: Write>(
     writer: W,
-    mut parsed: Parsed,
+    mut parsed: Parsed<'_>,
     config: FormatterConfig,
 ) -> Result<(), FormatterError> {
     trace!(?parsed, ?config, "Formatting");

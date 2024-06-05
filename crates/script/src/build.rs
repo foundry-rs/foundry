@@ -36,7 +36,7 @@ pub struct BuildData {
 }
 
 impl BuildData {
-    pub fn get_linker(&self) -> Linker {
+    pub fn get_linker(&self) -> Linker<'_> {
         Linker::new(self.project_root.clone(), self.output.artifact_ids().collect())
     }
 
