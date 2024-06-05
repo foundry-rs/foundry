@@ -106,7 +106,7 @@ impl ProviderBuilder {
             .or_else(|err| match err {
                 ParseError::RelativeUrlWithoutBase => {
                     if SocketAddr::from_str(url_str).is_ok() {
-                        Url::parse(&format!("http://{}", url_str))
+                        Url::parse(&format!("http://{url_str}"))
                     } else {
                         let path = Path::new(url_str);
 
@@ -235,7 +235,7 @@ impl ProviderBuilder {
 
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider> {
-        let ProviderBuilder {
+        let Self {
             url,
             chain: _,
             max_retry,
@@ -270,7 +270,7 @@ impl ProviderBuilder {
 
     /// Constructs the `RetryProvider` with a signer
     pub fn build_with_signer(self, signer: EthereumSigner) -> Result<RetryProviderWithSigner> {
-        let ProviderBuilder {
+        let Self {
             url,
             chain: _,
             max_retry,

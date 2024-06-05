@@ -309,7 +309,7 @@ async fn main() -> Result<()> {
                 {
                     let resolved = match func_names {
                         Some(v) => v.join("|"),
-                        None => "".to_string(),
+                        None => String::new(),
                     };
                     println!("{selector}\t{arguments:max_args_len$}\t{resolved}");
                 }

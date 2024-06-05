@@ -164,8 +164,6 @@ pub struct ProjectPathsAwareFilter {
     paths: ProjectPathsConfig,
 }
 
-// === impl ProjectPathsAwareFilter ===
-
 impl ProjectPathsAwareFilter {
     /// Returns true if the filter is empty.
     pub fn is_empty(&self) -> bool {

@@ -27,8 +27,6 @@ pub struct Miner {
     inner: Arc<MinerInner>,
 }
 
-// === impl Miner ===
-
 impl Miner {
     /// Returns a new miner with that operates in the given `mode`
     pub fn new(mode: MiningMode) -> Self {
@@ -79,8 +77,6 @@ pub struct MinerInner {
     waker: AtomicWaker,
 }
 
-// === impl MinerInner ===
-
 impl MinerInner {
     /// Call the waker again
     fn wake(&self) {
@@ -112,11 +108,9 @@ pub enum MiningMode {
     FixedBlockTime(FixedBlockTimeMiner),
 }
 
-// === impl MiningMode ===
-
 impl MiningMode {
     pub fn instant(max_transactions: usize, listener: Receiver<TxHash>) -> Self {
-        MiningMode::Auto(ReadyTransactionMiner {
+        Self::Auto(ReadyTransactionMiner {
             max_transactions,
             has_pending_txs: None,
             rx: listener.fuse(),
@@ -124,7 +118,7 @@ impl MiningMode {
     }
 
     pub fn interval(duration: Duration) -> Self {
-        MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(duration))
+        Self::FixedBlockTime(FixedBlockTimeMiner::new(duration))
     }
 
     /// polls the [Pool] and returns those transactions that should be put in a block, if any.
@@ -134,9 +128,9 @@ impl MiningMode {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction>>> {
         match self {
-            MiningMode::None => Poll::Pending,
-            MiningMode::Auto(miner) => miner.poll(pool, cx),
-            MiningMode::FixedBlockTime(miner) => miner.poll(pool, cx),
+            Self::None => Poll::Pending,
+            Self::Auto(miner) => miner.poll(pool, cx),
+            Self::FixedBlockTime(miner) => miner.poll(pool, cx),
         }
     }
 }
@@ -150,8 +144,6 @@ pub struct FixedBlockTimeMiner {
     /// The interval this fixed block time miner operates with
     interval: Interval,
 }
-
-// === impl FixedBlockTimeMiner ===
 
 impl FixedBlockTimeMiner {
     /// Creates a new instance with an interval of `duration`
@@ -184,8 +176,6 @@ pub struct ReadyTransactionMiner {
     /// Receives hashes of transactions that are ready
     rx: Fuse<Receiver<TxHash>>,
 }
-
-// === impl ReadyTransactionMiner ===
 
 impl ReadyTransactionMiner {
     fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {

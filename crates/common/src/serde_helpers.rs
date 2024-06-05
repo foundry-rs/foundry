@@ -15,10 +15,10 @@ pub enum Numeric {
 }
 
 impl From<Numeric> for U256 {
-    fn from(n: Numeric) -> U256 {
+    fn from(n: Numeric) -> Self {
         match n {
             Numeric::U256(n) => n,
-            Numeric::Num(n) => U256::from(n),
+            Numeric::Num(n) => Self::from(n),
         }
     }
 }
@@ -28,7 +28,7 @@ impl FromStr for Numeric {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Ok(val) = s.parse::<u128>() {
-            Ok(Numeric::U256(U256::from(val)))
+            Ok(Self::U256(U256::from(val)))
         } else if s.starts_with("0x") {
             U256::from_str_radix(s, 16).map(Numeric::U256).map_err(|err| err.to_string())
         } else {
@@ -63,10 +63,8 @@ impl NumberOrHexU256 {
     /// Tries to convert this into a [U256]].
     pub fn try_into_u256<E: de::Error>(self) -> Result<U256, E> {
         match self {
-            NumberOrHexU256::Int(num) => {
-                U256::from_str(num.to_string().as_str()).map_err(E::custom)
-            }
-            NumberOrHexU256::Hex(val) => Ok(val),
+            Self::Int(num) => U256::from_str(num.to_string().as_str()).map_err(E::custom),
+            Self::Hex(val) => Ok(val),
         }
     }
 }
@@ -84,11 +82,11 @@ where
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum NumericSeq {
-    /// Single parameter sequence (e.g [1])
+    /// Single parameter sequence (e.g `[1]`).
     Seq([Numeric; 1]),
-    /// U256
+    /// `U256`.
     U256(U256),
-    /// Native u64
+    /// Native `u64`.
     Num(u64),
 }
 

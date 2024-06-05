@@ -17,8 +17,6 @@ pub struct NodeLogLayer {
     state: LoggingManager,
 }
 
-// === impl NodeLogLayer ===
-
 impl NodeLogLayer {
     /// Returns a new instance of this layer
     pub fn new(state: LoggingManager) -> Self {
@@ -50,8 +48,6 @@ pub struct LoggingManager {
     /// Whether the logger is currently enabled
     pub enabled: Arc<RwLock<bool>>,
 }
-
-// === impl LoggingManager ===
 
 impl LoggingManager {
     /// Returns true if logging is currently enabled

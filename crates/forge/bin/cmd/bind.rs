@@ -195,7 +195,7 @@ impl BindArgs {
             .map(|(name, path)| {
                 trace!(?path, "parsing Abigen from file");
                 let abi = Abigen::new(name, path.to_str().unwrap())
-                    .wrap_err_with(|| format!("failed to parse Abigen from file: {:?}", path));
+                    .wrap_err_with(|| format!("failed to parse Abigen from file: {path:?}"));
                 if !self.skip_extra_derives {
                     abi?.add_derive("serde::Serialize")?.add_derive("serde::Deserialize")
                 } else {

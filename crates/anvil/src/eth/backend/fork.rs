@@ -2,7 +2,10 @@
 
 use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_primitives::{Address, Bytes, StorageValue, B256, U256};
-use alloy_provider::{ext::DebugApi, Provider};
+use alloy_provider::{
+    ext::{DebugApi, TraceApi},
+    Provider,
+};
 use alloy_rpc_types::{
     request::TransactionRequest, AccessListWithGasUsed, Block, BlockId,
     BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse, FeeHistory,
@@ -38,8 +41,6 @@ pub struct ClientFork {
     /// This also holds a handle to the underlying database
     pub database: Arc<AsyncRwLock<Box<dyn Db>>>,
 }
-
-// === impl ClientFork ===
 
 impl ClientFork {
     /// Creates a new instance of the fork
@@ -185,7 +186,7 @@ impl ClientFork {
         block: Option<BlockNumber>,
     ) -> Result<u128, TransportError> {
         let block = block.unwrap_or_default();
-        let res = self.provider().estimate_gas(request).block_id(block.into()).await?;
+        let res = self.provider().estimate_gas(request).block(block.into()).await?;
 
         Ok(res)
     }
@@ -599,8 +600,6 @@ pub struct ClientForkConfig {
     pub total_difficulty: U256,
 }
 
-// === impl ClientForkConfig ===
-
 impl ClientForkConfig {
     /// Updates the provider URL
     ///
@@ -658,8 +657,6 @@ pub struct ForkedStorage {
     pub block_receipts: HashMap<u64, Vec<ReceiptResponse>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
 }
-
-// === impl ForkedStorage ===
 
 impl ForkedStorage {
     /// Clears all data

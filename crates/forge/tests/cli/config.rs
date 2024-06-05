@@ -447,7 +447,6 @@ forgetest!(can_set_gas_price, |prj, cmd| {
 forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
-    dbg!(&remappings);
     similar_asserts::assert_eq!(
         remappings,
         vec![

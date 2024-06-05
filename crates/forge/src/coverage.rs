@@ -81,7 +81,7 @@ pub struct LcovReporter<'a> {
 }
 
 impl<'a> LcovReporter<'a> {
-    pub fn new(destination: &'a mut (dyn Write + 'a)) -> LcovReporter<'a> {
+    pub fn new(destination: &'a mut (dyn Write + 'a)) -> Self {
         Self { destination }
     }
 }
@@ -195,7 +195,7 @@ pub struct BytecodeReporter {
 }
 
 impl BytecodeReporter {
-    pub fn new(root: PathBuf, destdir: PathBuf) -> BytecodeReporter {
+    pub fn new(root: PathBuf, destdir: PathBuf) -> Self {
         Self { root, destdir }
     }
 }
@@ -218,7 +218,7 @@ impl CoverageReporter for BytecodeReporter {
                 let hits = hits
                     .hits
                     .get(&(code.offset as usize))
-                    .map(|h| format!("[{:03}]", h))
+                    .map(|h| format!("[{h:03}]"))
                     .unwrap_or("     ".to_owned());
                 let source_id = source_element.index();
                 let source_path = source_id.and_then(|i| {
@@ -246,13 +246,9 @@ impl CoverageReporter for BytecodeReporter {
                         end
                     )?;
                 } else if let Some(source_id) = source_id {
-                    writeln!(
-                        formatted,
-                        "{} {:40} // SRCID{}: ({}-{})",
-                        hits, code, source_id, start, end
-                    )?;
+                    writeln!(formatted, "{hits} {code:40} // SRCID{source_id}: ({start}-{end})")?;
                 } else {
-                    writeln!(formatted, "{} {:40}", hits, code)?;
+                    writeln!(formatted, "{hits} {code:40}")?;
                 }
             }
             fs::write(
@@ -273,7 +269,7 @@ struct LineNumberCache {
 
 impl LineNumberCache {
     pub fn new(root: PathBuf) -> Self {
-        LineNumberCache { root, line_offsets: HashMap::new() }
+        Self { root, line_offsets: HashMap::new() }
     }
 
     pub fn get_position(&mut self, path: &Path, offset: usize) -> eyre::Result<(usize, usize)> {

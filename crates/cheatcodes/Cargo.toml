@@ -11,6 +11,9 @@ homepage.workspace = true
 repository.workspace = true
 exclude.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true

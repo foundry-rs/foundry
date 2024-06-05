@@ -69,6 +69,6 @@ impl SenderFilters {
             excluded.push(addr_0);
         }
         targeted.retain(|addr| !excluded.contains(addr));
-        SenderFilters { targeted, excluded }
+        Self { targeted, excluded }
     }
 }

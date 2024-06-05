@@ -1,4 +1,9 @@
+//! # foundry-script
+//!
+//! Smart contract scripting.
+
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -189,8 +194,6 @@ pub struct ScriptArgs {
     #[command(flatten)]
     pub retry: RetryArgs,
 }
-
-// === impl ScriptArgs ===
 
 impl ScriptArgs {
     async fn preprocess(self) -> Result<PreprocessedState> {

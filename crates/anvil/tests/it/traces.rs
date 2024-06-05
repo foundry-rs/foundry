@@ -1,7 +1,10 @@
 use crate::{fork::fork_config, utils::http_provider_with_signer};
 use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes, U256};
-use alloy_provider::{ext::DebugApi, Provider};
+use alloy_provider::{
+    ext::{DebugApi, TraceApi},
+    Provider,
+};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, WithOtherFields};
 use alloy_rpc_types_trace::{
     geth::{GethDebugTracingCallOptions, GethTrace},

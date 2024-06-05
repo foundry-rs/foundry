@@ -225,7 +225,7 @@ impl SessionSource {
     ///
     /// Optionally, a shallow-cloned [SessionSource] with the passed content appended to the
     /// source code.
-    pub fn clone_with_new_line(&self, mut content: String) -> Result<(SessionSource, bool)> {
+    pub fn clone_with_new_line(&self, mut content: String) -> Result<(Self, bool)> {
         let new_source = self.shallow_clone();
         if let Some(parsed) = parse_fragment(new_source.solc, new_source.config, &content)
             .or_else(|| {
@@ -303,11 +303,11 @@ impl SessionSource {
         self
     }
 
-    /// Generates and foundry_compilers::CompilerInput from the source
+    /// Generates and [`SolcInput`] from the source.
     ///
     /// ### Returns
     ///
-    /// A [CompilerInput] object containing forge-std's `Vm` interface as well as the REPL contract
+    /// A [`SolcInput`] object containing forge-std's `Vm` interface as well as the REPL contract
     /// source.
     pub fn compiler_input(&self) -> SolcInput {
         let mut sources = Sources::new();

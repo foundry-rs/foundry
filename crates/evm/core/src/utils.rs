@@ -16,7 +16,7 @@ use revm::{
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-pub use revm::primitives::State as StateChangeset;
+pub use revm::primitives::EvmState as StateChangeset;
 
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///

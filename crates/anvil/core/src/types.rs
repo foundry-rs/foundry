@@ -40,12 +40,11 @@ impl<'de> serde::Deserialize<'de> for Forking {
         }
         let f = match ForkingVariants::deserialize(deserializer)? {
             ForkingVariants::Fork(ForkOpts { json_rpc_url, block_number }) => {
-                Forking { json_rpc_url, block_number }
+                Self { json_rpc_url, block_number }
             }
-            ForkingVariants::Tagged(f) => Forking {
-                json_rpc_url: f.forking.json_rpc_url,
-                block_number: f.forking.block_number,
-            },
+            ForkingVariants::Tagged(f) => {
+                Self { json_rpc_url: f.forking.json_rpc_url, block_number: f.forking.block_number }
+            }
         };
         Ok(f)
     }
@@ -70,7 +69,7 @@ pub enum EvmMineOptions {
 
 impl Default for EvmMineOptions {
     fn default() -> Self {
-        EvmMineOptions::Options { timestamp: None, blocks: None }
+        Self::Options { timestamp: None, blocks: None }
     }
 }
 
@@ -110,7 +109,7 @@ impl From<Index> for usize {
 
 #[cfg(feature = "serde")]
 impl<'a> serde::Deserialize<'a> for Index {
-    fn deserialize<D>(deserializer: D) -> Result<Index, D::Error>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'a>,
     {

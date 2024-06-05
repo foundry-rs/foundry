@@ -40,8 +40,6 @@ pub struct PubSubContext<Handler: PubSubRpcHandler> {
     subscriptions: Subscriptions<Handler::SubscriptionId, Handler::Subscription>,
 }
 
-// === impl PubSubContext ===
-
 impl<Handler: PubSubRpcHandler> PubSubContext<Handler> {
     /// Adds new active subscription
     ///
@@ -124,8 +122,6 @@ pub struct PubSubConnection<Handler: PubSubRpcHandler, Connection> {
     /// pending messages to send
     pending: VecDeque<String>,
 }
-
-// === impl PubSubConnection ===
 
 impl<Handler: PubSubRpcHandler, Connection> PubSubConnection<Handler, Connection> {
     pub fn new(connection: Connection, handler: Handler) -> Self {

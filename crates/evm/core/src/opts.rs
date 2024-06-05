@@ -141,14 +141,14 @@ impl EvmOpts {
     /// storage caching for the [CreateFork] will be enabled if
     ///   - `fork_url` is present
     ///   - `fork_block_number` is present
-    ///   - [StorageCachingConfig] allows the `fork_url` +  chain id pair
+    ///   - `StorageCachingConfig` allows the `fork_url` + chain ID pair
     ///   - storage is allowed (`no_storage_caching = false`)
     ///
     /// If all these criteria are met, then storage caching is enabled and storage info will be
-    /// written to [Config::foundry_cache_dir()]/<str(chainid)>/<block>/storage.json
+    /// written to `<Config::foundry_cache_dir()>/<str(chainid)>/<block>/storage.json`.
     ///
     /// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will
-    /// be at `~/.foundry/cache/mainnet/14435000/storage.json`
+    /// be at `~/.foundry/cache/mainnet/14435000/storage.json`.
     pub fn get_fork(&self, config: &Config, env: revm::primitives::Env) -> Option<CreateFork> {
         let url = self.fork_url.clone()?;
         let enable_caching = config.enable_caching(&url, env.cfg.chain_id);

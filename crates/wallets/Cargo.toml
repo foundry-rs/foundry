@@ -9,7 +9,12 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
+foundry-config.workspace = true
+
 alloy-primitives.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
 alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
@@ -22,18 +27,14 @@ alloy-dyn-abi.workspace = true
 
 # aws-kms
 alloy-signer-aws = { workspace = true, features = ["eip712"], optional = true }
-aws-config = { version = "1", default-features = false, optional = true }
+aws-config = { version = "1", optional = true } # default-features are necessary
 aws-sdk-kms = { version = "1", default-features = false, optional = true }
-
-foundry-config.workspace = true
-foundry-common.workspace = true
 
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 derive_builder = "0.20.0"
 eyre.workspace = true
 hex = { workspace = true, features = ["serde"] }
-itertools.workspace = true
 rpassword = "7"
 serde.workspace = true
 thiserror = "1"

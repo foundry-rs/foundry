@@ -165,7 +165,7 @@ impl TestArgs {
         let output = project.compile()?;
 
         if output.has_compiler_errors() {
-            println!("{}", output);
+            println!("{output}");
             eyre::bail!("Compilation failed");
         }
 

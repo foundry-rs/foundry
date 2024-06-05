@@ -291,10 +291,10 @@ impl ContractSources {
         output: &ProjectCompileOutput,
         root: &Path,
         libraries: &Libraries,
-    ) -> Result<ContractSources> {
+    ) -> Result<Self> {
         let linker = Linker::new(root, output.artifact_ids().collect());
 
-        let mut sources = ContractSources::default();
+        let mut sources = Self::default();
         for (id, artifact) in output.artifact_ids() {
             if let Some(file_id) = artifact.id {
                 let abs_path = root.join(&id.source);
@@ -302,7 +302,7 @@ impl ContractSources {
                     format!("failed to read artifact source file for `{}`", id.identifier())
                 })?;
                 let linked = linker.link(&id, libraries)?;
-                let contract = compact_to_contract(linked)?;
+                let contract = compact_to_contract(linked.into_contract_bytecode())?;
                 sources.insert(&id, file_id, source_code, contract);
             } else {
                 warn!(id = id.identifier(), "source not found");

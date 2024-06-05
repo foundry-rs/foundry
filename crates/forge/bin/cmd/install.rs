@@ -94,7 +94,7 @@ impl DependencyInstallOpts {
     ///
     /// Returns true if any dependency was installed.
     pub fn install_missing_dependencies(mut self, config: &mut Config) -> bool {
-        let DependencyInstallOpts { quiet, .. } = self;
+        let Self { quiet, .. } = self;
         let lib = config.install_lib_dir();
         if self.git(config).has_missing_dependencies(Some(lib)).unwrap_or(false) {
             // The extra newline is needed, otherwise the compiler output will overwrite the message
@@ -114,7 +114,7 @@ impl DependencyInstallOpts {
 
     /// Installs all dependencies
     pub fn install(self, config: &mut Config, dependencies: Vec<Dependency>) -> Result<()> {
-        let DependencyInstallOpts { no_git, no_commit, quiet, .. } = self;
+        let Self { no_git, no_commit, quiet, .. } = self;
 
         let git = self.git(config);
 

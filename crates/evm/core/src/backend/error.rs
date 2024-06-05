@@ -54,12 +54,12 @@ pub enum DatabaseError {
 impl DatabaseError {
     /// Create a new error with a message
     pub fn msg(msg: impl Into<String>) -> Self {
-        DatabaseError::Message(msg.into())
+        Self::Message(msg.into())
     }
 
     /// Create a new error with a message
     pub fn display(msg: impl std::fmt::Display) -> Self {
-        DatabaseError::Message(msg.to_string())
+        Self::Message(msg.to_string())
     }
 
     fn get_rpc_error(&self) -> Option<&eyre::Error> {
@@ -79,7 +79,7 @@ impl DatabaseError {
             Self::BlockNotFound(_) |
             Self::TransactionNotFound(_) |
             Self::MissingCreate2Deployer => None,
-            DatabaseError::Other(_) => None,
+            Self::Other(_) => None,
         }
     }
 
@@ -96,7 +96,7 @@ impl DatabaseError {
 
 impl From<tokio::task::JoinError> for DatabaseError {
     fn from(value: tokio::task::JoinError) -> Self {
-        DatabaseError::display(value)
+        Self::display(value)
     }
 }
 
@@ -113,11 +113,11 @@ impl From<Infallible> for DatabaseError {
 }
 
 // Note: this is mostly necessary to use some revm internals that return an [EVMError]
-impl From<EVMError<DatabaseError>> for DatabaseError {
-    fn from(err: EVMError<DatabaseError>) -> Self {
+impl From<EVMError<Self>> for DatabaseError {
+    fn from(err: EVMError<Self>) -> Self {
         match err {
             EVMError::Database(err) => err,
-            err => DatabaseError::Other(err.to_string()),
+            err => Self::Other(err.to_string()),
         }
     }
 }

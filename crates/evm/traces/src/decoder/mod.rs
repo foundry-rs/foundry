@@ -698,13 +698,13 @@ mod tests {
         for (function_signature, data, expected) in cheatcode_input_test_cases {
             let function = Function::parse(function_signature).unwrap();
             let result = decoder.decode_cheatcode_inputs(&function, &data);
-            assert_eq!(result, expected, "Input case failed for: {}", function_signature);
+            assert_eq!(result, expected, "Input case failed for: {function_signature}");
         }
 
         for (function_signature, expected) in cheatcode_output_test_cases {
             let function = Function::parse(function_signature).unwrap();
             let result = Some(decoder.decode_cheatcode_outputs(&function).unwrap_or_default());
-            assert_eq!(result, expected, "Output case failed for: {}", function_signature);
+            assert_eq!(result, expected, "Output case failed for: {function_signature}");
         }
     }
 }

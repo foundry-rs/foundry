@@ -38,6 +38,6 @@ pub enum WalletSignerError {
 
 impl WalletSignerError {
     pub fn aws_unsupported() -> Self {
-        WalletSignerError::UnsupportedSigner("AWS KMS")
+        Self::UnsupportedSigner("AWS KMS")
     }
 }

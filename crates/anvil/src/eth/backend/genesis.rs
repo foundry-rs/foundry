@@ -32,8 +32,6 @@ pub struct GenesisConfig {
     pub genesis_init: Option<Genesis>,
 }
 
-// === impl GenesisConfig ===
-
 impl GenesisConfig {
     /// Returns fresh `AccountInfo`s for the configured `accounts`
     pub fn account_infos(&self) -> impl Iterator<Item = (Address, AccountInfo)> + '_ {

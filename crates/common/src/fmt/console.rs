@@ -47,7 +47,7 @@ impl ConsoleFmt for String {
             FormatSpec::Number |
             FormatSpec::Integer |
             FormatSpec::Exponential |
-            FormatSpec::Hexadecimal => String::from("NaN"),
+            FormatSpec::Hexadecimal => Self::from("NaN"),
         }
     }
 }
@@ -77,7 +77,7 @@ impl ConsoleFmt for U256 {
             }
             FormatSpec::Exponential => {
                 let log = self.pretty().len() - 1;
-                let exp10 = U256::from(10).pow(U256::from(log));
+                let exp10 = Self::from(10).pow(Self::from(log));
                 let amount = *self;
                 let integer = amount / exp10;
                 let decimal = (amount % exp10).to_string();
@@ -110,7 +110,7 @@ impl ConsoleFmt for I256 {
                 } else {
                     self.pretty().len() - 1
                 };
-                let exp10 = I256::exp10(log);
+                let exp10 = Self::exp10(log);
                 let integer = (amount / exp10).twos_complement();
                 let decimal = (amount % exp10).twos_complement().to_string();
                 let decimal = format!("{decimal:0>log$}").trim_end_matches('0').to_string();

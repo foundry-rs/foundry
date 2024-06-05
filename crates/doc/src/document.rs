@@ -90,36 +90,34 @@ pub enum DocumentContent {
 impl DocumentContent {
     pub(crate) fn len(&self) -> usize {
         match self {
-            DocumentContent::Empty => 0,
-            DocumentContent::Single(_) => 1,
-            DocumentContent::Constants(items) => items.len(),
-            DocumentContent::OverloadedFunctions(items) => items.len(),
+            Self::Empty => 0,
+            Self::Single(_) => 1,
+            Self::Constants(items) => items.len(),
+            Self::OverloadedFunctions(items) => items.len(),
         }
     }
 
     pub(crate) fn get_mut(&mut self, index: usize) -> Option<&mut ParseItem> {
         match self {
-            DocumentContent::Empty => None,
-            DocumentContent::Single(item) => {
+            Self::Empty => None,
+            Self::Single(item) => {
                 if index == 0 {
                     Some(item)
                 } else {
                     None
                 }
             }
-            DocumentContent::Constants(items) => items.get_mut(index),
-            DocumentContent::OverloadedFunctions(items) => items.get_mut(index),
+            Self::Constants(items) => items.get_mut(index),
+            Self::OverloadedFunctions(items) => items.get_mut(index),
         }
     }
 
     pub fn iter_items(&self) -> ParseItemIter<'_> {
         match self {
-            DocumentContent::Empty => ParseItemIter { next: None, other: None },
-            DocumentContent::Single(item) => ParseItemIter { next: Some(item), other: None },
-            DocumentContent::Constants(items) => {
-                ParseItemIter { next: None, other: Some(items.iter()) }
-            }
-            DocumentContent::OverloadedFunctions(items) => {
+            Self::Empty => ParseItemIter { next: None, other: None },
+            Self::Single(item) => ParseItemIter { next: Some(item), other: None },
+            Self::Constants(items) => ParseItemIter { next: None, other: Some(items.iter()) },
+            Self::OverloadedFunctions(items) => {
                 ParseItemIter { next: None, other: Some(items.iter()) }
             }
         }
@@ -127,12 +125,12 @@ impl DocumentContent {
 
     pub fn iter_items_mut(&mut self) -> ParseItemIterMut<'_> {
         match self {
-            DocumentContent::Empty => ParseItemIterMut { next: None, other: None },
-            DocumentContent::Single(item) => ParseItemIterMut { next: Some(item), other: None },
-            DocumentContent::Constants(items) => {
+            Self::Empty => ParseItemIterMut { next: None, other: None },
+            Self::Single(item) => ParseItemIterMut { next: Some(item), other: None },
+            Self::Constants(items) => {
                 ParseItemIterMut { next: None, other: Some(items.iter_mut()) }
             }
-            DocumentContent::OverloadedFunctions(items) => {
+            Self::OverloadedFunctions(items) => {
                 ParseItemIterMut { next: None, other: Some(items.iter_mut()) }
             }
         }

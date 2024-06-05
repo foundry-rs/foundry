@@ -98,7 +98,7 @@ impl RunArgs {
         let tx = provider
             .get_transaction_by_hash(tx_hash)
             .await
-            .wrap_err_with(|| format!("tx not found: {:?}", tx_hash))?
+            .wrap_err_with(|| format!("tx not found: {tx_hash:?}"))?
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction

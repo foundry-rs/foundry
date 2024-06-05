@@ -2,7 +2,7 @@ use alloy_json_abi::{Event, Function};
 use foundry_common::{
     abi::{get_event, get_func},
     fs,
-    selectors::{SelectorType, SignEthClient},
+    selectors::{OpenChainClient, SelectorType},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -31,7 +31,7 @@ pub struct SignaturesIdentifier {
     /// Selectors that were unavailable during the session.
     unavailable: HashSet<String>,
     /// The API client to fetch signatures from
-    sign_eth_api: SignEthClient,
+    sign_eth_api: OpenChainClient,
     /// whether traces should be decoded via `sign_eth_api`
     offline: bool,
 }
@@ -42,7 +42,7 @@ impl SignaturesIdentifier {
         cache_path: Option<PathBuf>,
         offline: bool,
     ) -> eyre::Result<SingleSignaturesIdentifier> {
-        let sign_eth_api = SignEthClient::new()?;
+        let sign_eth_api = OpenChainClient::new()?;
 
         let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");

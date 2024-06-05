@@ -116,8 +116,6 @@ pub struct EthApi {
     instance_id: Arc<RwLock<B256>>,
 }
 
-// === impl Eth RPC API ===
-
 impl EthApi {
     /// Creates a new instance
     #[allow(clippy::too_many_arguments)]
@@ -148,7 +146,7 @@ impl EthApi {
         }
     }
 
-    /// Executes the [EthRequest] and returns an RPC [RpcResponse]
+    /// Executes the [EthRequest] and returns an RPC [ResponseResult].
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
         match request {
@@ -2114,8 +2112,6 @@ impl EthApi {
     }
 }
 
-// === impl EthApi utility functions ===
-
 impl EthApi {
     /// Executes the future on a new blocking task.
     async fn on_blocking_task<C, F, R>(&self, c: C) -> Result<R>
@@ -2200,7 +2196,7 @@ impl EthApi {
 
     /// Estimates the gas usage of the `request` with the state.
     ///
-    /// This will execute the [CallRequest] and find the best gas limit via binary search
+    /// This will execute the transaction request and find the best gas limit via binary search.
     fn do_estimate_gas_with_state<D>(
         &self,
         mut request: WithOtherFields<TransactionRequest>,
@@ -2647,7 +2643,7 @@ enum GasEstimationCallResult {
     EvmError(InstructionResult),
 }
 
-/// Converts the result of a call to revm EVM into a [GasEstimationCallRes].
+/// Converts the result of a call to revm EVM into a [`GasEstimationCallResult`].
 impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEstimationCallResult {
     type Error = BlockchainError;
 

@@ -17,8 +17,8 @@ use revm::{
     inspectors::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, HashMap as Map, Log,
-        ResultAndState, SpecId, State, StorageSlot, TransactTo, KECCAK_EMPTY,
+        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, EvmState, EvmStorageSlot,
+        HashMap as Map, Log, ResultAndState, SpecId, TransactTo, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, JournaledState,
 };
@@ -54,7 +54,7 @@ pub type LocalForkId = U256;
 /// This is used for fast lookup
 type ForkLookupIndex = usize;
 
-/// All accounts that will have persistent storage across fork swaps. See also [`clone_data()`]
+/// All accounts that will have persistent storage across fork swaps.
 const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
@@ -392,8 +392,8 @@ pub struct Backend {
     /// The journaled_state to use to initialize new forks with
     ///
     /// The way [`revm::JournaledState`] works is, that it holds the "hot" accounts loaded from the
-    /// underlying `Database` that feeds the Account and State data ([`revm::AccountInfo`])to the
-    /// journaled_state so it can apply changes to the state while the evm executes.
+    /// underlying `Database` that feeds the Account and State data to the journaled_state so it
+    /// can apply changes to the state while the EVM executes.
     ///
     /// In a way the `JournaledState` is something like a cache that
     /// 1. check if account is already loaded (hot)
@@ -404,7 +404,7 @@ pub struct Backend {
     /// ([`DatabaseExt::select_fork`]).
     ///
     /// This will be an empty `JournaledState`, which will be populated with persistent accounts,
-    /// See [`Self::update_fork_db()`] and [`clone_data()`].
+    /// See [`Self::update_fork_db()`].
     fork_init_journaled_state: JournaledState,
     /// The currently active fork database
     ///
@@ -413,8 +413,6 @@ pub struct Backend {
     /// holds additional Backend data
     inner: BackendInner,
 }
-
-// === impl Backend ===
 
 impl Backend {
     /// Creates a new Backend with a spawned multi fork thread.
@@ -934,8 +932,6 @@ impl Backend {
     }
 }
 
-// === impl a bunch of `revm::Database` adjacent implementations ===
-
 impl DatabaseExt for Backend {
     fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
         trace!("create snapshot");
@@ -1237,7 +1233,7 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    fn transact<I: InspectorExt<Backend>>(
+    fn transact<I: InspectorExt<Self>>(
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,
@@ -1365,7 +1361,7 @@ impl DatabaseExt for Backend {
                         let slot = U256::from_be_bytes(slot.0);
                         (
                             slot,
-                            StorageSlot::new_changed(
+                            EvmStorageSlot::new_changed(
                                 state_acc
                                     .storage
                                     .get(&slot)
@@ -1514,8 +1510,6 @@ pub struct Fork {
     journaled_state: JournaledState,
 }
 
-// === impl Fork ===
-
 impl Fork {
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
@@ -1578,16 +1572,12 @@ pub struct BackendInner {
     /// All accounts that should be kept persistent when switching forks.
     /// This means all accounts stored here _don't_ use a separate storage section on each fork
     /// instead the use only one that's persistent across fork swaps.
-    ///
-    /// See also [`clone_data()`]
     pub persistent_accounts: HashSet<Address>,
     /// The configured spec id
     pub spec_id: SpecId,
     /// All accounts that are allowed to execute cheatcodes
     pub cheatcode_access_accounts: HashSet<Address>,
 }
-
-// === impl BackendInner ===
 
 impl BackendInner {
     pub fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
@@ -1903,7 +1893,7 @@ fn commit_transaction<I: InspectorExt<Backend>>(
 }
 
 /// Helper method which updates data in the state with the data from the database.
-pub fn update_state<DB: Database>(state: &mut State, db: &mut DB) -> Result<(), DB::Error> {
+pub fn update_state<DB: Database>(state: &mut EvmState, db: &mut DB) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
         acc.info = db.basic(*addr)?.unwrap_or_default();
         for (key, val) in acc.storage.iter_mut() {

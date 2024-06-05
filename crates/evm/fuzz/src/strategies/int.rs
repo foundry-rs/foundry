@@ -7,7 +7,6 @@ use proptest::{
 use rand::Rng;
 
 /// Value tree for signed ints (up to int256).
-/// This is very similar to [proptest::BinarySearch]
 pub struct IntValueTree {
     /// Lower base (by absolute value)
     lo: I256,
@@ -56,7 +55,7 @@ impl ValueTree for IntValueTree {
     }
 
     fn simplify(&mut self) -> bool {
-        if self.fixed || !IntValueTree::magnitude_greater(self.hi, self.lo) {
+        if self.fixed || !Self::magnitude_greater(self.hi, self.lo) {
             return false
         }
         self.hi = self.curr;
@@ -64,7 +63,7 @@ impl ValueTree for IntValueTree {
     }
 
     fn complicate(&mut self) -> bool {
-        if self.fixed || !IntValueTree::magnitude_greater(self.hi, self.lo) {
+        if self.fixed || !Self::magnitude_greater(self.hi, self.lo) {
             return false
         }
 

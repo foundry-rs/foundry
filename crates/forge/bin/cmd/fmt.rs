@@ -43,8 +43,6 @@ pub struct FmtArgs {
 
 impl_figment_convert_basic!(FmtArgs);
 
-// === impl FmtArgs ===
-
 impl FmtArgs {
     pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;

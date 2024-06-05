@@ -139,8 +139,8 @@ impl CoreBuildArgs {
     /// Returns the `Project` for the current workspace
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
-    /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
-    /// [`foundry_config::Config::project()`]
+    /// `find_project_root_path` and merges the cli `BuildArgs` into it before returning
+    /// [`foundry_config::Config::project()`]).
     pub fn project(&self) -> Result<Project<MultiCompiler>> {
         let config = self.try_load_config_emit_warnings()?;
         Ok(config.project()?)
@@ -188,7 +188,7 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
 impl<'a> From<&'a CoreBuildArgs> for Config {
     fn from(args: &'a CoreBuildArgs) -> Self {
         let figment: Figment = args.into();
-        let mut config = Config::from_provider(figment).sanitized();
+        let mut config = Self::from_provider(figment).sanitized();
         // if `--config-path` is set we need to adjust the config's root path to the actual root
         // path for the project, otherwise it will the parent dir of the `--config-path`
         if args.project_paths.config_path.is_some() {

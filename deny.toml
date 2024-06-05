@@ -88,4 +88,5 @@ unknown-git = "deny"
 allow-git = [
     "https://github.com/alloy-rs/alloy",
     "https://github.com/paradigmxyz/revm-inspectors",
+    "https://github.com/bluealloy/revm",
 ]
