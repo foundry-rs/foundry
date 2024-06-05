@@ -10,15 +10,15 @@ use std::{fmt::Write, path::Path};
 /// Result of parsing the source code
 #[derive(Debug)]
 pub struct Parsed<'a> {
-    /// The original source code
+    /// The original source code.
     pub src: &'a str,
-    /// The Parse Tree via [`solang`]
+    /// The parse tree.
     pub pt: SourceUnit,
-    /// Parsed comments
+    /// Parsed comments.
     pub comments: Comments,
-    /// Parsed inline config
+    /// Parsed inline config.
     pub inline_config: InlineConfig,
-    /// Invalid inline config items parsed
+    /// Invalid inline config items parsed.
     pub invalid_inline_config_items: Vec<(Loc, InvalidInlineConfigItem)>,
 }
 

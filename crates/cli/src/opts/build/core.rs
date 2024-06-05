@@ -131,8 +131,8 @@ impl CoreBuildArgs {
     /// Returns the `Project` for the current workspace
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
-    /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
-    /// [`foundry_config::Config::project()`]
+    /// `find_project_root_path` and merges the cli `BuildArgs` into it before returning
+    /// [`foundry_config::Config::project()`]).
     pub fn project(&self) -> Result<Project<MultiCompiler>> {
         let config = self.try_load_config_emit_warnings()?;
         Ok(config.project()?)

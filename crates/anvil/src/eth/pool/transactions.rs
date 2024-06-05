@@ -409,12 +409,12 @@ impl ReadyTransactions {
         id
     }
 
-    /// Adds a new transactions to the ready queue
+    /// Adds a new transactions to the ready queue.
     ///
     /// # Panics
     ///
-    /// if the pending transaction is not ready: [PendingTransaction::is_ready()]
-    /// or the transaction is already included
+    /// If the pending transaction is not ready ([`PendingPoolTransaction::is_ready`])
+    /// or the transaction is already included.
     pub fn add_transaction(
         &mut self,
         tx: PendingPoolTransaction,

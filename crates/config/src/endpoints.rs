@@ -233,7 +233,7 @@ pub struct RpcEndpointConfig {
 }
 
 impl RpcEndpointConfig {
-    /// Returns the url this type holds, see [RpcEndpoints::resolve()]
+    /// Returns the url this type holds, see [`RpcEndpoint::resolve`]
     pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
         self.endpoint.resolve()
     }
@@ -329,7 +329,7 @@ impl Default for RpcEndpointConfig {
     }
 }
 
-/// Container type for _resolved_ endpoints, see [RpcEndpoints::resolve_all()]
+/// Container type for _resolved_ endpoints, see [`RpcEndpoint::resolve`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedRpcEndpoints {
     /// contains all named endpoints and their URL or an error if we failed to resolve the env var

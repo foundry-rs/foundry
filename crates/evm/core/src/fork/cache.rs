@@ -30,9 +30,9 @@ pub struct BlockchainDb {
 }
 
 impl BlockchainDb {
-    /// Creates a new instance of the [BlockchainDb]
+    /// Creates a new instance of the [BlockchainDb].
     ///
-    /// if a `cache_path` is provided it attempts to load a previously stored [JsonBlockCacheData]
+    /// If a `cache_path` is provided it attempts to load a previously stored [JsonBlockCacheData]
     /// and will try to use the cached entries it holds.
     ///
     /// This will return a new and empty [MemDb] if
@@ -99,7 +99,7 @@ impl BlockchainDb {
         &self.db.block_hashes
     }
 
-    /// Returns the [revm::Env] related metadata
+    /// Returns the Env related metadata
     pub fn meta(&self) -> &Arc<RwLock<BlockchainDbMeta>> {
         &self.meta
     }
@@ -327,7 +327,7 @@ impl DatabaseCommit for MemDb {
     }
 }
 
-/// A [BlockCacheDB] that stores the cached content in a json file
+/// A DB that stores the cached content in a json file
 #[derive(Debug)]
 pub struct JsonBlockCacheDB {
     /// Where this cache file is stored.

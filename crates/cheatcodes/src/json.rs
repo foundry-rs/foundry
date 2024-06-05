@@ -1,4 +1,4 @@
-//! Implementations of [`Json`](crate::Group::Json) cheatcodes.
+//! Implementations of [`Json`](spec::Group::Json) cheatcodes.
 
 use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};

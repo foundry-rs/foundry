@@ -7,7 +7,6 @@ use proptest::{
 use rand::Rng;
 
 /// Value tree for signed ints (up to int256).
-/// This is very similar to [proptest::BinarySearch]
 pub struct IntValueTree {
     /// Lower base (by absolute value)
     lo: I256,

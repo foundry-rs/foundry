@@ -19,26 +19,37 @@ pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, Context};
 pub use spec::{CheatcodeDef, Vm};
+pub use Vm::ForgeContext;
 
 #[macro_use]
 mod error;
-mod base64;
-mod config;
-mod env;
-mod evm;
-mod fs;
-mod inspector;
-mod json;
-mod script;
-mod string;
-mod test;
-mod toml;
-mod utils;
 
+mod base64;
+
+mod config;
+
+mod env;
 pub use env::set_execution_context;
-pub use script::ScriptWallets;
+
+mod evm;
+
+mod fs;
+
+mod inspector;
+
+mod json;
+
+mod script;
+pub use script::{ScriptWallets, ScriptWalletsInner};
+
+mod string;
+
+mod test;
 pub use test::expect::ExpectedCallTracker;
-pub use Vm::ForgeContext;
+
+mod toml;
+
+mod utils;
 
 /// Cheatcode implementation.
 pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {

@@ -279,7 +279,7 @@ impl SessionSource {
     ///
     /// ### Takes
     ///
-    /// The final statement's program counter for the [ChiselInspector]
+    /// The final statement's program counter for the ChiselInspector
     ///
     /// ### Returns
     ///
@@ -323,17 +323,8 @@ impl SessionSource {
     }
 }
 
-/// Formats a [Token] into an inspection message
-///
-/// ### Takes
-///
-/// An owned [Token]
-///
-/// ### Returns
-///
-/// A formatted [Token] for use in inspection output.
-///
-/// TODO: Verbosity option
+/// Formats a value into an inspection message
+// TODO: Verbosity option
 fn format_token(token: DynSolValue) -> String {
     match token {
         DynSolValue::Address(a) => {

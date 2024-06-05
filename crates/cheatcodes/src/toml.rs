@@ -1,4 +1,4 @@
-//! Implementations of [`Toml`](crate::Group::Toml) cheatcodes.
+//! Implementations of [`Toml`](spec::Group::Toml) cheatcodes.
 
 use crate::{
     json::{

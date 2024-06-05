@@ -951,9 +951,9 @@ impl NodeConfig {
     }
 
     /// Configures everything related to forking based on the passed `eth_rpc_url`:
-    ///  - returning a tuple of a [ForkedDatabase](ForkedDatabase) wrapped in an [Arc](Arc)
-    ///    [RwLock](tokio::sync::RwLock) and [ClientFork](ClientFork) wrapped in an [Option](Option)
-    ///    which can be used in a [Backend](mem::Backend) to fork from.
+    ///  - returning a tuple of a [ForkedDatabase] wrapped in an [Arc] [RwLock](tokio::sync::RwLock)
+    ///    and [ClientFork] wrapped in an [Option] which can be used in a [Backend](mem::Backend) to
+    ///    fork from.
     ///  - modifying some parameters of the passed `env`
     ///  - mutating some members of `self`
     pub async fn setup_fork_db(
@@ -973,9 +973,8 @@ impl NodeConfig {
     }
 
     /// Configures everything related to forking based on the passed `eth_rpc_url`:
-    ///  - returning a tuple of a [ForkedDatabase](ForkedDatabase) and
-    ///    [ClientForkConfig](ClientForkConfig) which can be used to build a
-    ///    [ClientFork](ClientFork) to fork from.
+    ///  - returning a tuple of a [ForkedDatabase] and [ClientForkConfig] which can be used to build
+    ///    a [ClientFork] to fork from.
     ///  - modifying some parameters of the passed `env`
     ///  - mutating some members of `self`
     pub async fn setup_fork_db_config(

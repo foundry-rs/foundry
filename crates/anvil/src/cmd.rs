@@ -417,8 +417,7 @@ pub struct AnvilEvmArgs {
     ///
     /// default value: 330
     ///
-    /// See --fork-url.
-    /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
+    /// See also --fork-url and <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[arg(
         long,
         requires = "fork_url",
@@ -432,8 +431,7 @@ pub struct AnvilEvmArgs {
     ///
     /// default value: false
     ///
-    /// See --fork-url.
-    /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
+    /// See also --fork-url and <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[arg(
         long,
         requires = "fork_url",

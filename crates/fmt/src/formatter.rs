@@ -393,7 +393,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(out)
     }
 
-    /// Transform [Visitable] items to a list of chunks and then sort those chunks by [AttrSortKey]
+    /// Transform [Visitable] items to a list of chunks and then sort those chunks.
     fn items_to_chunks_sorted<'b>(
         &mut self,
         next_byte_offset: Option<usize>,
@@ -585,8 +585,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(false)
     }
 
-    /// Write a raw comment. This is like [`write_comment`] but won't do any formatting or worry
-    /// about whitespace behind the comment
+    /// Write a raw comment. This is like [`write_comment`](Self::write_comment) but won't do any
+    /// formatting or worry about whitespace behind the comment.
     fn write_raw_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
         self.write_raw(&comment.comment)?;
         if comment.is_line() {
@@ -1255,7 +1255,8 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Visit the yul string with an optional identifier.
     /// If the identifier is present, write the value in the format `<val>:<ident>`.
-    /// Ref: https://docs.soliditylang.org/en/v0.8.15/yul.html#variable-declarations
+    ///
+    /// Ref: <https://docs.soliditylang.org/en/v0.8.15/yul.html#variable-declarations>
     fn visit_yul_string_with_ident(
         &mut self,
         loc: Loc,

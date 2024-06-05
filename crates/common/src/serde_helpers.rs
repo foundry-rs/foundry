@@ -82,11 +82,11 @@ where
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum NumericSeq {
-    /// Single parameter sequence (e.g [1])
+    /// Single parameter sequence (e.g `[1]`).
     Seq([Numeric; 1]),
-    /// U256
+    /// `U256`.
     U256(U256),
-    /// Native u64
+    /// Native `u64`.
     Num(u64),
 }
 

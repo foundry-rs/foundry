@@ -146,7 +146,7 @@ impl EthApi {
         }
     }
 
-    /// Executes the [EthRequest] and returns an RPC [RpcResponse]
+    /// Executes the [EthRequest] and returns an RPC [ResponseResult].
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
         match request {
@@ -2196,7 +2196,7 @@ impl EthApi {
 
     /// Estimates the gas usage of the `request` with the state.
     ///
-    /// This will execute the [CallRequest] and find the best gas limit via binary search
+    /// This will execute the transaction request and find the best gas limit via binary search.
     fn do_estimate_gas_with_state<D>(
         &self,
         mut request: WithOtherFields<TransactionRequest>,
@@ -2643,7 +2643,7 @@ enum GasEstimationCallResult {
     EvmError(InstructionResult),
 }
 
-/// Converts the result of a call to revm EVM into a [GasEstimationCallRes].
+/// Converts the result of a call to revm EVM into a [`GasEstimationCallResult`].
 impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEstimationCallResult {
     type Error = BlockchainError;
 

@@ -27,11 +27,11 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 /// Container for the compiled contracts.
 #[derive(Debug)]
 pub struct BuildData {
-    /// Root of the project
+    /// Root of the project.
     pub project_root: PathBuf,
-    /// Linker which can be used to link contracts, owns [ArtifactContracts] map.
+    /// The compiler output.
     pub output: ProjectCompileOutput,
-    /// Id of target contract artifact.
+    /// ID of target contract artifact.
     pub target: ArtifactId,
 }
 

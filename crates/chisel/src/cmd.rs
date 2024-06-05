@@ -19,10 +19,10 @@ pub enum ChiselCommand {
     /// Print the generated source contract
     Source,
     /// Save the current session to the cache
-    /// Takes: [session-id]
+    /// Takes: `<session-id>`
     Save,
     /// Load a previous session from cache
-    /// Takes: <session-id>
+    /// Takes: `<session-id>`
     ///
     /// WARNING: This will overwrite the current session (though the current session will be
     /// optimistically cached)
@@ -45,7 +45,7 @@ pub enum ChiselCommand {
     /// Export the current REPL session source to a Script file
     Export,
     /// Fetch an interface of a verified contract on Etherscan
-    /// Takes: <addr> <interface-name>
+    /// Takes: `<addr> <interface-name>`
     Fetch,
     /// Executes a shell command
     Exec,

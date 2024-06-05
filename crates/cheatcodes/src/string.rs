@@ -1,4 +1,4 @@
-//! Implementations of [`String`](crate::Group::String) cheatcodes.
+//! Implementations of [`String`](spec::Group::String) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
