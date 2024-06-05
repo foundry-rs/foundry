@@ -1,6 +1,6 @@
 use clap::Parser;
 use forge::TestFilter;
-use foundry_common::glob::GlobMatcher;
+use foundry_config::filter::GlobMatcher;
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::Config;
 use std::{fmt, path::Path};

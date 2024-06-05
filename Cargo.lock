@@ -3137,7 +3137,6 @@ dependencies = [
  "derive_more",
  "eyre",
  "forge-fmt",
- "foundry-common",
  "foundry-compilers",
  "foundry-config",
  "itertools 0.13.0",
@@ -3390,8 +3389,6 @@ dependencies = [
  "foundry-config",
  "foundry-linking",
  "foundry-macros",
- "glob",
- "globset",
  "num-format",
  "once_cell",
  "reqwest",
@@ -3413,15 +3410,15 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe70a3860ec9f1861e5d82cbd4ffc55756975c0826dacf8ae4d6d696df8f7f53"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "auto_impl",
  "cfg-if",
+ "derivative",
  "dirs 5.0.1",
  "dunce",
+ "dyn-clone",
  "fs_extra",
  "futures-util",
  "home",
@@ -3462,6 +3459,7 @@ dependencies = [
  "figment",
  "foundry-block-explorers",
  "foundry-compilers",
+ "glob",
  "globset",
  "number_prefix",
  "once_cell",

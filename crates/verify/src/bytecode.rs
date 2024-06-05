@@ -8,16 +8,13 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
 };
-use foundry_common::{
-    compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters},
-    provider::ProviderBuilder,
-};
+use foundry_common::{compile::ProjectCompiler, provider::ProviderBuilder};
 use foundry_compilers::{
     artifacts::{BytecodeHash, BytecodeObject, CompactContractBytecode},
     info::ContractInfo,
     Artifact, EvmVersion,
 };
-use foundry_config::{figment, impl_figment_convert, Chain, Config};
+use foundry_config::{figment, filter::SkipBuildFilter, impl_figment_convert, Chain, Config};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
@@ -374,14 +371,8 @@ impl VerifyBytecodeArgs {
 
     fn build_project(&self, config: &Config) -> Result<Bytes> {
         let project = config.project()?;
-        let mut compiler = ProjectCompiler::new();
+        let compiler = ProjectCompiler::new();
 
-        if let Some(skip) = &self.skip {
-            if !skip.is_empty() {
-                let filter = SkipBuildFilters::new(skip.to_owned(), project.root().to_path_buf())?;
-                compiler = compiler.filter(Box::new(filter));
-            }
-        }
         let output = compiler.compile(&project)?;
 
         let artifact = output

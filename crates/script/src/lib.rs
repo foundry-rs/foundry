@@ -17,7 +17,6 @@ use forge_verify::RetryArgs;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
     abi::{encode_function_args, get_func},
-    compile::SkipBuildFilter,
     evm::{Breakpoints, EvmArgs},
     shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
@@ -174,12 +173,6 @@ pub struct ScriptArgs {
         value_name = "PRICE",
     )]
     pub with_gas_price: Option<U256>,
-
-    /// Skip building files whose names contain the given filter.
-    ///
-    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
-    #[arg(long, num_args(1..))]
-    pub skip: Option<Vec<SkipBuildFilter>>,
 
     #[command(flatten)]
     pub opts: CoreBuildArgs,

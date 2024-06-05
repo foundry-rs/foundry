@@ -2,7 +2,7 @@ use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters};
+use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::{
     figment::{
@@ -52,13 +52,6 @@ pub struct BuildArgs {
     #[serde(skip)]
     pub sizes: bool,
 
-    /// Skip building files whose names contain the given filter.
-    ///
-    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
-    #[arg(long, num_args(1..))]
-    #[serde(skip)]
-    pub skip: Option<Vec<SkipBuildFilter>>,
-
     #[command(flatten)]
     #[serde(flatten)]
     pub args: CoreBuildArgs,
@@ -87,18 +80,11 @@ impl BuildArgs {
 
         let project = config.project()?;
 
-        let mut compiler = ProjectCompiler::new()
+        let compiler = ProjectCompiler::new()
             .print_names(self.names)
             .print_sizes(self.sizes)
             .quiet(self.format_json)
             .bail(!self.format_json);
-
-        if let Some(ref skip) = self.skip {
-            if !skip.is_empty() {
-                let filter = SkipBuildFilters::new(skip.clone(), project.root().clone())?;
-                compiler = compiler.filter(Box::new(filter));
-            }
-        };
 
         let output = compiler.compile(&project)?;
 
@@ -159,22 +145,24 @@ impl Provider for BuildArgs {
 
 #[cfg(test)]
 mod tests {
+    use foundry_common::compile::SkipBuildFilter;
+
     use super::*;
 
     #[test]
     fn can_parse_build_filters() {
         let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests"]);
-        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests]));
+        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests]));
 
         let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "scripts"]);
-        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Scripts]));
+        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Scripts]));
 
         let args: BuildArgs =
             BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "--skip", "scripts"]);
-        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
+        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
 
         let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "scripts"]);
-        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
+        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
     }
 
     #[test]
