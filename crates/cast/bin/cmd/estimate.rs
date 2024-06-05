@@ -104,7 +104,7 @@ impl EstimateArgs {
             .build_raw(sender)
             .await?;
 
-        let gas = provider.estimate_gas(&tx).block_id(block.unwrap_or_default()).await?;
+        let gas = provider.estimate_gas(&tx).block(block.unwrap_or_default()).await?;
         println!("{gas}");
         Ok(())
     }

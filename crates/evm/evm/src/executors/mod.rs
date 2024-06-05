@@ -808,7 +808,6 @@ fn convert_executed_result(
         &env.tx.data,
         env.tx.transact_to.is_create(),
         &env.tx.access_list,
-        &env.tx.eof_initcodes,
     );
 
     let result = match &out {
