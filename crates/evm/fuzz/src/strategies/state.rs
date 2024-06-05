@@ -81,6 +81,11 @@ impl EvmFuzzState {
     pub fn dictionary_read(&self) -> RwLockReadGuard<'_, RawRwLock, FuzzDictionary> {
         self.inner.read()
     }
+
+    /// Logs stats about the current state.
+    pub fn log_stats(&self) {
+        self.inner.read().log_stats();
+    }
 }
 
 // We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
@@ -99,6 +104,9 @@ pub struct FuzzDictionary {
     new_addreses: Vec<usize>,
     /// Sample typed values that are collected from call result and used across invariant runs.
     sample_values: HashMap<DynSolType, IndexSet<[u8; 32]>>,
+
+    misses: usize,
+    hits: usize,
 }
 
 impl fmt::Debug for FuzzDictionary {
@@ -303,6 +311,8 @@ impl FuzzDictionary {
     fn insert_value(&mut self, value: [u8; 32], collected: bool) {
         if self.state_values.len() < self.config.max_fuzz_dictionary_values {
             let (index, new_value) = self.state_values.insert_full(value);
+            let counter = if new_value { &mut self.misses } else { &mut self.hits };
+            *counter += 1;
             if new_value && collected {
                 self.new_values.push(index);
             }
@@ -363,6 +373,17 @@ impl FuzzDictionary {
 
         self.new_values.clear();
         self.new_addreses.clear();
+    }
+
+    pub fn log_stats(&self) {
+        trace!(
+            addresses.len = self.addresses.len(),
+            sample.len = self.sample_values.len(),
+            state.len = self.state_values.len(),
+            state.misses = self.misses,
+            state.hits = self.hits,
+            "FuzzDictionary stats",
+        );
     }
 }
 
