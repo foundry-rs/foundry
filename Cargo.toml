@@ -156,8 +156,8 @@ foundry-compilers = { version = "0.6.0", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
-revm = { version = "9.0", git = "https://github.com/bluealloy/revm.git", rev = "a28a543", default-features = false }
-revm-primitives = { version = "4", git = "https://github.com/bluealloy/revm.git", rev = "a28a543", default-features = false }
+revm = { version = "9.0.0", default-features = false }
+revm-primitives = { version = "4.0.0", default-features = false }
 revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", rev = "a278649", features = [
     "serde",
 ] }
@@ -237,3 +237,9 @@ hyper = "1.0"
 reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
 tower-http = "0.5"
+
+[patch.crates-io]
+revm = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
+revm-interpreter = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
+revm-precompile = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
+revm-primitives = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
