@@ -131,15 +131,15 @@ impl Stream for EthFilter {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
         match pin {
-            EthFilter::Logs(logs) => Poll::Ready(Some(Ok(logs.poll(cx)).to_rpc_result())),
-            EthFilter::Blocks(blocks) => {
+            Self::Logs(logs) => Poll::Ready(Some(Ok(logs.poll(cx)).to_rpc_result())),
+            Self::Blocks(blocks) => {
                 let mut new_blocks = Vec::new();
                 while let Poll::Ready(Some(block)) = blocks.poll_next_unpin(cx) {
                     new_blocks.push(block.hash);
                 }
                 Poll::Ready(Some(Ok(new_blocks).to_rpc_result()))
             }
-            EthFilter::PendingTransactions(tx) => {
+            Self::PendingTransactions(tx) => {
                 let mut new_txs = Vec::new();
                 while let Poll::Ready(Some(tx_hash)) = tx.poll_next_unpin(cx) {
                     new_txs.push(tx_hash);

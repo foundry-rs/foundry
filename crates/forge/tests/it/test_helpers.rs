@@ -39,9 +39,9 @@ pub enum ForgeTestProfile {
 impl fmt::Display for ForgeTestProfile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ForgeTestProfile::Default => write!(f, "default"),
-            ForgeTestProfile::Cancun => write!(f, "cancun"),
-            ForgeTestProfile::MultiVersion => write!(f, "multi-version"),
+            Self::Default => write!(f, "default"),
+            Self::Cancun => write!(f, "cancun"),
+            Self::MultiVersion => write!(f, "multi-version"),
         }
     }
 }

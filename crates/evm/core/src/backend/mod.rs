@@ -1237,7 +1237,7 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    fn transact<I: InspectorExt<Backend>>(
+    fn transact<I: InspectorExt<Self>>(
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,

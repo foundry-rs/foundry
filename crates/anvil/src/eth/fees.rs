@@ -391,12 +391,8 @@ impl FeeDetails {
 
     /// If neither `gas_price` nor `max_fee_per_gas` is `Some`, this will set both to `0`
     pub fn or_zero_fees(self) -> Self {
-        let FeeDetails {
-            gas_price,
-            max_fee_per_gas,
-            max_priority_fee_per_gas,
-            max_fee_per_blob_gas,
-        } = self;
+        let Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas } =
+            self;
 
         let no_fees = gas_price.is_none() && max_fee_per_gas.is_none();
         let gas_price = if no_fees { Some(0) } else { gas_price };
@@ -419,11 +415,11 @@ impl FeeDetails {
         request_max_fee: Option<u128>,
         request_priority: Option<u128>,
         max_fee_per_blob_gas: Option<u128>,
-    ) -> Result<FeeDetails, BlockchainError> {
+    ) -> Result<Self, BlockchainError> {
         match (request_gas_price, request_max_fee, request_priority, max_fee_per_blob_gas) {
             (gas_price, None, None, None) => {
                 // Legacy request, all default to gas price.
-                Ok(FeeDetails {
+                Ok(Self {
                     gas_price,
                     max_fee_per_gas: gas_price,
                     max_priority_fee_per_gas: gas_price,
@@ -439,7 +435,7 @@ impl FeeDetails {
                         return Err(BlockchainError::InvalidFeeInput)
                     }
                 }
-                Ok(FeeDetails {
+                Ok(Self {
                     gas_price: max_fee,
                     max_fee_per_gas: max_fee,
                     max_priority_fee_per_gas: max_priority,
@@ -455,7 +451,7 @@ impl FeeDetails {
                         return Err(BlockchainError::InvalidFeeInput)
                     }
                 }
-                Ok(FeeDetails {
+                Ok(Self {
                     gas_price: max_fee,
                     max_fee_per_gas: max_fee,
                     max_priority_fee_per_gas: max_priority,

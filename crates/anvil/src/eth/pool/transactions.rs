@@ -43,8 +43,8 @@ impl TransactionOrder {
     /// Returns the priority of the transactions
     pub fn priority(&self, tx: &TypedTransaction) -> TransactionPriority {
         match self {
-            TransactionOrder::Fifo => TransactionPriority::default(),
-            TransactionOrder::Fees => TransactionPriority(tx.gas_price()),
+            Self::Fifo => TransactionPriority::default(),
+            Self::Fees => TransactionPriority(tx.gas_price()),
         }
     }
 }
@@ -55,8 +55,8 @@ impl FromStr for TransactionOrder {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.to_lowercase();
         let order = match s.as_str() {
-            "fees" => TransactionOrder::Fees,
-            "fifo" => TransactionOrder::Fifo,
+            "fees" => Self::Fees,
+            "fifo" => Self::Fifo,
             _ => return Err(format!("Unknown TransactionOrder: `{s}`")),
         };
         Ok(order)

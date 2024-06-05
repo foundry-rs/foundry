@@ -369,7 +369,7 @@ pub struct PossibleSigs {
 
 impl PossibleSigs {
     fn new() -> Self {
-        PossibleSigs { method: SelectorOrSig::Selector("0x00000000".to_string()), data: vec![] }
+        Self { method: SelectorOrSig::Selector("0x00000000".to_string()), data: vec![] }
     }
 }
 
@@ -634,7 +634,7 @@ mod tests {
 
         let abi: JsonAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function", "methodIdentifiers": {"transfer(address,uint256)(uint256)": "0xa9059cbb"}}]"#).unwrap();
         let result = import_selectors(SelectorImportData::Abi(vec![abi])).await;
-        println!("{:?}", result);
+        println!("{result:?}");
         assert_eq!(
             result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
             "0xa9059cbb"

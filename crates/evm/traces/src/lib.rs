@@ -87,7 +87,7 @@ pub async fn render_trace_arena(
 
             // Display trace header
             let (trace, return_data) = render_trace(&node.trace, decoder).await?;
-            writeln!(s, "{left}{}", trace)?;
+            writeln!(s, "{left}{trace}")?;
 
             // Display logs and subcalls
             let left_prefix = format!("{child}{BRANCH}");

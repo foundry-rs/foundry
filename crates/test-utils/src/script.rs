@@ -60,7 +60,7 @@ impl ScriptTester {
         target_contract: &str,
     ) -> Self {
         init_tracing();
-        ScriptTester::copy_testdata(project_root).unwrap();
+        Self::copy_testdata(project_root).unwrap();
         init_script_cmd(&mut cmd, project_root, target_contract, endpoint);
 
         let mut provider = None;
@@ -68,7 +68,7 @@ impl ScriptTester {
             provider = Some(get_http_provider(endpoint))
         }
 
-        ScriptTester {
+        Self {
             accounts_pub: vec![
                 Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap(),
                 Address::from_str("0x70997970C51812dc3A010C7d01b50e0d17dc79C8").unwrap(),
@@ -297,17 +297,17 @@ impl ScriptOutcome {
 
     pub fn is_err(&self) -> bool {
         match self {
-            ScriptOutcome::OkNoEndpoint |
-            ScriptOutcome::OkSimulation |
-            ScriptOutcome::OkBroadcast |
-            ScriptOutcome::WarnSpecifyDeployer |
-            ScriptOutcome::OkRun => false,
-            ScriptOutcome::MissingSender |
-            ScriptOutcome::MissingWallet |
-            ScriptOutcome::StaticCallNotAllowed |
-            ScriptOutcome::UnsupportedLibraries |
-            ScriptOutcome::ErrorSelectForkOnBroadcast |
-            ScriptOutcome::ScriptFailed => true,
+            Self::OkNoEndpoint |
+            Self::OkSimulation |
+            Self::OkBroadcast |
+            Self::WarnSpecifyDeployer |
+            Self::OkRun => false,
+            Self::MissingSender |
+            Self::MissingWallet |
+            Self::StaticCallNotAllowed |
+            Self::UnsupportedLibraries |
+            Self::ErrorSelectForkOnBroadcast |
+            Self::ScriptFailed => true,
         }
     }
 }

@@ -72,11 +72,7 @@ impl CommentWithMetadata {
     }
 
     /// Construct a comment with metadata by analyzing its surrounding source code
-    fn from_comment_and_src(
-        comment: Comment,
-        src: &str,
-        last_comment: Option<&CommentWithMetadata>,
-    ) -> Self {
+    fn from_comment_and_src(comment: Comment, src: &str, last_comment: Option<&Self>) -> Self {
         let src_before = &src[..comment.loc().start()];
         if src_before.is_empty() {
             return Self::new(comment, CommentPosition::Prefix, false, 0)

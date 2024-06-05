@@ -351,7 +351,7 @@ where
 
     async fn block_field_as_num<B: Into<BlockId>>(&self, block: B, field: String) -> Result<U256> {
         let block = block.into();
-        let block_field = Cast::block(
+        let block_field = Self::block(
             self,
             block,
             false,
@@ -370,22 +370,22 @@ where
     }
 
     pub async fn base_fee<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
-        Cast::block_field_as_num(self, block, String::from("baseFeePerGas")).await
+        Self::block_field_as_num(self, block, String::from("baseFeePerGas")).await
     }
 
     pub async fn age<B: Into<BlockId>>(&self, block: B) -> Result<String> {
         let timestamp_str =
-            Cast::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
+            Self::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
         let datetime = DateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0).unwrap();
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
     pub async fn timestamp<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
-        Cast::block_field_as_num(self, block, "timestamp".to_string()).await
+        Self::block_field_as_num(self, block, "timestamp".to_string()).await
     }
 
     pub async fn chain(&self) -> Result<&str> {
-        let genesis_hash = Cast::block(
+        let genesis_hash = Self::block(
             self,
             0,
             false,
@@ -397,7 +397,7 @@ where
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Cast::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
+                match &(Self::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
                 {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
@@ -436,7 +436,7 @@ where
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Cast::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
+                match &(Self::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
                     "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
                         "avalanche-fuji"
                     }
@@ -934,12 +934,12 @@ where
                         }
                         first = false;
                         let log_str = serde_json::to_string(&log).unwrap();
-                        write!(output, "{}", log_str)?;
+                        write!(output, "{log_str}")?;
                     } else {
                         let log_str = log.pretty()
                             .replacen('\n', "- ", 1)  // Remove empty first line
                             .replace('\n', "\n  ");  // Indent
-                        writeln!(output, "{}", log_str)?;
+                        writeln!(output, "{log_str}")?;
                     }
                 },
                 // Break on cancel signal, to allow for closing JSON bracket
@@ -1962,7 +1962,7 @@ impl SimpleCast {
 
                 let mut nonce = nonce_start;
                 while nonce < u32::MAX && !found.load(Ordering::Relaxed) {
-                    let input = format!("{}{}({}", name, nonce, params);
+                    let input = format!("{name}{nonce}({params}");
                     let hash = keccak256(input.as_bytes());
                     let selector = &hash[..4];
 

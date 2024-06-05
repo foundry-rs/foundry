@@ -70,10 +70,10 @@ impl WalletSigner {
     pub async fn available_senders(&self, max: usize) -> Result<Vec<Address>> {
         let mut senders = Vec::new();
         match self {
-            WalletSigner::Local(local) => {
+            Self::Local(local) => {
                 senders.push(local.address());
             }
-            WalletSigner::Ledger(ledger) => {
+            Self::Ledger(ledger) => {
                 for i in 0..max {
                     if let Ok(address) =
                         ledger.get_address_with_path(&LedgerHDPath::LedgerLive(i)).await
@@ -89,7 +89,7 @@ impl WalletSigner {
                     }
                 }
             }
-            WalletSigner::Trezor(trezor) => {
+            Self::Trezor(trezor) => {
                 for i in 0..max {
                     if let Ok(address) =
                         trezor.get_address_with_path(&TrezorHDPath::TrezorLive(i)).await
@@ -99,7 +99,7 @@ impl WalletSigner {
                 }
             }
             #[cfg(feature = "aws-kms")]
-            WalletSigner::Aws(aws) => {
+            Self::Aws(aws) => {
                 senders.push(alloy_signer::Signer::address(aws));
             }
         }

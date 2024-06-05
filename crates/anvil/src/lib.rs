@@ -275,7 +275,7 @@ impl NodeHandle {
         self.config.print(fork);
         if !self.config.silent {
             if let Some(ipc_path) = self.ipc_path() {
-                println!("IPC path: {}", ipc_path);
+                println!("IPC path: {ipc_path}");
             }
             println!(
                 "Listening on {}",

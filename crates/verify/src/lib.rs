@@ -53,7 +53,7 @@ pub struct VerifierArgs {
 
 impl Default for VerifierArgs {
     fn default() -> Self {
-        VerifierArgs { verifier: VerificationProviderType::Etherscan, verifier_url: None }
+        Self { verifier: VerificationProviderType::Etherscan, verifier_url: None }
     }
 }
 

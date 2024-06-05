@@ -156,7 +156,7 @@ impl CoverageReport {
 pub struct HitMaps(pub HashMap<B256, HitMap>);
 
 impl HitMaps {
-    pub fn merge(&mut self, other: HitMaps) {
+    pub fn merge(&mut self, other: Self) {
         for (code_hash, hit_map) in other.0 {
             if let Some(HitMap { hits: extra_hits, .. }) = self.insert(code_hash, hit_map) {
                 for (pc, hits) in extra_hits {
@@ -167,7 +167,7 @@ impl HitMaps {
         }
     }
 
-    pub fn merged(mut self, other: HitMaps) -> Self {
+    pub fn merged(mut self, other: Self) -> Self {
         self.merge(other);
         self
     }
@@ -207,14 +207,14 @@ impl HitMap {
     }
 
     /// Merge another hitmap into this, assuming the bytecode is consistent
-    pub fn merge(&mut self, other: &HitMap) -> Result<(), eyre::Report> {
+    pub fn merge(&mut self, other: &Self) -> Result<(), eyre::Report> {
         for (pc, hits) in &other.hits {
             *self.hits.entry(*pc).or_default() += hits;
         }
         Ok(())
     }
 
-    pub fn consistent_bytecode(&self, hm1: &HitMap, hm2: &HitMap) -> bool {
+    pub fn consistent_bytecode(&self, hm1: &Self, hm2: &Self) -> bool {
         // Consider the bytecodes consistent if they are the same out as far as the
         // recorded hits
         let len1 = hm1.hits.last_key_value();

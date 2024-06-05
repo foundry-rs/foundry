@@ -52,7 +52,7 @@ impl<'a> Linker<'a> {
     pub fn new(
         root: impl Into<PathBuf>,
         contracts: ArtifactContracts<CompactContractBytecodeCow<'a>>,
-    ) -> Linker<'a> {
+    ) -> Self {
         Linker { root: root.into(), contracts }
     }
 
@@ -402,7 +402,7 @@ mod tests {
                         "incorrect library address for dependency {dep_identifier} of {identifier}"
                     );
                 } else {
-                    panic!("Library {} not found", dep_identifier);
+                    panic!("Library {dep_identifier} not found");
                 }
             }
         }
