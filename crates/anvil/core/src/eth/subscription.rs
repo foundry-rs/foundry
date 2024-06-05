@@ -14,20 +14,18 @@ pub enum SubscriptionId {
     String(String),
 }
 
-// === impl SubscriptionId ===
-
 impl SubscriptionId {
     /// Generates a new random hex identifier
     pub fn random_hex() -> Self {
-        SubscriptionId::String(hex_id())
+        Self::String(hex_id())
     }
 }
 
 impl fmt::Display for SubscriptionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SubscriptionId::Number(num) => num.fmt(f),
-            SubscriptionId::String(s) => s.fmt(f),
+            Self::Number(num) => num.fmt(f),
+            Self::String(s) => s.fmt(f),
         }
     }
 }
@@ -35,8 +33,8 @@ impl fmt::Display for SubscriptionId {
 impl fmt::Debug for SubscriptionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SubscriptionId::Number(num) => num.fmt(f),
-            SubscriptionId::String(s) => s.fmt(f),
+            Self::Number(num) => num.fmt(f),
+            Self::String(s) => s.fmt(f),
         }
     }
 }
@@ -46,8 +44,6 @@ impl fmt::Debug for SubscriptionId {
 pub struct HexIdProvider {
     len: usize,
 }
-
-// === impl  HexIdProvider ===
 
 impl HexIdProvider {
     /// Generates a random hex encoded Id

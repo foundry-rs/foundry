@@ -72,11 +72,7 @@ impl CommentWithMetadata {
     }
 
     /// Construct a comment with metadata by analyzing its surrounding source code
-    fn from_comment_and_src(
-        comment: Comment,
-        src: &str,
-        last_comment: Option<&CommentWithMetadata>,
-    ) -> Self {
+    fn from_comment_and_src(comment: Comment, src: &str, last_comment: Option<&Self>) -> Self {
         let src_before = &src[..comment.loc().start()];
         if src_before.is_empty() {
             return Self::new(comment, CommentPosition::Prefix, false, 0)
@@ -429,10 +425,10 @@ impl<'a> Iterator for NonCommentChars<'a> {
 
 /// Helpers for iterating over comment containing strings
 pub trait CommentStringExt {
-    fn comment_state_char_indices(&self) -> CommentStateCharIndices;
+    fn comment_state_char_indices(&self) -> CommentStateCharIndices<'_>;
 
     #[inline]
-    fn non_comment_chars(&self) -> NonCommentChars {
+    fn non_comment_chars(&self) -> NonCommentChars<'_> {
         NonCommentChars(self.comment_state_char_indices())
     }
 
@@ -447,14 +443,14 @@ where
     T: AsRef<str>,
 {
     #[inline]
-    fn comment_state_char_indices(&self) -> CommentStateCharIndices {
+    fn comment_state_char_indices(&self) -> CommentStateCharIndices<'_> {
         CommentStateCharIndices::new(self.as_ref())
     }
 }
 
 impl CommentStringExt for str {
     #[inline]
-    fn comment_state_char_indices(&self) -> CommentStateCharIndices {
+    fn comment_state_char_indices(&self) -> CommentStateCharIndices<'_> {
         CommentStateCharIndices::new(self)
     }
 }

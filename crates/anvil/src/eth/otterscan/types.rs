@@ -286,7 +286,7 @@ impl OtsSearchTransactions {
 impl OtsInternalOperation {
     /// Converts a batch of traces into a batch of internal operations, to comply with the spec for
     /// [`ots_getInternalOperations`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getinternaloperations)
-    pub fn batch_build(traces: MinedTransaction) -> Vec<OtsInternalOperation> {
+    pub fn batch_build(traces: MinedTransaction) -> Vec<Self> {
         traces
             .info
             .traces
@@ -322,7 +322,7 @@ impl OtsTrace {
             .filter_map(|trace| match trace.trace.action {
                 Action::Call(call) => {
                     if let Ok(ots_type) = call.call_type.try_into() {
-                        Some(OtsTrace {
+                        Some(Self {
                             r#type: ots_type,
                             depth: trace.trace.trace_address.len(),
                             from: call.from,
@@ -346,9 +346,9 @@ impl TryFrom<CallType> for OtsTraceType {
 
     fn try_from(value: CallType) -> std::result::Result<Self, Self::Error> {
         match value {
-            CallType::Call => Ok(OtsTraceType::Call),
-            CallType::StaticCall => Ok(OtsTraceType::StaticCall),
-            CallType::DelegateCall => Ok(OtsTraceType::DelegateCall),
+            CallType::Call => Ok(Self::Call),
+            CallType::StaticCall => Ok(Self::StaticCall),
+            CallType::DelegateCall => Ok(Self::DelegateCall),
             _ => Err(()),
         }
     }

@@ -925,7 +925,7 @@ impl Cheatcode for assertLeDecimal_3Call {
 impl Cheatcode for assertApproxEqAbs_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         Ok(uint_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
-            .map_err(|e| format!("assertion failed: {}", e))?)
+            .map_err(|e| format!("assertion failed: {e}"))?)
     }
 }
 
@@ -939,7 +939,7 @@ impl Cheatcode for assertApproxEqAbs_1Call {
 impl Cheatcode for assertApproxEqAbs_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         Ok(int_assert_approx_eq_abs(self.left, self.right, self.maxDelta)
-            .map_err(|e| format!("assertion failed: {}", e))?)
+            .map_err(|e| format!("assertion failed: {e}"))?)
     }
 }
 
@@ -981,7 +981,7 @@ impl Cheatcode for assertApproxEqAbsDecimal_3Call {
 impl Cheatcode for assertApproxEqRel_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         Ok(uint_assert_approx_eq_rel(self.left, self.right, self.maxPercentDelta)
-            .map_err(|e| format!("assertion failed: {}", e))?)
+            .map_err(|e| format!("assertion failed: {e}"))?)
     }
 }
 
@@ -995,7 +995,7 @@ impl Cheatcode for assertApproxEqRel_1Call {
 impl Cheatcode for assertApproxEqRel_2Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         Ok(int_assert_approx_eq_rel(self.left, self.right, self.maxPercentDelta)
-            .map_err(|e| format!("assertion failed: {}", e))?)
+            .map_err(|e| format!("assertion failed: {e}"))?)
     }
 }
 

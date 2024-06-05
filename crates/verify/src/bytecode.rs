@@ -59,7 +59,8 @@ pub struct VerifyBytecodeArgs {
     #[clap(short = 'r', long, value_name = "RPC_URL", env = "ETH_RPC_URL")]
     pub rpc_url: Option<String>,
 
-    /// Verfication Type: `full` or `partial`. Ref: https://docs.sourcify.dev/docs/full-vs-partial-match/
+    /// Verfication Type: `full` or `partial`.
+    /// Ref: <https://docs.sourcify.dev/docs/full-vs-partial-match/>
     #[clap(long, default_value = "full", value_name = "TYPE")]
     pub verification_type: VerificationType,
 
@@ -459,7 +460,7 @@ impl VerifyBytecodeArgs {
             if !self.json {
                 println!(
                     "{} with status {}",
-                    format!("{:?} code matched", bytecode_type).green().bold(),
+                    format!("{bytecode_type:?} code matched").green().bold(),
                     res.1.unwrap().green().bold()
                 );
             } else {
@@ -475,8 +476,7 @@ impl VerifyBytecodeArgs {
             println!(
                 "{}",
                 format!(
-                    "{:?} code did not match - this may be due to varying compiler settings",
-                    bytecode_type
+                    "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
                 )
                 .red()
                 .bold()
@@ -491,8 +491,7 @@ impl VerifyBytecodeArgs {
                 matched: false,
                 verification_type: self.verification_type,
                 message: Some(format!(
-                    "{:?} code did not match - this may be due to varying compiler settings",
-                    bytecode_type
+                    "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
                 )),
             };
             json_results.push(json_res);
@@ -500,7 +499,8 @@ impl VerifyBytecodeArgs {
     }
 }
 
-/// Enum to represent the type of verification: `full` or `partial`. Ref: https://docs.sourcify.dev/docs/full-vs-partial-match/
+/// Enum to represent the type of verification: `full` or `partial`.
+/// Ref: <https://docs.sourcify.dev/docs/full-vs-partial-match/>
 #[derive(Debug, Clone, clap::ValueEnum, Default, PartialEq, Eq, Serialize, Deserialize, Copy)]
 pub enum VerificationType {
     #[default]
@@ -515,8 +515,8 @@ impl FromStr for VerificationType {
 
     fn from_str(s: &str) -> Result<Self> {
         match s {
-            "full" => Ok(VerificationType::Full),
-            "partial" => Ok(VerificationType::Partial),
+            "full" => Ok(Self::Full),
+            "partial" => Ok(Self::Partial),
             _ => eyre::bail!("Invalid verification type"),
         }
     }
@@ -534,8 +534,8 @@ impl From<VerificationType> for String {
 impl fmt::Display for VerificationType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VerificationType::Full => write!(f, "full"),
-            VerificationType::Partial => write!(f, "partial"),
+            Self::Full => write!(f, "full"),
+            Self::Partial => write!(f, "partial"),
         }
     }
 }

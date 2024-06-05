@@ -1,4 +1,5 @@
-//! In memory blockchain backend
+//! In-memory blockchain backend.
+
 use self::state::trie_storage;
 use crate::{
     config::PruneStateHistoryConfig,
@@ -115,8 +116,8 @@ pub enum BlockRequest {
 impl BlockRequest {
     pub fn block_number(&self) -> BlockNumber {
         match *self {
-            BlockRequest::Pending(_) => BlockNumber::Pending,
-            BlockRequest::Number(n) => BlockNumber::Number(n),
+            Self::Pending(_) => BlockNumber::Pending,
+            Self::Number(n) => BlockNumber::Number(n),
         }
     }
 }
@@ -130,7 +131,7 @@ pub struct Backend {
     /// the evm during its execution.
     ///
     /// At time of writing, there are two different types of `Db`:
-    ///   - [`MemDb`](crate::mem::MemDb): everything is stored in memory
+    ///   - [`MemDb`](crate::mem::in_memory_db::MemDb): everything is stored in memory
     ///   - [`ForkDb`](crate::mem::fork_db::ForkedDatabase): forks off a remote client, missing
     ///     data is retrieved via RPC-calls
     ///
@@ -141,7 +142,7 @@ pub struct Backend {
     /// potentially blocks for some time, even taking into account the rate limits of RPC
     /// endpoints. Therefor the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
     /// need to read from it, while it's currently written to, don't block. E.g. a new block is
-    /// currently mined and a new [`Self::set_storage()`] request is being executed.
+    /// currently mined and a new [`Self::set_storage_at()`] request is being executed.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// stores all block related data in memory
     blockchain: Blockchain,

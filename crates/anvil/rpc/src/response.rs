@@ -24,7 +24,7 @@ impl From<RpcError> for RpcResponse {
 
 impl RpcResponse {
     pub fn new(id: Id, content: impl Into<ResponseResult>) -> Self {
-        RpcResponse { jsonrpc: Version::V2, id: Some(id), result: content.into() }
+        Self { jsonrpc: Version::V2, id: Some(id), result: content.into() }
     }
 
     pub fn invalid_request(id: Id) -> Self {
@@ -47,17 +47,17 @@ impl ResponseResult {
     where
         S: Serialize + 'static,
     {
-        ResponseResult::Success(serde_json::to_value(&content).unwrap())
+        Self::Success(serde_json::to_value(&content).unwrap())
     }
 
     pub fn error(error: RpcError) -> Self {
-        ResponseResult::Error(error)
+        Self::Error(error)
     }
 }
 
 impl From<RpcError> for ResponseResult {
     fn from(err: RpcError) -> Self {
-        ResponseResult::error(err)
+        Self::error(err)
     }
 }
 /// Synchronous response
@@ -72,7 +72,7 @@ pub enum Response {
 }
 
 impl Response {
-    /// Creates new [Response] with the given [Error]
+    /// Creates new [`Response`] with the given [`RpcError`].
     pub fn error(error: RpcError) -> Self {
         RpcResponse::new(Id::Null, ResponseResult::Error(error)).into()
     }
@@ -80,12 +80,12 @@ impl Response {
 
 impl From<RpcError> for Response {
     fn from(err: RpcError) -> Self {
-        Response::error(err)
+        Self::error(err)
     }
 }
 
 impl From<RpcResponse> for Response {
     fn from(resp: RpcResponse) -> Self {
-        Response::Single(resp)
+        Self::Single(resp)
     }
 }

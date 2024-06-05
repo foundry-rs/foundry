@@ -305,10 +305,10 @@ impl ContractSources {
         output: &ProjectCompileOutput,
         root: &Path,
         libraries: &Libraries,
-    ) -> Result<ContractSources> {
+    ) -> Result<Self> {
         let linker = Linker::new(root, output.artifact_ids().collect());
 
-        let mut sources = ContractSources::default();
+        let mut sources = Self::default();
         for (id, artifact) in output.artifact_ids() {
             if let Some(file_id) = artifact.id {
                 let abs_path = root.join(&id.source);
@@ -316,7 +316,7 @@ impl ContractSources {
                     format!("failed to read artifact source file for `{}`", id.identifier())
                 })?;
                 let linked = linker.link(&id, libraries)?;
-                let contract = compact_to_contract(linked)?;
+                let contract = compact_to_contract(linked.into_contract_bytecode())?;
                 sources.insert(&id, file_id, source_code, contract);
             } else {
                 warn!(id = id.identifier(), "source not found");
@@ -618,18 +618,18 @@ pub enum SkipBuildFilter {
 impl SkipBuildFilter {
     fn new(s: &str) -> Self {
         match s {
-            "test" | "tests" => SkipBuildFilter::Tests,
-            "script" | "scripts" => SkipBuildFilter::Scripts,
-            s => SkipBuildFilter::Custom(s.to_string()),
+            "test" | "tests" => Self::Tests,
+            "script" | "scripts" => Self::Scripts,
+            s => Self::Custom(s.to_string()),
         }
     }
 
     /// Returns the pattern to match against a file
     fn file_pattern(&self) -> &str {
         match self {
-            SkipBuildFilter::Tests => ".t.sol",
-            SkipBuildFilter::Scripts => ".s.sol",
-            SkipBuildFilter::Custom(s) => s.as_str(),
+            Self::Tests => ".t.sol",
+            Self::Scripts => ".s.sol",
+            Self::Custom(s) => s.as_str(),
         }
     }
 

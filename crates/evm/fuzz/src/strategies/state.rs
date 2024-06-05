@@ -33,7 +33,7 @@ pub struct EvmFuzzState {
 }
 
 impl EvmFuzzState {
-    pub fn new<DB: DatabaseRef>(db: &CacheDB<DB>, config: FuzzDictionaryConfig) -> EvmFuzzState {
+    pub fn new<DB: DatabaseRef>(db: &CacheDB<DB>, config: FuzzDictionaryConfig) -> Self {
         // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
         let mut accs = db.accounts.iter().collect::<Vec<_>>();
         accs.sort_by_key(|(address, _)| *address);
@@ -81,6 +81,11 @@ impl EvmFuzzState {
     pub fn dictionary_read(&self) -> RwLockReadGuard<'_, RawRwLock, FuzzDictionary> {
         self.inner.read()
     }
+
+    /// Logs stats about the current state.
+    pub fn log_stats(&self) {
+        self.inner.read().log_stats();
+    }
 }
 
 // We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
@@ -99,6 +104,9 @@ pub struct FuzzDictionary {
     new_addreses: Vec<usize>,
     /// Sample typed values that are collected from call result and used across invariant runs.
     sample_values: HashMap<DynSolType, IndexSet<[u8; 32]>>,
+
+    misses: usize,
+    hits: usize,
 }
 
 impl fmt::Debug for FuzzDictionary {
@@ -221,6 +229,7 @@ impl FuzzDictionary {
     }
 
     /// Insert values from push bytes into fuzz dictionary.
+    /// Values are collected only once for a given address.
     /// If values are newly collected then they are removed at the end of current run.
     fn insert_push_bytes_values(
         &mut self,
@@ -228,7 +237,7 @@ impl FuzzDictionary {
         account_info: &AccountInfo,
         collected: bool,
     ) {
-        if self.config.include_push_bytes {
+        if self.config.include_push_bytes && !self.addresses.contains(address) {
             // Insert push bytes
             if let Some(code) = account_info.code.clone() {
                 self.insert_address(*address, collected);
@@ -303,6 +312,8 @@ impl FuzzDictionary {
     fn insert_value(&mut self, value: [u8; 32], collected: bool) {
         if self.state_values.len() < self.config.max_fuzz_dictionary_values {
             let (index, new_value) = self.state_values.insert_full(value);
+            let counter = if new_value { &mut self.misses } else { &mut self.hits };
+            *counter += 1;
             if new_value && collected {
                 self.new_values.push(index);
             }
@@ -363,6 +374,17 @@ impl FuzzDictionary {
 
         self.new_values.clear();
         self.new_addreses.clear();
+    }
+
+    pub fn log_stats(&self) {
+        trace!(
+            addresses.len = self.addresses.len(),
+            sample.len = self.sample_values.len(),
+            state.len = self.state_values.len(),
+            state.misses = self.misses,
+            state.hits = self.hits,
+            "FuzzDictionary stats",
+        );
     }
 }
 

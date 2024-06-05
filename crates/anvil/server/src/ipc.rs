@@ -28,13 +28,13 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
         Self { handler, path }
     }
 
-    /// Returns a stream of incoming connection handlers
+    /// Returns a stream of incoming connection handlers.
     ///
-    /// This establishes the ipc endpoint, converts the incoming connections into handled eth
-    /// connections, See [`PubSubConnection`] that should be spawned
+    /// This establishes the IPC endpoint, converts the incoming connections into handled
+    /// connections.
     #[instrument(target = "ipc", skip_all)]
     pub fn incoming(self) -> io::Result<impl Stream<Item = impl Future<Output = ()>>> {
-        let IpcEndpoint { handler, path } = self;
+        let Self { handler, path } = self;
 
         trace!(%path, "starting IPC server");
 

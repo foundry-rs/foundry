@@ -1076,8 +1076,7 @@ async fn test_estimate_gas() {
     let error_message = error_result.unwrap_err().to_string();
     assert!(
         error_message.contains("Insufficient funds for gas * price + value"),
-        "Error message did not match expected: {}",
-        error_message
+        "Error message did not match expected: {error_message}"
     );
 
     // Setup state override to simulate sufficient funds for the recipient.

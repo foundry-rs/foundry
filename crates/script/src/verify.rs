@@ -77,7 +77,7 @@ impl VerifyBundle {
 
         let via_ir = config.via_ir;
 
-        VerifyBundle {
+        Self {
             num_of_optimizations,
             known_contracts,
             etherscan: Default::default(),

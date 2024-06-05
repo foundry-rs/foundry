@@ -1,5 +1,7 @@
 //! Task management support
 
+#![allow(rustdoc::private_doc_tests)]
+
 use crate::{shutdown::Shutdown, tasks::block_listener::BlockListener, EthApi};
 use alloy_network::AnyNetwork;
 use alloy_primitives::B256;
@@ -21,8 +23,6 @@ pub struct TaskManager {
     /// A receiver for the shutdown signal
     on_shutdown: Shutdown,
 }
-
-// === impl TaskManager ===
 
 impl TaskManager {
     /// Creates a new instance of the task manager

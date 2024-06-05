@@ -36,6 +36,20 @@ homepage = "https://github.com/foundry-rs/foundry"
 repository = "https://github.com/foundry-rs/foundry"
 exclude = ["benches/", "tests/", "test-data/", "testdata/"]
 
+[workspace.lints.clippy]
+dbg-macro = "warn"
+manual-string-new = "warn"
+uninlined-format-args = "warn"
+use-self = "warn"
+
+[workspace.lints.rust]
+rust-2018-idioms = "deny"
+# unreachable-pub = "warn"
+unused-must-use = "deny"
+
+[workspace.lints.rustdoc]
+all = "warn"
+
 # Speed up compilation time for dev builds by reducing emitted debug info.
 # NOTE: Debuggers may provide less useful information with this setting.
 # Uncomment this section if you're using a debugger.

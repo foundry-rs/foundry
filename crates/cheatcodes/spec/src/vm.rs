@@ -2159,23 +2159,21 @@ impl PartialEq for ForgeContext {
     // and script group case (any of dry run, broadcast or resume).
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (_, &ForgeContext::TestGroup) => {
-                self == &ForgeContext::Test ||
-                    self == &ForgeContext::Snapshot ||
-                    self == &ForgeContext::Coverage
+            (_, &Self::TestGroup) => {
+                self == &Self::Test || self == &Self::Snapshot || self == &Self::Coverage
             }
-            (_, &ForgeContext::ScriptGroup) => {
-                self == &ForgeContext::ScriptDryRun ||
-                    self == &ForgeContext::ScriptBroadcast ||
-                    self == &ForgeContext::ScriptResume
+            (_, &Self::ScriptGroup) => {
+                self == &Self::ScriptDryRun ||
+                    self == &Self::ScriptBroadcast ||
+                    self == &Self::ScriptResume
             }
-            (&ForgeContext::Test, &ForgeContext::Test) |
-            (&ForgeContext::Snapshot, &ForgeContext::Snapshot) |
-            (&ForgeContext::Coverage, &ForgeContext::Coverage) |
-            (&ForgeContext::ScriptDryRun, &ForgeContext::ScriptDryRun) |
-            (&ForgeContext::ScriptBroadcast, &ForgeContext::ScriptBroadcast) |
-            (&ForgeContext::ScriptResume, &ForgeContext::ScriptResume) |
-            (&ForgeContext::Unknown, &ForgeContext::Unknown) => true,
+            (&Self::Test, &Self::Test) |
+            (&Self::Snapshot, &Self::Snapshot) |
+            (&Self::Coverage, &Self::Coverage) |
+            (&Self::ScriptDryRun, &Self::ScriptDryRun) |
+            (&Self::ScriptBroadcast, &Self::ScriptBroadcast) |
+            (&Self::ScriptResume, &Self::ScriptResume) |
+            (&Self::Unknown, &Self::Unknown) => true,
             _ => false,
         }
     }

@@ -57,7 +57,7 @@ impl EtherscanSourceProvider for EtherscanFlattenedSource {
 impl EtherscanFlattenedSource {
     /// Attempts to compile the flattened content locally with the compiler version.
     ///
-    /// This expects the completely flattened `content´ and will try to compile it using the
+    /// This expects the completely flattened content and will try to compile it using the
     /// provided compiler. If the compiler is missing it will be installed.
     ///
     /// # Errors

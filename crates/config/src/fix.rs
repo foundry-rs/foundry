@@ -1,4 +1,4 @@
-//! Helpers to automatically fix configuration warnings
+//! Helpers to automatically fix configuration warnings.
 
 use crate::{Config, Warning};
 use figment::providers::Env;
@@ -51,7 +51,7 @@ impl DerefMut for TomlFile {
     }
 }
 
-/// The error emitted when failing to insert a profile into [profile]
+/// The error emitted when failing to insert into a profile.
 #[derive(Debug)]
 struct InsertProfileError {
     pub message: String,

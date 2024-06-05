@@ -13,7 +13,7 @@ pub struct Filter {
 
 impl Filter {
     pub fn new(test_pattern: &str, contract_pattern: &str, path_pattern: &str) -> Self {
-        Filter {
+        Self {
             test_regex: Regex::new(test_pattern)
                 .unwrap_or_else(|_| panic!("Failed to parse test pattern: `{test_pattern}`")),
             contract_regex: Regex::new(contract_pattern).unwrap_or_else(|_| {
@@ -60,7 +60,7 @@ impl Filter {
     }
 
     pub fn matches_all() -> Self {
-        Filter {
+        Self {
             test_regex: Regex::new(".*").unwrap(),
             contract_regex: Regex::new(".*").unwrap(),
             path_regex: Regex::new(".*").unwrap(),

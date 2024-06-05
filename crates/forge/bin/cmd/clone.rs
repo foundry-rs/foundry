@@ -88,14 +88,8 @@ pub struct CloneArgs {
 
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
-        let CloneArgs {
-            address,
-            root,
-            opts,
-            etherscan,
-            no_remappings_txt,
-            keep_directory_structure,
-        } = self;
+        let Self { address, root, opts, etherscan, no_remappings_txt, keep_directory_structure } =
+            self;
 
         // step 0. get the chain and api key from the config
         let config = Config::from(&etherscan);
@@ -131,7 +125,7 @@ impl CloneArgs {
         if !opts.no_commit {
             let git = Git::new(&root).quiet(opts.quiet);
             git.add(Some("--all"))?;
-            let msg = format!("chore: forge clone {}", address);
+            let msg = format!("chore: forge clone {address}");
             git.commit(&msg)?;
         }
 
@@ -619,7 +613,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
-        println!("project_root: {:#?}", root);
+        println!("project_root: {root:#?}");
         compile_project(root, false).expect("compilation failure")
     }
 

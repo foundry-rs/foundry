@@ -60,7 +60,7 @@ pub struct LogsArgs {
 
 impl LogsArgs {
     pub async fn run(self) -> Result<()> {
-        let LogsArgs {
+        let Self {
             from_block,
             to_block,
             address,
@@ -91,7 +91,7 @@ impl LogsArgs {
         if !subscribe {
             let logs = cast.filter_logs(filter, json).await?;
 
-            println!("{}", logs);
+            println!("{logs}");
 
             return Ok(())
         }

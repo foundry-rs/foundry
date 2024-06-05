@@ -110,7 +110,7 @@ pub enum SolidityErrorCode {
     ContractExceeds24576Bytes,
     /// Warning after shanghai if init code size exceeds 49152 bytes
     ContractInitCodeSizeExceeds49152Bytes,
-    /// Warning that Function state mutability can be restricted to [view,pure]
+    /// Warning that Function state mutability can be restricted to view/pure.
     FunctionStateMutabilityCanBeRestricted,
     /// Warning: Unused local variable
     UnusedLocalVariable,
@@ -139,8 +139,6 @@ pub enum SolidityErrorCode {
     /// All other error codes
     Other(u64),
 }
-
-// === impl SolidityErrorCode ===
 
 impl SolidityErrorCode {
     /// The textual identifier for this error

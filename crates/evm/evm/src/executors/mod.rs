@@ -101,7 +101,7 @@ impl Executor {
             },
         );
 
-        Executor { backend, env, inspector, gas_limit }
+        Self { backend, env, inspector, gas_limit }
     }
 
     /// Returns the spec id of the executor
@@ -452,21 +452,21 @@ impl Executor {
         self.ensure_success(address, reverted, state_changeset, should_fail).unwrap_or_default()
     }
 
-    /// This is the same as [Self::is_success] but intended for outcomes of [Self::call_raw] used in
-    /// fuzzing and invariant testing.
+    /// This is the same as [`Self::is_success`] but intended for outcomes of [`Self::call_raw`]
+    /// used in fuzzing and invariant testing.
     ///
     /// ## Background
     ///
-    /// Executing and failure checking [`Executor::ensure_success`] are two steps, for ds-test
+    /// Executing and failure checking `Executor::ensure_success` are two steps, for ds-test
     /// legacy reasons failures can be stored in a global variables and needs to be called via a
     /// solidity call `failed()(bool)`.
     ///
-    /// For fuzz tests we’re using the `CowBackend` which is a Cow of the executor’s backend which
-    /// lazily clones the backend when it’s mutated via cheatcodes like `snapshot`. Snapshots
-    /// make it even more complicated because now we also need to keep track of that global
-    /// variable when we revert to a snapshot (because it is stored in state). Now, the problem
-    /// is that the `CowBackend` is dropped after every call, so we need to keep track of the
-    /// snapshot failure in the [`RawCallResult`] instead.
+    /// For fuzz tests we’re using the `CowBackend` which lazily clones the backend when it’s
+    /// mutated via cheatcodes like `snapshot`. Snapshots make it even more complicated because
+    /// now we also need to keep track of that global variable when we revert to a snapshot
+    /// (because it is stored in state). Now, the problem is that the `CowBackend` is dropped
+    /// after every call, so we need to keep track of the snapshot failure in the
+    /// [`RawCallResult`] instead.
     pub fn is_raw_call_success(
         &self,
         address: Address,
@@ -513,7 +513,7 @@ impl Executor {
 
             // Check if a DSTest assertion failed
             let executor =
-                Executor::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
+                Self::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
             let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
             if let Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { _0: failed } }) =
                 call
@@ -610,13 +610,13 @@ pub enum EvmError {
 
 impl From<ExecutionErr> for EvmError {
     fn from(err: ExecutionErr) -> Self {
-        EvmError::Execution(Box::new(err))
+        Self::Execution(Box::new(err))
     }
 }
 
 impl From<alloy_sol_types::Error> for EvmError {
     fn from(err: alloy_sol_types::Error) -> Self {
-        EvmError::AbiError(err.into())
+        Self::AbiError(err.into())
     }
 }
 

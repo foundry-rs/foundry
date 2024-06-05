@@ -179,7 +179,7 @@ impl InferInlineHyperlinks {
                 };
                 if let Some(target) = target {
                     let display_value = link.markdown_link_display_value();
-                    let markdown_link = format!("[{}]({})", display_value, target);
+                    let markdown_link = format!("[{display_value}]({target})");
                     // replace the link with the markdown link
                     comment.value =
                         comment.value.as_str().replacen(link.as_str(), markdown_link.as_str(), 1);

@@ -67,7 +67,7 @@ pub enum EstimateSubcommands {
 
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
-        let EstimateArgs { to, mut sig, mut args, mut tx, block, eth, command } = self;
+        let Self { to, mut sig, mut args, mut tx, block, eth, command } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;

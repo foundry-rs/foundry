@@ -78,7 +78,7 @@ pub enum SendTxSubcommands {
 
 impl SendTxArgs {
     pub async fn run(self) -> Result<()> {
-        let SendTxArgs {
+        let Self {
             eth,
             to,
             mut sig,

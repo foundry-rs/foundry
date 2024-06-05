@@ -105,7 +105,7 @@ impl RevertDecoder {
 
     /// Tries to decode an error message from the given revert bytes.
     ///
-    /// See [`decode_revert`] for more information.
+    /// See [`decode`](Self::decode) for more information.
     pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
         if err.len() < SELECTOR_LEN {
             if let Some(status) = status {
