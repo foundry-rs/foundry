@@ -544,12 +544,16 @@ impl EthApi {
     /// Returns the current gas price
     fn eth_gas_price(&self) -> Result<U256> {
         node_info!("eth_gasPrice");
-        self.gas_price()
+        Ok(U256::from(self.gas_price()))
     }
 
     /// Returns the current gas price
-    pub fn gas_price(&self) -> Result<U256> {
-        Ok(U256::from(self.backend.gas_price()))
+    pub fn gas_price(&self) -> u128 {
+        if self.backend.is_eip1559() {
+            self.backend.base_fee().saturating_add(self.lowest_suggestion_tip())
+        } else {
+            self.backend.fees().raw_gas_price()
+        }
     }
 
     /// Returns the excess blob gas and current blob gas price
@@ -562,7 +566,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn gas_max_priority_fee_per_gas(&self) -> Result<U256> {
-        Ok(U256::from(self.backend.max_priority_fee_per_gas()))
+        self.max_priority_fee_per_gas()
     }
 
     /// Returns the base fee per blob required to send a EIP-4844 tx.
@@ -1351,7 +1355,24 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
         node_info!("eth_maxPriorityFeePerGas");
-        Ok(U256::from(self.backend.max_priority_fee_per_gas()))
+        Ok(U256::from(self.lowest_suggestion_tip()))
+    }
+
+    /// Returns the suggested fee cap.
+    fn lowest_suggestion_tip(&self) -> u128 {
+        let block_number = self.backend.best_number();
+        let latest_cached_block = self.fee_history_cache.lock().get(&block_number).cloned();
+
+        match latest_cached_block {
+            Some(block) => block.rewards.iter().copied().min().unwrap_or(1e9 as u128),
+            None => self
+                .fee_history_cache
+                .lock()
+                .values()
+                .flat_map(|b| b.rewards.clone())
+                .min()
+                .unwrap_or(1e9 as u128),
+        }
     }
 
     /// Creates a filter object, based on filter options, to notify when the state changes (logs).
@@ -1744,7 +1765,7 @@ impl EthApi {
                 base_fee: self.backend.base_fee(),
                 chain_id: self.backend.chain_id().to::<u64>(),
                 gas_limit: self.backend.gas_limit(),
-                gas_price: self.backend.gas_price(),
+                gas_price: self.gas_price(),
             },
             fork_config: fork_config
                 .map(|fork| {
@@ -2427,7 +2448,7 @@ impl EthApi {
                 m.chain_id = Some(chain_id);
                 m.gas_limit = gas_limit;
                 if gas_price.is_none() {
-                    m.gas_price = self.backend.gas_price()
+                    m.gas_price = self.gas_price();
                 }
                 TypedTransactionRequest::Legacy(m)
             }
@@ -2436,7 +2457,7 @@ impl EthApi {
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if gas_price.is_none() {
-                    m.gas_price = self.backend.gas_price();
+                    m.gas_price = self.gas_price();
                 }
                 TypedTransactionRequest::EIP2930(m)
             }
@@ -2445,7 +2466,7 @@ impl EthApi {
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if max_fee_per_gas.is_none() {
-                    m.max_fee_per_gas = self.backend.gas_price();
+                    m.max_fee_per_gas = self.gas_price();
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
@@ -2457,8 +2478,7 @@ impl EthApi {
                         m.tx.chain_id = chain_id;
                         m.tx.gas_limit = gas_limit;
                         if max_fee_per_gas.is_none() {
-                            m.tx.max_fee_per_gas =
-                                self.gas_price().unwrap_or_default().to::<u128>();
+                            m.tx.max_fee_per_gas = self.gas_price();
                         }
                         if max_fee_per_blob_gas.is_none() {
                             m.tx.max_fee_per_blob_gas = self

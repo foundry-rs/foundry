@@ -266,6 +266,7 @@ contract ContractTest is DSTest {
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.wipe_contracts();
+
     prj.add_source(
         "Contract.sol",
         r"

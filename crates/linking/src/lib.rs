@@ -2,13 +2,13 @@
 
 use alloy_primitives::{Address, Bytes, B256};
 use foundry_compilers::{
-    artifacts::{CompactContractBytecode, CompactContractBytecodeCow, Libraries},
+    artifacts::{CompactContractBytecodeCow, Libraries},
     contracts::ArtifactContracts,
     Artifact, ArtifactId,
 };
 use semver::Version;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -138,14 +138,16 @@ impl<'a> Linker<'a> {
         libraries: Libraries,
         sender: Address,
         mut nonce: u64,
-        target: &'a ArtifactId,
+        targets: impl IntoIterator<Item = &'a ArtifactId>,
     ) -> Result<LinkOutput, LinkerError> {
         // Library paths in `link_references` keys are always stripped, so we have to strip
         // user-provided paths to be able to match them correctly.
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
 
         let mut needed_libraries = BTreeSet::new();
-        self.collect_dependencies(target, &mut needed_libraries)?;
+        for target in targets {
+            self.collect_dependencies(target, &mut needed_libraries)?;
+        }
 
         let mut libs_to_deploy = Vec::new();
 
@@ -200,7 +202,7 @@ impl<'a> Linker<'a> {
                 let bytecode = self.link(id, &libraries).unwrap().bytecode.unwrap();
                 (id, bytecode)
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<Vec<_>>();
 
         let mut libs_to_deploy = Vec::new();
 
@@ -210,22 +212,22 @@ impl<'a> Linker<'a> {
             // Find any library which is fully linked.
             let deployable = needed_libraries
                 .iter()
-                .find(|(_, bytecode)| !bytecode.object.is_unlinked())
-                .map(|(id, _)| *id);
+                .enumerate()
+                .find(|(_, (_, bytecode))| !bytecode.object.is_unlinked());
 
             // If we haven't found any deployable library, it means we have a cyclic dependency.
-            let Some(id) = deployable else {
+            let Some((index, &(id, _))) = deployable else {
                 return Err(LinkerError::CyclicDependency);
             };
-            let bytecode = needed_libraries.remove(id).unwrap();
-            let code = bytecode.into_bytes().unwrap();
-            let address = sender.create2_from_code(salt, code.as_ref());
-            libs_to_deploy.push(code);
+            let (_, bytecode) = needed_libraries.swap_remove(index);
+            let code = bytecode.bytes().unwrap();
+            let address = sender.create2_from_code(salt, code);
+            libs_to_deploy.push(code.clone());
 
             let (file, name) = self.convert_artifact_id_to_lib_path(id);
 
-            for (_, bytecode) in needed_libraries.iter_mut() {
-                bytecode.link(file.to_string_lossy(), name.clone(), address);
+            for (_, bytecode) in &mut needed_libraries {
+                bytecode.to_mut().link(file.to_string_lossy(), name.clone(), address);
             }
 
             libraries.libs.entry(file).or_default().insert(name, address.to_checksum(None));
@@ -239,7 +241,7 @@ impl<'a> Linker<'a> {
         &self,
         target: &ArtifactId,
         libraries: &Libraries,
-    ) -> Result<CompactContractBytecode, LinkerError> {
+    ) -> Result<CompactContractBytecodeCow<'a>, LinkerError> {
         let mut contract =
             self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?.clone();
         for (file, libs) in &libraries.libs {
@@ -255,18 +257,20 @@ impl<'a> Linker<'a> {
                 }
             }
         }
-
-        Ok(CompactContractBytecode {
-            abi: contract.abi.map(|a| a.into_owned()),
-            bytecode: contract.bytecode.map(|b| b.into_owned()),
-            deployed_bytecode: contract.deployed_bytecode.map(|b| b.into_owned()),
-        })
+        Ok(contract)
     }
 
     pub fn get_linked_artifacts(
         &self,
         libraries: &Libraries,
     ) -> Result<ArtifactContracts, LinkerError> {
+        self.contracts.keys().map(|id| Ok((id.clone(), self.link(id, libraries)?))).collect()
+    }
+
+    pub fn get_linked_artifacts_cow(
+        &self,
+        libraries: &Libraries,
+    ) -> Result<ArtifactContracts<CompactContractBytecodeCow<'a>>, LinkerError> {
         self.contracts.keys().map(|id| Ok((id.clone(), self.link(id, libraries)?))).collect()
     }
 }
@@ -324,7 +328,7 @@ mod tests {
             let linker = Linker::new(self.project.root(), self.output.artifact_ids().collect());
             for (id, identifier) in self.iter_linking_targets(&linker) {
                 let output = linker
-                    .link_with_nonce_or_address(Default::default(), sender, initial_nonce, id)
+                    .link_with_nonce_or_address(Default::default(), sender, initial_nonce, [id])
                     .expect("Linking failed");
                 self.validate_assertions(identifier, output);
             }

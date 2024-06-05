@@ -48,7 +48,7 @@ pub fn replay_run(
 
         if let Some(new_coverage) = call_result.coverage {
             if let Some(old_coverage) = coverage {
-                *coverage = Some(std::mem::take(old_coverage).merge(new_coverage));
+                *coverage = Some(std::mem::take(old_coverage).merged(new_coverage));
             } else {
                 *coverage = Some(new_coverage);
             }

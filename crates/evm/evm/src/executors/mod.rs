@@ -16,7 +16,8 @@ use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
     backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult},
     constants::{
-        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_CODE,
+        CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
+        DEFAULT_CREATE2_DEPLOYER_CODE,
     },
     debug::DebugArena,
     decode::RevertDecoder,
@@ -93,6 +94,9 @@ impl Executor {
             CHEATCODE_ADDRESS,
             revm::primitives::AccountInfo {
                 code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
+                // Also set the code hash manually so that it's not computed later.
+                // The code hash value does not matter, as long as it's not zero or `KECCAK_EMPTY`.
+                code_hash: CHEATCODE_CONTRACT_HASH,
                 ..Default::default()
             },
         );
@@ -781,12 +785,6 @@ impl std::ops::DerefMut for CallResult {
     }
 }
 
-/// Calculates the initial gas stipend for a transaction
-fn calc_stipend(calldata: &[u8], spec: SpecId) -> u64 {
-    let non_zero_data_cost = if SpecId::enabled(spec, SpecId::ISTANBUL) { 16 } else { 68 };
-    calldata.iter().fold(21000, |sum, byte| sum + if *byte == 0 { 4 } else { non_zero_data_cost })
-}
-
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
 fn convert_executed_result(
     env: EnvWithHandlerCfg,
@@ -805,7 +803,13 @@ fn convert_executed_result(
         }
         ExecutionResult::Halt { reason, gas_used } => (reason.into(), 0_u64, gas_used, None),
     };
-    let stipend = calc_stipend(&env.tx.data, env.handler_cfg.spec_id);
+    let stipend = revm::interpreter::gas::validate_initial_tx_gas(
+        env.spec_id(),
+        &env.tx.data,
+        env.tx.transact_to.is_create(),
+        &env.tx.access_list,
+        &env.tx.eof_initcodes,
+    );
 
     let result = match &out {
         Some(Output::Call(data)) => data.clone(),

@@ -1,10 +1,8 @@
 //! Test outcomes.
 
+use crate::gas_report::GasReport;
 use alloy_primitives::{Address, Log};
-use foundry_common::{
-    evm::Breakpoints, get_contract_name, get_file_name, shell, ContractsByArtifact,
-};
-use foundry_compilers::artifacts::Libraries;
+use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
 use foundry_evm::{
     coverage::HitMaps,
     debug::DebugArena,
@@ -16,12 +14,9 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::{self, Write},
-    sync::Arc,
     time::Duration,
 };
 use yansi::Paint;
-
-use crate::gas_report::GasReport;
 
 /// The aggregated result of a test run.
 #[derive(Clone, Debug)]
@@ -198,11 +193,6 @@ pub struct SuiteResult {
     pub test_results: BTreeMap<String, TestResult>,
     /// Generated warnings.
     pub warnings: Vec<String>,
-    /// Libraries used to link test contract.
-    pub libraries: Libraries,
-    /// Contracts linked with correct libraries.
-    #[serde(skip)]
-    pub known_contracts: Arc<ContractsByArtifact>,
 }
 
 impl SuiteResult {
@@ -210,10 +200,8 @@ impl SuiteResult {
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
         warnings: Vec<String>,
-        libraries: Libraries,
-        known_contracts: Arc<ContractsByArtifact>,
     ) -> Self {
-        Self { duration, test_results, warnings, libraries, known_contracts }
+        Self { duration, test_results, warnings }
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.

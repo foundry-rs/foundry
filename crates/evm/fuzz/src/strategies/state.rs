@@ -1,4 +1,4 @@
-use crate::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts};
+use crate::invariant::{ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts};
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
@@ -17,6 +17,12 @@ use std::{
     fmt,
     sync::Arc,
 };
+
+/// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
+///
+/// This is to limit the performance impact of fuzz tests that might deploy arbitrarily sized
+/// bytecode (as is the case with Solmate).
+const PUSH_BYTE_ANALYSIS_LIMIT: usize = 24 * 1024;
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
@@ -49,16 +55,18 @@ impl EvmFuzzState {
     /// the given [FuzzDictionaryConfig].
     pub fn collect_values_from_call(
         &self,
-        target_abi: Option<&JsonAbi>,
-        target_function: Option<&Function>,
+        fuzzed_contracts: &FuzzRunIdentifiedContracts,
+        tx: &BasicTxDetails,
         result: &Bytes,
         logs: &[Log],
         state_changeset: &StateChangeset,
         run_depth: u32,
     ) {
         let mut dict = self.inner.write();
-        dict.insert_result_values(target_function, result, run_depth);
-        dict.insert_logs_values(target_abi, logs, run_depth);
+        fuzzed_contracts.with_fuzzed_artifacts(tx, |target_abi, target_function| {
+            dict.insert_logs_values(target_abi, logs, run_depth);
+            dict.insert_result_values(target_function, result, run_depth);
+        });
         dict.insert_state_values(state_changeset);
     }
 
@@ -85,10 +93,10 @@ pub struct FuzzDictionary {
     addresses: IndexSet<Address>,
     /// Configuration for the dictionary.
     config: FuzzDictionaryConfig,
-    /// New keys added to the dictionary since container initialization.
-    new_values: IndexSet<[u8; 32]>,
-    /// New addresses added to the dictionary since container initialization.
-    new_addreses: IndexSet<Address>,
+    /// New key indexes added to the dictionary since container initialization.
+    new_values: Vec<usize>,
+    /// New address indexes added to the dictionary since container initialization.
+    new_addreses: Vec<usize>,
     /// Sample typed values that are collected from call result and used across invariant runs.
     sample_values: HashMap<DynSolType, IndexSet<[u8; 32]>>,
 }
@@ -104,7 +112,14 @@ impl fmt::Debug for FuzzDictionary {
 
 impl FuzzDictionary {
     pub fn new(config: FuzzDictionaryConfig) -> Self {
-        Self { config, ..Default::default() }
+        let mut dictionary = Self { config, ..Default::default() };
+        dictionary.prefill();
+        dictionary
+    }
+
+    /// Insert common values into the dictionary at initialization.
+    fn prefill(&mut self) {
+        self.insert_value([0; 32], false);
     }
 
     /// Insert values from initial db state into fuzz dictionary.
@@ -217,10 +232,42 @@ impl FuzzDictionary {
             // Insert push bytes
             if let Some(code) = account_info.code.clone() {
                 self.insert_address(*address, collected);
-                for push_byte in collect_push_bytes(&code.bytes()) {
-                    self.insert_value(push_byte, collected);
-                }
+                self.collect_push_bytes(code.bytes_slice(), collected);
             }
+        }
+    }
+
+    fn collect_push_bytes(&mut self, code: &[u8], collected: bool) {
+        let mut i = 0;
+        let len = code.len().min(PUSH_BYTE_ANALYSIS_LIMIT);
+        while i < len {
+            let op = code[i];
+            if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
+                let push_size = (op - opcode::PUSH1 + 1) as usize;
+                let push_start = i + 1;
+                let push_end = push_start + push_size;
+                // As a precaution, if a fuzz test deploys malformed bytecode (such as using
+                // `CREATE2`) this will terminate the loop early.
+                if push_start > code.len() || push_end > code.len() {
+                    break;
+                }
+
+                let push_value = U256::try_from_be_slice(&code[push_start..push_end]).unwrap();
+                // Also add the value below and above the push value to the dictionary.
+                if push_value != U256::ZERO {
+                    // Never add 0 to the dictionary as it's always present, and it's a pretty
+                    // common value that this is worth it.
+                    self.insert_value(push_value.to_be_bytes(), collected);
+
+                    self.insert_value((push_value - U256::from(1)).to_be_bytes(), collected);
+                }
+                if push_value != U256::MAX {
+                    self.insert_value((push_value + U256::from(1)).to_be_bytes(), collected);
+                }
+
+                i += push_size;
+            }
+            i += 1;
         }
     }
 
@@ -241,24 +288,24 @@ impl FuzzDictionary {
     }
 
     /// Insert address into fuzz dictionary.
-    /// If address is newly collected then it is removed at the end of current run.
+    /// If address is newly collected then it is removed by index at the end of current run.
     fn insert_address(&mut self, address: Address, collected: bool) {
-        if self.addresses.len() < self.config.max_fuzz_dictionary_addresses &&
-            self.addresses.insert(address) &&
-            collected
-        {
-            self.new_addreses.insert(address);
+        if self.addresses.len() < self.config.max_fuzz_dictionary_addresses {
+            let (index, new_address) = self.addresses.insert_full(address);
+            if new_address && collected {
+                self.new_addreses.push(index);
+            }
         }
     }
 
     /// Insert raw value into fuzz dictionary.
-    /// If value is newly collected then it is removed at the end of current run.
+    /// If value is newly collected then it is removed by index at the end of current run.
     fn insert_value(&mut self, value: [u8; 32], collected: bool) {
-        if self.state_values.len() < self.config.max_fuzz_dictionary_values &&
-            self.state_values.insert(value) &&
-            collected
-        {
-            self.new_values.insert(value);
+        if self.state_values.len() < self.config.max_fuzz_dictionary_values {
+            let (index, new_value) = self.state_values.insert_full(value);
+            if new_value && collected {
+                self.new_values.push(index);
+            }
         }
     }
 
@@ -283,9 +330,16 @@ impl FuzzDictionary {
         }
     }
 
-    #[inline]
     pub fn values(&self) -> &IndexSet<[u8; 32]> {
         &self.state_values
+    }
+
+    pub fn len(&self) -> usize {
+        self.state_values.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.state_values.is_empty()
     }
 
     #[inline]
@@ -300,57 +354,16 @@ impl FuzzDictionary {
 
     pub fn revert(&mut self) {
         // Revert new values collected during the run.
-        for key in self.new_values.iter() {
-            self.state_values.swap_remove(key);
+        for &value_index in &self.new_values {
+            self.state_values.swap_remove_index(value_index);
         }
-        for address in self.new_addreses.iter() {
-            self.addresses.swap_remove(address);
+        for &address_index in &self.new_addreses {
+            self.addresses.swap_remove_index(address_index);
         }
 
         self.new_values.clear();
         self.new_addreses.clear();
     }
-}
-
-/// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
-///
-/// This is to limit the performance impact of fuzz tests that might deploy arbitrarily sized
-/// bytecode (as is the case with Solmate).
-const PUSH_BYTE_ANALYSIS_LIMIT: usize = 24 * 1024;
-
-/// Collects all push bytes from the given bytecode.
-fn collect_push_bytes(code: &[u8]) -> Vec<[u8; 32]> {
-    let mut bytes: Vec<[u8; 32]> = Vec::new();
-    // We use [SpecId::LATEST] since we do not really care what spec it is - we are not interested
-    // in gas costs.
-    let mut i = 0;
-    while i < code.len().min(PUSH_BYTE_ANALYSIS_LIMIT) {
-        let op = code[i];
-        if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
-            let push_size = (op - opcode::PUSH1 + 1) as usize;
-            let push_start = i + 1;
-            let push_end = push_start + push_size;
-            // As a precaution, if a fuzz test deploys malformed bytecode (such as using `CREATE2`)
-            // this will terminate the loop early.
-            if push_start > code.len() || push_end > code.len() {
-                return bytes;
-            }
-
-            let push_value = U256::try_from_be_slice(&code[push_start..push_end]).unwrap();
-            bytes.push(push_value.to_be_bytes());
-            // also add the value below and above the push value to the dictionary.
-            if push_value != U256::ZERO {
-                bytes.push((push_value - U256::from(1)).to_be_bytes());
-            }
-            if push_value != U256::MAX {
-                bytes.push((push_value + U256::from(1)).to_be_bytes());
-            }
-
-            i += push_size;
-        }
-        i += 1;
-    }
-    bytes
 }
 
 /// Collects all created contracts from a StateChangeset which haven't been discovered yet. Stores

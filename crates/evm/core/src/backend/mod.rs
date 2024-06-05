@@ -496,15 +496,11 @@ impl Backend {
         slot: U256,
         value: U256,
     ) -> Result<(), DatabaseError> {
-        let ret = if let Some(db) = self.active_fork_db_mut() {
+        if let Some(db) = self.active_fork_db_mut() {
             db.insert_account_storage(address, slot, value)
         } else {
             self.mem_db.insert_account_storage(address, slot, value)
-        };
-
-        debug_assert!(self.storage(address, slot).unwrap() == value);
-
-        ret
+        }
     }
 
     /// Completely replace an account's storage without overriding account info.
@@ -536,11 +532,6 @@ impl Backend {
     /// This will also grant cheatcode access to the test account
     pub fn set_test_contract(&mut self, acc: Address) -> &mut Self {
         trace!(?acc, "setting test account");
-        // toggle the previous sender
-        if let Some(current) = self.inner.test_contract_address.take() {
-            self.remove_persistent_account(&current);
-            self.revoke_cheatcode_access(&acc);
-        }
 
         self.add_persistent_account(acc);
         self.allow_cheatcode_access(acc);
@@ -603,11 +594,11 @@ impl Backend {
     /// Instead, it stores whether an `assert` failed in a boolean variable that we can read
     pub fn is_failed_test_contract(&self, address: Address) -> bool {
         /*
-         contract DSTest {
+        contract DSTest {
             bool public IS_TEST = true;
             // slot 0 offset 1 => second byte of slot0
             bool private _failed;
-         }
+        }
         */
         let value = self.storage_ref(address, U256::ZERO).unwrap_or_default();
         value.as_le_bytes()[1] != 0
@@ -675,9 +666,8 @@ impl Backend {
         active_journaled_state: &mut JournaledState,
         target_fork: &mut Fork,
     ) {
-        if let Some((_, fork_idx)) = self.active_fork_ids.as_ref() {
-            let active = self.inner.get_fork(*fork_idx);
-            merge_account_data(accounts, &active.db, active_journaled_state, target_fork)
+        if let Some(db) = self.active_fork_db() {
+            merge_account_data(accounts, db, active_journaled_state, target_fork)
         } else {
             merge_account_data(accounts, &self.mem_db, active_journaled_state, target_fork)
         }
@@ -716,6 +706,24 @@ impl Backend {
     /// Returns the currently active `ForkDB`, if any
     pub fn active_fork_db_mut(&mut self) -> Option<&mut ForkDB> {
         self.active_fork_mut().map(|f| &mut f.db)
+    }
+
+    /// Returns the current database implementation as a `&dyn` value.
+    #[inline(always)]
+    pub fn db(&self) -> &dyn Database<Error = DatabaseError> {
+        match self.active_fork_db() {
+            Some(fork_db) => fork_db,
+            None => &self.mem_db,
+        }
+    }
+
+    /// Returns the current database implementation as a `&mut dyn` value.
+    #[inline(always)]
+    pub fn db_mut(&mut self) -> &mut dyn Database<Error = DatabaseError> {
+        match self.active_fork_ids.map(|(_, idx)| &mut self.inner.get_fork_mut(idx).db) {
+            Some(fork_db) => fork_db,
+            None => &mut self.mem_db,
+        }
     }
 
     /// Creates a snapshot of the currently active database

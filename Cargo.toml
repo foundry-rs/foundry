@@ -82,17 +82,17 @@ scrypt.opt-level = 3
 [profile.local]
 inherits = "dev"
 opt-level = 1
+debug-assertions = false
 strip = "debuginfo"
 panic = "abort"
 codegen-units = 16
 
 # Like release, but with full debug symbols and with stack unwinds. Useful for e.g. `perf`.
 [profile.debug-fast]
-inherits = "release"
+inherits = "local"
 debug = true
 strip = "none"
 panic = "unwind"
-incremental = false
 
 # Optimized release profile.
 [profile.release]
@@ -137,8 +137,8 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.2.8", default-features = false }
-foundry-compilers = { version = "0.5", default-features = false }
+foundry-block-explorers = { version = "0.3.0", default-features = false }
+foundry-compilers = { version = "0.6.0", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -175,7 +175,7 @@ alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "5940871", 
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "5940871", default-features = false }
 alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "5940871", default-features = false }
 alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "5940871", default-features = false }
-alloy-primitives = { version = "0.7.1", features = ["getrandom"] }
+alloy-primitives = { version = "0.7.1", features = ["getrandom", "rand"] }
 alloy-dyn-abi = "0.7.1"
 alloy-json-abi = "0.7.1"
 alloy-sol-types = "0.7.1"
@@ -188,7 +188,10 @@ solang-parser = "=0.3.3"
 ## misc
 arrayvec = "0.7"
 base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "std",
+] }
 color-eyre = "0.6"
 derive_more = "0.99"
 evm-disassembler = "0.5"
@@ -213,6 +216,7 @@ num-format = "0.4.4"
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 tempfile = "3.10"
 tokio = "1"
+rayon = "1"
 
 axum = "0.7"
 hyper = "1.0"

@@ -283,7 +283,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
         let mut version = None;
 
         let path_or_name = parts.next().unwrap();
-        if path_or_name.ends_with(".sol") {
+        if path_or_name.contains('.') {
             file = Some(PathBuf::from(path_or_name));
             if let Some(name_or_version) = parts.next() {
                 if name_or_version.contains('.') {
@@ -376,7 +376,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                         let name = file.replace(".sol", "");
                         PathBuf::from(format!("{file}/{name}.json"))
                     }
-                    _ => return Err(fmt_err!("Invalid artifact path")),
+                    _ => bail!("invalid artifact path"),
                 };
 
             state.config.paths.artifacts.join(path_in_artifacts)

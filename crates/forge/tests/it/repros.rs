@@ -254,7 +254,7 @@ test_repro!(6501, false, None, |res| {
     assert_eq!(test.status, TestStatus::Success);
     assert_eq!(test.decoded_logs, ["a".to_string(), "1".to_string(), "b 2".to_string()]);
 
-    let (kind, traces) = test.traces[1].clone();
+    let (kind, traces) = test.traces.last().unwrap().clone();
     let nodes = traces.into_nodes();
     assert_eq!(kind, TraceKind::Execution);
 
@@ -329,3 +329,6 @@ test_repro!(7481);
 
 // https://github.com/foundry-rs/foundry/issues/5739
 test_repro!(5739);
+
+// https://github.com/foundry-rs/foundry/issues/8004
+test_repro!(8004);

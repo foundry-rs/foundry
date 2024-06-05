@@ -1,7 +1,7 @@
 use crate::tx::CastTxBuilder;
 use alloy_primitives::{TxKind, U256};
-use alloy_rpc_types::BlockId;
-use cast::Cast;
+use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use cast::{traces::TraceKind, Cast};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -114,7 +114,7 @@ impl CallArgs {
             sig = Some(data);
         }
 
-        let config = Config::from(&eth);
+        let mut config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
         let sender = eth.wallet.sender().await;
 
@@ -153,6 +153,11 @@ impl CallArgs {
             let figment =
                 Config::figment_with_root(find_project_root_path(None).unwrap()).merge(eth.rpc);
             let evm_opts = figment.extract::<EvmOpts>()?;
+            if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
+                // Override Config `fork_block_number` (if set) with CLI value.
+                config.fork_block_number = Some(block_number);
+            }
+
             let (env, fork, chain) = TracingExecutor::get_fork_material(&config, evm_opts).await?;
             let mut executor = TracingExecutor::new(env, fork, evm_version, debug);
 
@@ -162,15 +167,12 @@ impl CallArgs {
             let trace = match tx_kind {
                 TxKind::Create => {
                     let deploy_result = executor.deploy(sender, input, value, None);
-
-                    match deploy_result {
-                        Ok(deploy_result) => TraceResult::from(deploy_result),
-                        Err(evm_err) => TraceResult::try_from(evm_err)?,
-                    }
+                    TraceResult::try_from(deploy_result)?
                 }
-                TxKind::Call(to) => {
-                    TraceResult::from(executor.call_raw_committing(sender, to, input, value)?)
-                }
+                TxKind::Call(to) => TraceResult::from_raw(
+                    executor.call_raw_committing(sender, to, input, value)?,
+                    TraceKind::Execution,
+                ),
             };
 
             handle_traces(trace, &config, chain, labels, debug).await?;

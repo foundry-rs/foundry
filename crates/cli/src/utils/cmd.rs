@@ -141,29 +141,20 @@ pub fn eta_key(state: &indicatif::ProgressState, f: &mut dyn Write) {
     write!(f, "{:.1}s", state.eta().as_secs_f64()).unwrap()
 }
 
-#[macro_export]
-macro_rules! init_progress {
-    ($local:expr, $label:expr) => {{
-        let pb = indicatif::ProgressBar::new($local.len() as u64);
-        let mut template =
-            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ".to_string();
-        template += $label;
-        template += " ({eta})";
-        pb.set_style(
-            indicatif::ProgressStyle::with_template(&template)
-                .unwrap()
-                .with_key("eta", $crate::utils::eta_key)
-                .progress_chars("#>-"),
-        );
-        pb
-    }};
-}
-
-#[macro_export]
-macro_rules! update_progress {
-    ($pb:ident, $index:expr) => {
-        $pb.set_position(($index + 1) as u64);
-    };
+pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
+    let pb = indicatif::ProgressBar::new(len);
+    let mut template =
+        "{prefix}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} "
+            .to_string();
+    write!(template, "{}", label).unwrap();
+    template += " ({eta})";
+    pb.set_style(
+        indicatif::ProgressStyle::with_template(&template)
+            .unwrap()
+            .with_key("eta", crate::utils::eta_key)
+            .progress_chars("#>-"),
+    );
+    pb
 }
 
 /// Creates progress object and progress bar.
@@ -378,19 +369,19 @@ pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> Result<Vec<
 #[derive(Debug)]
 pub struct TraceResult {
     pub success: bool,
-    pub traces: Traces,
-    pub debug: DebugArena,
+    pub traces: Option<Traces>,
+    pub debug: Option<DebugArena>,
     pub gas_used: u64,
 }
 
-impl From<RawCallResult> for TraceResult {
-    fn from(result: RawCallResult) -> Self {
-        let RawCallResult { gas_used, traces, reverted, debug, .. } = result;
-
+impl TraceResult {
+    /// Create a new [`TraceResult`] from a [`RawCallResult`].
+    pub fn from_raw(raw: RawCallResult, trace_kind: TraceKind) -> Self {
+        let RawCallResult { gas_used, traces, reverted, debug, .. } = raw;
         Self {
             success: !reverted,
-            traces: vec![(TraceKind::Execution, traces.expect("traces is None"))],
-            debug: debug.unwrap_or_default(),
+            traces: traces.map(|arena| vec![(trace_kind, arena)]),
+            debug,
             gas_used,
         }
     }
@@ -398,31 +389,18 @@ impl From<RawCallResult> for TraceResult {
 
 impl From<DeployResult> for TraceResult {
     fn from(result: DeployResult) -> Self {
-        let RawCallResult { gas_used, traces, debug, .. } = result.raw;
-        Self {
-            success: true,
-            traces: vec![(TraceKind::Execution, traces.expect("traces is None"))],
-            debug: debug.unwrap_or_default(),
-            gas_used,
-        }
+        Self::from_raw(result.raw, TraceKind::Deployment)
     }
 }
 
-impl TryFrom<EvmError> for TraceResult {
+impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
     type Error = EvmError;
 
-    fn try_from(err: EvmError) -> Result<Self, Self::Error> {
-        match err {
-            EvmError::Execution(err) => {
-                let RawCallResult { reverted, gas_used, traces, debug: run_debug, .. } = err.raw;
-                Ok(TraceResult {
-                    success: !reverted,
-                    traces: vec![(TraceKind::Execution, traces.expect("traces is None"))],
-                    debug: run_debug.unwrap_or_default(),
-                    gas_used,
-                })
-            }
-            _ => Err(err),
+    fn try_from(value: Result<DeployResult, EvmError>) -> Result<Self, Self::Error> {
+        match value {
+            Ok(result) => Ok(Self::from(result)),
+            Err(EvmError::Execution(err)) => Ok(Self::from_raw(err.raw, TraceKind::Deployment)),
+            Err(err) => Err(err),
         }
     }
 }
@@ -456,7 +434,7 @@ pub async fn handle_traces(
 
     let mut etherscan_identifier = EtherscanIdentifier::new(config, chain)?;
     if let Some(etherscan_identifier) = &mut etherscan_identifier {
-        for (_, trace) in &mut result.traces {
+        for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
             decoder.identify(trace, etherscan_identifier);
         }
     }
@@ -468,7 +446,7 @@ pub async fn handle_traces(
             Default::default()
         };
         let mut debugger = Debugger::builder()
-            .debug_arena(&result.debug)
+            .debug_arena(result.debug.as_ref().expect("missing debug arena"))
             .decoder(&decoder)
             .sources(sources)
             .build();
@@ -481,12 +459,10 @@ pub async fn handle_traces(
 }
 
 pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) -> Result<()> {
-    if result.traces.is_empty() {
-        panic!("No traces found")
-    }
+    let traces = result.traces.as_ref().expect("No traces found");
 
     println!("Traces:");
-    for (_, arena) in &result.traces {
+    for (_, arena) in traces {
         println!("{}", render_trace_arena(arena, decoder).await?);
     }
     println!();

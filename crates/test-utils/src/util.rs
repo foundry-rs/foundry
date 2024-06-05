@@ -3,9 +3,10 @@ use eyre::{Result, WrapErr};
 use foundry_compilers::{
     artifacts::Settings,
     cache::CompilerCache,
+    compilers::multi::MultiCompiler,
     error::Result as SolcResult,
     project_util::{copy_dir, TempProject},
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
@@ -198,6 +199,7 @@ impl ExtTester {
             test_cmd.env("FOUNDRY_ETH_RPC_URL", crate::rpc::next_http_archive_rpc_endpoint());
             test_cmd.env("FOUNDRY_FORK_BLOCK_NUMBER", fork_block.to_string());
         }
+        test_cmd.env("FOUNDRY_INVARIANT_DEPTH", "15");
 
         test_cmd.assert_non_empty_stdout();
     }
@@ -408,7 +410,7 @@ pub struct TestProject<T: ArtifactOutput = ConfigurableArtifacts> {
     /// The directory in which this test executable is running.
     exe_root: PathBuf,
     /// The project in which the test should run.
-    inner: Arc<TempProject<Solc, T>>,
+    inner: Arc<TempProject<MultiCompiler, T>>,
 }
 
 impl TestProject {

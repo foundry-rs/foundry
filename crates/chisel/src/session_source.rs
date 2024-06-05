@@ -8,7 +8,6 @@ use eyre::Result;
 use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_compilers::{
     artifacts::{Settings, Source, Sources},
-    compilers::{solc::SolcVersionManager, CompilerInput, CompilerVersionManager},
     CompilerOutput, Solc, SolcInput,
 };
 use foundry_config::{Config, SolcReq};
@@ -104,8 +103,6 @@ impl SessionSourceConfig {
             SolcReq::Version(Version::new(0, 8, 19))
         };
 
-        let vm = SolcVersionManager::default();
-
         match solc_req {
             SolcReq::Version(version) => {
                 // Validate that the requested evm version is supported by the solc version
@@ -118,15 +115,16 @@ impl SessionSourceConfig {
                     }
                 }
 
-                let solc = if let Ok(solc) = vm.get_installed(&version) {
-                    solc
-                } else {
-                    if self.foundry_config.offline {
-                        eyre::bail!("can't install missing solc {version} in offline mode")
-                    }
-                    println!("{}", format!("Installing solidity version {version}...").green());
-                    vm.install(&version)?
-                };
+                let solc =
+                    if let Some(solc) = Solc::find_svm_installed_version(version.to_string())? {
+                        solc
+                    } else {
+                        if self.foundry_config.offline {
+                            eyre::bail!("can't install missing solc {version} in offline mode")
+                        }
+                        println!("{}", format!("Installing solidity version {version}...").green());
+                        Solc::blocking_install(&version)?
+                    };
                 Ok(solc)
             }
             SolcReq::Local(solc) => {
@@ -329,9 +327,10 @@ impl SessionSource {
         };
 
         // we only care about the solidity source, so we can safely unwrap
-        SolcInput::build(sources, settings, &self.solc.version)
+        SolcInput::resolve_and_build(sources, settings)
             .into_iter()
             .next()
+            .map(|i| i.sanitized(&self.solc.version))
             .expect("Solidity source not found")
     }
 
