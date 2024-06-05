@@ -253,10 +253,15 @@ async fn main() -> Result<()> {
                     .await?
             );
         }
-        CastSubcommand::BlockNumber { rpc } => {
+        CastSubcommand::BlockNumber { rpc, block } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).block_number().await?);
+
+            if let Some(block_number) = block {
+                println!("{:#?}", provider.get_block(block_number, false).await?);
+            } else {
+                println!("{}", Cast::new(provider).block_number().await?);
+            }
         }
         CastSubcommand::Chain { rpc } => {
             let config = Config::from(&rpc);
@@ -309,7 +314,7 @@ async fn main() -> Result<()> {
                 {
                     let resolved = match func_names {
                         Some(v) => v.join("|"),
-                        None => String::new(),
+                        None => "".to_string(),
                     };
                     println!("{selector}\t{arguments:max_args_len$}\t{resolved}");
                 }
