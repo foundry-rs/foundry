@@ -174,7 +174,7 @@ pub struct Config {
     pub allow_paths: Vec<PathBuf>,
     /// additional solc include paths for `--include-path`
     pub include_paths: Vec<PathBuf>,
-    /// glob patters to skip
+    /// glob patterns to skip
     #[serde(with = "from_vec_glob")]
     pub skip: Vec<globset::Glob>,
     /// whether to force a `project.clean()`
