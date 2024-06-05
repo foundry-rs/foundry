@@ -1,4 +1,4 @@
-//! Implementations of [`Evm`](crate::Group::Evm) cheatcodes.
+//! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_genesis::{Genesis, GenesisAccount};

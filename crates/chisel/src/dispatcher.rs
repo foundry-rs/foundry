@@ -942,7 +942,7 @@ impl ChiselDispatcher {
         Ok(())
     }
 
-    /// Format a type that implements [fmt::Display] as a chisel error string.
+    /// Format a type that implements [std::fmt::Display] as a chisel error string.
     ///
     /// ### Takes
     ///

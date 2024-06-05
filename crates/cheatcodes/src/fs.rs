@@ -1,4 +1,4 @@
-//! Implementations of [`Filesystem`](crate::Group::Filesystem) cheatcodes.
+//! Implementations of [`Filesystem`](spec::Group::Filesystem) cheatcodes.
 
 use super::string::parse;
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};

@@ -31,7 +31,7 @@ pub struct RetryBackoffLayer {
 }
 
 impl RetryBackoffLayer {
-    /// Creates a new [RetryWithPolicyLayer] with the given parameters
+    /// Creates a new retry layer with the given parameters.
     pub fn new(
         max_rate_limit_retries: u32,
         max_timeout_retries: u32,

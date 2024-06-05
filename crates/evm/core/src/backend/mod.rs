@@ -54,7 +54,7 @@ pub type LocalForkId = U256;
 /// This is used for fast lookup
 type ForkLookupIndex = usize;
 
-/// All accounts that will have persistent storage across fork swaps. See also [`clone_data()`]
+/// All accounts that will have persistent storage across fork swaps.
 const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
@@ -392,8 +392,8 @@ pub struct Backend {
     /// The journaled_state to use to initialize new forks with
     ///
     /// The way [`revm::JournaledState`] works is, that it holds the "hot" accounts loaded from the
-    /// underlying `Database` that feeds the Account and State data ([`revm::AccountInfo`])to the
-    /// journaled_state so it can apply changes to the state while the evm executes.
+    /// underlying `Database` that feeds the Account and State data to the journaled_state so it
+    /// can apply changes to the state while the EVM executes.
     ///
     /// In a way the `JournaledState` is something like a cache that
     /// 1. check if account is already loaded (hot)
@@ -404,7 +404,7 @@ pub struct Backend {
     /// ([`DatabaseExt::select_fork`]).
     ///
     /// This will be an empty `JournaledState`, which will be populated with persistent accounts,
-    /// See [`Self::update_fork_db()`] and [`clone_data()`].
+    /// See [`Self::update_fork_db()`].
     fork_init_journaled_state: JournaledState,
     /// The currently active fork database
     ///
@@ -1572,8 +1572,6 @@ pub struct BackendInner {
     /// All accounts that should be kept persistent when switching forks.
     /// This means all accounts stored here _don't_ use a separate storage section on each fork
     /// instead the use only one that's persistent across fork swaps.
-    ///
-    /// See also [`clone_data()`]
     pub persistent_accounts: HashSet<Address>,
     /// The configured spec id
     pub spec_id: SpecId,

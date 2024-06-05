@@ -14,32 +14,32 @@ pub struct RpcError {
 }
 
 impl RpcError {
-    /// New [Error] with the given [ErrorCode]
+    /// New [`RpcError`] with the given [`ErrorCode`].
     pub const fn new(code: ErrorCode) -> Self {
         Self { message: Cow::Borrowed(code.message()), code, data: None }
     }
 
-    /// Creates a new `ParseError`
+    /// Creates a new `ParseError` error.
     pub const fn parse_error() -> Self {
         Self::new(ErrorCode::ParseError)
     }
 
-    /// Creates a new `MethodNotFound`
+    /// Creates a new `MethodNotFound` error.
     pub const fn method_not_found() -> Self {
         Self::new(ErrorCode::MethodNotFound)
     }
 
-    /// Creates a new `InvalidRequest`
+    /// Creates a new `InvalidRequest` error.
     pub const fn invalid_request() -> Self {
         Self::new(ErrorCode::InvalidRequest)
     }
 
-    /// Creates a new `InternalError`
+    /// Creates a new `InternalError` error.
     pub const fn internal_error() -> Self {
         Self::new(ErrorCode::InternalError)
     }
 
-    /// Creates a new `InvalidParams`
+    /// Creates a new `InvalidParams` error.
     pub fn invalid_params<M>(message: M) -> Self
     where
         M: Into<String>,
@@ -47,7 +47,7 @@ impl RpcError {
         Self { code: ErrorCode::InvalidParams, message: message.into().into(), data: None }
     }
 
-    /// Creates a new `InternalError` with a message
+    /// Creates a new `InternalError` error with a message.
     pub fn internal_error_with<M>(message: M) -> Self
     where
         M: Into<String>,
@@ -55,7 +55,7 @@ impl RpcError {
         Self { code: ErrorCode::InternalError, message: message.into().into(), data: None }
     }
 
-    /// Creates a new rpc error for when a transaction was rejected
+    /// Creates a new RPC error for when a transaction was rejected.
     pub fn transaction_rejected<M>(message: M) -> Self
     where
         M: Into<String>,

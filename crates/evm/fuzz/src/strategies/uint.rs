@@ -7,7 +7,6 @@ use proptest::{
 use rand::Rng;
 
 /// Value tree for unsigned ints (up to uint256).
-/// This is very similar to [proptest::BinarySearch]
 pub struct UintValueTree {
     /// Lower base
     lo: U256,

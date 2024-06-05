@@ -166,12 +166,10 @@ impl Reporter for SpinnerReporter {
         ));
     }
 
-    /// Invoked before a new [`Solc`] bin is installed
     fn on_solc_installation_start(&self, version: &Version) {
         self.send_msg(format!("Installing Solc version {version}"));
     }
 
-    /// Invoked before a new [`Solc`] bin was successfully installed
     fn on_solc_installation_success(&self, version: &Version) {
         self.send_msg(format!("Successfully installed Solc {version}"));
     }

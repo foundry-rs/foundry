@@ -216,8 +216,8 @@ impl ScriptSequence {
     }
 
     /// Gets paths in the formats
-    /// ./broadcast/[contract_filename]/[chain_id]/[sig]-[timestamp].json and
-    /// ./cache/[contract_filename]/[chain_id]/[sig]-[timestamp].json
+    /// `./broadcast/[contract_filename]/[chain_id]/[sig]-[timestamp].json` and
+    /// `./cache/[contract_filename]/[chain_id]/[sig]-[timestamp].json`.
     pub fn get_paths(
         config: &Config,
         sig: &str,

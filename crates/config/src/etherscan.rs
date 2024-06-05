@@ -111,7 +111,7 @@ impl DerefMut for EtherscanConfigs {
     }
 }
 
-/// Container type for _resolved_ etherscan keys, see [EtherscanConfigs::resolve_all()]
+/// Container type for _resolved_ etherscan keys, see [`EtherscanConfigs::resolved`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedEtherscanConfigs {
     /// contains all named `ResolvedEtherscanConfig` or an error if we failed to resolve the env

@@ -8,12 +8,12 @@ use revm::primitives::{Env, EnvWithHandlerCfg, SpecId};
 ///
 /// By default, the [`Executor`] will be configured with an empty [`InspectorStack`].
 ///
-/// [`Cheatcodes`]: super::inspector::Cheatcodes
-/// [`InspectorStack`]: super::inspector::InspectorStack
+/// [`Cheatcodes`]: super::Cheatcodes
+/// [`InspectorStack`]: super::InspectorStack
 #[derive(Clone, Debug)]
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct ExecutorBuilder {
-    /// The configuration used to build an [InspectorStack].
+    /// The configuration used to build an `InspectorStack`.
     stack: InspectorStackBuilder,
     /// The gas limit.
     gas_limit: Option<U256>,
@@ -45,7 +45,7 @@ impl ExecutorBuilder {
         self
     }
 
-    /// Sets the EVM spec to use
+    /// Sets the EVM spec to use.
     #[inline]
     pub fn spec(mut self, spec: SpecId) -> Self {
         self.spec_id = spec;
@@ -53,8 +53,6 @@ impl ExecutorBuilder {
     }
 
     /// Sets the executor gas limit.
-    ///
-    /// See [Executor::gas_limit] for more info on why you might want to set this.
     #[inline]
     pub fn gas_limit(mut self, gas_limit: U256) -> Self {
         self.gas_limit = Some(gas_limit);

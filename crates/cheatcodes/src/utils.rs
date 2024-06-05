@@ -1,4 +1,4 @@
-//! Implementations of [`Utils`](crate::Group::Utils) cheatcodes.
+//! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{keccak256, Address, B256, U256};

@@ -10,7 +10,7 @@ use itertools::Itertools;
 use solang_parser::pt::{Base, FunctionDefinition};
 use std::path::{Path, PathBuf};
 
-/// The result of [Asdoc::as_doc] method.
+/// The result of [`AsDoc::as_doc`].
 pub type AsDocResult = Result<String, std::fmt::Error>;
 
 /// A trait for formatting a parse unit as documentation.

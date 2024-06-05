@@ -303,11 +303,11 @@ impl SessionSource {
         self
     }
 
-    /// Generates and foundry_compilers::CompilerInput from the source
+    /// Generates and [`SolcInput`] from the source.
     ///
     /// ### Returns
     ///
-    /// A [CompilerInput] object containing forge-std's `Vm` interface as well as the REPL contract
+    /// A [`SolcInput`] object containing forge-std's `Vm` interface as well as the REPL contract
     /// source.
     pub fn compiler_input(&self) -> SolcInput {
         let mut sources = Sources::new();

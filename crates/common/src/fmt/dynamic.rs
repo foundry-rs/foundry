@@ -85,7 +85,7 @@ impl DynValueFormatter {
     }
 }
 
-/// Wrapper that implements [`Display`] for a [`DynSolValue`].
+/// Wrapper that implements [`Display`](fmt::Display) for a [`DynSolValue`].
 struct DynValueDisplay<'a> {
     /// The value to display.
     value: &'a DynSolValue,
@@ -94,7 +94,7 @@ struct DynValueDisplay<'a> {
 }
 
 impl<'a> DynValueDisplay<'a> {
-    /// Creates a new [`Display`] wrapper for the given value.
+    /// Creates a new [`Display`](fmt::Display) wrapper for the given value.
     #[inline]
     fn new(value: &'a DynSolValue, raw: bool) -> Self {
         Self { value, formatter: DynValueFormatter { raw } }

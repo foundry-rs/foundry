@@ -1,7 +1,8 @@
-/// A macro to implement converters from a type to [`Config`] and [`figment::Figment`]
+/// A macro to implement converters from a type to [`Config`](crate::Config) and
+/// [`figment::Figment`].
 ///
 /// This can be used to remove some boilerplate code that's necessary to add additional layer(s) to
-/// the [`Config`]'s default `Figment`.
+/// the `Config`'s default `Figment`.
 ///
 /// `impl_figment` takes the default `Config` and merges additional `Provider`, therefore the
 /// targeted type, requires an implementation of `figment::Profile`.
@@ -9,7 +10,7 @@
 /// # Example
 ///
 /// Use `impl_figment` on a type with a `root: Option<PathBuf>` field, which will be used for
-/// [`Config::figment_with_root()`]
+/// [`Config::figment_with_root()`](crate::Config::figment_with_root).
 ///
 /// ```rust
 /// use std::path::PathBuf;
@@ -183,7 +184,8 @@ macro_rules! merge_impl_figment_convert {
     };
 }
 
-/// A macro to implement converters from a type to [`Config`] and [`figment::Figment`]
+/// A macro to implement converters from a type to [`Config`](crate::Config) and
+/// [`figment::Figment`].
 ///
 /// Via [Config::to_figment](crate::Config::to_figment) and the
 /// [Cast](crate::FigmentProviders::Cast) profile.

@@ -1,4 +1,4 @@
-//! Implementations of [`Environment`](crate::Group::Environment) cheatcodes.
+//! Implementations of [`Environment`](spec::Group::Environment) cheatcodes.
 
 use crate::{string, Cheatcode, Cheatcodes, Error, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;

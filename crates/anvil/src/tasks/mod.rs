@@ -1,5 +1,7 @@
 //! Task management support
 
+#![allow(rustdoc::private_doc_tests)]
+
 use crate::{shutdown::Shutdown, tasks::block_listener::BlockListener, EthApi};
 use alloy_network::AnyNetwork;
 use alloy_primitives::B256;

@@ -48,7 +48,7 @@ rust-2018-idioms = "deny"
 unused-must-use = "deny"
 
 [workspace.lints.rustdoc]
-# all = "warn"
+all = "warn"
 
 # Speed up compilation time for dev builds by reducing emitted debug info.
 # NOTE: Debuggers may provide less useful information with this setting.

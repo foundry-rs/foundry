@@ -33,17 +33,17 @@ pub use inspector::CoverageCollector;
 /// "anchors"). A single coverage item may be referred to by multiple anchors.
 #[derive(Clone, Debug, Default)]
 pub struct CoverageReport {
-    /// A map of source IDs to the source path
+    /// A map of source IDs to the source path.
     pub source_paths: HashMap<(Version, usize), PathBuf>,
-    /// A map of source paths to source IDs
+    /// A map of source paths to source IDs.
     pub source_paths_to_ids: HashMap<(Version, PathBuf), usize>,
     /// All coverage items for the codebase, keyed by the compiler version.
     pub items: HashMap<Version, Vec<CoverageItem>>,
     /// All item anchors for the codebase, keyed by their contract ID.
     pub anchors: HashMap<ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>)>,
-    /// All the bytecode hits for the codebase
+    /// All the bytecode hits for the codebase.
     pub bytecode_hits: HashMap<ContractId, HitMap>,
-    /// The bytecode -> source mappings
+    /// The bytecode -> source mappings.
     pub source_maps: HashMap<ContractId, (SourceMap, SourceMap)>,
 }
 
@@ -59,7 +59,7 @@ impl CoverageReport {
         self.source_paths_to_ids.get(&(version, path)).copied()
     }
 
-    /// Add the source maps
+    /// Add the source maps.
     pub fn add_source_maps(
         &mut self,
         source_maps: impl IntoIterator<Item = (ContractId, (SourceMap, SourceMap))>,
@@ -67,12 +67,12 @@ impl CoverageReport {
         self.source_maps.extend(source_maps);
     }
 
-    /// Add coverage items to this report
+    /// Add coverage items to this report.
     pub fn add_items(&mut self, version: Version, items: impl IntoIterator<Item = CoverageItem>) {
         self.items.entry(version).or_default().extend(items);
     }
 
-    /// Add anchors to this report
+    /// Add anchors to this report.
     pub fn add_anchors(
         &mut self,
         anchors: impl IntoIterator<Item = (ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>))>,
@@ -80,7 +80,7 @@ impl CoverageReport {
         self.anchors.extend(anchors);
     }
 
-    /// Get coverage summaries by source file path
+    /// Get coverage summaries by source file path.
     pub fn summary_by_file(&self) -> impl Iterator<Item = (PathBuf, CoverageSummary)> {
         let mut summaries = BTreeMap::new();
 
@@ -99,7 +99,7 @@ impl CoverageReport {
         summaries.into_iter()
     }
 
-    /// Get coverage items by source file path
+    /// Get coverage items by source file path.
     pub fn items_by_source(&self) -> impl Iterator<Item = (PathBuf, Vec<CoverageItem>)> {
         let mut items_by_source: BTreeMap<_, Vec<_>> = BTreeMap::new();
 
@@ -117,10 +117,11 @@ impl CoverageReport {
         items_by_source.into_iter()
     }
 
-    /// Processes data from a [HitMap] and sets hit counts for coverage items in this coverage map.
+    /// Processes data from a [`HitMap`] and sets hit counts for coverage items in this coverage
+    /// map.
     ///
     /// This function should only be called *after* all the relevant sources have been processed and
-    /// added to the map (see [add_source]).
+    /// added to the map (see [`add_source`](Self::add_source)).
     pub fn add_hit_map(
         &mut self,
         contract_id: &ContractId,
@@ -151,7 +152,7 @@ impl CoverageReport {
     }
 }
 
-/// A collection of [HitMap]s
+/// A collection of [`HitMap`]s.
 #[derive(Clone, Debug, Default)]
 pub struct HitMaps(pub HashMap<B256, HitMap>);
 

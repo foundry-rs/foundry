@@ -72,7 +72,7 @@ pub enum Response {
 }
 
 impl Response {
-    /// Creates new [Response] with the given [Error]
+    /// Creates new [`Response`] with the given [`RpcError`].
     pub fn error(error: RpcError) -> Self {
         RpcResponse::new(Id::Null, ResponseResult::Error(error)).into()
     }

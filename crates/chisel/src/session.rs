@@ -247,7 +247,7 @@ impl ChiselSession {
 }
 
 /// Generic helper function that attempts to convert a type that has
-/// an [Into<OffsetDateTime>] implementation into a formatted date string.
+/// an [`Into<OffsetDateTime>`] implementation into a formatted date string.
 fn systemtime_strftime<T>(dt: T, format: &str) -> Result<String>
 where
     T: Into<OffsetDateTime>,

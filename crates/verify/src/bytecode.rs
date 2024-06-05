@@ -59,7 +59,8 @@ pub struct VerifyBytecodeArgs {
     #[clap(short = 'r', long, value_name = "RPC_URL", env = "ETH_RPC_URL")]
     pub rpc_url: Option<String>,
 
-    /// Verfication Type: `full` or `partial`. Ref: https://docs.sourcify.dev/docs/full-vs-partial-match/
+    /// Verfication Type: `full` or `partial`.
+    /// Ref: <https://docs.sourcify.dev/docs/full-vs-partial-match/>
     #[clap(long, default_value = "full", value_name = "TYPE")]
     pub verification_type: VerificationType,
 
@@ -498,7 +499,8 @@ impl VerifyBytecodeArgs {
     }
 }
 
-/// Enum to represent the type of verification: `full` or `partial`. Ref: https://docs.sourcify.dev/docs/full-vs-partial-match/
+/// Enum to represent the type of verification: `full` or `partial`.
+/// Ref: <https://docs.sourcify.dev/docs/full-vs-partial-match/>
 #[derive(Debug, Clone, clap::ValueEnum, Default, PartialEq, Eq, Serialize, Deserialize, Copy)]
 pub enum VerificationType {
     #[default]

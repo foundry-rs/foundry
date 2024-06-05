@@ -103,14 +103,14 @@ impl Shell {
 
     /// Write a fragment to stdout
     ///
-    /// Caller is responsible for deciding whether [`Shell::verbosity`] is affects output.
+    /// Caller is responsible for deciding whether [`Shell`] verbosity affects output.
     pub fn write_stdout(&self, fragment: impl fmt::Display) -> io::Result<()> {
         self.output.write_stdout(fragment)
     }
 
     /// Write a fragment to stderr
     ///
-    /// Caller is responsible for deciding whether [`Shell::verbosity`] is affects output.
+    /// Caller is responsible for deciding whether [`Shell`] verbosity affects output.
     pub fn write_stderr(&self, fragment: impl fmt::Display) -> io::Result<()> {
         self.output.write_stderr(fragment)
     }

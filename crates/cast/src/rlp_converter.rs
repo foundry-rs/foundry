@@ -2,9 +2,10 @@ use alloy_rlp::{Buf, Decodable, Encodable, Header};
 use serde_json::Value;
 use std::fmt;
 
-/// Arbitrary nested data
-/// Item::Array(vec![]); is equivalent to []
-/// Item::Array(vec![Item::Data(vec![])]); is equivalent to [""] or [null]
+/// Arbitrary nested data.
+///
+/// - `Item::Array(vec![])` is equivalent to `[]`.
+/// - `Item::Array(vec![Item::Data(vec![])])` is equivalent to `[""]` or `[null]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Item {
     Data(Vec<u8>),

@@ -3,7 +3,7 @@ use solang_parser::doccomment::DocCommentTag;
 use std::collections::HashMap;
 
 /// The natspec comment tag explaining the purpose of the comment.
-/// See: https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags.
+/// See: <https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags>.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CommentTag {
     /// A title that should describe the contract/interface
@@ -54,7 +54,8 @@ impl CommentTag {
 }
 
 /// The natspec documentation comment.
-/// https://docs.soliditylang.org/en/v0.8.17/natspec-format.html
+///
+/// Ref: <https://docs.soliditylang.org/en/v0.8.17/natspec-format.html>
 #[derive(Clone, Debug, PartialEq)]
 pub struct Comment {
     /// The doc comment tag.

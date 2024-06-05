@@ -2,7 +2,7 @@ use super::Function;
 use alloy_sol_types::SolCall;
 use serde::{Deserialize, Serialize};
 
-/// Cheatcode definition trait. Implemented by all [`Vm`] functions.
+/// Cheatcode definition trait. Implemented by all [`Vm`](crate::Vm) functions.
 pub trait CheatcodeDef: std::fmt::Debug + Clone + SolCall {
     /// The static cheatcode definition.
     const CHEATCODE: &'static Cheatcode<'static>;

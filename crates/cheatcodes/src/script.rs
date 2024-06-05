@@ -1,4 +1,4 @@
-//! Implementations of [`Scripting`](crate::Group::Scripting) cheatcodes.
+//! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
 use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, B256, U256};
@@ -83,7 +83,7 @@ pub struct ScriptWalletsInner {
     pub provided_sender: Option<Address>,
 }
 
-/// Clonable wrapper around [ScriptWalletsInner].
+/// Clonable wrapper around [`ScriptWalletsInner`].
 #[derive(Debug, Clone)]
 pub struct ScriptWallets {
     /// Inner data.

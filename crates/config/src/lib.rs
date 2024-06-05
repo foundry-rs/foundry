@@ -47,17 +47,19 @@ use std::{
     str::FromStr,
 };
 
-// Macros useful for creating a figment.
 mod macros;
 
-// Utilities for making it easier to handle tests.
 pub mod utils;
-pub use crate::utils::*;
+pub use utils::*;
 
 mod endpoints;
 pub use endpoints::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints};
 
 mod etherscan;
+use etherscan::{
+    EtherscanConfigError, EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig,
+};
+
 mod resolve;
 pub use resolve::UnresolvedEnvVarError;
 
@@ -68,9 +70,11 @@ pub mod fmt;
 pub use fmt::FormatterConfig;
 
 pub mod fs_permissions;
-pub use crate::fs_permissions::FsPermissions;
+pub use fs_permissions::FsPermissions;
+use fs_permissions::PathPermission;
 
 pub mod error;
+use error::ExtractConfigError;
 pub use error::SolidityErrorCode;
 
 pub mod doc;
@@ -79,36 +83,25 @@ pub use doc::DocConfig;
 mod warning;
 pub use warning::*;
 
-// helpers for fixing configuration warnings
 pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
 
-/// config providers
 pub mod providers;
+use providers::{remappings::RemappingsProvider, FallbackProfileProvider, WarningsProvider};
 
-/// compilers supported by foundry
-pub mod language;
+mod language;
 pub use language::Language;
-
-use crate::{
-    error::ExtractConfigError,
-    etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig},
-};
-use providers::*;
 
 mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzDictionaryConfig};
 
 mod invariant;
-use crate::fs_permissions::PathPermission;
 pub use invariant::InvariantConfig;
-use providers::remappings::RemappingsProvider;
 
 mod inline;
-use crate::etherscan::EtherscanEnvProvider;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
 /// Foundry configuration
@@ -193,7 +186,7 @@ pub struct Config {
     /// auto-detection.
     ///
     /// **Note** for backwards compatibility reasons this also accepts solc_version from the toml
-    /// file, see [`BackwardsCompatProvider`]
+    /// file, see `BackwardsCompatTomlProvider`.
     pub solc: Option<SolcReq>,
     /// The Vyper instance to use if any.
     pub vyper: Option<PathBuf>,
@@ -369,8 +362,7 @@ pub struct Config {
     /// Whether to compile in sparse mode
     ///
     /// If this option is enabled, only the required contracts/files will be selected to be
-    /// included in solc's output selection, see also
-    /// [OutputSelection](foundry_compilers::artifacts::output_selection::OutputSelection)
+    /// included in solc's output selection, see also [`OutputSelection`].
     pub sparse_mode: bool,
     /// Generates additional build info json files for every new build, containing the
     /// `CompilerInput` and `CompilerOutput`.
@@ -952,7 +944,7 @@ impl Config {
         Ok(MultiCompilerSettings { solc: self.solc_settings()?, vyper: self.vyper_settings()? })
     }
 
-    /// Returns all configured [`Remappings`]
+    /// Returns all configured remappings.
     ///
     /// **Note:** this will add an additional `<src>/=<src path>` remapping here, see
     /// [Self::get_source_dir_remapping()]
@@ -1491,77 +1483,77 @@ impl Config {
         toml::to_string_pretty(&toml::Value::Table(wrapping_table))
     }
 
-    /// Returns the path to the `foundry.toml`  of this `Config`
+    /// Returns the path to the `foundry.toml` of this `Config`.
     pub fn get_config_path(&self) -> PathBuf {
         self.__root.0.join(Config::FILE_NAME)
     }
 
-    /// Returns the selected profile
+    /// Returns the selected profile.
     ///
-    /// If the `FOUNDRY_PROFILE` env variable is not set, this returns the `DEFAULT_PROFILE`
+    /// If the `FOUNDRY_PROFILE` env variable is not set, this returns the `DEFAULT_PROFILE`.
     pub fn selected_profile() -> Profile {
         Profile::from_env_or("FOUNDRY_PROFILE", Config::DEFAULT_PROFILE)
     }
 
-    /// Returns the path to foundry's global toml file that's stored at `~/.foundry/foundry.toml`
+    /// Returns the path to foundry's global TOML file: `~/.foundry/foundry.toml`.
     pub fn foundry_dir_toml() -> Option<PathBuf> {
         Self::foundry_dir().map(|p| p.join(Config::FILE_NAME))
     }
 
-    /// Returns the path to foundry's config dir `~/.foundry/`
+    /// Returns the path to foundry's config dir: `~/.foundry/`.
     pub fn foundry_dir() -> Option<PathBuf> {
         dirs_next::home_dir().map(|p| p.join(Config::FOUNDRY_DIR_NAME))
     }
 
-    /// Returns the path to foundry's cache dir `~/.foundry/cache`
+    /// Returns the path to foundry's cache dir: `~/.foundry/cache`.
     pub fn foundry_cache_dir() -> Option<PathBuf> {
         Self::foundry_dir().map(|p| p.join("cache"))
     }
 
-    /// Returns the path to foundry rpc cache dir `~/.foundry/cache/rpc`
+    /// Returns the path to foundry rpc cache dir: `~/.foundry/cache/rpc`.
     pub fn foundry_rpc_cache_dir() -> Option<PathBuf> {
         Some(Self::foundry_cache_dir()?.join("rpc"))
     }
-    /// Returns the path to foundry chain's cache dir `~/.foundry/cache/rpc/<chain>`
+    /// Returns the path to foundry chain's cache dir: `~/.foundry/cache/rpc/<chain>`
     pub fn foundry_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
         Some(Self::foundry_rpc_cache_dir()?.join(chain_id.into().to_string()))
     }
 
-    /// Returns the path to foundry's etherscan cache dir `~/.foundry/cache/etherscan`
+    /// Returns the path to foundry's etherscan cache dir: `~/.foundry/cache/etherscan`.
     pub fn foundry_etherscan_cache_dir() -> Option<PathBuf> {
         Some(Self::foundry_cache_dir()?.join("etherscan"))
     }
 
-    /// Returns the path to foundry's keystores dir `~/.foundry/keystores`
+    /// Returns the path to foundry's keystores dir: `~/.foundry/keystores`.
     pub fn foundry_keystores_dir() -> Option<PathBuf> {
         Some(Self::foundry_dir()?.join("keystores"))
     }
 
-    /// Returns the path to foundry's etherscan cache dir for `chain_id`
+    /// Returns the path to foundry's etherscan cache dir for `chain_id`:
     /// `~/.foundry/cache/etherscan/<chain>`
     pub fn foundry_etherscan_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
         Some(Self::foundry_etherscan_cache_dir()?.join(chain_id.into().to_string()))
     }
 
-    /// Returns the path to the cache dir of the `block` on the `chain`
-    /// `~/.foundry/cache/rpc/<chain>/<block>
+    /// Returns the path to the cache dir of the `block` on the `chain`:
+    /// `~/.foundry/cache/rpc/<chain>/<block>`
     pub fn foundry_block_cache_dir(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
         Some(Self::foundry_chain_cache_dir(chain_id)?.join(format!("{block}")))
     }
 
-    /// Returns the path to the cache file of the `block` on the `chain`
+    /// Returns the path to the cache file of the `block` on the `chain`:
     /// `~/.foundry/cache/rpc/<chain>/<block>/storage.json`
     pub fn foundry_block_cache_file(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
         Some(Self::foundry_block_cache_dir(chain_id, block)?.join("storage.json"))
     }
 
-    #[doc = r#"Returns the path to `foundry`'s data directory inside the user's data directory
-    |Platform | Value                                 | Example                          |
-    | ------- | ------------------------------------- | -------------------------------- |
-    | Linux   | `$XDG_CONFIG_HOME` or `$HOME`/.config/foundry | /home/alice/.config/foundry|
-    | macOS   | `$HOME`/Library/Application Support/foundry   | /Users/Alice/Library/Application Support/foundry |
-    | Windows | `{FOLDERID_RoamingAppData}/foundry`           | C:\Users\Alice\AppData\Roaming/foundry   |
-    "#]
+    /// Returns the path to `foundry`'s data directory inside the user's data directory.
+    ///
+    /// | Platform | Value                                         | Example                                          |
+    /// | -------  | --------------------------------------------- | ------------------------------------------------ |
+    /// | Linux    | `$XDG_CONFIG_HOME` or `$HOME`/.config/foundry | /home/alice/.config/foundry                      |
+    /// | macOS    | `$HOME`/Library/Application Support/foundry   | /Users/Alice/Library/Application Support/foundry |
+    /// | Windows  | `{FOLDERID_RoamingAppData}/foundry`           | C:\Users\Alice\AppData\Roaming/foundry           |
     pub fn data_dir() -> eyre::Result<PathBuf> {
         let path = dirs_next::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
         std::fs::create_dir_all(&path).wrap_err("Failed to create module directory")?;
@@ -1573,7 +1565,7 @@ impl Config {
     /// and the first hit is used.
     ///
     /// If this search comes up empty, then it checks if a global `foundry.toml` exists at
-    /// `~/.foundry/foundry.tol`, see [`Self::foundry_dir_toml()`]
+    /// `~/.foundry/foundry.toml`, see [`Self::foundry_dir_toml`].
     pub fn find_config_file() -> Option<PathBuf> {
         fn find(path: &Path) -> Option<PathBuf> {
             if path.is_absolute() {
@@ -1596,7 +1588,7 @@ impl Config {
             .or_else(|| Self::foundry_dir_toml().filter(|p| p.exists()))
     }
 
-    /// Clears the foundry cache
+    /// Clears the foundry cache.
     pub fn clean_foundry_cache() -> eyre::Result<()> {
         if let Some(cache_dir) = Config::foundry_cache_dir() {
             let path = cache_dir.as_path();
@@ -1608,7 +1600,7 @@ impl Config {
         Ok(())
     }
 
-    /// Clears the foundry cache for `chain`
+    /// Clears the foundry cache for `chain`.
     pub fn clean_foundry_chain_cache(chain: Chain) -> eyre::Result<()> {
         if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
             let path = cache_dir.as_path();
@@ -1620,7 +1612,7 @@ impl Config {
         Ok(())
     }
 
-    /// Clears the foundry cache for `chain` and `block`
+    /// Clears the foundry cache for `chain` and `block`.
     pub fn clean_foundry_block_cache(chain: Chain, block: u64) -> eyre::Result<()> {
         if let Some(cache_dir) = Config::foundry_block_cache_dir(chain, block) {
             let path = cache_dir.as_path();
@@ -1632,7 +1624,7 @@ impl Config {
         Ok(())
     }
 
-    /// Clears the foundry etherscan cache
+    /// Clears the foundry etherscan cache.
     pub fn clean_foundry_etherscan_cache() -> eyre::Result<()> {
         if let Some(cache_dir) = Config::foundry_etherscan_cache_dir() {
             let path = cache_dir.as_path();
@@ -1644,7 +1636,7 @@ impl Config {
         Ok(())
     }
 
-    /// Clears the foundry etherscan cache for `chain`
+    /// Clears the foundry etherscan cache for `chain`.
     pub fn clean_foundry_etherscan_chain_cache(chain: Chain) -> eyre::Result<()> {
         if let Some(cache_dir) = Config::foundry_etherscan_chain_cache_dir(chain) {
             let path = cache_dir.as_path();
@@ -1656,7 +1648,7 @@ impl Config {
         Ok(())
     }
 
-    /// List the data in the foundry cache
+    /// List the data in the foundry cache.
     pub fn list_foundry_cache() -> eyre::Result<Cache> {
         if let Some(cache_dir) = Config::foundry_rpc_cache_dir() {
             let mut cache = Cache { chains: vec![] };
@@ -1679,7 +1671,7 @@ impl Config {
         }
     }
 
-    /// List the cached data for `chain`
+    /// List the cached data for `chain`.
     pub fn list_foundry_chain_cache(chain: Chain) -> eyre::Result<ChainCache> {
         let block_explorer_data_size = match Config::foundry_etherscan_chain_cache_dir(chain) {
             Some(cache_dir) => Self::get_cached_block_explorer_data(&cache_dir)?,
@@ -1701,7 +1693,7 @@ impl Config {
         }
     }
 
-    //The path provided to this function should point to a cached chain folder
+    /// The path provided to this function should point to a cached chain folder.
     fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
         let mut blocks = vec![];
         if !chain_path.exists() {
@@ -1724,7 +1716,7 @@ impl Config {
         Ok(blocks)
     }
 
-    //The path provided to this function should point to the etherscan cache for a chain
+    /// The path provided to this function should point to the etherscan cache for a chain.
     fn get_cached_block_explorer_data(chain_path: &Path) -> eyre::Result<u64> {
         if !chain_path.exists() {
             return Ok(0)
