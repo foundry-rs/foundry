@@ -157,61 +157,6 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
     pb
 }
 
-/// Creates progress object and progress bar.
-#[macro_export]
-macro_rules! init_tests_progress {
-    ($tests_len:expr,$threads_no:expr) => {{
-        let progress = MultiProgress::new();
-        let pb = progress.add(indicatif::ProgressBar::new($tests_len as u64));
-        pb.set_style(
-            indicatif::ProgressStyle::with_template("{bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
-                .unwrap()
-                .progress_chars("##-"),
-        );
-        pb.set_message(format!("completed (with {} threads)", $threads_no as u64));
-        (progress, pb)
-    }};
-}
-
-/// Creates progress entry for test suite, having `[spinner] Test suite name` format.
-#[macro_export]
-macro_rules! init_test_suite_progress {
-    ($overall_progress:expr, $suite_name:expr) => {{
-        let pb = $overall_progress.add(indicatif::ProgressBar::new_spinner());
-        pb.set_style(
-            indicatif::ProgressStyle::with_template("{spinner} {wide_msg:.bold.dim}")
-                .unwrap()
-                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
-        );
-        pb.set_message(format!("{} ", $suite_name));
-        pb.enable_steady_tick(Duration::from_millis(100));
-        pb
-    }};
-}
-
-/// Creates progress entry for fuzz tests.
-/// Set the prefix and total number of runs. Message is updated during execution with current phase.
-/// Test progress is placed under test suite progress entry so all tests within suite are grouped.
-#[macro_export]
-macro_rules! init_fuzz_test_progress {
-    ($progress:expr, $test_name:expr, $runs:expr) => {{
-        let test_progress = $progress.map(|(overall_progress, suite_progress)| {
-            let pb = overall_progress
-                .insert_after(suite_progress, indicatif::ProgressBar::new($runs as u64));
-            pb.set_style(
-                indicatif::ProgressStyle::with_template(
-                    "    ↪ {prefix:.bold.dim}: [{pos}/{len}]{msg} Runs",
-                )
-                .unwrap()
-                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
-            );
-            pb.set_prefix(format!("{}", $test_name));
-            pb
-        });
-        test_progress
-    }};
-}
-
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {

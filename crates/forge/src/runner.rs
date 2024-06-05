@@ -3,6 +3,7 @@
 use crate::{
     fuzz::{invariant::BasicTxDetails, BaseCounterExample},
     multi_runner::{is_matching_test, TestContract},
+    progress::{start_fuzz_progress, TestsProgress},
     result::{SuiteResult, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,
 };
@@ -10,7 +11,6 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
 use alloy_primitives::{address, Address, Bytes, U256};
 use eyre::Result;
-use foundry_cli::init_fuzz_test_progress;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt,
@@ -35,7 +35,6 @@ use foundry_evm::{
     },
     traces::{load_contracts, TraceKind},
 };
-use indicatif::{MultiProgress, ProgressBar};
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{
@@ -70,6 +69,8 @@ pub struct ContractRunner<'a> {
     pub sender: Address,
     /// Should generate debug traces
     pub debug: bool,
+    /// Overall test run progress.
+    progress: Option<&'a TestsProgress>,
 }
 
 impl<'a> ContractRunner<'a> {
@@ -83,6 +84,7 @@ impl<'a> ContractRunner<'a> {
         sender: Option<Address>,
         revert_decoder: &'a RevertDecoder,
         debug: bool,
+        progress: Option<&'a TestsProgress>,
     ) -> Self {
         Self {
             name,
@@ -93,6 +95,7 @@ impl<'a> ContractRunner<'a> {
             sender: sender.unwrap_or_default(),
             revert_decoder,
             debug,
+            progress,
         }
     }
 }
@@ -276,7 +279,6 @@ impl<'a> ContractRunner<'a> {
         test_options: &TestOptions,
         known_contracts: ContractsByArtifact,
         handle: &tokio::runtime::Handle,
-        progress: Option<(&MultiProgress, &ProgressBar)>,
     ) -> SuiteResult {
         info!("starting tests");
         let start = Instant::now();
@@ -374,6 +376,7 @@ impl<'a> ContractRunner<'a> {
                 let res = if func.is_invariant_test() {
                     let runner = test_options.invariant_runner(self.name, &func.name);
                     let invariant_config = test_options.invariant_config(self.name, &func.name);
+
                     self.run_invariant_test(
                         runner,
                         setup,
@@ -381,20 +384,13 @@ impl<'a> ContractRunner<'a> {
                         func,
                         &known_contracts,
                         identified_contracts.as_ref().unwrap(),
-                        init_fuzz_test_progress!(progress, func.name, invariant_config.runs),
                     )
                 } else if func.is_fuzz_test() {
                     debug_assert!(func.is_test());
                     let runner = test_options.fuzz_runner(self.name, &func.name);
                     let fuzz_config = test_options.fuzz_config(self.name, &func.name);
-                    self.run_fuzz_test(
-                        func,
-                        should_fail,
-                        runner,
-                        setup,
-                        fuzz_config.clone(),
-                        init_fuzz_test_progress!(progress, func.name, fuzz_config.runs),
-                    )
+
+                    self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
                 } else {
                     debug_assert!(func.is_test());
                     self.run_test(func, should_fail, setup)
@@ -529,7 +525,6 @@ impl<'a> ContractRunner<'a> {
     }
 
     #[instrument(name = "invariant_test", skip_all)]
-    #[allow(clippy::too_many_arguments)]
     pub fn run_invariant_test(
         &self,
         runner: TestRunner,
@@ -538,7 +533,6 @@ impl<'a> ContractRunner<'a> {
         func: &Function,
         known_contracts: &ContractsByArtifact,
         identified_contracts: &ContractsByAddress,
-        progress: Option<ProgressBar>,
     ) -> TestResult {
         trace!(target: "forge::test::fuzz", "executing invariant test for {:?}", func.name);
         let TestSetup { address, logs, traces, labeled_addresses, coverage, fuzz_fixtures, .. } =
@@ -646,6 +640,8 @@ impl<'a> ContractRunner<'a> {
             }
         }
 
+        let progress =
+            start_fuzz_progress(self.progress, self.name, &func.name, invariant_config.runs);
         let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs, gas_report_traces } =
             match evm.invariant_fuzz(invariant_contract.clone(), &fuzz_fixtures, progress.as_ref())
             {
@@ -759,7 +755,6 @@ impl<'a> ContractRunner<'a> {
         runner: TestRunner,
         setup: TestSetup,
         fuzz_config: FuzzConfig,
-        progress: Option<ProgressBar>,
     ) -> TestResult {
         let span = info_span!("fuzz_test", %should_fail);
         if !span.is_disabled() {
@@ -783,6 +778,7 @@ impl<'a> ContractRunner<'a> {
         } = setup;
 
         // Run fuzz test
+        let progress = start_fuzz_progress(self.progress, self.name, &func.name, fuzz_config.runs);
         let start = Instant::now();
         let fuzzed_executor = FuzzedExecutor::new(
             self.executor.clone(),

@@ -1,12 +1,12 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner, TestFilter, TestOptions,
+    progress::TestsProgress, result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner,
+    TestFilter, TestOptions,
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_cli::{init_test_suite_progress, init_tests_progress};
 use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{artifacts::Libraries, Artifact, ArtifactId, ProjectCompileOutput};
 use foundry_config::Config;
@@ -15,7 +15,6 @@ use foundry_evm::{
     inspectors::CheatsConfig, opts::EvmOpts, revm,
 };
 use foundry_linking::{LinkOutput, Linker};
-use indicatif::{MultiProgress, ProgressBar};
 use rayon::prelude::*;
 use revm::primitives::SpecId;
 use std::{
@@ -24,7 +23,7 @@ use std::{
     fmt::Debug,
     path::Path,
     sync::{mpsc, Arc},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 #[derive(Debug, Clone)]
@@ -175,43 +174,34 @@ impl MultiContractRunner {
         );
 
         if show_progress {
-            // Create overall tests progress and progress bar.
-            // Tests progress is passed to test runners for adding individual test suite progress.
-            // Progress bar is updated each time a test suite ends.
-            let (tests_progress, progress_bar) =
-                init_tests_progress!(contracts.len(), rayon::current_num_threads());
+            let tests_progress = TestsProgress::new(contracts.len(), rayon::current_num_threads());
             // Collect test suite results to stream at the end of test run.
             let results: Vec<(String, SuiteResult)> = contracts
                 .par_iter()
                 .map(|&(id, contract)| {
                     let _guard = handle.enter();
-                    // Add test suite progress to tests result.
-                    let suite_progress = init_test_suite_progress!(tests_progress, id.name);
+                    tests_progress.inner.lock().start_suite_progress(&id.identifier());
 
-                    // Run tests, pass tests progress and current test suite progress in order
-                    // to add specific run details.
                     let result = self.run_tests(
                         id,
                         contract,
                         db.clone(),
                         filter,
                         &handle,
-                        Some((&tests_progress, &suite_progress)),
+                        Some(&tests_progress),
                     );
 
-                    // Print result summary and remove test progress from overall progress.
-                    tests_progress.suspend(|| {
-                        println!("{}\n  ↪ {}", id.name.clone(), result.summary());
-                    });
-                    suite_progress.finish_and_clear();
-                    // Increment test progress bar to reflect completed test suite.
-                    progress_bar.inc(1);
+                    tests_progress
+                        .inner
+                        .lock()
+                        .end_suite_progress(&id.identifier(), result.summary());
 
                     (id.identifier(), result)
                 })
                 .collect();
-            // Tests completed, remove progress and stream results.
-            tests_progress.clear().unwrap();
+
+            tests_progress.inner.lock().clear();
+
             results.iter().for_each(|result| {
                 let _ = tx.send(result.to_owned());
             });
@@ -231,7 +221,7 @@ impl MultiContractRunner {
         db: Backend,
         filter: &dyn TestFilter,
         handle: &tokio::runtime::Handle,
-        progress: Option<(&MultiProgress, &ProgressBar)>,
+        progress: Option<&TestsProgress>,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let mut span_name = identifier.as_str();
@@ -273,15 +263,10 @@ impl MultiContractRunner {
             self.sender,
             &self.revert_decoder,
             self.debug,
-        );
-
-        let r = runner.run_tests(
-            filter,
-            &self.test_options,
-            self.known_contracts.clone(),
-            handle,
             progress,
         );
+
+        let r = runner.run_tests(filter, &self.test_options, self.known_contracts.clone(), handle);
 
         debug!(duration=?r.duration, "executed all tests in contract");
 

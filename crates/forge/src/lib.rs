@@ -21,6 +21,7 @@ pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 mod runner;
 pub use runner::ContractRunner;
 
+mod progress;
 pub mod result;
 
 // TODO: remove
