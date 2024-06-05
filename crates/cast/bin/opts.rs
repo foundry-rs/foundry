@@ -332,6 +332,7 @@ pub enum CastSubcommand {
     BlockNumber {
         #[command(flatten)]
         rpc: RpcOpts,
+        block: Option<BlockId>,
     },
 
     /// Perform a call on an account without publishing a transaction.
