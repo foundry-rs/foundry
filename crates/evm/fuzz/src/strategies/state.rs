@@ -221,6 +221,7 @@ impl FuzzDictionary {
     }
 
     /// Insert values from push bytes into fuzz dictionary.
+    /// Values are collected only once for a given address.
     /// If values are newly collected then they are removed at the end of current run.
     fn insert_push_bytes_values(
         &mut self,
@@ -228,7 +229,7 @@ impl FuzzDictionary {
         account_info: &AccountInfo,
         collected: bool,
     ) {
-        if self.config.include_push_bytes {
+        if self.config.include_push_bytes && !self.addresses.contains(address) {
             // Insert push bytes
             if let Some(code) = account_info.code.clone() {
                 self.insert_address(*address, collected);
