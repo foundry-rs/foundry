@@ -34,7 +34,7 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     /// connections, See [`PubSubConnection`] that should be spawned
     #[instrument(target = "ipc", skip_all)]
     pub fn incoming(self) -> io::Result<impl Stream<Item = impl Future<Output = ()>>> {
-        let IpcEndpoint { handler, path } = self;
+        let Self { handler, path } = self;
 
         trace!(%path, "starting IPC server");
 

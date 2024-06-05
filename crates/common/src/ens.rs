@@ -68,27 +68,27 @@ impl NameOrAddress {
         provider: &P,
     ) -> Result<Address, EnsError> {
         match self {
-            NameOrAddress::Name(name) => provider.resolve_name(name).await,
-            NameOrAddress::Address(addr) => Ok(*addr),
+            Self::Name(name) => provider.resolve_name(name).await,
+            Self::Address(addr) => Ok(*addr),
         }
     }
 }
 
 impl From<String> for NameOrAddress {
     fn from(name: String) -> Self {
-        NameOrAddress::Name(name)
+        Self::Name(name)
     }
 }
 
 impl From<&String> for NameOrAddress {
     fn from(name: &String) -> Self {
-        NameOrAddress::Name(name.clone())
+        Self::Name(name.clone())
     }
 }
 
 impl From<Address> for NameOrAddress {
     fn from(addr: Address) -> Self {
-        NameOrAddress::Address(addr)
+        Self::Address(addr)
     }
 }
 
@@ -97,9 +97,9 @@ impl FromStr for NameOrAddress {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Ok(addr) = Address::from_str(s) {
-            Ok(NameOrAddress::Address(addr))
+            Ok(Self::Address(addr))
         } else {
-            Ok(NameOrAddress::Name(s.to_string()))
+            Ok(Self::Name(s.to_string()))
         }
     }
 }

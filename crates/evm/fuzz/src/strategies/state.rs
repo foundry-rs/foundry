@@ -33,7 +33,7 @@ pub struct EvmFuzzState {
 }
 
 impl EvmFuzzState {
-    pub fn new<DB: DatabaseRef>(db: &CacheDB<DB>, config: FuzzDictionaryConfig) -> EvmFuzzState {
+    pub fn new<DB: DatabaseRef>(db: &CacheDB<DB>, config: FuzzDictionaryConfig) -> Self {
         // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
         let mut accs = db.accounts.iter().collect::<Vec<_>>();
         accs.sort_by_key(|(address, _)| *address);

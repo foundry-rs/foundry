@@ -23,11 +23,11 @@ impl FromStr for InlineConfigItem {
     type Err = InvalidInlineConfigItem;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
-            "disable-next-item" => InlineConfigItem::DisableNextItem,
-            "disable-line" => InlineConfigItem::DisableLine,
-            "disable-next-line" => InlineConfigItem::DisableNextLine,
-            "disable-start" => InlineConfigItem::DisableStart,
-            "disable-end" => InlineConfigItem::DisableEnd,
+            "disable-next-item" => Self::DisableNextItem,
+            "disable-line" => Self::DisableLine,
+            "disable-next-line" => Self::DisableNextLine,
+            "disable-start" => Self::DisableStart,
+            "disable-end" => Self::DisableEnd,
             s => return Err(InvalidInlineConfigItem(s.into())),
         })
     }

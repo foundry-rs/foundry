@@ -41,7 +41,7 @@ pub struct TransactionWithMetadata {
 }
 
 fn default_string() -> Option<String> {
-    Some("".to_string())
+    Some(String::new())
 }
 
 fn default_address() -> Option<Address> {

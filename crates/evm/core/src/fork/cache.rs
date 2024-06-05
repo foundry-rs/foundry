@@ -132,11 +132,7 @@ impl BlockchainDbMeta {
             .and_then(|url| url.host().map(|host| host.to_string()))
             .unwrap_or(url);
 
-        BlockchainDbMeta {
-            cfg_env: env.cfg.clone(),
-            block_env: env.block,
-            hosts: BTreeSet::from([host]),
-        }
+        Self { cfg_env: env.cfg.clone(), block_env: env.block, hosts: BTreeSet::from([host]) }
     }
 }
 
@@ -451,7 +447,7 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
         let Data { meta, data: StateSnapshot { accounts, storage, block_hashes } } =
             Data::deserialize(deserializer)?;
 
-        Ok(JsonBlockCacheData {
+        Ok(Self {
             meta: Arc::new(RwLock::new(meta)),
             data: Arc::new(MemDb {
                 accounts: RwLock::new(accounts),

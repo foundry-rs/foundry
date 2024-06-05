@@ -37,7 +37,7 @@ pub fn remove_contract(
     let contract = if let Some(contract) = output.remove(path.to_string_lossy(), name) {
         contract
     } else {
-        let mut err = format!("could not find artifact: `{}`", name);
+        let mut err = format!("could not find artifact: `{name}`");
         if let Some(suggestion) =
             super::did_you_mean(name, output.artifacts().map(|(name, _)| name)).pop()
         {
@@ -146,7 +146,7 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
     let mut template =
         "{prefix}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} "
             .to_string();
-    write!(template, "{}", label).unwrap();
+    write!(template, "{label}").unwrap();
     template += " ({eta})";
     pb.set_style(
         indicatif::ProgressStyle::with_template(&template)

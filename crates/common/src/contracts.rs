@@ -117,7 +117,7 @@ impl ContractsByArtifact {
     }
 
     /// Finds a contract which has a similar bytecode as `code`.
-    pub fn find_by_creation_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
+    pub fn find_by_creation_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
         self.iter().find(|(_, contract)| {
             if let Some(bytecode) = contract.bytecode() {
                 bytecode_diff_score(bytecode.as_ref(), code) <= 0.1
@@ -128,7 +128,7 @@ impl ContractsByArtifact {
     }
 
     /// Finds a contract which has a similar deployed bytecode as `code`.
-    pub fn find_by_deployed_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
+    pub fn find_by_deployed_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
         self.iter().find(|(_, contract)| {
             if let Some(deployed_bytecode) = contract.deployed_bytecode() {
                 bytecode_diff_score(deployed_bytecode.as_ref(), code) <= 0.1
@@ -140,7 +140,7 @@ impl ContractsByArtifact {
 
     /// Finds a contract which deployed bytecode exactly matches the given code. Accounts for link
     /// references and immutables.
-    pub fn find_by_deployed_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
+    pub fn find_by_deployed_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
         self.iter().find(|(_, contract)| {
             let Some(deployed_bytecode) = &contract.deployed_bytecode else {
                 return false;
@@ -233,7 +233,10 @@ impl ContractsByArtifact {
 
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
     /// found, return error.
-    pub fn find_by_name_or_identifier(&self, id: &str) -> Result<Option<ArtifactWithContractRef>> {
+    pub fn find_by_name_or_identifier(
+        &self,
+        id: &str,
+    ) -> Result<Option<ArtifactWithContractRef<'_>>> {
         let contracts = self
             .iter()
             .filter(|(artifact, _)| artifact.name == id || artifact.identifier() == id)

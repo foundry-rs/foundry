@@ -349,7 +349,7 @@ fn format_token(token: DynSolValue) -> String {
         DynSolValue::Int(i, bit_len) => {
             format!(
                 "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
-                format!("int{}", bit_len).red(),
+                format!("int{bit_len}").red(),
                 format!(
                     "0x{}",
                     format!("{i:x}")
@@ -367,7 +367,7 @@ fn format_token(token: DynSolValue) -> String {
         DynSolValue::Uint(i, bit_len) => {
             format!(
                 "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
-                format!("uint{}", bit_len).red(),
+                format!("uint{bit_len}").red(),
                 format!(
                     "0x{}",
                     format!("{i:x}")
@@ -755,7 +755,7 @@ impl Type {
                     .map(|(returns, _)| map_parameters(returns))
                     .unwrap_or_default();
                 Self::Function(
-                    Box::new(Type::Custom(vec!["__fn_type__".to_string()])),
+                    Box::new(Self::Custom(vec!["__fn_type__".to_string()])),
                     params,
                     returns,
                 )
@@ -900,7 +900,7 @@ impl Type {
 
     /// Recurses over itself, appending all the idents and function arguments in the order that they
     /// are found
-    fn recurse(&self, types: &mut Vec<String>, args: &mut Option<Vec<Option<Type>>>) {
+    fn recurse(&self, types: &mut Vec<String>, args: &mut Option<Vec<Option<Self>>>) {
         match self {
             Self::Builtin(ty) => types.push(ty.to_string()),
             Self::Custom(tys) => types.extend(tys.clone()),
@@ -1167,7 +1167,7 @@ impl Type {
             .function_definitions
             .get(&function_name.name)?;
         let return_parameter = contract.as_ref().returns.first()?.to_owned().1?;
-        Type::ethabi(&return_parameter.ty, Some(intermediate)).map(|p| (contract_expr.unwrap(), p))
+        Self::ethabi(&return_parameter.ty, Some(intermediate)).map(|p| (contract_expr.unwrap(), p))
     }
 
     /// Inverts Int to Uint and viceversa.

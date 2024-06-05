@@ -56,13 +56,7 @@ impl SequenceProgressState {
         txs.set_position(sequence.receipts.len() as u64);
         receipts.set_position(sequence.receipts.len() as u64);
 
-        let mut state = SequenceProgressState {
-            top_spinner,
-            txs,
-            receipts,
-            tx_spinners: Default::default(),
-            multi,
-        };
+        let mut state = Self { top_spinner, txs, receipts, tx_spinners: Default::default(), multi };
 
         for tx_hash in sequence.pending.iter() {
             state.tx_sent(*tx_hash);

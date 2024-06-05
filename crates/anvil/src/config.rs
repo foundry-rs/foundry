@@ -1043,7 +1043,7 @@ latest block number: {latest_block}"
                 // the block, and the block number is less than equal the latest block, then
                 // the user is forking from a non-archive node with an older block number.
                 if fork_block_number <= latest_block {
-                    message.push_str(&format!("\n{}", NON_ARCHIVE_NODE_WARNING));
+                    message.push_str(&format!("\n{NON_ARCHIVE_NODE_WARNING}"));
                 }
                 panic!("{}", message);
             }

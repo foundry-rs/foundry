@@ -29,16 +29,8 @@ impl Prank {
         new_origin: Option<Address>,
         depth: u64,
         single_call: bool,
-    ) -> Prank {
-        Prank {
-            prank_caller,
-            prank_origin,
-            new_caller,
-            new_origin,
-            depth,
-            single_call,
-            used: false,
-        }
+    ) -> Self {
+        Self { prank_caller, prank_origin, new_caller, new_origin, depth, single_call, used: false }
     }
 
     /// Apply the prank by setting `used` to true iff it is false
@@ -47,7 +39,7 @@ impl Prank {
         if self.used {
             None
         } else {
-            Some(Prank { used: true, ..self.clone() })
+            Some(Self { used: true, ..self.clone() })
         }
     }
 }

@@ -52,7 +52,7 @@ impl FromStr for HeaderValueWrapper {
     type Err = <HeaderValue as FromStr>::Err;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(HeaderValueWrapper(s.parse()?))
+        Ok(Self(s.parse()?))
     }
 }
 
@@ -91,6 +91,6 @@ impl From<HeaderValueWrapper> for HeaderValue {
 
 impl From<HeaderValue> for HeaderValueWrapper {
     fn from(header: HeaderValue) -> Self {
-        HeaderValueWrapper(header)
+        Self(header)
     }
 }

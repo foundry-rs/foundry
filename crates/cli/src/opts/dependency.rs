@@ -120,7 +120,7 @@ impl FromStr for Dependency {
             (None, None, None)
         };
 
-        Ok(Dependency { name: name.or_else(|| alias.clone()).unwrap(), url, tag, alias })
+        Ok(Self { name: name.or_else(|| alias.clone()).unwrap(), url, tag, alias })
     }
 }
 

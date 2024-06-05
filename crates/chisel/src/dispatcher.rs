@@ -86,11 +86,11 @@ impl DispatchResult {
     pub fn is_error(&self) -> bool {
         matches!(
             self,
-            DispatchResult::Failure(_) |
-                DispatchResult::CommandFailed(_) |
-                DispatchResult::UnrecognizedCommand(_) |
-                DispatchResult::SolangParserFailed(_) |
-                DispatchResult::FileIoError(_)
+            Self::Failure(_) |
+                Self::CommandFailed(_) |
+                Self::UnrecognizedCommand(_) |
+                Self::SolangParserFailed(_) |
+                Self::FileIoError(_)
         )
     }
 }
@@ -414,8 +414,7 @@ impl ChiselDispatcher {
                         )))
                     }
                     Err(e) => DispatchResult::CommandFailed(Self::make_error(format!(
-                        "Invalid calldata: {}",
-                        e
+                        "Invalid calldata: {e}"
                     ))),
                 }
             }

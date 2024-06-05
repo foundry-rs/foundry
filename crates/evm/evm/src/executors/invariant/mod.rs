@@ -219,7 +219,7 @@ impl<'a> InvariantExecutor<'a> {
                         U256::ZERO,
                     )
                     .map_err(|e| {
-                        TestCaseError::fail(format!("Could not make raw evm call: {}", e))
+                        TestCaseError::fail(format!("Could not make raw evm call: {e}"))
                     })?;
 
                 if call_result.result.as_ref() == MAGIC_ASSUME {

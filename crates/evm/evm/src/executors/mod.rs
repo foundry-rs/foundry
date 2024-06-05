@@ -101,7 +101,7 @@ impl Executor {
             },
         );
 
-        Executor { backend, env, inspector, gas_limit }
+        Self { backend, env, inspector, gas_limit }
     }
 
     /// Returns the spec id of the executor
@@ -513,7 +513,7 @@ impl Executor {
 
             // Check if a DSTest assertion failed
             let executor =
-                Executor::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
+                Self::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
             let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
             if let Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { _0: failed } }) =
                 call
@@ -610,13 +610,13 @@ pub enum EvmError {
 
 impl From<ExecutionErr> for EvmError {
     fn from(err: ExecutionErr) -> Self {
-        EvmError::Execution(Box::new(err))
+        Self::Execution(Box::new(err))
     }
 }
 
 impl From<alloy_sol_types::Error> for EvmError {
     fn from(err: alloy_sol_types::Error) -> Self {
-        EvmError::AbiError(err.into())
+        Self::AbiError(err.into())
     }
 }
 

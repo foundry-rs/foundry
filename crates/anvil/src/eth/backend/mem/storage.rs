@@ -250,7 +250,7 @@ impl BlockchainStorage {
     }
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
-        BlockchainStorage {
+        Self {
             blocks: Default::default(),
             hashes: HashMap::from([(U64::from(block_number), block_hash)]),
             best_hash: block_hash,

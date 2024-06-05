@@ -38,7 +38,7 @@ impl RandomCallGenerator {
     ) -> Self {
         let strategy = weighted(0.9, strategy).sboxed();
 
-        RandomCallGenerator {
+        Self {
             test_address,
             runner: Arc::new(Mutex::new(runner)),
             strategy,

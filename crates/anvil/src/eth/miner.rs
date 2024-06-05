@@ -110,7 +110,7 @@ pub enum MiningMode {
 
 impl MiningMode {
     pub fn instant(max_transactions: usize, listener: Receiver<TxHash>) -> Self {
-        MiningMode::Auto(ReadyTransactionMiner {
+        Self::Auto(ReadyTransactionMiner {
             max_transactions,
             has_pending_txs: None,
             rx: listener.fuse(),
@@ -118,7 +118,7 @@ impl MiningMode {
     }
 
     pub fn interval(duration: Duration) -> Self {
-        MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(duration))
+        Self::FixedBlockTime(FixedBlockTimeMiner::new(duration))
     }
 
     /// polls the [Pool] and returns those transactions that should be put in a block, if any.
@@ -128,9 +128,9 @@ impl MiningMode {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction>>> {
         match self {
-            MiningMode::None => Poll::Pending,
-            MiningMode::Auto(miner) => miner.poll(pool, cx),
-            MiningMode::FixedBlockTime(miner) => miner.poll(pool, cx),
+            Self::None => Poll::Pending,
+            Self::Auto(miner) => miner.poll(pool, cx),
+            Self::FixedBlockTime(miner) => miner.poll(pool, cx),
         }
     }
 }

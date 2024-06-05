@@ -95,7 +95,7 @@ pub enum CallSubcommands {
 
 impl CallArgs {
     pub async fn run(self) -> Result<()> {
-        let CallArgs {
+        let Self {
             to,
             mut sig,
             mut args,

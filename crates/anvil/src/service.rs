@@ -151,7 +151,7 @@ impl Stream for BlockProducer {
                         Poll::Ready(Some(outcome))
                     }
                     Err(err) => {
-                        panic!("miner task failed: {}", err);
+                        panic!("miner task failed: {err}");
                     }
                 }
             } else {

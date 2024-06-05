@@ -91,8 +91,8 @@ pub enum EthSubscription {
 impl EthSubscription {
     fn poll_response(&mut self, cx: &mut Context<'_>) -> Poll<Option<EthSubscriptionResponse>> {
         match self {
-            EthSubscription::Logs(listener) => listener.poll(cx),
-            EthSubscription::Header(blocks, storage, id) => {
+            Self::Logs(listener) => listener.poll(cx),
+            Self::Header(blocks, storage, id) => {
                 // this loop ensures we poll the receiver until it is pending, in which case the
                 // underlying `UnboundedReceiver` will register the new waker, see
                 // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
@@ -110,7 +110,7 @@ impl EthSubscription {
                     }
                 }
             }
-            EthSubscription::PendingTransactions(tx, id) => {
+            Self::PendingTransactions(tx, id) => {
                 let res = ready!(tx.poll_next_unpin(cx))
                     .map(SubscriptionResult::TransactionHash)
                     .map(to_rpc_result)

@@ -1,8 +1,5 @@
 #![doc = include_str!("../README.md")]
-#![warn(missing_docs)]
-#![warn(unused_extern_crates)]
-#![forbid(unsafe_code)]
-#![forbid(where_clauses_object_safety)]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 /// REPL input dispatcher module
 pub mod dispatcher;

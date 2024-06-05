@@ -18,7 +18,7 @@ pub struct FindBlockArgs {
 
 impl FindBlockArgs {
     pub async fn run(self) -> Result<()> {
-        let FindBlockArgs { timestamp, rpc } = self;
+        let Self { timestamp, rpc } = self;
 
         let ts_target = timestamp;
         let config = Config::from(&rpc);

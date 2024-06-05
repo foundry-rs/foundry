@@ -1,4 +1,9 @@
+//! # foundry-linking
+//!
+//! EVM bytecode linker.
+
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 use alloy_primitives::{Address, Bytes, B256};
 use foundry_compilers::{
@@ -47,7 +52,7 @@ impl<'a> Linker<'a> {
     pub fn new(
         root: impl Into<PathBuf>,
         contracts: ArtifactContracts<CompactContractBytecodeCow<'a>>,
-    ) -> Linker<'a> {
+    ) -> Self {
         Linker { root: root.into(), contracts }
     }
 
@@ -397,7 +402,7 @@ mod tests {
                         "incorrect library address for dependency {dep_identifier} of {identifier}"
                     );
                 } else {
-                    panic!("Library {} not found", dep_identifier);
+                    panic!("Library {dep_identifier} not found");
                 }
             }
         }

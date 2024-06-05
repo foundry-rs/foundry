@@ -56,7 +56,7 @@ impl ValueTree for IntValueTree {
     }
 
     fn simplify(&mut self) -> bool {
-        if self.fixed || !IntValueTree::magnitude_greater(self.hi, self.lo) {
+        if self.fixed || !Self::magnitude_greater(self.hi, self.lo) {
             return false
         }
         self.hi = self.curr;
@@ -64,7 +64,7 @@ impl ValueTree for IntValueTree {
     }
 
     fn complicate(&mut self) -> bool {
-        if self.fixed || !IntValueTree::magnitude_greater(self.hi, self.lo) {
+        if self.fixed || !Self::magnitude_greater(self.hi, self.lo) {
             return false
         }
 

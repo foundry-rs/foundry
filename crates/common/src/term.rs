@@ -34,8 +34,8 @@ pub struct TermSettings {
 
 impl TermSettings {
     /// Returns a new [`TermSettings`], configured from the current environment.
-    pub fn from_env() -> TermSettings {
-        TermSettings { indicate_progress: std::io::stdout().is_terminal() }
+    pub fn from_env() -> Self {
+        Self { indicate_progress: std::io::stdout().is_terminal() }
     }
 }
 
@@ -55,7 +55,7 @@ impl Spinner {
     }
 
     pub fn with_indicator(indicator: &'static [&'static str], msg: impl Into<String>) -> Self {
-        Spinner {
+        Self {
             indicator,
             no_progress: !TERM_SETTINGS.indicate_progress,
             message: msg.into(),
@@ -125,7 +125,7 @@ impl SpinnerReporter {
             })
             .expect("failed to spawn thread");
 
-        SpinnerReporter { sender }
+        Self { sender }
     }
 
     fn send_msg(&self, msg: impl Into<String>) {

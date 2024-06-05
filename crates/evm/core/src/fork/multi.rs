@@ -41,7 +41,7 @@ impl ForkId {
             Some(n) => write!(id, "{n:#x}").unwrap(),
             None => id.push_str("latest"),
         }
-        ForkId(id)
+        Self(id)
     }
 
     /// Returns the identifier of the fork.

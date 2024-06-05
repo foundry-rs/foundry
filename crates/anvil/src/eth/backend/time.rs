@@ -26,8 +26,8 @@ pub struct TimeManager {
 }
 
 impl TimeManager {
-    pub fn new(start_timestamp: u64) -> TimeManager {
-        let time_manager = TimeManager {
+    pub fn new(start_timestamp: u64) -> Self {
+        let time_manager = Self {
             last_timestamp: Default::default(),
             offset: Default::default(),
             next_exact_timestamp: Default::default(),

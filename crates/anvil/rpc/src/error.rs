@@ -16,7 +16,7 @@ pub struct RpcError {
 impl RpcError {
     /// New [Error] with the given [ErrorCode]
     pub const fn new(code: ErrorCode) -> Self {
-        RpcError { message: Cow::Borrowed(code.message()), code, data: None }
+        Self { message: Cow::Borrowed(code.message()), code, data: None }
     }
 
     /// Creates a new `ParseError`
@@ -44,7 +44,7 @@ impl RpcError {
     where
         M: Into<String>,
     {
-        RpcError { code: ErrorCode::InvalidParams, message: message.into().into(), data: None }
+        Self { code: ErrorCode::InvalidParams, message: message.into().into(), data: None }
     }
 
     /// Creates a new `InternalError` with a message
@@ -52,7 +52,7 @@ impl RpcError {
     where
         M: Into<String>,
     {
-        RpcError { code: ErrorCode::InternalError, message: message.into().into(), data: None }
+        Self { code: ErrorCode::InternalError, message: message.into().into(), data: None }
     }
 
     /// Creates a new rpc error for when a transaction was rejected
@@ -60,11 +60,7 @@ impl RpcError {
     where
         M: Into<String>,
     {
-        RpcError {
-            code: ErrorCode::TransactionRejected,
-            message: message.into().into(),
-            data: None,
-        }
+        Self { code: ErrorCode::TransactionRejected, message: message.into().into(), data: None }
     }
 }
 
@@ -100,28 +96,28 @@ impl ErrorCode {
     /// Returns the error code as `i64`
     pub fn code(&self) -> i64 {
         match *self {
-            ErrorCode::ParseError => -32700,
-            ErrorCode::InvalidRequest => -32600,
-            ErrorCode::MethodNotFound => -32601,
-            ErrorCode::InvalidParams => -32602,
-            ErrorCode::InternalError => -32603,
-            ErrorCode::TransactionRejected => -32003,
-            ErrorCode::ExecutionError => 3,
-            ErrorCode::ServerError(c) => c,
+            Self::ParseError => -32700,
+            Self::InvalidRequest => -32600,
+            Self::MethodNotFound => -32601,
+            Self::InvalidParams => -32602,
+            Self::InternalError => -32603,
+            Self::TransactionRejected => -32003,
+            Self::ExecutionError => 3,
+            Self::ServerError(c) => c,
         }
     }
 
     /// Returns the message associated with the error
     pub const fn message(&self) -> &'static str {
         match *self {
-            ErrorCode::ParseError => "Parse error",
-            ErrorCode::InvalidRequest => "Invalid request",
-            ErrorCode::MethodNotFound => "Method not found",
-            ErrorCode::InvalidParams => "Invalid params",
-            ErrorCode::InternalError => "Internal error",
-            ErrorCode::TransactionRejected => "Transaction rejected",
-            ErrorCode::ServerError(_) => "Server error",
-            ErrorCode::ExecutionError => "Execution error",
+            Self::ParseError => "Parse error",
+            Self::InvalidRequest => "Invalid request",
+            Self::MethodNotFound => "Method not found",
+            Self::InvalidParams => "Invalid params",
+            Self::InternalError => "Internal error",
+            Self::TransactionRejected => "Transaction rejected",
+            Self::ServerError(_) => "Server error",
+            Self::ExecutionError => "Execution error",
         }
     }
 }
@@ -136,7 +132,7 @@ impl Serialize for ErrorCode {
 }
 
 impl<'a> Deserialize<'a> for ErrorCode {
-    fn deserialize<D>(deserializer: D) -> Result<ErrorCode, D::Error>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'a>,
     {
@@ -147,14 +143,14 @@ impl<'a> Deserialize<'a> for ErrorCode {
 impl From<i64> for ErrorCode {
     fn from(code: i64) -> Self {
         match code {
-            -32700 => ErrorCode::ParseError,
-            -32600 => ErrorCode::InvalidRequest,
-            -32601 => ErrorCode::MethodNotFound,
-            -32602 => ErrorCode::InvalidParams,
-            -32603 => ErrorCode::InternalError,
-            -32003 => ErrorCode::TransactionRejected,
-            3 => ErrorCode::ExecutionError,
-            _ => ErrorCode::ServerError(code),
+            -32700 => Self::ParseError,
+            -32600 => Self::InvalidRequest,
+            -32601 => Self::MethodNotFound,
+            -32602 => Self::InvalidParams,
+            -32603 => Self::InternalError,
+            -32003 => Self::TransactionRejected,
+            3 => Self::ExecutionError,
+            _ => Self::ServerError(code),
         }
     }
 }

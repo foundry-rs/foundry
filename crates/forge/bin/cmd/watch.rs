@@ -163,7 +163,7 @@ struct WatchTestState {
 }
 
 /// The `on_action` hook for `forge test --watch`
-fn on_test(action: OnActionState<WatchTestState>) {
+fn on_test(action: OnActionState<'_, WatchTestState>) {
     let OnActionState { args, runtime, action, wx, cmd, other } = action;
     let WatchTestState { project_root, no_reconfigure, last_test_files } = other;
 

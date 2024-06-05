@@ -780,16 +780,13 @@ dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-eips",
- "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types",
  "alloy-rpc-types-trace",
  "alloy-serde",
  "alloy-trie",
- "anvil-core",
  "bytes",
- "c-kzg",
  "foundry-common",
  "foundry-evm",
  "rand",
@@ -802,7 +799,6 @@ dependencies = [
 name = "anvil-rpc"
 version = "0.2.0"
 dependencies = [
- "rand",
  "serde",
  "serde_json",
 ]
@@ -3743,9 +3739,7 @@ dependencies = [
  "const-hex",
  "derive_builder",
  "eyre",
- "foundry-common",
  "foundry-config",
- "itertools 0.13.0",
  "rpassword",
  "serde",
  "thiserror",
