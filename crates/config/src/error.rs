@@ -140,8 +140,6 @@ pub enum SolidityErrorCode {
     Other(u64),
 }
 
-// === impl SolidityErrorCode ===
-
 impl SolidityErrorCode {
     /// The textual identifier for this error
     ///

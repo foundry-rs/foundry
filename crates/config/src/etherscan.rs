@@ -66,8 +66,6 @@ pub struct EtherscanConfigs {
     configs: BTreeMap<String, EtherscanConfig>,
 }
 
-// === impl Endpoints ===
-
 impl EtherscanConfigs {
     /// Creates a new list of etherscan configs
     pub fn new(configs: impl IntoIterator<Item = (impl Into<String>, EtherscanConfig)>) -> Self {
@@ -120,8 +118,6 @@ pub struct ResolvedEtherscanConfigs {
     /// var alias
     configs: BTreeMap<String, Result<ResolvedEtherscanConfig, EtherscanConfigError>>,
 }
-
-// === impl ResolvedEtherscanConfigs ===
 
 impl ResolvedEtherscanConfigs {
     /// Creates a new list of resolved etherscan configs
@@ -180,8 +176,6 @@ pub struct EtherscanConfig {
     /// The etherscan API KEY that's required to make requests
     pub key: EtherscanApiKey,
 }
-
-// === impl EtherscanConfig ===
 
 impl EtherscanConfig {
     /// Returns the etherscan config required to create a client.
@@ -261,8 +255,6 @@ pub struct ResolvedEtherscanConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<Chain>,
 }
-
-// === impl ResolvedEtherscanConfig ===
 
 impl ResolvedEtherscanConfig {
     /// Creates a new instance using the api key and chain
@@ -349,8 +341,6 @@ pub enum EtherscanApiKey {
     /// **Note:** this contains the key or `${ETHERSCAN_KEY}`
     Env(String),
 }
-
-// === impl EtherscanApiKey ===
 
 impl EtherscanApiKey {
     /// Returns the key variant

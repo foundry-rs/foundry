@@ -24,8 +24,6 @@ pub struct LogsSubscription {
     pub id: SubscriptionId,
 }
 
-// === impl LogsSubscription ===
-
 impl LogsSubscription {
     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Option<EthSubscriptionResponse>> {
         loop {
@@ -68,8 +66,6 @@ pub struct EthSubscriptionResponse {
     params: EthSubscriptionParams,
 }
 
-// === impl EthSubscriptionResponse ===
-
 impl EthSubscriptionResponse {
     pub fn new(params: EthSubscriptionParams) -> Self {
         Self { jsonrpc: Version::V2, method: "eth_subscription", params }
@@ -91,8 +87,6 @@ pub enum EthSubscription {
     Header(NewBlockNotifications, StorageInfo, SubscriptionId),
     PendingTransactions(Receiver<TxHash>, SubscriptionId),
 }
-
-// === impl EthSubscription ===
 
 impl EthSubscription {
     fn poll_response(&mut self, cx: &mut Context<'_>) -> Poll<Option<EthSubscriptionResponse>> {

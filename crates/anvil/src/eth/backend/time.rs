@@ -25,8 +25,6 @@ pub struct TimeManager {
     interval: Arc<RwLock<Option<u64>>>,
 }
 
-// === impl TimeManager ===
-
 impl TimeManager {
     pub fn new(start_timestamp: u64) -> TimeManager {
         let time_manager = TimeManager {

@@ -112,8 +112,6 @@ struct BlockProducer {
     queued: VecDeque<Vec<Arc<PoolTransaction>>>,
 }
 
-// === impl BlockProducer ===
-
 impl BlockProducer {
     fn new(backend: Arc<Backend>) -> Self {
         Self { idle_backend: Some(backend), block_mining: None, queued: Default::default() }

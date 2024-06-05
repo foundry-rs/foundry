@@ -33,8 +33,6 @@ pub struct Filters {
     keepalive: Duration,
 }
 
-// === impl Filters ===
-
 impl Filters {
     /// Adds a new `EthFilter` to the set
     pub async fn add_filter(&self, filter: EthFilter) -> String {
@@ -123,8 +121,6 @@ pub enum EthFilter {
     PendingTransactions(Receiver<TxHash>),
 }
 
-// === impl EthFilter ===
-
 impl Stream for EthFilter {
     type Item = ResponseResult;
 
@@ -164,8 +160,6 @@ pub struct LogsFilter {
     /// They'll be returned on the first pill
     pub historic: Option<Vec<Log>>,
 }
-
-// === impl LogsFilter ===
 
 impl LogsFilter {
     /// Returns all the logs since the last time this filter was polled

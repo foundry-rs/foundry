@@ -14,8 +14,6 @@ pub enum SubscriptionId {
     String(String),
 }
 
-// === impl SubscriptionId ===
-
 impl SubscriptionId {
     /// Generates a new random hex identifier
     pub fn random_hex() -> Self {
@@ -46,8 +44,6 @@ impl fmt::Debug for SubscriptionId {
 pub struct HexIdProvider {
     len: usize,
 }
-
-// === impl  HexIdProvider ===
 
 impl HexIdProvider {
     /// Generates a random hex encoded Id

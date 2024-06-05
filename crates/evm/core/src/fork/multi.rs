@@ -72,8 +72,6 @@ pub struct MultiFork {
     _shutdown: Arc<ShutDownMultiFork>,
 }
 
-// === impl MultiForkBackend ===
-
 impl MultiFork {
     /// Creates a new pair multi fork pair
     pub fn new() -> (Self, MultiForkHandler) {
@@ -221,8 +219,6 @@ pub struct MultiForkHandler {
     /// Optional periodic interval to flush rpc cache
     flush_cache_interval: Option<tokio::time::Interval>,
 }
-
-// === impl MultiForkHandler ===
 
 impl MultiForkHandler {
     fn new(incoming: Receiver<Request>) -> Self {
@@ -437,8 +433,6 @@ struct CreatedFork {
     /// consumers
     num_senders: Arc<AtomicUsize>,
 }
-
-// === impl CreatedFork ===
 
 impl CreatedFork {
     pub fn new(opts: CreateFork, backend: SharedBackend) -> Self {

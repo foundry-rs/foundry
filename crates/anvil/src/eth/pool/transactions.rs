@@ -37,8 +37,6 @@ pub enum TransactionOrder {
     Fees,
 }
 
-// === impl TransactionOrder ===
-
 impl TransactionOrder {
     /// Returns the priority of the transactions
     pub fn priority(&self, tx: &TypedTransaction) -> TransactionPriority {
@@ -685,8 +683,6 @@ pub struct ReadyTransaction {
     /// amount of required markers that are inherently provided
     pub requires_offset: usize,
 }
-
-// === impl ReadyTransaction ==
 
 impl ReadyTransaction {
     pub fn provides(&self) -> &[TxMarker] {

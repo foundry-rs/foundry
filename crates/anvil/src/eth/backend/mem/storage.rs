@@ -35,8 +35,6 @@ const MIN_HISTORY_LIMIT: usize = 10;
 // 1hr of up-time at lowest 1s interval
 const MAX_ON_DISK_HISTORY_LIMIT: usize = 3_600;
 
-// === impl DiskStateCache ===
-
 /// Represents the complete state of single block
 pub struct InMemoryBlockStates {
     /// The states at a certain block
@@ -58,8 +56,6 @@ pub struct InMemoryBlockStates {
     /// Stores old states on disk
     disk_cache: DiskStateCache,
 }
-
-// === impl InMemoryBlockStates ===
 
 impl InMemoryBlockStates {
     /// Creates a new instance with limited slots
@@ -296,8 +292,6 @@ impl BlockchainStorage {
     }
 }
 
-// === impl BlockchainStorage ===
-
 impl BlockchainStorage {
     /// Returns the hash for [BlockNumberOrTag]
     pub fn hash(&self, number: BlockNumberOrTag) -> Option<B256> {
@@ -333,8 +327,6 @@ pub struct Blockchain {
     /// underlying storage that supports concurrent reads
     pub storage: Arc<RwLock<BlockchainStorage>>,
 }
-
-// === impl BlockchainStorage ===
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
@@ -394,8 +386,6 @@ pub struct MinedTransaction {
     pub block_hash: B256,
     pub block_number: u64,
 }
-
-// === impl MinedTransaction ===
 
 impl MinedTransaction {
     /// Returns the traces of the transaction for `trace_transaction`

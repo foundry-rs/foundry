@@ -116,8 +116,6 @@ pub struct EthApi {
     instance_id: Arc<RwLock<B256>>,
 }
 
-// === impl Eth RPC API ===
-
 impl EthApi {
     /// Creates a new instance
     #[allow(clippy::too_many_arguments)]
@@ -2113,8 +2111,6 @@ impl EthApi {
         Ok(content)
     }
 }
-
-// === impl EthApi utility functions ===
 
 impl EthApi {
     /// Executes the future on a new blocking task.

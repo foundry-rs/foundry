@@ -55,8 +55,6 @@ pub struct FeeManager {
     elasticity: Arc<RwLock<f64>>,
 }
 
-// === impl FeeManager ===
-
 impl FeeManager {
     pub fn new(
         spec_id: SpecId,
@@ -194,8 +192,6 @@ pub struct FeeHistoryService {
     /// a type that can fetch ethereum-storage data
     storage_info: StorageInfo,
 }
-
-// === impl FeeHistoryService ===
 
 impl FeeHistoryService {
     pub fn new(
