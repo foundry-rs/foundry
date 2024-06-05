@@ -209,7 +209,7 @@ impl MultiContractRunner {
         if !enabled!(tracing::Level::TRACE) {
             span_name = get_contract_name(&identifier);
         }
-        let _guard = info_span!("run_tests", name = span_name).entered();
+        let _guard = debug_span!("run_suite", name = span_name).entered();
 
         debug!("start executing all tests in contract");
 
@@ -343,9 +343,7 @@ impl MultiContractRunnerBuilder {
         let mut deployable_contracts = DeployableContracts::default();
 
         for (id, contract) in linked_contracts.iter() {
-            let Some(abi) = contract.abi.as_ref() else {
-                continue;
-            };
+            let Some(abi) = &contract.abi else { continue };
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&

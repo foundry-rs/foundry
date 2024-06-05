@@ -88,7 +88,7 @@ jobs:
                       svm_target_platform: linux-aarch64
                       platform: linux
                       arch: arm64
-                    - runner: macos-latest-large
+                    - runner: macos-12-large
                       target: x86_64-apple-darwin
                       svm_target_platform: macosx-amd64
                       platform: darwin

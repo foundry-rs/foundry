@@ -178,6 +178,8 @@ impl FuzzedExecutor {
             _ => {}
         }
 
+        state.log_stats();
+
         result
     }
 

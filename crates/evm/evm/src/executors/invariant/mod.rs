@@ -322,7 +322,7 @@ impl<'a> InvariantExecutor<'a> {
         });
 
         trace!(?fuzz_fixtures);
-        trace!(state_len = fuzz_state.dictionary_read().len());
+        fuzz_state.log_stats();
 
         let (reverts, error) = failures.into_inner().into_inner();
 
