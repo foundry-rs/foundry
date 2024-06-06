@@ -137,6 +137,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         unchecked_cheatcode_artifacts: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         lang: Language::Solidity,
+        skip: vec![],
         __non_exhaustive: (),
         __warnings: vec![],
     };

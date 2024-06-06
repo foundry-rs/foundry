@@ -2,9 +2,9 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_fmt::{format_to, parse, print_diagnostics_report};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
-use foundry_common::{fs, glob::expand_globs, term::cli_warn};
+use foundry_common::{fs, term::cli_warn};
 use foundry_compilers::{compilers::solc::SolcLanguage, SOLC_EXTENSIONS};
-use foundry_config::impl_figment_convert_basic;
+use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use std::{

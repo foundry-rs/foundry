@@ -80,6 +80,9 @@ pub use error::SolidityErrorCode;
 pub mod doc;
 pub use doc::DocConfig;
 
+pub mod filter;
+pub use filter::SkipBuildFilters;
+
 mod warning;
 pub use warning::*;
 
@@ -171,6 +174,9 @@ pub struct Config {
     pub allow_paths: Vec<PathBuf>,
     /// additional solc include paths for `--include-path`
     pub include_paths: Vec<PathBuf>,
+    /// glob patterns to skip
+    #[serde(with = "from_vec_glob")]
+    pub skip: Vec<globset::Glob>,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -773,7 +779,7 @@ impl Config {
 
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let project = Project::builder()
+        let mut builder = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
             .settings(self.compiler_settings()?)
@@ -787,8 +793,14 @@ impl Config {
             .set_offline(self.offline)
             .set_cached(cached && !self.build_info)
             .set_build_info(!no_artifacts && self.build_info)
-            .set_no_artifacts(no_artifacts)
-            .build(self.compiler()?)?;
+            .set_no_artifacts(no_artifacts);
+
+        if !self.skip.is_empty() {
+            let filter = SkipBuildFilters::new(self.skip.clone(), self.__root.0.clone());
+            builder = builder.sparse_output(filter);
+        }
+
+        let project = builder.build(self.compiler()?)?;
 
         if self.force {
             self.cleanup(&project)?;
@@ -1901,6 +1913,30 @@ pub(crate) mod from_opt_glob {
     }
 }
 
+/// Ser/de `globset::Glob` explicitly to handle `Option<Glob>` properly
+pub(crate) mod from_vec_glob {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(value: &[globset::Glob], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let value = value.iter().map(|g| g.glob()).collect::<Vec<_>>();
+        value.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<globset::Glob>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Vec<String> = Vec::deserialize(deserializer)?;
+        s.into_iter()
+            .map(|s| globset::Glob::new(&s))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// A helper wrapper around the root path used during Config detection
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -2065,6 +2101,7 @@ impl Default for Config {
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
             lang: Language::Solidity,
+            skip: vec![],
             __non_exhaustive: (),
             __warnings: vec![],
         }
