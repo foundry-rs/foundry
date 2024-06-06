@@ -27,8 +27,14 @@ alloy-dyn-abi.workspace = true
 
 # aws-kms
 alloy-signer-aws = { workspace = true, features = ["eip712"], optional = true }
-aws-config = { version = "1", optional = true } # default-features are necessary
+aws-config = { version = "1", optional = true }                                 # default-features are necessary
 aws-sdk-kms = { version = "1", default-features = false, optional = true }
+
+# gcp-kms
+alloy-signer-gcp = { workspace = true, features = ["eip712"], optional = true }
+gcloud-sdk = { version = "0.24", features = [
+  "google-cloud-kms-v1",
+], optional = true }
 
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
@@ -47,3 +53,4 @@ tokio = { workspace = true, features = ["macros"] }
 default = ["rustls"]
 rustls = ["aws-sdk-kms?/rustls"]
 aws-kms = ["dep:alloy-signer-aws", "dep:aws-config", "dep:aws-sdk-kms"]
+gcp-kms = ["dep:alloy-signer-gcp", "dep:gcloud-sdk"]

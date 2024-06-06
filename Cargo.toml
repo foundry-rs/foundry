@@ -184,6 +184,7 @@ alloy-serde = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", defa
 alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
 alloy-signer-wallet = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
 alloy-signer-aws = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
+alloy-signer-gcp = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
 alloy-signer-ledger = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
 alloy-signer-trezor = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
 alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }

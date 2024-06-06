@@ -40,4 +40,8 @@ impl WalletSignerError {
     pub fn aws_unsupported() -> Self {
         Self::UnsupportedSigner("AWS KMS")
     }
+
+    pub fn gcp_unsupported() -> Self {
+        Self::UnsupportedSigner("Google Cloud KMS")
+    }
 }
