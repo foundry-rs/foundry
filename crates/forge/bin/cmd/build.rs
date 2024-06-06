@@ -145,9 +145,8 @@ impl Provider for BuildArgs {
 
 #[cfg(test)]
 mod tests {
-    use foundry_config::filter::SkipBuildFilter;
-
     use super::*;
+    use foundry_config::filter::SkipBuildFilter;
 
     #[test]
     fn can_parse_build_filters() {

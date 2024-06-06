@@ -45,11 +45,24 @@ impl GlobMatcher {
             return true;
         }
 
+        if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+            if file_name.contains(self.as_str()) {
+                return true;
+            }
+        }
+
         if !path.starts_with("./") && self.as_str().starts_with("./") {
             return self.matcher.is_match(format!("./{}", path.display()));
         }
 
         false
+    }
+
+    /// Matches file only if the filter does not apply.
+    ///
+    /// This returns the inverse of `self.is_match(file)`.
+    fn is_match_exclude(&self, path: &Path) -> bool {
+        !self.is_match(path)
     }
 
     /// Returns the `globset::Glob`.
@@ -96,11 +109,11 @@ impl FileFilter for SkipBuildFilters {
     /// Only returns a match if _no_  exclusion filter matches
     fn is_match(&self, file: &Path) -> bool {
         self.matchers.iter().all(|matcher| {
-            if !is_match_exclude(matcher, file) {
+            if !matcher.is_match_exclude(file) {
                 false
             } else {
                 file.strip_prefix(&self.project_root)
-                    .map_or(true, |stripped| is_match_exclude(matcher, stripped))
+                    .map_or(true, |stripped| matcher.is_match_exclude(stripped))
             }
         })
     }
@@ -153,18 +166,6 @@ impl FromStr for SkipBuildFilter {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self::new(s))
     }
-}
-
-/// Matches file only if the filter does not apply.
-///
-/// This returns the inverse of `file.name.contains(pattern) || matcher.is_match(file)`.
-fn is_match_exclude(matcher: &GlobMatcher, path: &Path) -> bool {
-    fn is_match(matcher: &GlobMatcher, path: &Path) -> Option<bool> {
-        let file_name = path.file_name()?.to_str()?;
-        Some(file_name.contains(matcher.as_str()) || matcher.is_match(path))
-    }
-
-    !is_match(matcher, path).unwrap_or_default()
 }
 
 #[cfg(test)]
