@@ -23,7 +23,12 @@ foundry-evm-traces.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
-alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-primitives = { workspace = true, features = [
+    "serde",
+    "getrandom",
+    "arbitrary",
+    "rlp",
+] }
 revm = { workspace = true, features = [
     "std",
     "serde",
@@ -43,3 +48,4 @@ serde = "1"
 thiserror = "1"
 tracing = "0.1"
 indexmap.workspace = true
+ahash.workspace = true

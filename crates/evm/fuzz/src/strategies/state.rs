@@ -18,6 +18,8 @@ use std::{
     sync::Arc,
 };
 
+type AIndexSet<T> = IndexSet<T, std::hash::BuildHasherDefault<ahash::AHasher>>;
+
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
 ///
 /// This is to limit the performance impact of fuzz tests that might deploy arbitrarily sized
@@ -44,7 +46,7 @@ impl EvmFuzzState {
         Self { inner: Arc::new(RwLock::new(dictionary)) }
     }
 
-    pub fn collect_values(&self, values: impl IntoIterator<Item = [u8; 32]>) {
+    pub fn collect_values(&self, values: impl IntoIterator<Item = B256>) {
         let mut dict = self.inner.write();
         for value in values {
             dict.insert_value(value, true);
@@ -93,9 +95,9 @@ impl EvmFuzzState {
 #[derive(Default)]
 pub struct FuzzDictionary {
     /// Collected state values.
-    state_values: IndexSet<[u8; 32]>,
+    state_values: AIndexSet<B256>,
     /// Addresses that already had their PUSH bytes collected.
-    addresses: IndexSet<Address>,
+    addresses: AIndexSet<Address>,
     /// Configuration for the dictionary.
     config: FuzzDictionaryConfig,
     /// New key indexes added to the dictionary since container initialization.
@@ -103,7 +105,7 @@ pub struct FuzzDictionary {
     /// New address indexes added to the dictionary since container initialization.
     new_addreses: Vec<usize>,
     /// Sample typed values that are collected from call result and used across invariant runs.
-    sample_values: HashMap<DynSolType, IndexSet<[u8; 32]>>,
+    sample_values: HashMap<DynSolType, AIndexSet<B256>>,
 
     misses: usize,
     hits: usize,
@@ -127,32 +129,33 @@ impl FuzzDictionary {
 
     /// Insert common values into the dictionary at initialization.
     fn prefill(&mut self) {
-        self.insert_value([0; 32], false);
+        self.insert_value(B256::ZERO, false);
     }
 
     /// Insert values from initial db state into fuzz dictionary.
     /// These values are persisted across invariant runs.
     fn insert_db_values(&mut self, db_state: Vec<(&Address, &DbAccount)>) {
+        let collected = false;
         for (address, account) in db_state {
             // Insert basic account information
-            self.insert_value(address.into_word().into(), false);
+            self.insert_value(address.into_word(), collected);
             // Insert push bytes
-            self.insert_push_bytes_values(address, &account.info, false);
+            self.insert_push_bytes_values(address, &account.info, collected);
             // Insert storage values.
             if self.config.include_storage {
                 // Sort storage values before inserting to ensure deterministic dictionary.
                 let values = account.storage.iter().collect::<BTreeMap<_, _>>();
                 for (slot, value) in values {
-                    self.insert_storage_value(slot, value, false);
+                    self.insert_storage_value(slot, value, collected);
                 }
             }
         }
 
-        // need at least some state data if db is empty otherwise we can't select random data for
-        // state fuzzing
+        // We need at least some state data if DB is empty,
+        // otherwise we can't select random data for state fuzzing.
         if self.values().is_empty() {
-            // prefill with a random addresses
-            self.insert_value(Address::random().into_word().into(), false);
+            // Prefill with a random address.
+            self.insert_value(Address::random().into_word(), false);
         }
     }
 
@@ -193,8 +196,8 @@ impl FuzzDictionary {
 
             // If we weren't able to decode event then we insert raw data in fuzz dictionary.
             if !log_decoded {
-                for topic in log.topics() {
-                    self.insert_value(topic.0, true);
+                for &topic in log.topics() {
+                    self.insert_value(topic, true);
                 }
                 let chunks = log.data.data.chunks_exact(32);
                 let rem = chunks.remainder();
@@ -202,7 +205,7 @@ impl FuzzDictionary {
                     self.insert_value(chunk.try_into().unwrap(), true);
                 }
                 if !rem.is_empty() {
-                    self.insert_value(B256::right_padding_from(rem).0, true);
+                    self.insert_value(B256::right_padding_from(rem), true);
                 }
             }
         }
@@ -214,15 +217,16 @@ impl FuzzDictionary {
     /// Insert values from call state changeset into fuzz dictionary.
     /// These values are removed at the end of current run.
     fn insert_state_values(&mut self, state_changeset: &StateChangeset) {
+        let collected = true;
         for (address, account) in state_changeset {
             // Insert basic account information.
-            self.insert_value(address.into_word().into(), true);
+            self.insert_value(address.into_word(), collected);
             // Insert push bytes.
-            self.insert_push_bytes_values(address, &account.info, true);
+            self.insert_push_bytes_values(address, &account.info, collected);
             // Insert storage values.
             if self.config.include_storage {
                 for (slot, value) in &account.storage {
-                    self.insert_storage_value(slot, &value.present_value, true);
+                    self.insert_storage_value(slot, &value.present_value, collected);
                 }
             }
         }
@@ -239,7 +243,7 @@ impl FuzzDictionary {
     ) {
         if self.config.include_push_bytes && !self.addresses.contains(address) {
             // Insert push bytes
-            if let Some(code) = account_info.code.clone() {
+            if let Some(code) = &account_info.code {
                 self.insert_address(*address, collected);
                 self.collect_push_bytes(code.bytes_slice(), collected);
             }
@@ -262,16 +266,16 @@ impl FuzzDictionary {
                 }
 
                 let push_value = U256::try_from_be_slice(&code[push_start..push_end]).unwrap();
-                // Also add the value below and above the push value to the dictionary.
                 if push_value != U256::ZERO {
-                    // Never add 0 to the dictionary as it's always present, and it's a pretty
-                    // common value that this is worth it.
-                    self.insert_value(push_value.to_be_bytes(), collected);
+                    // Never add 0 to the dictionary as it's always present.
+                    self.insert_value(push_value.into(), collected);
 
-                    self.insert_value((push_value - U256::from(1)).to_be_bytes(), collected);
-                }
-                if push_value != U256::MAX {
-                    self.insert_value((push_value + U256::from(1)).to_be_bytes(), collected);
+                    // Also add the value below and above the push value to the dictionary.
+                    self.insert_value((push_value - U256::from(1)).into(), collected);
+
+                    if push_value != U256::MAX {
+                        self.insert_value((push_value + U256::from(1)).into(), collected);
+                    }
                 }
 
                 i += push_size;
@@ -283,16 +287,16 @@ impl FuzzDictionary {
     /// Insert values from single storage slot and storage value into fuzz dictionary.
     /// If storage values are newly collected then they are removed at the end of current run.
     fn insert_storage_value(&mut self, storage_slot: &U256, storage_value: &U256, collected: bool) {
-        self.insert_value(B256::from(*storage_slot).0, collected);
-        self.insert_value(B256::from(*storage_value).0, collected);
+        self.insert_value(B256::from(*storage_slot), collected);
+        self.insert_value(B256::from(*storage_value), collected);
         // also add the value below and above the storage value to the dictionary.
         if *storage_value != U256::ZERO {
             let below_value = storage_value - U256::from(1);
-            self.insert_value(B256::from(below_value).0, collected);
+            self.insert_value(B256::from(below_value), collected);
         }
         if *storage_value != U256::MAX {
             let above_value = storage_value + U256::from(1);
-            self.insert_value(B256::from(above_value).0, collected);
+            self.insert_value(B256::from(above_value), collected);
         }
     }
 
@@ -309,7 +313,7 @@ impl FuzzDictionary {
 
     /// Insert raw value into fuzz dictionary.
     /// If value is newly collected then it is removed by index at the end of current run.
-    fn insert_value(&mut self, value: [u8; 32], collected: bool) {
+    fn insert_value(&mut self, value: B256, collected: bool) {
         if self.state_values.len() < self.config.max_fuzz_dictionary_values {
             let (index, new_value) = self.state_values.insert_full(value);
             let counter = if new_value { &mut self.misses } else { &mut self.hits };
@@ -323,10 +327,13 @@ impl FuzzDictionary {
     /// Insert sample values that are reused across multiple runs.
     /// The number of samples is limited to invariant run depth.
     /// If collected samples limit is reached then values are inserted as regular values.
-    pub fn insert_sample_values(&mut self, sample_values: Vec<DynSolValue>, limit: u32) {
+    pub fn insert_sample_values(
+        &mut self,
+        sample_values: impl IntoIterator<Item = DynSolValue>,
+        limit: u32,
+    ) {
         for sample in sample_values {
             if let (Some(sample_type), Some(sample_value)) = (sample.as_type(), sample.as_word()) {
-                let sample_value = sample_value.into();
                 if let Some(values) = self.sample_values.get_mut(&sample_type) {
                     if values.len() < limit as usize {
                         values.insert(sample_value);
@@ -341,7 +348,7 @@ impl FuzzDictionary {
         }
     }
 
-    pub fn values(&self) -> &IndexSet<[u8; 32]> {
+    pub fn values(&self) -> &AIndexSet<B256> {
         &self.state_values
     }
 
@@ -354,12 +361,12 @@ impl FuzzDictionary {
     }
 
     #[inline]
-    pub fn samples(&self, param_type: DynSolType) -> Option<&IndexSet<[u8; 32]>> {
-        self.sample_values.get(&param_type)
+    pub fn samples(&self, param_type: &DynSolType) -> Option<&AIndexSet<B256>> {
+        self.sample_values.get(param_type)
     }
 
     #[inline]
-    pub fn addresses(&self) -> &IndexSet<Address> {
+    pub fn addresses(&self) -> &AIndexSet<Address> {
         &self.addresses
     }
 
@@ -400,25 +407,30 @@ pub fn collect_created_contracts(
 ) -> eyre::Result<()> {
     let mut writable_targeted = targeted_contracts.targets.lock();
     for (address, account) in state_changeset {
-        if !setup_contracts.contains_key(address) {
-            if let (true, Some(code)) = (&account.is_touched(), &account.info.code) {
-                if !code.is_empty() {
-                    if let Some((artifact, contract)) =
-                        project_contracts.find_by_deployed_code(&code.original_bytes())
-                    {
-                        if let Some(functions) =
-                            artifact_filters.get_targeted_functions(artifact, &contract.abi)?
-                        {
-                            created_contracts.push(*address);
-                            writable_targeted.insert(
-                                *address,
-                                (artifact.name.clone(), contract.abi.clone(), functions),
-                            );
-                        }
-                    }
-                }
-            }
+        if setup_contracts.contains_key(address) {
+            continue;
         }
+        if !account.is_touched() {
+            continue;
+        }
+        let Some(code) = &account.info.code else {
+            continue;
+        };
+        if code.is_empty() {
+            continue;
+        }
+        let Some((artifact, contract)) =
+            project_contracts.find_by_deployed_code(code.original_byte_slice())
+        else {
+            continue;
+        };
+        let Some(functions) = artifact_filters.get_targeted_functions(artifact, &contract.abi)?
+        else {
+            continue;
+        };
+        created_contracts.push(*address);
+        writable_targeted
+            .insert(*address, (artifact.name.clone(), contract.abi.clone(), functions));
     }
     Ok(())
 }
