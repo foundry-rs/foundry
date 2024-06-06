@@ -404,7 +404,7 @@ pub struct Config {
     /// CREATE2 salt to use for the library deployment in scripts.
     pub create2_library_salt: B256,
 
-    /// Compiler to use
+    /// Vyper optimization mode. "gas", "none" or "codesize"
     pub vyper_optimize: Option<VyperOptimizationMode>,
 
     /// The root path where the config detection started from, `Config::with_root`
