@@ -371,10 +371,17 @@ impl FuzzDictionary {
     }
 
     pub fn revert(&mut self) {
-        // Revert new values collected during the run.
+        // Revert values and addresses collected during the run, using recorded indexes.
+        // Indexes are sorted and removed in reverse in order to point to same value as when they
+        // were recorded.
+        self.new_values.sort();
+        self.new_values.reverse();
         for &value_index in &self.new_values {
             self.state_values.swap_remove_index(value_index);
         }
+
+        self.new_addreses.sort();
+        self.new_addreses.reverse();
         for &address_index in &self.new_addreses {
             self.addresses.swap_remove_index(address_index);
         }
