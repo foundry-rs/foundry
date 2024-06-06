@@ -816,7 +816,7 @@ impl Backend {
         I: InspectorExt<WrapDatabaseRef<DB>>,
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
-        if let Some(ref factory) = self.precompile_factory {
+        if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
         }
         evm
