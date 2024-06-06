@@ -9,7 +9,7 @@ use foundry_compilers::{
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     fs_permissions::{FsAccessPermission, PathPermission},
-    Config, FsPermissions, FuzzConfig, InvariantConfig, Language, SolcReq,
+    Config, FsPermissions, FuzzConfig, InvariantConfig, SolcReq,
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
@@ -136,7 +136,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         isolate: true,
         unchecked_cheatcode_artifacts: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
-        lang: Language::Solidity,
+        vyper_optimize: None,
         skip: vec![],
         __non_exhaustive: (),
         __warnings: vec![],

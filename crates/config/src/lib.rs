@@ -27,7 +27,7 @@ use foundry_compilers::{
     compilers::{
         multi::{MultiCompiler, MultiCompilerSettings},
         solc::SolcCompiler,
-        vyper::{Vyper, VyperSettings},
+        vyper::{settings::VyperOptimizationMode, Vyper, VyperSettings},
         Compiler,
     },
     error::SolcError,
@@ -94,9 +94,6 @@ pub use figment;
 
 pub mod providers;
 use providers::{remappings::RemappingsProvider, FallbackProfileProvider, WarningsProvider};
-
-mod language;
-pub use language::Language;
 
 mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzDictionaryConfig};
@@ -408,8 +405,7 @@ pub struct Config {
     pub create2_library_salt: B256,
 
     /// Compiler to use
-    #[serde(with = "from_str_lowercase")]
-    pub lang: Language,
+    pub vyper_optimize: Option<VyperOptimizationMode>,
 
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
@@ -1283,7 +1279,7 @@ impl Config {
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
         Ok(VyperSettings {
             evm_version: Some(self.evm_version),
-            optimize: None,
+            optimize: self.vyper_optimize,
             bytecode_metadata: None,
             // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
             // those for now. It should be enough to run tests and deploy contracts.
@@ -2100,7 +2096,7 @@ impl Default for Config {
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
-            lang: Language::Solidity,
+            vyper_optimize: None,
             skip: vec![],
             __non_exhaustive: (),
             __warnings: vec![],
