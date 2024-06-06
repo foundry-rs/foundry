@@ -14,7 +14,7 @@ use crate::{
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
-        fees::{FeeDetails, FeeHistoryCache},
+        fees::{FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
@@ -31,7 +31,7 @@ use crate::{
     revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::TxEip4844Variant;
+use alloy_consensus::transaction::eip4844::TxEip4844Variant;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::eip2718::Decodable2718;
@@ -116,8 +116,6 @@ pub struct EthApi {
     instance_id: Arc<RwLock<B256>>,
 }
 
-// === impl Eth RPC API ===
-
 impl EthApi {
     /// Creates a new instance
     #[allow(clippy::too_many_arguments)]
@@ -148,7 +146,7 @@ impl EthApi {
         }
     }
 
-    /// Executes the [EthRequest] and returns an RPC [RpcResponse]
+    /// Executes the [EthRequest] and returns an RPC [ResponseResult].
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
         match request {
@@ -544,12 +542,16 @@ impl EthApi {
     /// Returns the current gas price
     fn eth_gas_price(&self) -> Result<U256> {
         node_info!("eth_gasPrice");
-        self.gas_price()
+        Ok(U256::from(self.gas_price()))
     }
 
     /// Returns the current gas price
-    pub fn gas_price(&self) -> Result<U256> {
-        Ok(U256::from(self.backend.gas_price()))
+    pub fn gas_price(&self) -> u128 {
+        if self.backend.is_eip1559() {
+            self.backend.base_fee().saturating_add(self.lowest_suggestion_tip())
+        } else {
+            self.backend.fees().raw_gas_price()
+        }
     }
 
     /// Returns the excess blob gas and current blob gas price
@@ -562,7 +564,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn gas_max_priority_fee_per_gas(&self) -> Result<U256> {
-        Ok(U256::from(self.backend.max_priority_fee_per_gas()))
+        self.max_priority_fee_per_gas()
     }
 
     /// Returns the base fee per blob required to send a EIP-4844 tx.
@@ -1351,7 +1353,22 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
         node_info!("eth_maxPriorityFeePerGas");
-        Ok(U256::from(self.backend.max_priority_fee_per_gas()))
+        Ok(U256::from(self.lowest_suggestion_tip()))
+    }
+
+    /// Returns the suggested fee cap.
+    ///
+    /// Returns at least [MIN_SUGGESTED_PRIORITY_FEE]
+    fn lowest_suggestion_tip(&self) -> u128 {
+        let block_number = self.backend.best_number();
+        let latest_cached_block = self.fee_history_cache.lock().get(&block_number).cloned();
+
+        match latest_cached_block {
+            Some(block) => block.rewards.iter().copied().min(),
+            None => self.fee_history_cache.lock().values().flat_map(|b| b.rewards.clone()).min(),
+        }
+        .map(|fee| fee.max(MIN_SUGGESTED_PRIORITY_FEE))
+        .unwrap_or(MIN_SUGGESTED_PRIORITY_FEE)
     }
 
     /// Creates a filter object, based on filter options, to notify when the state changes (logs).
@@ -1744,7 +1761,7 @@ impl EthApi {
                 base_fee: self.backend.base_fee(),
                 chain_id: self.backend.chain_id().to::<u64>(),
                 gas_limit: self.backend.gas_limit(),
-                gas_price: self.backend.gas_price(),
+                gas_price: self.gas_price(),
             },
             fork_config: fork_config
                 .map(|fork| {
@@ -2093,8 +2110,6 @@ impl EthApi {
     }
 }
 
-// === impl EthApi utility functions ===
-
 impl EthApi {
     /// Executes the future on a new blocking task.
     async fn on_blocking_task<C, F, R>(&self, c: C) -> Result<R>
@@ -2179,7 +2194,7 @@ impl EthApi {
 
     /// Estimates the gas usage of the `request` with the state.
     ///
-    /// This will execute the [CallRequest] and find the best gas limit via binary search
+    /// This will execute the transaction request and find the best gas limit via binary search.
     fn do_estimate_gas_with_state<D>(
         &self,
         mut request: WithOtherFields<TransactionRequest>,
@@ -2427,7 +2442,7 @@ impl EthApi {
                 m.chain_id = Some(chain_id);
                 m.gas_limit = gas_limit;
                 if gas_price.is_none() {
-                    m.gas_price = self.backend.gas_price()
+                    m.gas_price = self.gas_price();
                 }
                 TypedTransactionRequest::Legacy(m)
             }
@@ -2436,7 +2451,7 @@ impl EthApi {
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if gas_price.is_none() {
-                    m.gas_price = self.backend.gas_price();
+                    m.gas_price = self.gas_price();
                 }
                 TypedTransactionRequest::EIP2930(m)
             }
@@ -2445,7 +2460,7 @@ impl EthApi {
                 m.chain_id = chain_id;
                 m.gas_limit = gas_limit;
                 if max_fee_per_gas.is_none() {
-                    m.max_fee_per_gas = self.backend.gas_price();
+                    m.max_fee_per_gas = self.gas_price();
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
@@ -2457,8 +2472,7 @@ impl EthApi {
                         m.tx.chain_id = chain_id;
                         m.tx.gas_limit = gas_limit;
                         if max_fee_per_gas.is_none() {
-                            m.tx.max_fee_per_gas =
-                                self.gas_price().unwrap_or_default().to::<u128>();
+                            m.tx.max_fee_per_gas = self.gas_price();
                         }
                         if max_fee_per_blob_gas.is_none() {
                             m.tx.max_fee_per_blob_gas = self
@@ -2627,7 +2641,7 @@ enum GasEstimationCallResult {
     EvmError(InstructionResult),
 }
 
-/// Converts the result of a call to revm EVM into a [GasEstimationCallRes].
+/// Converts the result of a call to revm EVM into a [`GasEstimationCallResult`].
 impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEstimationCallResult {
     type Error = BlockchainError;
 

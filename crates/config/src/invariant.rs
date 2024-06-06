@@ -26,7 +26,7 @@ pub struct InvariantConfig {
     #[serde(flatten)]
     pub dictionary: FuzzDictionaryConfig,
     /// The maximum number of attempts to shrink the sequence
-    pub shrink_run_limit: usize,
+    pub shrink_run_limit: u32,
     /// The maximum number of rejects via `vm.assume` which can be encountered during a single
     /// invariant run.
     pub max_assume_rejects: u32,
@@ -40,11 +40,11 @@ impl Default for InvariantConfig {
     fn default() -> Self {
         InvariantConfig {
             runs: 256,
-            depth: 15,
+            depth: 500,
             fail_on_revert: false,
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
-            shrink_run_limit: 2usize.pow(18_u32),
+            shrink_run_limit: 5000,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
             failure_persist_dir: None,
@@ -57,11 +57,11 @@ impl InvariantConfig {
     pub fn new(cache_dir: PathBuf) -> Self {
         InvariantConfig {
             runs: 256,
-            depth: 15,
+            depth: 500,
             fail_on_revert: false,
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
-            shrink_run_limit: 2usize.pow(18_u32),
+            shrink_run_limit: 5000,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
             failure_persist_dir: Some(cache_dir),
@@ -102,6 +102,7 @@ impl InlineConfigParser for InvariantConfig {
                 "failure-persist-dir" => {
                     conf_clone.failure_persist_dir = Some(PathBuf::from(value))
                 }
+                "shrink-run-limit" => conf_clone.shrink_run_limit = parse_config_u32(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key.to_string()))?,
             }
         }

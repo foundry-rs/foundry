@@ -1,4 +1,9 @@
+//! # foundry-script
+//!
+//! Smart contract scripting.
+
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -44,13 +49,14 @@ use foundry_evm::{
 };
 use foundry_wallets::MultiWalletOpts;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 use yansi::Paint;
 
 mod broadcast;
 mod build;
 mod execute;
 mod multi_sequence;
+mod progress;
 mod providers;
 mod receipts;
 mod runner;
@@ -195,8 +201,6 @@ pub struct ScriptArgs {
     #[command(flatten)]
     pub retry: RetryArgs,
 }
-
-// === impl ScriptArgs ===
 
 impl ScriptArgs {
     async fn preprocess(self) -> Result<PreprocessedState> {
@@ -591,7 +595,7 @@ impl ScriptConfig {
                         CheatsConfig::new(
                             &self.config,
                             self.evm_opts.clone(),
-                            Some(Arc::new(known_contracts)),
+                            Some(known_contracts),
                             Some(script_wallets),
                             Some(target.version),
                         )

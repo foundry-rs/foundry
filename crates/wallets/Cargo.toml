@@ -9,11 +9,15 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
+foundry-config.workspace = true
+
 alloy-primitives.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
 alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
-alloy-signer-aws = { workspace = true, features = ["eip712"] }
 alloy-signer-ledger = { workspace = true, features = ["eip712"] }
 alloy-signer-trezor.workspace = true
 alloy-network.workspace = true
@@ -21,18 +25,16 @@ alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
 alloy-dyn-abi.workspace = true
 
-aws-sdk-kms = { version = "1", default-features = false }
-aws-config = "1"
-
-foundry-config.workspace = true
-foundry-common.workspace = true
+# aws-kms
+alloy-signer-aws = { workspace = true, features = ["eip712"], optional = true }
+aws-config = { version = "1", optional = true } # default-features are necessary
+aws-sdk-kms = { version = "1", default-features = false, optional = true }
 
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 derive_builder = "0.20.0"
 eyre.workspace = true
 hex = { workspace = true, features = ["serde"] }
-itertools.workspace = true
 rpassword = "7"
 serde.workspace = true
 thiserror = "1"
@@ -43,4 +45,5 @@ tokio = { workspace = true, features = ["macros"] }
 
 [features]
 default = ["rustls"]
-rustls = ["aws-sdk-kms/rustls"]
+rustls = ["aws-sdk-kms?/rustls"]
+aws-kms = ["dep:alloy-signer-aws", "dep:aws-config", "dep:aws-sdk-kms"]

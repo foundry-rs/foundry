@@ -6373,6 +6373,26 @@
     },
     {
       "func": {
+        "id": "promptSecretUint",
+        "description": "Prompts the user for hidden uint256 in the terminal (usually pk).",
+        "declaration": "function promptSecretUint(string calldata promptText) external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "promptSecretUint(string)",
+        "selector": "0x69ca02b7",
+        "selectorBytes": [
+          105,
+          202,
+          2,
+          183
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "promptUint",
         "description": "Prompts the user for uint256 in the terminal.",
         "declaration": "function promptUint(string calldata promptText) external returns (uint256);",
@@ -6388,6 +6408,66 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomAddress",
+        "description": "Returns a random `address`.",
+        "declaration": "function randomAddress() external returns (address);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "randomAddress()",
+        "selector": "0xd5bee9f5",
+        "selectorBytes": [
+          213,
+          190,
+          233,
+          245
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomUint_0",
+        "description": "Returns a random uint256 value.",
+        "declaration": "function randomUint() external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "randomUint()",
+        "selector": "0x25124730",
+        "selectorBytes": [
+          37,
+          18,
+          71,
+          48
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomUint_1",
+        "description": "Returns random uin256 value between the provided range (min..=max).",
+        "declaration": "function randomUint(uint256 min, uint256 max) external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "randomUint(uint256,uint256)",
+        "selector": "0xd61b051b",
+        "selectorBytes": [
+          214,
+          27,
+          5,
+          27
+        ]
+      },
+      "group": "utilities",
       "status": "stable",
       "safety": "safe"
     },

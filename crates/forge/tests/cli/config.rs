@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, U256};
 use foundry_cli::utils as forge_utils;
 use foundry_compilers::{
     artifacts::{BytecodeHash, OptimizerDetails, RevertStrings, YulDetails},
-    compilers::{solc::SolcVersionManager, CompilerVersionManager},
+    Solc,
 };
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
@@ -43,6 +43,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
         solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
+        vyper: Some(PathBuf::from("custom-vyper")),
         auto_detect_solc: false,
         auto_detect_remappings: true,
         offline: true,
@@ -131,7 +132,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         doc: Default::default(),
         fs_permissions: Default::default(),
         labels: Default::default(),
-        cancun: true,
         prague: true,
         isolate: true,
         unchecked_cheatcode_artifacts: false,
@@ -364,13 +364,10 @@ contract Foo {}
 
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
-    assert!(cmd
-        .stderr_lossy()
-        .contains(r#""this/solc/does/not/exist": No such file or directory"#));
+    assert!(cmd.stderr_lossy().contains("`solc` this/solc/does/not/exist does not exist"));
 
     // `OTHER_SOLC_VERSION` was installed in previous step, so we can use the path to this directly
-    let local_solc =
-        SolcVersionManager::default().get_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
+    let local_solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
     cmd.forge_fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
     let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));
@@ -450,7 +447,6 @@ forgetest!(can_set_gas_price, |prj, cmd| {
 forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
-    dbg!(&remappings);
     similar_asserts::assert_eq!(
         remappings,
         vec![

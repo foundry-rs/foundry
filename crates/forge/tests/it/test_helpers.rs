@@ -39,9 +39,9 @@ pub enum ForgeTestProfile {
 impl fmt::Display for ForgeTestProfile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ForgeTestProfile::Default => write!(f, "default"),
-            ForgeTestProfile::Cancun => write!(f, "cancun"),
-            ForgeTestProfile::MultiVersion => write!(f, "multi-version"),
+            Self::Default => write!(f, "default"),
+            Self::Cancun => write!(f, "cancun"),
+            Self::MultiVersion => write!(f, "multi-version"),
         }
     }
 }
@@ -104,7 +104,7 @@ impl ForgeTestProfile {
                     max_fuzz_dictionary_addresses: 10_000,
                     max_fuzz_dictionary_values: 10_000,
                 },
-                shrink_run_limit: 2usize.pow(18u32),
+                shrink_run_limit: 5000,
                 max_assume_rejects: 65536,
                 gas_report_samples: 256,
                 failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),

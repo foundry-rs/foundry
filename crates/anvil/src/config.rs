@@ -350,8 +350,6 @@ Genesis Timestamp
     }
 }
 
-// === impl NodeConfig ===
-
 impl NodeConfig {
     /// Returns a new config intended to be used in tests, which does not print and binds to a
     /// random, free port by setting it to `0`
@@ -953,9 +951,9 @@ impl NodeConfig {
     }
 
     /// Configures everything related to forking based on the passed `eth_rpc_url`:
-    ///  - returning a tuple of a [ForkedDatabase](ForkedDatabase) wrapped in an [Arc](Arc)
-    ///    [RwLock](tokio::sync::RwLock) and [ClientFork](ClientFork) wrapped in an [Option](Option)
-    ///    which can be used in a [Backend](mem::Backend) to fork from.
+    ///  - returning a tuple of a [ForkedDatabase] wrapped in an [Arc] [RwLock](tokio::sync::RwLock)
+    ///    and [ClientFork] wrapped in an [Option] which can be used in a [Backend](mem::Backend) to
+    ///    fork from.
     ///  - modifying some parameters of the passed `env`
     ///  - mutating some members of `self`
     pub async fn setup_fork_db(
@@ -975,9 +973,8 @@ impl NodeConfig {
     }
 
     /// Configures everything related to forking based on the passed `eth_rpc_url`:
-    ///  - returning a tuple of a [ForkedDatabase](ForkedDatabase) and
-    ///    [ClientForkConfig](ClientForkConfig) which can be used to build a
-    ///    [ClientFork](ClientFork) to fork from.
+    ///  - returning a tuple of a [ForkedDatabase] and [ClientForkConfig] which can be used to build
+    ///    a [ClientFork] to fork from.
     ///  - modifying some parameters of the passed `env`
     ///  - mutating some members of `self`
     pub async fn setup_fork_db_config(
@@ -1045,7 +1042,7 @@ latest block number: {latest_block}"
                 // the block, and the block number is less than equal the latest block, then
                 // the user is forking from a non-archive node with an older block number.
                 if fork_block_number <= latest_block {
-                    message.push_str(&format!("\n{}", NON_ARCHIVE_NODE_WARNING));
+                    message.push_str(&format!("\n{NON_ARCHIVE_NODE_WARNING}"));
                 }
                 panic!("{}", message);
             }
@@ -1178,8 +1175,6 @@ pub struct PruneStateHistoryConfig {
     pub enabled: bool,
     pub max_memory_history: Option<usize>,
 }
-
-// === impl PruneStateHistoryConfig ===
 
 impl PruneStateHistoryConfig {
     /// Returns `true` if writing state history is supported

@@ -10,12 +10,19 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "cast"
 path = "bin/main.rs"
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
+vergen = { workspace = true, default-features = false, features = [
+    "build",
+    "git",
+    "gitcl",
+] }
 
 [dependencies]
 # lib
@@ -48,12 +55,12 @@ eyre.workspace = true
 futures = "0.3"
 hex.workspace = true
 rand.workspace = true
-rayon = "1"
+rayon.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 
-# aws
-aws-sdk-kms = { version = "1", default-features = false }
+# aws-kms
+aws-sdk-kms = { version = "1", default-features = false, optional = true }
 
 # bin
 foundry-cli.workspace = true
@@ -83,11 +90,12 @@ async-trait = "0.1"
 criterion = "0.5"
 
 [features]
-default = ["rustls"]
+default = ["rustls", "jemalloc"]
 rustls = ["foundry-cli/rustls", "foundry-wallets/rustls"]
 openssl = ["foundry-cli/openssl"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
+aws-kms = ["foundry-wallets/aws-kms", "dep:aws-sdk-kms"]
 
 [[bench]]
 name = "vanity"

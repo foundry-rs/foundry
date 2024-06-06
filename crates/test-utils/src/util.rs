@@ -3,9 +3,10 @@ use eyre::{Result, WrapErr};
 use foundry_compilers::{
     artifacts::Settings,
     cache::CompilerCache,
+    compilers::multi::MultiCompiler,
     error::Result as SolcResult,
     project_util::{copy_dir, TempProject},
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
@@ -198,6 +199,7 @@ impl ExtTester {
             test_cmd.env("FOUNDRY_ETH_RPC_URL", crate::rpc::next_http_archive_rpc_endpoint());
             test_cmd.env("FOUNDRY_FORK_BLOCK_NUMBER", fork_block.to_string());
         }
+        test_cmd.env("FOUNDRY_INVARIANT_DEPTH", "15");
 
         test_cmd.assert_non_empty_stdout();
     }
@@ -408,7 +410,7 @@ pub struct TestProject<T: ArtifactOutput = ConfigurableArtifacts> {
     /// The directory in which this test executable is running.
     exe_root: PathBuf,
     /// The project in which the test should run.
-    inner: Arc<TempProject<Solc, T>>,
+    inner: Arc<TempProject<MultiCompiler, T>>,
 }
 
 impl TestProject {
@@ -731,18 +733,18 @@ impl TestCommand {
     }
 
     /// Replaces the underlying command.
-    pub fn set_cmd(&mut self, cmd: Command) -> &mut TestCommand {
+    pub fn set_cmd(&mut self, cmd: Command) -> &mut Self {
         self.cmd = cmd;
         self
     }
 
     /// Resets the command to the default `forge` command.
-    pub fn forge_fuse(&mut self) -> &mut TestCommand {
+    pub fn forge_fuse(&mut self) -> &mut Self {
         self.set_cmd(self.project.forge_bin())
     }
 
     /// Resets the command to the default `cast` command.
-    pub fn cast_fuse(&mut self) -> &mut TestCommand {
+    pub fn cast_fuse(&mut self) -> &mut Self {
         self.set_cmd(self.project.cast_bin())
     }
 
@@ -756,13 +758,13 @@ impl TestCommand {
     }
 
     /// Add an argument to pass to the command.
-    pub fn arg<A: AsRef<OsStr>>(&mut self, arg: A) -> &mut TestCommand {
+    pub fn arg<A: AsRef<OsStr>>(&mut self, arg: A) -> &mut Self {
         self.cmd.arg(arg);
         self
     }
 
     /// Add any number of arguments to the command.
-    pub fn args<I, A>(&mut self, args: I) -> &mut TestCommand
+    pub fn args<I, A>(&mut self, args: I) -> &mut Self
     where
         I: IntoIterator<Item = A>,
         A: AsRef<OsStr>,
@@ -771,13 +773,13 @@ impl TestCommand {
         self
     }
 
-    pub fn stdin(&mut self, fun: impl FnOnce(ChildStdin) + 'static) -> &mut TestCommand {
+    pub fn stdin(&mut self, fun: impl FnOnce(ChildStdin) + 'static) -> &mut Self {
         self.stdin_fun = Some(Box::new(fun));
         self
     }
 
     /// Convenience function to add `--root project.root()` argument
-    pub fn root_arg(&mut self) -> &mut TestCommand {
+    pub fn root_arg(&mut self) -> &mut Self {
         let root = self.project.root().to_path_buf();
         self.arg("--root").arg(root)
     }
@@ -807,7 +809,7 @@ impl TestCommand {
     /// Note that this does not need to be called normally, since the creation
     /// of this TestCommand causes its working directory to be set to the
     /// test's directory automatically.
-    pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut TestCommand {
+    pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
         self.cmd.current_dir(dir);
         self
     }

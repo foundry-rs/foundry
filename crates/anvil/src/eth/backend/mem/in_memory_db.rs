@@ -94,7 +94,7 @@ impl Db for MemDb {
     }
 
     fn current_state(&self) -> StateDb {
-        StateDb::new(MemDb { inner: self.inner.clone(), ..Default::default() })
+        StateDb::new(Self { inner: self.inner.clone(), ..Default::default() })
     }
 }
 

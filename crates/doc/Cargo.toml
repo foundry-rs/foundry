@@ -10,6 +10,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 forge-fmt.workspace = true
 foundry-common.workspace = true
@@ -24,7 +27,7 @@ eyre.workspace = true
 itertools.workspace = true
 mdbook = { version = "0.4", default-features = false, features = ["search"] }
 once_cell = "1"
-rayon = "1"
+rayon.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 solang-parser.workspace = true

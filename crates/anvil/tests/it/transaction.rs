@@ -515,7 +515,7 @@ async fn call_past_state() {
     let value = contract.getValue().call().await.unwrap();
     assert_eq!(value._0, "initial value");
 
-    let gas_price = api.gas_price().unwrap().to::<u128>();
+    let gas_price = api.gas_price();
     let set_tx = contract.setValue("hi".to_string()).gas_price(gas_price + 1);
 
     let _receipt = set_tx.send().await.unwrap().get_receipt().await.unwrap();
@@ -1076,8 +1076,7 @@ async fn test_estimate_gas() {
     let error_message = error_result.unwrap_err().to_string();
     assert!(
         error_message.contains("Insufficient funds for gas * price + value"),
-        "Error message did not match expected: {}",
-        error_message
+        "Error message did not match expected: {error_message}"
     );
 
     // Setup state override to simulate sufficient funds for the recipient.
@@ -1136,7 +1135,7 @@ async fn test_reject_eip1559_pre_london() {
     let provider = handle.http_provider();
 
     let gas_limit = api.gas_limit().to::<u128>();
-    let gas_price = api.gas_price().unwrap().to::<u128>();
+    let gas_price = api.gas_price();
 
     let unsupported_call_builder =
         Greeter::deploy_builder(provider.clone(), "Hello World!".to_string());

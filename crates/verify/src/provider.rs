@@ -8,8 +8,8 @@ use eyre::{OptionExt, Result};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     artifacts::{output_selection::OutputSelection, Metadata, Source},
-    compilers::{solc::SolcVersionManager, CompilerVersionManager},
-    CompilerConfig, Graph, Project,
+    compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler, CompilerSettings},
+    Graph, Project, Solc,
 };
 use foundry_config::Config;
 use semver::Version;
@@ -35,10 +35,8 @@ impl VerificationContext {
         let mut project = config.project()?;
         project.no_artifacts = true;
 
-        // Set project's compiler to always use resolved version.
-        let vm = SolcVersionManager::default();
-        let solc = vm.get_or_install(&compiler_version)?;
-        project.compiler_config = CompilerConfig::Specific(solc);
+        let solc = Solc::find_or_install(&compiler_version)?;
+        project.compiler.solc = SolcCompiler::Specific(solc);
 
         Ok(Self { config, project, target_name, target_path, compiler_version })
     }
@@ -46,8 +44,9 @@ impl VerificationContext {
     /// Compiles target contract requesting only ABI and returns it.
     pub fn get_target_abi(&self) -> Result<JsonAbi> {
         let mut project = self.project.clone();
-        project.settings.output_selection =
-            OutputSelection::common_output_selection(["abi".to_string()]);
+        project.settings.update_output_selection(|selection| {
+            *selection = OutputSelection::common_output_selection(["abi".to_string()])
+        });
 
         let output = ProjectCompiler::new()
             .quiet(true)
@@ -64,8 +63,9 @@ impl VerificationContext {
     /// Compiles target file requesting only metadata and returns it.
     pub fn get_target_metadata(&self) -> Result<Metadata> {
         let mut project = self.project.clone();
-        project.settings.output_selection =
-            OutputSelection::common_output_selection(["metadata".to_string()]);
+        project.settings.update_output_selection(|selection| {
+            *selection = OutputSelection::common_output_selection(["metadata".to_string()]);
+        });
 
         let output = ProjectCompiler::new()
             .quiet(true)
@@ -83,7 +83,8 @@ impl VerificationContext {
     pub fn get_target_imports(&self) -> Result<Vec<PathBuf>> {
         let mut sources = self.project.paths.read_input_files()?;
         sources.insert(self.target_path.clone(), Source::read(&self.target_path)?);
-        let graph = Graph::resolve_sources(&self.project.paths, sources)?;
+        let graph =
+            Graph::<MultiCompilerParsedSource>::resolve_sources(&self.project.paths, sources)?;
 
         Ok(graph.imports(&self.target_path).into_iter().cloned().collect())
     }
@@ -117,10 +118,10 @@ impl FromStr for VerificationProviderType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "e" | "etherscan" => Ok(VerificationProviderType::Etherscan),
-            "s" | "sourcify" => Ok(VerificationProviderType::Sourcify),
-            "b" | "blockscout" => Ok(VerificationProviderType::Blockscout),
-            "o" | "oklink" => Ok(VerificationProviderType::Oklink),
+            "e" | "etherscan" => Ok(Self::Etherscan),
+            "s" | "sourcify" => Ok(Self::Sourcify),
+            "b" | "blockscout" => Ok(Self::Blockscout),
+            "o" | "oklink" => Ok(Self::Oklink),
             _ => Err(format!("Unknown provider: {s}")),
         }
     }
@@ -129,16 +130,16 @@ impl FromStr for VerificationProviderType {
 impl fmt::Display for VerificationProviderType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VerificationProviderType::Etherscan => {
+            Self::Etherscan => {
                 write!(f, "etherscan")?;
             }
-            VerificationProviderType::Sourcify => {
+            Self::Sourcify => {
                 write!(f, "sourcify")?;
             }
-            VerificationProviderType::Blockscout => {
+            Self::Blockscout => {
                 write!(f, "blockscout")?;
             }
-            VerificationProviderType::Oklink => {
+            Self::Oklink => {
                 write!(f, "oklink")?;
             }
         };
@@ -159,19 +160,15 @@ impl VerificationProviderType {
     /// Returns the corresponding `VerificationProvider` for the key
     pub fn client(&self, key: &Option<String>) -> Result<Box<dyn VerificationProvider>> {
         match self {
-            VerificationProviderType::Etherscan => {
+            Self::Etherscan => {
                 if key.as_ref().map_or(true, |key| key.is_empty()) {
                     eyre::bail!("ETHERSCAN_API_KEY must be set")
                 }
                 Ok(Box::<EtherscanVerificationProvider>::default())
             }
-            VerificationProviderType::Sourcify => {
-                Ok(Box::<SourcifyVerificationProvider>::default())
-            }
-            VerificationProviderType::Blockscout => {
-                Ok(Box::<EtherscanVerificationProvider>::default())
-            }
-            VerificationProviderType::Oklink => Ok(Box::<EtherscanVerificationProvider>::default()),
+            Self::Sourcify => Ok(Box::<SourcifyVerificationProvider>::default()),
+            Self::Blockscout => Ok(Box::<EtherscanVerificationProvider>::default()),
+            Self::Oklink => Ok(Box::<EtherscanVerificationProvider>::default()),
         }
     }
 }

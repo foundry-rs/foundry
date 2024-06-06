@@ -4,9 +4,11 @@ use crate::{
     config::*,
     test_helpers::{RE_PATH_SEPARATOR, TEST_DATA_DEFAULT},
 };
+use alloy_chains::Chain;
 use forge::result::SuiteResult;
-use foundry_config::{fs_permissions::PathPermission, FsPermissions};
+use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_test_utils::Filter;
+use std::fs;
 
 /// Executes reverting fork test
 #[tokio::test(flavor = "multi_thread")]
@@ -95,4 +97,33 @@ async fn test_create_same_fork() {
     let runner = TEST_DATA_DEFAULT.runner();
     let filter = Filter::new(".*", ".*", &format!(".*fork{RE_PATH_SEPARATOR}ForkSame"));
     TestConfig::with_filter(runner, filter).run().await;
+}
+
+/// Test that `no_storage_caching` config is properly applied
+#[tokio::test(flavor = "multi_thread")]
+async fn test_storage_caching_config() {
+    // no_storage_caching set to true: storage should not be cached
+    let mut config = TEST_DATA_DEFAULT.config.clone();
+    config.no_storage_caching = true;
+    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let filter =
+        Filter::new("testStorageCaching", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
+            .exclude_tests(".*Revert");
+    TestConfig::with_filter(runner, filter).run().await;
+    let cache_dir = Config::foundry_block_cache_dir(Chain::mainnet(), 19800000);
+    assert!(!cache_dir.unwrap().exists());
+
+    // no_storage_caching set to false: storage should be cached
+    let mut config = TEST_DATA_DEFAULT.config.clone();
+    config.no_storage_caching = false;
+    let runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let filter =
+        Filter::new("testStorageCaching", ".*", &format!(".*cheats{RE_PATH_SEPARATOR}Fork"))
+            .exclude_tests(".*Revert");
+    TestConfig::with_filter(runner, filter).run().await;
+    let cache_dir = Config::foundry_block_cache_dir(Chain::mainnet(), 19800000).unwrap();
+    assert!(cache_dir.exists());
+
+    // cleanup cached storage so subsequent tests does not fail
+    let _ = fs::remove_file(cache_dir);
 }

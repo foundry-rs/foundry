@@ -1,4 +1,5 @@
-//! In memory blockchain backend
+//! In-memory blockchain backend.
+
 use self::state::trie_storage;
 use crate::{
     config::PruneStateHistoryConfig,
@@ -18,7 +19,7 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
-        fees::{FeeDetails, FeeManager},
+        fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         pool::transactions::PoolTransaction,
         util::get_precompiles_for,
@@ -44,7 +45,7 @@ use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
 };
-use alloy_trie::{HashBuilder, Nibbles};
+use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::{
     eth::{
         block::{Block, BlockInfo},
@@ -115,8 +116,8 @@ pub enum BlockRequest {
 impl BlockRequest {
     pub fn block_number(&self) -> BlockNumber {
         match *self {
-            BlockRequest::Pending(_) => BlockNumber::Pending,
-            BlockRequest::Number(n) => BlockNumber::Number(n),
+            Self::Pending(_) => BlockNumber::Pending,
+            Self::Number(n) => BlockNumber::Number(n),
         }
     }
 }
@@ -130,7 +131,7 @@ pub struct Backend {
     /// the evm during its execution.
     ///
     /// At time of writing, there are two different types of `Db`:
-    ///   - [`MemDb`](crate::mem::MemDb): everything is stored in memory
+    ///   - [`MemDb`](crate::mem::in_memory_db::MemDb): everything is stored in memory
     ///   - [`ForkDb`](crate::mem::fork_db::ForkedDatabase): forks off a remote client, missing
     ///     data is retrieved via RPC-calls
     ///
@@ -141,7 +142,7 @@ pub struct Backend {
     /// potentially blocks for some time, even taking into account the rate limits of RPC
     /// endpoints. Therefor the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
     /// need to read from it, while it's currently written to, don't block. E.g. a new block is
-    /// currently mined and a new [`Self::set_storage()`] request is being executed.
+    /// currently mined and a new [`Self::set_storage_at()`] request is being executed.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// stores all block related data in memory
     blockchain: Blockchain,
@@ -650,16 +651,6 @@ impl Backend {
         self.fees.set_base_fee(basefee)
     }
 
-    /// Returns the current gas price
-    pub fn gas_price(&self) -> u128 {
-        self.fees.gas_price()
-    }
-
-    /// Returns the suggested fee cap
-    pub fn max_priority_fee_per_gas(&self) -> u128 {
-        self.fees.max_priority_fee_per_gas()
-    }
-
     /// Sets the gas price
     pub fn set_gas_price(&self, price: u128) {
         self.fees.set_gas_price(price)
@@ -849,7 +840,7 @@ impl Backend {
 
         let db = self.db.read().await;
         let mut inspector = Inspector::default();
-        let mut evm = self.new_evm_with_inspector_ref(&*db, env, &mut inspector);
+        let mut evm = self.new_evm_with_inspector_ref(&**db, env, &mut inspector);
         let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
@@ -1149,7 +1140,9 @@ impl Backend {
             env.block.basefee = U256::from(base);
         }
 
-        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
+        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
+            self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
+        });
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         env.tx = TxEnv {
@@ -1169,7 +1162,6 @@ impl Backend {
             access_list: access_list.unwrap_or_default().flattened(),
             blob_hashes: blob_versioned_hashes.unwrap_or_default(),
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
-            ..Default::default()
         };
 
         if env.block.basefee == revm::primitives::U256::ZERO {
@@ -2226,7 +2218,7 @@ impl Backend {
             let account = db.get(&address).cloned().unwrap_or_default();
 
             let mut builder = HashBuilder::default()
-                .with_proof_retainer(vec![Nibbles::unpack(keccak256(address))]);
+                .with_proof_retainer(ProofRetainer::new(vec![Nibbles::unpack(keccak256(address))]));
 
             for (key, account) in trie_accounts(db) {
                 builder.add_leaf(key, &account);
@@ -2508,7 +2500,7 @@ pub fn transaction_build(
 pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<Bytes>> {
     let keys: Vec<_> = keys.iter().map(|key| Nibbles::unpack(keccak256(key))).collect();
 
-    let mut builder = HashBuilder::default().with_proof_retainer(keys.clone());
+    let mut builder = HashBuilder::default().with_proof_retainer(ProofRetainer::new(keys.clone()));
 
     for (key, value) in trie_storage(storage) {
         builder.add_leaf(key, &value);

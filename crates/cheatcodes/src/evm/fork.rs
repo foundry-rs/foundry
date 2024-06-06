@@ -62,6 +62,7 @@ impl Cheatcode for createSelectFork_2Call {
 impl Cheatcode for rollFork_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { blockNumber } = self;
+        persist_caller(ccx);
         ccx.ecx.db.roll_fork(
             None,
             (*blockNumber).to(),
@@ -75,6 +76,7 @@ impl Cheatcode for rollFork_0Call {
 impl Cheatcode for rollFork_1Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { txHash } = self;
+        persist_caller(ccx);
         ccx.ecx.db.roll_fork_to_transaction(
             None,
             *txHash,
@@ -88,6 +90,7 @@ impl Cheatcode for rollFork_1Call {
 impl Cheatcode for rollFork_2Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { forkId, blockNumber } = self;
+        persist_caller(ccx);
         ccx.ecx.db.roll_fork(
             Some(*forkId),
             (*blockNumber).to(),
@@ -101,6 +104,7 @@ impl Cheatcode for rollFork_2Call {
 impl Cheatcode for rollFork_3Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { forkId, txHash } = self;
+        persist_caller(ccx);
         ccx.ecx.db.roll_fork_to_transaction(
             Some(*forkId),
             *txHash,
@@ -114,6 +118,7 @@ impl Cheatcode for rollFork_3Call {
 impl Cheatcode for selectForkCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { forkId } = self;
+        persist_caller(ccx);
         check_broadcast(ccx.state)?;
 
         ccx.ecx.db.select_fork(*forkId, &mut ccx.ecx.env, &mut ccx.ecx.journaled_state)?;
@@ -334,11 +339,14 @@ fn create_fork_request<DB: DatabaseExt>(
     url_or_alias: &str,
     block: Option<u64>,
 ) -> Result<CreateFork> {
+    persist_caller(ccx);
+
     let url = ccx.state.config.rpc_url(url_or_alias)?;
     let mut evm_opts = ccx.state.config.evm_opts.clone();
     evm_opts.fork_block_number = block;
     let fork = CreateFork {
-        enable_caching: ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
+        enable_caching: !ccx.state.config.no_storage_caching &&
+            ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         env: (*ccx.ecx.env).clone(),
         evm_opts,
@@ -353,4 +361,13 @@ fn check_broadcast(state: &Cheatcodes) -> Result<()> {
     } else {
         Err(fmt_err!("cannot select forks during a broadcast"))
     }
+}
+
+// Helper to add the caller of fork cheat code as persistent account (in order to make sure that the
+// state of caller contract is not lost when fork changes).
+// Applies to create, select and roll forks actions.
+// https://github.com/foundry-rs/foundry/issues/8004
+#[inline]
+fn persist_caller<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) {
+    ccx.ecx.db.add_persistent_account(ccx.caller);
 }

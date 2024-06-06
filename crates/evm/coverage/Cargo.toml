@@ -10,6 +10,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-common.workspace = true
 foundry-compilers.workspace = true
@@ -21,3 +24,4 @@ revm.workspace = true
 semver = "1"
 tracing = "0.1"
 rustc-hash.workspace = true
+rayon.workspace = true

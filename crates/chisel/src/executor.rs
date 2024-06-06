@@ -91,15 +91,15 @@ impl SessionSource {
                 // Map the source location of the final statement of the `run()` function to its
                 // corresponding runtime program counter
                 let final_pc = {
-                    let offset = source_loc.start();
-                    let length = source_loc.end() - source_loc.start();
+                    let offset = source_loc.start() as u32;
+                    let length = (source_loc.end() - source_loc.start()) as u32;
                     contract
                         .get_source_map_deployed()
                         .unwrap()
                         .unwrap()
                         .into_iter()
                         .zip(InstructionIter::new(&deployed_bytecode))
-                        .filter(|(s, _)| s.offset == offset && s.length == length)
+                        .filter(|(s, _)| s.offset() == offset && s.length() == length)
                         .map(|(_, i)| i.pc)
                         .max()
                         .unwrap_or_default()
@@ -279,7 +279,7 @@ impl SessionSource {
     ///
     /// ### Takes
     ///
-    /// The final statement's program counter for the [ChiselInspector]
+    /// The final statement's program counter for the ChiselInspector
     ///
     /// ### Returns
     ///
@@ -323,17 +323,8 @@ impl SessionSource {
     }
 }
 
-/// Formats a [Token] into an inspection message
-///
-/// ### Takes
-///
-/// An owned [Token]
-///
-/// ### Returns
-///
-/// A formatted [Token] for use in inspection output.
-///
-/// TODO: Verbosity option
+/// Formats a value into an inspection message
+// TODO: Verbosity option
 fn format_token(token: DynSolValue) -> String {
     match token {
         DynSolValue::Address(a) => {
@@ -349,7 +340,7 @@ fn format_token(token: DynSolValue) -> String {
         DynSolValue::Int(i, bit_len) => {
             format!(
                 "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
-                format!("int{}", bit_len).red(),
+                format!("int{bit_len}").red(),
                 format!(
                     "0x{}",
                     format!("{i:x}")
@@ -367,7 +358,7 @@ fn format_token(token: DynSolValue) -> String {
         DynSolValue::Uint(i, bit_len) => {
             format!(
                 "Type: {}\n├ Hex: {}\n├ Hex (full word): {}\n└ Decimal: {}",
-                format!("uint{}", bit_len).red(),
+                format!("uint{bit_len}").red(),
                 format!(
                     "0x{}",
                     format!("{i:x}")
@@ -755,7 +746,7 @@ impl Type {
                     .map(|(returns, _)| map_parameters(returns))
                     .unwrap_or_default();
                 Self::Function(
-                    Box::new(Type::Custom(vec!["__fn_type__".to_string()])),
+                    Box::new(Self::Custom(vec!["__fn_type__".to_string()])),
                     params,
                     returns,
                 )
@@ -900,7 +891,7 @@ impl Type {
 
     /// Recurses over itself, appending all the idents and function arguments in the order that they
     /// are found
-    fn recurse(&self, types: &mut Vec<String>, args: &mut Option<Vec<Option<Type>>>) {
+    fn recurse(&self, types: &mut Vec<String>, args: &mut Option<Vec<Option<Self>>>) {
         match self {
             Self::Builtin(ty) => types.push(ty.to_string()),
             Self::Custom(tys) => types.extend(tys.clone()),
@@ -1167,7 +1158,7 @@ impl Type {
             .function_definitions
             .get(&function_name.name)?;
         let return_parameter = contract.as_ref().returns.first()?.to_owned().1?;
-        Type::ethabi(&return_parameter.ty, Some(intermediate)).map(|p| (contract_expr.unwrap(), p))
+        Self::ethabi(&return_parameter.ty, Some(intermediate)).map(|p| (contract_expr.unwrap(), p))
     }
 
     /// Inverts Int to Uint and viceversa.
@@ -1401,11 +1392,7 @@ impl<'a> Iterator for InstructionIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::{
-        compilers::{solc::SolcVersionManager, CompilerVersionManager},
-        error::SolcError,
-        Solc,
-    };
+    use foundry_compilers::{error::SolcError, Solc};
     use semver::Version;
     use std::sync::Mutex;
 
@@ -1690,8 +1677,7 @@ mod tests {
         for _ in 0..3 {
             let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
             if !*is_preinstalled {
-                let solc = SolcVersionManager::default()
-                    .get_or_install(&version.parse().unwrap())
+                let solc = Solc::find_or_install(&version.parse().unwrap())
                     .map(|solc| (solc.version.clone(), solc));
                 match solc {
                     Ok((v, solc)) => {
@@ -1712,9 +1698,7 @@ mod tests {
             }
         }
 
-        let solc = SolcVersionManager::default()
-            .get_or_install(&Version::new(0, 8, 19))
-            .expect("could not install solc");
+        let solc = Solc::find_or_install(&Version::new(0, 8, 19)).expect("could not install solc");
         SessionSource::new(solc, Default::default())
     }
 

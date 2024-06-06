@@ -6,15 +6,11 @@ use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     artifacts::{BytecodeObject, ContractBytecodeSome, Libraries},
-    compilers::{
-        solc::SolcVersionManager, vyper::parser::VyperParsedSource, Compiler,
-        CompilerVersionManager,
-    },
+    compilers::{solc::SolcCompiler, Compiler},
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
-    resolver::{parse::SolData, GraphEdges},
-    Artifact, ArtifactId, CompilerConfig, FileFilter, Project, ProjectCompileOutput,
-    ProjectPathsConfig, SolcConfig, SolcSparseFileFilter, SparseOutputFileFilter,
+    Artifact, ArtifactId, FileFilter, Project, ProjectBuilder, ProjectCompileOutput,
+    ProjectPathsConfig, Solc, SolcConfig, SparseOutputFileFilter,
 };
 use foundry_linking::Linker;
 use num_format::{Locale, ToFormattedString};
@@ -309,10 +305,10 @@ impl ContractSources {
         output: &ProjectCompileOutput,
         root: &Path,
         libraries: &Libraries,
-    ) -> Result<ContractSources> {
+    ) -> Result<Self> {
         let linker = Linker::new(root, output.artifact_ids().collect());
 
-        let mut sources = ContractSources::default();
+        let mut sources = Self::default();
         for (id, artifact) in output.artifact_ids() {
             if let Some(file_id) = artifact.id {
                 let abs_path = root.join(&id.source);
@@ -320,7 +316,7 @@ impl ContractSources {
                     format!("failed to read artifact source file for `{}`", id.identifier())
                 })?;
                 let linked = linker.link(&id, libraries)?;
-                let contract = compact_to_contract(linked)?;
+                let contract = compact_to_contract(linked.into_contract_bytecode())?;
                 sources.insert(&id, file_id, source_code, contract);
             } else {
                 warn!(id = id.identifier(), "source not found");
@@ -521,7 +517,10 @@ pub async fn compile_from_source(
 }
 
 /// Creates a [Project] from an Etherscan source.
-pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> Result<Project> {
+pub fn etherscan_project(
+    metadata: &Metadata,
+    target_path: impl AsRef<Path>,
+) -> Result<Project<SolcCompiler>> {
     let target_path = dunce::canonicalize(target_path.as_ref())?;
     let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
@@ -553,17 +552,16 @@ pub fn etherscan_project(metadata: &Metadata, target_path: impl AsRef<Path>) -> 
         .build_with_root(sources_path);
 
     let v = metadata.compiler_version()?;
-    let vm = SolcVersionManager::default();
-    let solc = vm.get_or_install(&v)?;
+    let solc = Solc::find_or_install(&v)?;
 
-    let compiler_config = CompilerConfig::Specific(solc);
+    let compiler = SolcCompiler::Specific(solc);
 
-    Ok(Project::builder()
+    Ok(ProjectBuilder::<SolcCompiler>::default()
         .settings(SolcConfig::builder().settings(settings).build().settings)
         .paths(paths)
         .ephemeral()
         .no_artifacts()
-        .build(compiler_config)?)
+        .build(compiler)?)
 }
 
 /// Bundles multiple `SkipBuildFilter` into a single `FileFilter`
@@ -595,22 +593,6 @@ impl FileFilter for &SkipBuildFilters {
     }
 }
 
-impl SparseOutputFileFilter<SolData> for SkipBuildFilters {
-    fn sparse_sources(&self, file: &Path, graph: &GraphEdges<SolData>) -> Vec<PathBuf> {
-        SolcSparseFileFilter::new(self).sparse_sources(file, graph)
-    }
-}
-
-impl SparseOutputFileFilter<VyperParsedSource> for SkipBuildFilters {
-    fn sparse_sources(&self, file: &Path, _graph: &GraphEdges<VyperParsedSource>) -> Vec<PathBuf> {
-        if self.is_match(file) {
-            vec![file.to_path_buf()]
-        } else {
-            vec![]
-        }
-    }
-}
-
 impl SkipBuildFilters {
     /// Creates a new `SkipBuildFilters` from multiple `SkipBuildFilter`.
     pub fn new(
@@ -636,18 +618,18 @@ pub enum SkipBuildFilter {
 impl SkipBuildFilter {
     fn new(s: &str) -> Self {
         match s {
-            "test" | "tests" => SkipBuildFilter::Tests,
-            "script" | "scripts" => SkipBuildFilter::Scripts,
-            s => SkipBuildFilter::Custom(s.to_string()),
+            "test" | "tests" => Self::Tests,
+            "script" | "scripts" => Self::Scripts,
+            s => Self::Custom(s.to_string()),
         }
     }
 
     /// Returns the pattern to match against a file
     fn file_pattern(&self) -> &str {
         match self {
-            SkipBuildFilter::Tests => ".t.sol",
-            SkipBuildFilter::Scripts => ".s.sol",
-            SkipBuildFilter::Custom(s) => s.as_str(),
+            Self::Tests => ".t.sol",
+            Self::Scripts => ".s.sol",
+            Self::Custom(s) => s.as_str(),
         }
     }
 

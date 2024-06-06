@@ -20,6 +20,7 @@ use foundry_evm_core::{
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
+use rustc_hash::FxHashMap;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 
 mod precompiles;
@@ -108,7 +109,7 @@ pub struct CallTraceDecoder {
     pub receive_contracts: Vec<Address>,
 
     /// All known functions.
-    pub functions: HashMap<Selector, Vec<Function>>,
+    pub functions: FxHashMap<Selector, Vec<Function>>,
     /// All known events.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// Revert decoder. Contains all known custom errors.
@@ -522,7 +523,7 @@ impl CallTraceDecoder {
         match func.name.as_str() {
             s if s.starts_with("env") => Some("<env var value>"),
             "createWallet" | "deriveKey" => Some("<pk>"),
-            "promptSecret" => Some("<secret>"),
+            "promptSecret" | "promptSecretUint" => Some("<secret>"),
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
             _ => None,
@@ -697,13 +698,13 @@ mod tests {
         for (function_signature, data, expected) in cheatcode_input_test_cases {
             let function = Function::parse(function_signature).unwrap();
             let result = decoder.decode_cheatcode_inputs(&function, &data);
-            assert_eq!(result, expected, "Input case failed for: {}", function_signature);
+            assert_eq!(result, expected, "Input case failed for: {function_signature}");
         }
 
         for (function_signature, expected) in cheatcode_output_test_cases {
             let function = Function::parse(function_signature).unwrap();
             let result = Some(decoder.decode_cheatcode_outputs(&function).unwrap_or_default());
-            assert_eq!(result, expected, "Output case failed for: {}", function_signature);
+            assert_eq!(result, expected, "Output case failed for: {function_signature}");
         }
     }
 }

@@ -13,10 +13,10 @@ use alloy_rpc_types_trace::parity::{Action, CreateAction, CreateOutput, TraceOut
 use itertools::Itertools;
 
 impl EthApi {
-    /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
-    /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71
+    /// Otterscan currently requires this endpoint, even though it's not part of the `ots_*`.
+    /// Ref: <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
     ///
-    /// As a faster alternative to eth_getBlockByNumber (by excluding uncle block
+    /// As a faster alternative to `eth_getBlockByNumber` (by excluding uncle block
     /// information), which is not relevant in the context of an anvil node
     pub async fn erigon_get_header_by_number(&self, number: BlockNumber) -> Result<Option<Block>> {
         node_info!("ots_getApiLevel");
@@ -24,8 +24,8 @@ impl EthApi {
         self.backend.block_by_number(number).await
     }
 
-    /// As per the latest Otterscan source code, at least version 8 is needed
-    /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/params.ts#L1C2-L1C2
+    /// As per the latest Otterscan source code, at least version 8 is needed.
+    /// Ref: <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/params.ts#L1C2-L1C2>
     pub async fn ots_get_api_level(&self) -> Result<u64> {
         node_info!("ots_getApiLevel");
 

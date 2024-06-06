@@ -1,4 +1,4 @@
-//! Implementations of [`Json`](crate::Group::Json) cheatcodes.
+//! Implementations of [`Json`](spec::Group::Json) cheatcodes.
 
 use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
@@ -251,7 +251,7 @@ impl Cheatcode for serializeBytes_1Call {
 impl Cheatcode for serializeUintToHexCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
-        let hex = format!("0x{:x}", value);
+        let hex = format!("0x{value:x}");
         serialize_json(state, objectKey, Some(valueKey), &hex)
     }
 }
@@ -445,7 +445,7 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
             if let Some(mut val) = string.strip_prefix("0x") {
                 let s;
                 if val.len() % 2 != 0 {
-                    s = format!("0{}", val);
+                    s = format!("0{val}");
                     val = &s[..];
                 }
                 let bytes = hex::decode(val)?;

@@ -2,7 +2,8 @@
 //!
 //! EVM trace identifying and decoding.
 
-#![warn(unreachable_pub, unused_crate_dependencies, rust_2018_idioms)]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -86,7 +87,7 @@ pub async fn render_trace_arena(
 
             // Display trace header
             let (trace, return_data) = render_trace(&node.trace, decoder).await?;
-            writeln!(s, "{left}{}", trace)?;
+            writeln!(s, "{left}{trace}")?;
 
             // Display logs and subcalls
             let left_prefix = format!("{child}{BRANCH}");

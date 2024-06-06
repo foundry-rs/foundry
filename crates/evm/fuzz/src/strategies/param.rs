@@ -128,33 +128,23 @@ pub fn fuzz_param_from_state(
         // Generate a bias and use it to pick samples or non-persistent values (50 / 50).
         // Use `Index` instead of `Selector` when selecting a value to avoid iterating over the
         // entire dictionary.
-        ((0..100).prop_flat_map(Just), any::<prop::sample::Index>()).prop_map(
-            move |(bias, index)| {
-                let state = state.dictionary_read();
-                let values = match bias {
-                    x if x < 50 => {
-                        if let Some(sample_values) = state.samples(param.clone()) {
-                            sample_values
-                        } else {
-                            state.values()
-                        }
-                    }
-                    _ => state.values(),
-                };
-                let index = index.index(values.len());
-                *values.iter().nth(index).unwrap()
-            },
-        )
+        any::<(bool, prop::sample::Index)>().prop_map(move |(bias, index)| {
+            let state = state.dictionary_read();
+            let values = if bias { state.samples(&param) } else { None }
+                .unwrap_or_else(|| state.values())
+                .as_slice();
+            values[index.index(values.len())]
+        })
     };
 
     // Convert the value based on the parameter type
     match *param {
-        DynSolType::Address => value()
-            .prop_map(move |value| DynSolValue::Address(Address::from_word(value.into())))
-            .boxed(),
+        DynSolType::Address => {
+            value().prop_map(move |value| DynSolValue::Address(Address::from_word(value))).boxed()
+        }
         DynSolType::Function => value()
             .prop_map(move |value| {
-                DynSolValue::Function(alloy_primitives::Function::from_word(value.into()))
+                DynSolValue::Function(alloy_primitives::Function::from_word(value))
             })
             .boxed(),
         DynSolType::FixedBytes(size @ 1..=32) => value()
@@ -172,19 +162,17 @@ pub fn fuzz_param_from_state(
             })
             .boxed(),
         DynSolType::Bytes => {
-            value().prop_map(move |value| DynSolValue::Bytes(value.into())).boxed()
+            value().prop_map(move |value| DynSolValue::Bytes(value.0.into())).boxed()
         }
         DynSolType::Int(n @ 8..=256) => match n / 8 {
             32 => value()
-                .prop_map(move |value| {
-                    DynSolValue::Int(I256::from_raw(U256::from_be_bytes(value)), 256)
-                })
+                .prop_map(move |value| DynSolValue::Int(I256::from_raw(value.into()), 256))
                 .boxed(),
             1..=31 => value()
                 .prop_map(move |value| {
                     // Generate a uintN in the correct range, then shift it to the range of intN
                     // by subtracting 2^(N-1)
-                    let uint = U256::from_be_bytes(value) % U256::from(1).wrapping_shl(n);
+                    let uint = U256::from_be_bytes(value.0) % U256::from(1).wrapping_shl(n);
                     let max_int_plus1 = U256::from(1).wrapping_shl(n - 1);
                     let num = I256::from_raw(uint.wrapping_sub(max_int_plus1));
                     DynSolValue::Int(num, n)
@@ -194,11 +182,12 @@ pub fn fuzz_param_from_state(
         },
         DynSolType::Uint(n @ 8..=256) => match n / 8 {
             32 => value()
-                .prop_map(move |value| DynSolValue::Uint(U256::from_be_bytes(value), 256))
+                .prop_map(move |value| DynSolValue::Uint(U256::from_be_bytes(value.0), 256))
                 .boxed(),
             1..=31 => value()
                 .prop_map(move |value| {
-                    DynSolValue::Uint(U256::from_be_bytes(value) % U256::from(1).wrapping_shl(n), n)
+                    let uint = U256::from_be_bytes(value.0) % U256::from(1).wrapping_shl(n);
+                    DynSolValue::Uint(uint, n)
                 })
                 .boxed(),
             _ => unreachable!(),

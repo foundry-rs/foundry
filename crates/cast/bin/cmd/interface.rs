@@ -44,14 +44,7 @@ pub struct InterfaceArgs {
 
 impl InterfaceArgs {
     pub async fn run(self) -> Result<()> {
-        let InterfaceArgs {
-            path_or_address,
-            name,
-            pragma,
-            output: output_location,
-            etherscan,
-            json,
-        } = self;
+        let Self { path_or_address, name, pragma, output: output_location, etherscan, json } = self;
         let source = if Path::new(&path_or_address).exists() {
             AbiPath::Local { path: path_or_address, name }
         } else {

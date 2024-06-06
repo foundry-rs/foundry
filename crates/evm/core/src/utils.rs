@@ -1,9 +1,8 @@
 pub use crate::ic::*;
 use crate::{constants::DEFAULT_CREATE2_DEPLOYER, InspectorExt};
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, FixedBytes, U256};
+use alloy_primitives::{Address, Selector, U256};
 use alloy_rpc_types::{Block, Transaction};
-use eyre::ContextCompat;
 use foundry_config::NamedChain;
 use revm::{
     db::WrapDatabaseRef,
@@ -17,7 +16,7 @@ use revm::{
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-pub use revm::primitives::State as StateChangeset;
+pub use revm::primitives::EvmState as StateChangeset;
 
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
@@ -61,15 +60,14 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
 }
 
 /// Given an ABI and selector, it tries to find the respective function.
-pub fn get_function(
+pub fn get_function<'a>(
     contract_name: &str,
-    selector: &FixedBytes<4>,
-    abi: &JsonAbi,
-) -> eyre::Result<Function> {
+    selector: Selector,
+    abi: &'a JsonAbi,
+) -> eyre::Result<&'a Function> {
     abi.functions()
-        .find(|func| func.selector().as_slice() == selector.as_slice())
-        .cloned()
-        .wrap_err(format!("{contract_name} does not have the selector {selector:?}"))
+        .find(|func| func.selector() == selector)
+        .ok_or_else(|| eyre::eyre!("{contract_name} does not have the selector {selector}"))
 }
 
 /// Configures the env for the transaction
@@ -235,9 +233,21 @@ where
     DB: revm::Database,
     I: InspectorExt<DB>,
 {
+    let revm::primitives::EnvWithHandlerCfg { env, handler_cfg } = env;
+
     // NOTE: We could use `revm::Evm::builder()` here, but on the current patch it has some
     // performance issues.
-    let revm::primitives::EnvWithHandlerCfg { env, handler_cfg } = env;
+    /*
+    revm::Evm::builder()
+        .with_db(db)
+        .with_env(env)
+        .with_external_context(inspector)
+        .with_handler_cfg(handler_cfg)
+        .append_handler_register(revm::inspector_handle_register)
+        .append_handler_register(create2_handler_register)
+        .build()
+    */
+
     let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);

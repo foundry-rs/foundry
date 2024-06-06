@@ -620,26 +620,26 @@ pub enum EthRequest {
 
     /// Returns the number of transactions currently pending for inclusion in the next block(s), as
     /// well as the ones that are being scheduled for future execution only.
-    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status)
+    /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status>
     #[cfg_attr(feature = "serde", serde(rename = "txpool_status", with = "empty_params"))]
     TxPoolStatus(()),
 
     /// Returns a summary of all the transactions currently pending for inclusion in the next
     /// block(s), as well as the ones that are being scheduled for future execution only.
-    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_inspect)
+    /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_inspect>
     #[cfg_attr(feature = "serde", serde(rename = "txpool_inspect", with = "empty_params"))]
     TxPoolInspect(()),
 
     /// Returns the details of all transactions currently pending for inclusion in the next
     /// block(s), as well as the ones that are being scheduled for future execution only.
-    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content)
+    /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content>
     #[cfg_attr(feature = "serde", serde(rename = "txpool_content", with = "empty_params"))]
     TxPoolContent(()),
 
     /// Otterscan's `ots_getApiLevel` endpoint
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
-    /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71
-    /// Related upstream issue: https://github.com/otterscan/otterscan/issues/1081
+    /// <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
+    /// Related upstream issue: <https://github.com/otterscan/otterscan/issues/1081>
     #[cfg_attr(feature = "serde", serde(rename = "erigon_getHeaderByNumber"))]
     ErigonGetHeaderByNumber(
         #[cfg_attr(

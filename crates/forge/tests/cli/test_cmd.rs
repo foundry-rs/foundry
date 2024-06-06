@@ -266,6 +266,7 @@ contract ContractTest is DSTest {
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.wipe_contracts();
+
     prj.add_source(
         "Contract.sol",
         r"
@@ -590,6 +591,6 @@ contract CounterTest is Test {
         let runs_split = &stderr[start_runs + 6..];
         runs_split.find(',').map(|end_runs| &runs_split[..end_runs])
     });
-    // make sure there are only 54 runs (with proptest shrinking same test results in 292 runs)
-    assert_eq!(runs.unwrap().parse::<usize>().unwrap(), 54);
+    // make sure there are only 61 runs (with proptest shrinking same test results in 298 runs)
+    assert_eq!(runs.unwrap().parse::<usize>().unwrap(), 61);
 });

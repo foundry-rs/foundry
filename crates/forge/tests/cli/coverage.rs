@@ -70,11 +70,9 @@ contract AContractTest is DSTest {
     let lcov_data = std::fs::read_to_string(lcov_info).unwrap();
     // AContract.init must be hit at least once
     let re = Regex::new(r"FNDA:(\d+),AContract\.init").unwrap();
-    assert!(lcov_data.lines().any(|line| re.captures(line).map_or(false, |caps| caps
-        .get(1)
-        .unwrap()
-        .as_str()
-        .parse::<i32>()
-        .unwrap() >
-        0)));
+    let valid_line = |line| {
+        re.captures(line)
+            .map_or(false, |caps| caps.get(1).unwrap().as_str().parse::<i32>().unwrap() > 0)
+    };
+    assert!(lcov_data.lines().any(valid_line), "{lcov_data}");
 });

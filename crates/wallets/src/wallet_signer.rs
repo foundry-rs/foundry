@@ -4,15 +4,15 @@ use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, ChainId, B256};
 use alloy_signer::{Signature, Signer};
-use alloy_signer_aws::AwsSigner;
 use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
 use alloy_signer_trezor::{HDPath as TrezorHDPath, TrezorSigner};
 use alloy_signer_wallet::{coins_bip39::English, LocalWallet, MnemonicBuilder};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
-use aws_config::BehaviorVersion;
-use aws_sdk_kms::Client as AwsClient;
 use std::path::PathBuf;
+
+#[cfg(feature = "aws-kms")]
+use {alloy_signer_aws::AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Client as AwsClient};
 
 pub type Result<T> = std::result::Result<T, WalletSignerError>;
 
@@ -26,6 +26,7 @@ pub enum WalletSigner {
     /// Wrapper around Trezor signer.
     Trezor(TrezorSigner),
     /// Wrapper around AWS KMS signer.
+    #[cfg(feature = "aws-kms")]
     Aws(AwsSigner),
 }
 
@@ -41,15 +42,23 @@ impl WalletSigner {
     }
 
     pub async fn from_aws(key_id: String) -> Result<Self> {
-        let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-        let client = AwsClient::new(&config);
+        #[cfg(feature = "aws-kms")]
+        {
+            let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+            let client = AwsClient::new(&config);
 
-        Ok(Self::Aws(AwsSigner::new(client, key_id, None).await?))
+            Ok(Self::Aws(AwsSigner::new(client, key_id, None).await?))
+        }
+
+        #[cfg(not(feature = "aws-kms"))]
+        {
+            let _ = key_id;
+            Err(WalletSignerError::aws_unsupported())
+        }
     }
 
-    pub fn from_private_key(private_key: impl AsRef<[u8]>) -> Result<Self> {
-        let wallet = LocalWallet::from_bytes(&B256::from_slice(private_key.as_ref()))?;
-        Ok(Self::Local(wallet))
+    pub fn from_private_key(private_key: &B256) -> Result<Self> {
+        Ok(Self::Local(LocalWallet::from_bytes(private_key)?))
     }
 
     /// Returns a list of addresses available to use with current signer
@@ -61,10 +70,10 @@ impl WalletSigner {
     pub async fn available_senders(&self, max: usize) -> Result<Vec<Address>> {
         let mut senders = Vec::new();
         match self {
-            WalletSigner::Local(local) => {
+            Self::Local(local) => {
                 senders.push(local.address());
             }
-            WalletSigner::Ledger(ledger) => {
+            Self::Ledger(ledger) => {
                 for i in 0..max {
                     if let Ok(address) =
                         ledger.get_address_with_path(&LedgerHDPath::LedgerLive(i)).await
@@ -80,7 +89,7 @@ impl WalletSigner {
                     }
                 }
             }
-            WalletSigner::Trezor(trezor) => {
+            Self::Trezor(trezor) => {
                 for i in 0..max {
                     if let Ok(address) =
                         trezor.get_address_with_path(&TrezorHDPath::TrezorLive(i)).await
@@ -89,7 +98,8 @@ impl WalletSigner {
                     }
                 }
             }
-            WalletSigner::Aws(aws) => {
+            #[cfg(feature = "aws-kms")]
+            Self::Aws(aws) => {
                 senders.push(alloy_signer::Signer::address(aws));
             }
         }
@@ -124,6 +134,7 @@ macro_rules! delegate {
             Self::Local($inner) => $e,
             Self::Ledger($inner) => $e,
             Self::Trezor($inner) => $e,
+            #[cfg(feature = "aws-kms")]
             Self::Aws($inner) => $e,
         }
     };
@@ -201,7 +212,7 @@ impl PendingSigner {
             }
             Self::Interactive => {
                 let private_key = rpassword::prompt_password("Enter private key:")?;
-                Ok(WalletSigner::from_private_key(hex::decode(private_key)?)?)
+                Ok(WalletSigner::from_private_key(&hex::FromHex::from_hex(private_key)?)?)
             }
         }
     }

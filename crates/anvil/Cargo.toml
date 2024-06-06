@@ -10,13 +10,20 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "anvil"
 path = "src/anvil.rs"
 required-features = ["cli"]
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
+vergen = { workspace = true, default-features = false, features = [
+    "build",
+    "git",
+    "gitcl",
+] }
 
 [dependencies]
 # foundry internal
@@ -31,7 +38,12 @@ foundry-evm.workspace = true
 # evm support
 bytes = "1.4.0"
 k256.workspace = true
-revm = { workspace = true, features = ["std", "serde", "memory_limit", "c-kzg"] }
+revm = { workspace = true, features = [
+    "std",
+    "serde",
+    "memory_limit",
+    "c-kzg",
+] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-contract = { workspace = true, features = ["pubsub"] }
@@ -78,7 +90,11 @@ rand = "0.8"
 eyre.workspace = true
 
 # cli
-clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }
+clap = { version = "4", features = [
+    "derive",
+    "env",
+    "wrap_help",
+], optional = true }
 clap_complete = { version = "4", optional = true }
 chrono.workspace = true
 auto_impl = "1"
@@ -101,7 +117,7 @@ similar-asserts.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [features]
-default = ["cli"]
+default = ["cli", "jemalloc"]
 cmd = ["clap", "clap_complete", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd", "fdlimit"]
 asm-keccak = ["alloy-primitives/asm-keccak"]

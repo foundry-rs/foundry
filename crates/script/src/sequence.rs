@@ -32,22 +32,22 @@ pub enum ScriptSequenceKind {
 impl ScriptSequenceKind {
     pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         match self {
-            ScriptSequenceKind::Single(sequence) => sequence.save(silent, save_ts),
-            ScriptSequenceKind::Multi(sequence) => sequence.save(silent, save_ts),
+            Self::Single(sequence) => sequence.save(silent, save_ts),
+            Self::Multi(sequence) => sequence.save(silent, save_ts),
         }
     }
 
     pub fn sequences(&self) -> &[ScriptSequence] {
         match self {
-            ScriptSequenceKind::Single(sequence) => std::slice::from_ref(sequence),
-            ScriptSequenceKind::Multi(sequence) => &sequence.deployments,
+            Self::Single(sequence) => std::slice::from_ref(sequence),
+            Self::Multi(sequence) => &sequence.deployments,
         }
     }
 
     pub fn sequences_mut(&mut self) -> &mut [ScriptSequence] {
         match self {
-            ScriptSequenceKind::Single(sequence) => std::slice::from_mut(sequence),
-            ScriptSequenceKind::Multi(sequence) => &mut sequence.deployments,
+            Self::Single(sequence) => std::slice::from_mut(sequence),
+            Self::Multi(sequence) => &mut sequence.deployments,
         }
     }
     /// Updates underlying sequence paths to not be under /dry-run directory.
@@ -58,11 +58,11 @@ impl ScriptSequenceKind {
         target: &ArtifactId,
     ) -> Result<()> {
         match self {
-            ScriptSequenceKind::Single(sequence) => {
+            Self::Single(sequence) => {
                 sequence.paths =
                     Some(ScriptSequence::get_paths(config, sig, target, sequence.chain, false)?);
             }
-            ScriptSequenceKind::Multi(sequence) => {
+            Self::Multi(sequence) => {
                 (sequence.path, sequence.sensitive_path) =
                     MultiChainSequence::get_paths(config, sig, target, false)?;
             }
@@ -114,7 +114,7 @@ pub struct SensitiveScriptSequence {
 
 impl From<ScriptSequence> for SensitiveScriptSequence {
     fn from(sequence: ScriptSequence) -> Self {
-        SensitiveScriptSequence {
+        Self {
             transactions: sequence
                 .transactions
                 .iter()
@@ -133,8 +133,7 @@ impl ScriptSequence {
         chain_id: u64,
         dry_run: bool,
     ) -> Result<Self> {
-        let (path, sensitive_path) =
-            ScriptSequence::get_paths(config, sig, target, chain_id, dry_run)?;
+        let (path, sensitive_path) = Self::get_paths(config, sig, target, chain_id, dry_run)?;
 
         let mut script_sequence: Self = foundry_compilers::utils::read_json_file(&path)
             .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
@@ -217,8 +216,8 @@ impl ScriptSequence {
     }
 
     /// Gets paths in the formats
-    /// ./broadcast/[contract_filename]/[chain_id]/[sig]-[timestamp].json and
-    /// ./cache/[contract_filename]/[chain_id]/[sig]-[timestamp].json
+    /// `./broadcast/[contract_filename]/[chain_id]/[sig]-[timestamp].json` and
+    /// `./cache/[contract_filename]/[chain_id]/[sig]-[timestamp].json`.
     pub fn get_paths(
         config: &Config,
         sig: &str,

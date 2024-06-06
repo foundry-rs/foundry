@@ -10,6 +10,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-block-explorers.workspace = true
 foundry-common.workspace = true
@@ -19,7 +22,12 @@ foundry-evm-core.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
-alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-primitives = { workspace = true, features = [
+    "serde",
+    "getrandom",
+    "arbitrary",
+    "rlp",
+] }
 alloy-sol-types.workspace = true
 revm-inspectors.workspace = true
 
@@ -32,6 +40,7 @@ serde = "1"
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing = "0.1"
 yansi.workspace = true
+rustc-hash.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
