@@ -423,11 +423,12 @@ impl VerifyBytecodeArgs {
 
             // Check if `out/directory` name matches the contract name
             if key.ends_with(name.as_str()) {
-                let artifacts: Vec<_> =
-                    value.iter().flat_map(|a| a.1.iter().map(|a_| a_)).collect();
+                // let artifacts: Vec<_> =
+                let artifacts =
+                    value.iter().flat_map(|(_, artifacts)| artifacts.iter()).collect::<Vec<_>>();
 
                 for artifact in artifacts {
-                    // Check if ABI files matches the name
+                    // Check if ABI file matches the name
                     if !artifact.file.ends_with(name.replace(".sol", ".json")) {
                         continue;
                     }
