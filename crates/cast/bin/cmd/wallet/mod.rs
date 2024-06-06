@@ -299,7 +299,7 @@ impl WalletSubcommands {
                 if address == recovered_address {
                     println!("Validation succeeded. Address {address} signed this message.");
                 } else {
-                    println!("Validation failed. Address {address} did not sign this message.");
+                    eyre::bail!("Validation failed. Address {address} did not sign this message.");
                 }
             }
             Self::Import { account_name, keystore_dir, unsafe_password, raw_wallet_options } => {
@@ -428,11 +428,9 @@ flag to set your key via:
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use alloy_primitives::address;
-
     use super::*;
+    use alloy_primitives::address;
+    use std::str::FromStr;
 
     #[test]
     fn can_parse_wallet_sign_message() {

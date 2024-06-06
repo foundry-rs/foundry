@@ -961,7 +961,7 @@ impl TestCommand {
         fs::write(format!("{}.stderr", name.display()), &output.stderr).unwrap();
     }
 
-    /// Runs the command and asserts that it resulted in an error exit code.
+    /// Runs the command and asserts that it **failed** (resulted in an error exit code).
     #[track_caller]
     pub fn assert_err(&mut self) {
         let out = self.execute();
@@ -970,7 +970,7 @@ impl TestCommand {
         }
     }
 
-    /// Runs the command and asserts that something was printed to stderr.
+    /// Runs the command and asserts that it **failed** and something was printed to stderr.
     #[track_caller]
     pub fn assert_non_empty_stderr(&mut self) {
         let out = self.execute();
@@ -979,7 +979,7 @@ impl TestCommand {
         }
     }
 
-    /// Runs the command and asserts that something was printed to stdout.
+    /// Runs the command and asserts that it **succeeded** and something was printed to stdout.
     #[track_caller]
     pub fn assert_non_empty_stdout(&mut self) {
         let out = self.execute();
@@ -988,7 +988,7 @@ impl TestCommand {
         }
     }
 
-    /// Runs the command and asserts that nothing was printed to stdout.
+    /// Runs the command and asserts that it **failed** nothing was printed to stdout.
     #[track_caller]
     pub fn assert_empty_stdout(&mut self) {
         let out = self.execute();

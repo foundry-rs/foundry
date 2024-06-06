@@ -77,15 +77,22 @@ casttest!(wallet_address_keystore_with_password_file, |_prj, cmd| {
 
 // tests that `cast wallet sign message` outputs the expected signature
 casttest!(wallet_sign_message_utf8_data, |_prj, cmd| {
-    cmd.args([
-        "wallet",
-        "sign",
-        "--private-key",
-        "0x0000000000000000000000000000000000000000000000000000000000000001",
-        "test",
-    ]);
+    let pk = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    let address = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf";
+    let msg = "test";
+    let expected = "0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c";
+
+    cmd.args(["wallet", "sign", "--private-key", pk, msg]);
     let output = cmd.stdout_lossy();
-    assert_eq!(output.trim(), "0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c");
+    assert_eq!(output.trim(), expected);
+
+    // Success.
+    cmd.cast_fuse()
+        .args(["wallet", "verify", "-a", address, msg, expected])
+        .assert_non_empty_stdout();
+
+    // Fail.
+    cmd.cast_fuse().args(["wallet", "verify", "-a", address, "other msg", expected]).assert_err();
 });
 
 // tests that `cast wallet sign message` outputs the expected signature, given a 0x-prefixed data
