@@ -6,7 +6,6 @@ use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
 use indexmap::IndexSet;
-use itertools::Itertools;
 use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
 use revm::{
     db::{CacheDB, DatabaseRef, DbAccount},
@@ -365,22 +364,10 @@ impl FuzzDictionary {
         &self.addresses
     }
 
+    /// Revert values and addresses collected during the run by truncating to initial db len.
     pub fn revert(&mut self) {
-        // Revert values and addresses collected during the run by truncating to initial db values.
-        // Generate range of indexes from last db index to end and remove them in reverse order.
-        let mut new_values_range =
-            (self.db_state_values - 1..self.state_values.len() - 1).collect_vec();
-        new_values_range.reverse();
-        for new_value in new_values_range {
-            self.state_values.swap_remove_index(new_value);
-        }
-
-        let mut new_addresses_range =
-            (self.db_addresses - 1..self.addresses.len() - 1).collect_vec();
-        new_addresses_range.reverse();
-        for new_address in new_addresses_range {
-            self.addresses.swap_remove_index(new_address);
-        }
+        self.state_values.truncate(self.db_state_values);
+        self.addresses.truncate(self.db_addresses);
     }
 
     pub fn log_stats(&self) {
