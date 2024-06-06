@@ -292,7 +292,7 @@ test_repro!(6538);
 
 // https://github.com/foundry-rs/foundry/issues/6554
 test_repro!(6554; |config| {
-    let path = config.runner.config.__root.0.join("out/default/Issue6554.t.sol");
+    let path = config.runner.config.root.0.join("out/default/Issue6554.t.sol");
 
     let mut prj_config = Config::clone(&config.runner.config);
     prj_config.fs_permissions.add(PathPermission::read_write(path));

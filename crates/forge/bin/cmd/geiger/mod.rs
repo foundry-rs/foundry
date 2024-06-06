@@ -98,7 +98,7 @@ impl GeigerArgs {
             eprintln!("{}\n", "ffi enabled".red());
         }
 
-        let root = config.__root.0;
+        let root = config.root.0;
 
         let sum = sources
             .par_iter()

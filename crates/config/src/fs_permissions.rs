@@ -67,22 +67,20 @@ impl FsPermissions {
     }
 
     /// Updates all `allowed_paths` and joins ([`Path::join`]) the `root` with all entries
-    pub fn join_all(&mut self, root: impl AsRef<Path>) {
-        let root = root.as_ref();
+    pub fn join_all(&mut self, root: &Path) {
         self.permissions.iter_mut().for_each(|perm| {
             perm.path = root.join(&perm.path);
         })
     }
 
     /// Same as [`Self::join_all`] but consumes the type
-    pub fn joined(mut self, root: impl AsRef<Path>) -> Self {
+    pub fn joined(mut self, root: &Path) -> Self {
         self.join_all(root);
         self
     }
 
     /// Removes all existing permissions for the given path
-    pub fn remove(&mut self, path: impl AsRef<Path>) {
-        let path = path.as_ref();
+    pub fn remove(&mut self, path: &Path) {
         self.permissions.retain(|permission| permission.path != path)
     }
 

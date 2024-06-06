@@ -289,7 +289,7 @@ impl<'a> Git<'a> {
 
     #[inline]
     pub fn from_config(config: &'a Config) -> Self {
-        Self::new(config.__root.0.as_path())
+        Self::new(config.root.0.as_path())
     }
 
     pub fn root_of(relative_to: &Path) -> Result<PathBuf> {

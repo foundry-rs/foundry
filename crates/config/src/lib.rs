@@ -414,13 +414,17 @@ pub struct Config {
     /// Soldeer dependencies
     pub dependencies: Option<SoldeerConfig>,
 
-    /// The root path where the config detection started from, `Config::with_root`
-    #[doc(hidden)]
-    //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
+    /// The root path where the config detection started from, [`Config::with_root`].
+    // We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
     // representation, but will be deserialized from the `Figment` so that forge commands can
     // override it.
-    #[serde(rename = "root", default, skip_serializing)]
-    pub __root: RootPath,
+    #[serde(default, skip_serializing)]
+    pub root: RootPath,
+
+    /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
+    #[serde(rename = "__warnings", default, skip_serializing)]
+    pub warnings: Vec<Warning>,
+
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
@@ -431,10 +435,7 @@ pub struct Config {
     /// ```
     #[doc(hidden)]
     #[serde(skip)]
-    pub __non_exhaustive: (),
-    /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
-    #[serde(default, skip_serializing)]
-    pub __warnings: Vec<Warning>,
+    pub _non_exhaustive: (),
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`]
@@ -558,7 +559,7 @@ impl Config {
     pub fn to_figment(self, providers: FigmentProviders) -> Figment {
         let mut c = self;
         let profile = Config::selected_profile();
-        let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
+        let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.root.0));
 
         // merge global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
@@ -571,7 +572,7 @@ impl Config {
         // merge local foundry.toml file
         figment = Config::merge_toml_provider(
             figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.root.0.join(Config::FILE_NAME))
                 .cached(),
             profile.clone(),
         );
@@ -620,7 +621,7 @@ impl Config {
                     .extract_inner::<Vec<PathBuf>>("libs")
                     .map(Cow::Owned)
                     .unwrap_or_else(|_| Cow::Borrowed(&c.libs)),
-                root: &c.__root.0,
+                root: &c.root.0,
                 remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
             };
             figment = figment.merge(remappings);
@@ -638,7 +639,7 @@ impl Config {
     /// This joins all relative paths with the current root and attempts to make them canonic
     #[must_use]
     pub fn canonic(self) -> Self {
-        let root = self.__root.0.clone();
+        let root = self.root.0.clone();
         self.canonic_at(root)
     }
 
@@ -808,7 +809,7 @@ impl Config {
             .set_no_artifacts(no_artifacts);
 
         if !self.skip.is_empty() {
-            let filter = SkipBuildFilters::new(self.skip.clone(), self.__root.0.clone());
+            let filter = SkipBuildFilters::new(self.skip.clone(), self.root.0.clone());
             builder = builder.sparse_output(filter);
         }
 
@@ -926,7 +927,7 @@ impl Config {
             .artifacts(&self.out)
             .libs(self.libs.iter())
             .remappings(self.get_all_remappings())
-            .allowed_path(&self.__root.0)
+            .allowed_path(&self.root.0)
             .allowed_paths(&self.libs)
             .allowed_paths(&self.allow_paths)
             .include_paths(&self.include_paths);
@@ -935,7 +936,7 @@ impl Config {
             builder = builder.build_infos(build_info_path);
         }
 
-        builder.build_with_root(&self.__root.0)
+        builder.build_with_root(&self.root.0)
     }
 
     /// Returns configuration for a compiler to use when setting up a [Project].
@@ -1183,7 +1184,7 @@ impl Config {
 
     /// Returns the remapping for the project's _test_ directory, but only if it exists
     pub fn get_test_dir_remapping(&self) -> Option<Remapping> {
-        if self.__root.0.join(&self.test).exists() {
+        if self.root.0.join(&self.test).exists() {
             get_dir_remapping(&self.test)
         } else {
             None
@@ -1192,7 +1193,7 @@ impl Config {
 
     /// Returns the remapping for the project's _script_ directory, but only if it exists
     pub fn get_script_dir_remapping(&self) -> Option<Remapping> {
-        if self.__root.0.join(&self.script).exists() {
+        if self.root.0.join(&self.script).exists() {
             get_dir_remapping(&self.script)
         } else {
             None
@@ -1360,7 +1361,7 @@ impl Config {
         let paths = ProjectPathsConfig::builder().build_with_root::<()>(&root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         Config {
-            __root: paths.root.into(),
+            root: paths.root.into(),
             src: paths.sources.file_name().unwrap().into(),
             out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
@@ -1452,7 +1453,7 @@ impl Config {
     pub fn update_libs(&self) -> eyre::Result<()> {
         self.update(|doc| {
             let profile = self.profile.as_str().as_str();
-            let root = &self.__root.0;
+            let root = &self.root.0;
             let libs: toml_edit::Value = self
                 .libs
                 .iter()
@@ -1509,7 +1510,7 @@ impl Config {
 
     /// Returns the path to the `foundry.toml` of this `Config`.
     pub fn get_config_path(&self) -> PathBuf {
-        self.__root.0.join(Config::FILE_NAME)
+        self.root.0.join(Config::FILE_NAME)
     }
 
     /// Returns the selected profile.
@@ -2006,7 +2007,7 @@ impl Provider for Config {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
         if let Some(entry) = data.get_mut(&self.profile) {
-            entry.insert("root".to_string(), Value::serialize(self.__root.clone())?);
+            entry.insert("root".to_string(), Value::serialize(self.root.clone())?);
         }
         Ok(data)
     }
@@ -2023,7 +2024,7 @@ impl Default for Config {
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             prague: false,
             isolate: false,
-            __root: Default::default(),
+            root: Default::default(),
             src: "src".into(),
             test: "test".into(),
             script: "script".into(),
@@ -2114,8 +2115,8 @@ impl Default for Config {
             create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
             skip: vec![],
             dependencies: Default::default(),
-            __non_exhaustive: (),
-            __warnings: vec![],
+            warnings: vec![],
+            _non_exhaustive: (),
         }
     }
 }
@@ -2827,7 +2828,7 @@ mod tests {
     // Helper function to clear `__warnings` in config, since it will be populated during loading
     // from file, causing testing problem when comparing to those created from `default()`, etc.
     fn clear_warning(config: &mut Config) {
-        config.__warnings = vec![];
+        config.warnings = vec![];
     }
 
     #[test]
@@ -4645,7 +4646,7 @@ mod tests {
             assert_eq!(loaded.src.file_name().unwrap(), "my-src");
             assert_eq!(loaded.out.file_name().unwrap(), "my-out");
             assert_eq!(
-                loaded.__warnings,
+                loaded.warnings,
                 vec![Warning::UnknownSection {
                     unknown_section: Profile::new("default"),
                     source: Some("foundry.toml".into())
