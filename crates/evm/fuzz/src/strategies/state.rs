@@ -106,7 +106,7 @@ pub struct FuzzDictionary {
     db_state_values: usize,
     /// Number of address values initially collected from db.
     /// Used to revert new collected addresses at the end of each run.
-    db_addreses: usize,
+    db_addresses: usize,
     /// Sample typed values that are collected from call result and used across invariant runs.
     sample_values: HashMap<DynSolType, AIndexSet<B256>>,
 
@@ -163,7 +163,7 @@ impl FuzzDictionary {
         // Record number of values and addresses inserted from db to be used for reverting at the
         // end of each run.
         self.db_state_values = self.state_values.len();
-        self.db_addreses = self.addresses.len();
+        self.db_addresses = self.addresses.len();
     }
 
     /// Insert values collected from call result into fuzz dictionary.
@@ -376,7 +376,7 @@ impl FuzzDictionary {
         }
 
         let mut new_addresses_range =
-            (self.db_addreses - 1..self.addresses.len() - 1).collect_vec();
+            (self.db_addresses - 1..self.addresses.len() - 1).collect_vec();
         new_addresses_range.reverse();
         for new_address in new_addresses_range {
             self.addresses.swap_remove_index(new_address);
