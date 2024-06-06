@@ -767,7 +767,13 @@ impl Backend {
 
         let test_contract = match env.tx.transact_to {
             TransactTo::Call(to) => to,
-            TransactTo::Create => env.tx.caller.create(env.tx.nonce.unwrap_or_default()),
+            TransactTo::Create => {
+                let nonce = self
+                    .basic_ref(env.tx.caller)
+                    .map(|b| b.unwrap_or_default().nonce)
+                    .unwrap_or_default();
+                env.tx.caller.create(nonce)
+            }
         };
         self.set_test_contract(test_contract);
     }
