@@ -9,7 +9,7 @@ use foundry_compilers::{
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     fs_permissions::{FsAccessPermission, PathPermission},
-    Config, FsPermissions, FuzzConfig, InvariantConfig, Language, SolcReq,
+    Config, FsPermissions, FuzzConfig, InvariantConfig, SolcReq,
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
@@ -43,7 +43,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
         solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
-        vyper: Some(PathBuf::from("custom-vyper")),
         auto_detect_solc: false,
         auto_detect_remappings: true,
         offline: true,
@@ -136,7 +135,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         isolate: true,
         unchecked_cheatcode_artifacts: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
-        lang: Language::Solidity,
+        vyper: Default::default(),
         skip: vec![],
         __non_exhaustive: (),
         __warnings: vec![],
