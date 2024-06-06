@@ -80,6 +80,9 @@ pub use error::SolidityErrorCode;
 pub mod doc;
 pub use doc::DocConfig;
 
+pub mod filter;
+pub use filter::SkipBuildFilters;
+
 mod warning;
 pub use warning::*;
 
@@ -92,9 +95,6 @@ pub use figment;
 pub mod providers;
 use providers::{remappings::RemappingsProvider, FallbackProfileProvider, WarningsProvider};
 
-mod language;
-pub use language::Language;
-
 mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzDictionaryConfig};
 
@@ -106,6 +106,9 @@ pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfi
 
 pub mod soldeer;
 use soldeer::SoldeerConfig;
+
+mod vyper;
+use vyper::VyperConfig;
 
 /// Foundry configuration
 ///
@@ -174,6 +177,9 @@ pub struct Config {
     pub allow_paths: Vec<PathBuf>,
     /// additional solc include paths for `--include-path`
     pub include_paths: Vec<PathBuf>,
+    /// glob patterns to skip
+    #[serde(with = "from_vec_glob")]
+    pub skip: Vec<globset::Glob>,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -191,8 +197,6 @@ pub struct Config {
     /// **Note** for backwards compatibility reasons this also accepts solc_version from the toml
     /// file, see `BackwardsCompatTomlProvider`.
     pub solc: Option<SolcReq>,
-    /// The Vyper instance to use if any.
-    pub vyper: Option<PathBuf>,
     /// whether to autodetect the solc compiler version to use
     pub auto_detect_solc: bool,
     /// Offline mode, if set, network access (downloading solc) is disallowed.
@@ -404,9 +408,8 @@ pub struct Config {
     /// CREATE2 salt to use for the library deployment in scripts.
     pub create2_library_salt: B256,
 
-    /// Compiler to use
-    #[serde(with = "from_str_lowercase")]
-    pub lang: Language,
+    /// Configuration for Vyper compiler
+    pub vyper: VyperConfig,
 
     /// Soldeer dependencies
     pub dependencies: Option<SoldeerConfig>,
@@ -462,6 +465,7 @@ impl Config {
         "invariant",
         "labels",
         "dependencies",
+        "vyper",
     ];
 
     /// File name of config toml file
@@ -787,7 +791,7 @@ impl Config {
 
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let project = Project::builder()
+        let mut builder = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
             .settings(self.compiler_settings()?)
@@ -801,8 +805,14 @@ impl Config {
             .set_offline(self.offline)
             .set_cached(cached && !self.build_info)
             .set_build_info(!no_artifacts && self.build_info)
-            .set_no_artifacts(no_artifacts)
-            .build(self.compiler()?)?;
+            .set_no_artifacts(no_artifacts);
+
+        if !self.skip.is_empty() {
+            let filter = SkipBuildFilters::new(self.skip.clone(), self.__root.0.clone());
+            builder = builder.sparse_output(filter);
+        }
+
+        let project = builder.build(self.compiler()?)?;
 
         if self.force {
             self.cleanup(&project)?;
@@ -939,7 +949,7 @@ impl Config {
 
     /// Returns configured [Vyper] compiler.
     pub fn vyper_compiler(&self) -> Result<Option<Vyper>, SolcError> {
-        let vyper = if let Some(path) = &self.vyper {
+        let vyper = if let Some(path) = &self.vyper.path {
             Some(Vyper::new(path)?)
         } else {
             Vyper::new("vyper").ok()
@@ -1285,7 +1295,7 @@ impl Config {
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
         Ok(VyperSettings {
             evm_version: Some(self.evm_version),
-            optimize: None,
+            optimize: self.vyper.optimize,
             bytecode_metadata: None,
             // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
             // those for now. It should be enough to run tests and deploy contracts.
@@ -1915,6 +1925,30 @@ pub(crate) mod from_opt_glob {
     }
 }
 
+/// Ser/de `globset::Glob` explicitly to handle `Option<Glob>` properly
+pub(crate) mod from_vec_glob {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(value: &[globset::Glob], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let value = value.iter().map(|g| g.glob()).collect::<Vec<_>>();
+        value.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<globset::Glob>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Vec<String> = Vec::deserialize(deserializer)?;
+        s.into_iter()
+            .map(|s| globset::Glob::new(&s))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// A helper wrapper around the root path used during Config detection
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -2005,7 +2039,7 @@ impl Default for Config {
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             solc: None,
-            vyper: None,
+            vyper: Default::default(),
             auto_detect_solc: true,
             offline: false,
             optimizer: true,
@@ -2078,7 +2112,7 @@ impl Default for Config {
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
-            lang: Language::Solidity,
+            skip: vec![],
             dependencies: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
@@ -2781,7 +2815,10 @@ mod tests {
         etherscan::ResolvedEtherscanConfigs,
     };
     use figment::error::Kind::InvalidType;
-    use foundry_compilers::artifacts::{ModelCheckerEngine, YulDetails};
+    use foundry_compilers::{
+        artifacts::{ModelCheckerEngine, YulDetails},
+        compilers::vyper::settings::VyperOptimizationMode,
+    };
     use similar_asserts::assert_eq;
     use std::{collections::BTreeMap, fs::File, io::Write};
     use tempfile::tempdir;
@@ -4907,6 +4944,31 @@ mod tests {
                         "Uniswap V3: Positions NFT".to_string()
                     ),
                 ])
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_parse_vyper() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [vyper]
+                optimize = "codesize"
+                path = "/path/to/vyper"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(
+                config.vyper,
+                VyperConfig {
+                    optimize: Some(VyperOptimizationMode::Codesize),
+                    path: Some("/path/to/vyper".into())
+                }
             );
 
             Ok(())
