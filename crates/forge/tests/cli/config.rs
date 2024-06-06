@@ -137,6 +137,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         vyper: Default::default(),
         skip: vec![],
+        dependencies: Default::default(),
         __non_exhaustive: (),
         __warnings: vec![],
     };

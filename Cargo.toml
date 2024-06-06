@@ -239,6 +239,8 @@ hyper = "1.0"
 reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
 tower-http = "0.5"
+# soldeer
+soldeer = "0.2.15"
 
 [patch.crates-io]
 revm = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }

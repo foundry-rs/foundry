@@ -59,6 +59,7 @@ pub mod remappings;
 pub mod remove;
 pub mod selectors;
 pub mod snapshot;
+pub mod soldeer;
 pub mod test;
 pub mod tree;
 pub mod update;

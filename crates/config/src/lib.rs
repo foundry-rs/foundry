@@ -104,6 +104,9 @@ pub use invariant::InvariantConfig;
 mod inline;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
+pub mod soldeer;
+use soldeer::SoldeerConfig;
+
 mod vyper;
 use vyper::VyperConfig;
 
@@ -408,6 +411,9 @@ pub struct Config {
     /// Configuration for Vyper compiler
     pub vyper: VyperConfig,
 
+    /// Soldeer dependencies
+    pub dependencies: Option<SoldeerConfig>,
+
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -450,8 +456,17 @@ impl Config {
     pub const PROFILE_SECTION: &'static str = "profile";
 
     /// Standalone sections in the config which get integrated into the selected profile
-    pub const STANDALONE_SECTIONS: &'static [&'static str] =
-        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant", "labels", "vyper"];
+    pub const STANDALONE_SECTIONS: &'static [&'static str] = &[
+        "rpc_endpoints",
+        "etherscan",
+        "fmt",
+        "doc",
+        "fuzz",
+        "invariant",
+        "labels",
+        "dependencies",
+        "vyper",
+    ];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -2098,6 +2113,7 @@ impl Default for Config {
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
             skip: vec![],
+            dependencies: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }
