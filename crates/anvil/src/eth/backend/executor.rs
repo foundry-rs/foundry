@@ -9,6 +9,7 @@ use crate::{
     PrecompileFactory,
 };
 use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
@@ -65,7 +66,7 @@ impl ExecutedTransaction {
             TypedTransaction::Deposit(tx) => TypedReceipt::Deposit(DepositReceipt {
                 inner: receipt_with_bloom,
                 deposit_nonce: Some(tx.nonce),
-                deposit_nonce_version: Some(1),
+                deposit_receipt_version: Some(1),
             }),
         }
     }
@@ -201,7 +202,8 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         }
 
         let ommers: Vec<Header> = Vec::new();
-        let receipts_root = trie::ordered_trie_root(receipts.iter().map(alloy_rlp::encode));
+        let receipts_root =
+            trie::ordered_trie_root(receipts.iter().map(Encodable2718::encoded_2718));
 
         let partial_header = PartialHeader {
             parent_hash,

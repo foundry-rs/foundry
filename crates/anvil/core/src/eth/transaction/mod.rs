@@ -7,7 +7,7 @@ use alloy_consensus::{
     TxEnvelope, TxLegacy, TxReceipt,
 };
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256};
+use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256, U64};
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
     other::OtherFields, request::TransactionRequest, AccessList, AnyTransactionReceipt,
@@ -1030,8 +1030,10 @@ pub struct TransactionInfo {
 pub struct DepositReceipt<T = alloy_primitives::Log> {
     #[serde(flatten)]
     pub inner: ReceiptWithBloom<T>,
+    #[serde(default, with = "alloy_serde::num::u64_opt_via_ruint")]
     pub deposit_nonce: Option<u64>,
-    pub deposit_nonce_version: Option<u64>,
+    #[serde(default, with = "alloy_serde::num::u64_opt_via_ruint")]
+    pub deposit_receipt_version: Option<u64>,
 }
 
 impl DepositReceipt {
@@ -1041,7 +1043,7 @@ impl DepositReceipt {
             self.inner.logs_bloom.length() +
             self.inner.receipt.logs.length() +
             self.deposit_nonce.map_or(0, |n| n.length()) +
-            self.deposit_nonce_version.map_or(0, |n| n.length())
+            self.deposit_receipt_version.map_or(0, |n| n.length())
     }
 
     /// Returns the rlp header for the receipt payload.
@@ -1059,7 +1061,7 @@ impl DepositReceipt {
         if let Some(n) = self.deposit_nonce {
             n.encode(out);
         }
-        if let Some(n) = self.deposit_nonce_version {
+        if let Some(n) = self.deposit_receipt_version {
             n.encode(out);
         }
     }
@@ -1088,7 +1090,7 @@ impl DepositReceipt {
                 logs_bloom,
             },
             deposit_nonce,
-            deposit_nonce_version,
+            deposit_receipt_version: deposit_nonce_version,
         };
 
         let consumed = started_len - b.len();
@@ -1257,6 +1259,62 @@ impl Decodable for TypedReceipt {
     }
 }
 
+impl Encodable2718 for TypedReceipt {
+    fn type_flag(&self) -> Option<u8> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::EIP2930(_) => Some(1),
+            Self::EIP1559(_) => Some(2),
+            Self::EIP4844(_) => Some(3),
+            Self::Deposit(_) => Some(0x7E),
+        }
+    }
+
+    fn encode_2718_len(&self) -> usize {
+        match self {
+            Self::Legacy(r) => ReceiptEnvelope::Legacy(r.clone()).encode_2718_len(),
+            Self::EIP2930(r) => ReceiptEnvelope::Eip2930(r.clone()).encode_2718_len(),
+            Self::EIP1559(r) => ReceiptEnvelope::Eip1559(r.clone()).encode_2718_len(),
+            Self::EIP4844(r) => ReceiptEnvelope::Eip4844(r.clone()).encode_2718_len(),
+            Self::Deposit(r) => 1 + r.length(),
+        }
+    }
+
+    fn encode_2718(&self, out: &mut dyn BufMut) {
+        match self {
+            Self::Legacy(r) => ReceiptEnvelope::Legacy(r.clone()).encode_2718(out),
+            Self::EIP2930(r) => ReceiptEnvelope::Eip2930(r.clone()).encode_2718(out),
+            Self::EIP1559(r) => ReceiptEnvelope::Eip1559(r.clone()).encode_2718(out),
+            Self::EIP4844(r) => ReceiptEnvelope::Eip4844(r.clone()).encode_2718(out),
+            Self::Deposit(r) => {
+                out.put_u8(0x7E);
+                r.encode(out);
+            }
+        }
+    }
+}
+
+impl Decodable2718 for TypedReceipt {
+    fn typed_decode(ty: u8, buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        if ty == 0x7E {
+            return Ok(Self::Deposit(DepositReceipt::decode(buf)?))
+        }
+        match ReceiptEnvelope::typed_decode(ty, buf)? {
+            ReceiptEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
+            ReceiptEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
+            ReceiptEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
+            _ => unreachable!(),
+        }
+    }
+
+    fn fallback_decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        match ReceiptEnvelope::fallback_decode(buf)? {
+            ReceiptEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
+            _ => unreachable!(),
+        }
+    }
+}
+
 pub type ReceiptResponse = TransactionReceipt<TypedReceipt<alloy_rpc_types::Log>>;
 
 pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<ReceiptResponse> {
@@ -1300,8 +1358,16 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
             0x03 => TypedReceipt::EIP4844(receipt_with_bloom),
             0x7E => TypedReceipt::Deposit(DepositReceipt {
                 inner: receipt_with_bloom,
-                deposit_nonce: other.get("depositNonce").and_then(|v| v.as_u64()),
-                deposit_nonce_version: other.get("depositNonceVersion").and_then(|v| v.as_u64()),
+                deposit_nonce: other
+                    .get_deserialized::<U64>("depositNonce")
+                    .transpose()
+                    .ok()?
+                    .map(|v| v.to()),
+                deposit_receipt_version: other
+                    .get_deserialized::<U64>("depositReceiptVersion")
+                    .transpose()
+                    .ok()?
+                    .map(|v| v.to()),
             }),
             _ => return None,
         },
