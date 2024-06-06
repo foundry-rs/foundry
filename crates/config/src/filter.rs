@@ -179,20 +179,20 @@ mod tests {
         let custom = |s| GlobMatcher::from_str(s).unwrap();
 
         let file = Path::new("A.t.sol");
-        assert!(!is_match_exclude(&tests, file));
-        assert!(is_match_exclude(&scripts, file));
-        assert!(!is_match_exclude(&custom("A.t"), file));
+        assert!(!tests.is_match_exclude(file));
+        assert!(scripts.is_match_exclude(file));
+        assert!(!custom("A.t").is_match_exclude(file));
 
         let file = Path::new("A.s.sol");
-        assert!(is_match_exclude(&tests, file));
-        assert!(!is_match_exclude(&scripts, file));
-        assert!(!is_match_exclude(&custom("A.s"), file));
+        assert!(tests.is_match_exclude(file));
+        assert!(!scripts.is_match_exclude(file));
+        assert!(!custom("A.s").is_match_exclude(file));
 
         let file = Path::new("/home/test/Foo.sol");
-        assert!(!is_match_exclude(&custom("*/test/**"), file));
+        assert!(!custom("*/test/**").is_match_exclude(file));
 
         let file = Path::new("/home/script/Contract.sol");
-        assert!(!is_match_exclude(&custom("*/script/**"), file));
+        assert!(!custom("*/script/**").is_match_exclude(file));
     }
 
     #[test]
