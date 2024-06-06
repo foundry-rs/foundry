@@ -31,6 +31,9 @@ pub const INITIAL_GAS_PRICE: u128 = 1_875_000_000;
 /// Bounds the amount the base fee can change between blocks.
 pub const BASE_FEE_CHANGE_DENOMINATOR: u128 = 8;
 
+/// Minimum suggested priority fee
+pub const MIN_SUGGESTED_PRIORITY_FEE: u128 = 1e9 as u128;
+
 pub fn default_elasticity() -> f64 {
     1f64 / BaseFeeParams::ethereum().elasticity_multiplier as f64
 }
