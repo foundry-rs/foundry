@@ -225,11 +225,13 @@ impl VerifyBytecodeArgs {
                 (VerificationType::Partial, _) => (VerificationType::Partial, true),
             };
 
+        trace!(?verification_type, has_metadata);
         // Etherscan compilation metadata
         let etherscan_metadata = source_code.items.first().unwrap();
 
         let local_bytecode =
             if let Some(local_bytecode) = self.build_using_cache(etherscan_metadata, &config) {
+                trace!("using cache");
                 local_bytecode
             } else {
                 self.build_project(&config)?
@@ -411,37 +413,44 @@ impl VerifyBytecodeArgs {
         for (key, value) in cached_artifacts {
             let name = self.contract.name.to_owned() + ".sol";
             let version = etherscan_settings.compiler_version.to_owned();
+            // Ignores vyper
             if version.starts_with("vyper:") {
                 return None;
             }
             // Parse etherscan version string
             let version =
                 version.split('+').next().unwrap_or("").trim_start_matches('v').to_string();
+
+            // Check if `out/directory` name matches the contract name
             if key.ends_with(name.as_str()) {
-                if let Some(artifact) = value.into_iter().next() {
+                let artifacts =
+                    value.iter().flat_map(|(_, artifacts)| artifacts.iter()).collect::<Vec<_>>();
+                let name = name.replace(".sol", ".json");
+                for artifact in artifacts {
+                    // Check if ABI file matches the name
+                    if !artifact.file.ends_with(&name) {
+                        continue;
+                    }
+
+                    // Check if Solidity version matches
                     if let Ok(version) = Version::parse(&version) {
-                        if let Some(artifact) = artifact.1.iter().find(|a| {
-                            a.version.major == version.major &&
-                                a.version.minor == version.minor &&
-                                a.version.patch == version.patch
-                        }) {
-                            return artifact
-                                .artifact
-                                .bytecode
-                                .as_ref()
-                                .and_then(|bytes| bytes.bytes().to_owned())
-                                .cloned();
+                        if !(artifact.version.major == version.major &&
+                            artifact.version.minor == version.minor &&
+                            artifact.version.patch == version.patch)
+                        {
+                            continue;
                         }
                     }
-                    let artifact = artifact.1.first().unwrap(); // Get the first artifact
-                    let local_bytecode = if let Some(local_bytecode) = &artifact.artifact.bytecode {
-                        local_bytecode.bytes()
-                    } else {
-                        None
-                    };
 
-                    return local_bytecode.map(|bytes| bytes.to_owned());
+                    return artifact
+                        .artifact
+                        .bytecode
+                        .as_ref()
+                        .and_then(|bytes| bytes.bytes().to_owned())
+                        .cloned();
                 }
+
+                return None
             }
         }
 
