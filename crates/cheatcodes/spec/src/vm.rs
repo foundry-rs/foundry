@@ -1499,6 +1499,10 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function promptSecret(string calldata promptText) external returns (string memory input);
 
+    /// Prompts the user for hidden uint256 in the terminal (usually pk).
+    #[cheatcode(group = Filesystem)]
+    function promptSecretUint(string calldata promptText) external returns (uint256);
+
     /// Prompts the user for an address in the terminal.
     #[cheatcode(group = Filesystem)]
     function promptAddress(string calldata promptText) external returns (address);
