@@ -427,7 +427,7 @@ impl VerifyBytecodeArgs {
                 let name = name.replace(".sol", ".json");
                 for artifact in artifacts {
                     // Check if ABI file matches the name
-                    if !artifact.file.ends_with(name.to_owned()) {
+                    if !artifact.file.ends_with(&name) {
                         continue;
                     }
 
