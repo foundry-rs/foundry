@@ -328,6 +328,11 @@ async fn main() -> Result<()> {
         CastSubcommand::Index { key_type, key, slot_number } => {
             println!("{}", SimpleCast::index(&key_type, &key, &slot_number)?);
         }
+        CastSubcommand::IndexErc7201 { id, formula_id } => {
+            eyre::ensure!(formula_id == "erc7201", "unsupported formula ID: {formula_id}");
+            let id = stdin::unwrap_line(id)?;
+            println!("{}", foundry_common::erc7201(&id));
+        }
         CastSubcommand::Implementation { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;

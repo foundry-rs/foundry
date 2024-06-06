@@ -888,3 +888,16 @@ casttest!(ens_resolve_no_dot_eth, |_prj, cmd| {
     let (_out, err) = cmd.unchecked_output_lossy();
     assert!(err.contains("not found"), "{err:?}");
 });
+
+casttest!(index7201, |_prj, cmd| {
+    let tests =
+        [("example.main", "0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500")];
+    for (id, expected) in tests {
+        cmd.cast_fuse();
+        assert_eq!(cmd.args(["index-erc7201", id]).stdout_lossy().trim(), expected);
+    }
+});
+
+casttest!(index_unknown_formula_id, |_prj, cmd| {
+    cmd.args(["index-7201", "test", "--formula-id", "unknown"]).assert_err();
+});
