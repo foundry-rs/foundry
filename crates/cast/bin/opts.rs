@@ -714,7 +714,7 @@ pub enum CastSubcommand {
     },
 
     /// Hash arbitrary data using Keccak-256.
-    #[command(visible_alias = "k")]
+    #[command(visible_aliases = &["k", "keccak256"])]
     Keccak {
         /// The data to hash.
         data: Option<String>,
