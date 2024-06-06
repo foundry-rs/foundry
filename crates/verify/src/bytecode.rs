@@ -224,7 +224,7 @@ impl VerifyBytecodeArgs {
                 (VerificationType::Partial, _) => (VerificationType::Partial, true),
             };
 
-        trace!("verification_type: {:?}, has_metadata: {}", verification_type, has_metadata);
+        trace!(?verification_type, has_metadata);
         // Etherscan compilation metadata
         let etherscan_metadata = source_code.items.first().unwrap();
 
