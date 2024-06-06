@@ -27,7 +27,7 @@ use foundry_compilers::{
     compilers::{
         multi::{MultiCompiler, MultiCompilerSettings},
         solc::SolcCompiler,
-        vyper::{settings::VyperOptimizationMode, Vyper, VyperSettings},
+        vyper::{Vyper, VyperSettings},
         Compiler,
     },
     error::SolcError,
@@ -103,6 +103,9 @@ pub use invariant::InvariantConfig;
 
 mod inline;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
+
+mod vyper;
+use vyper::VyperConfig;
 
 /// Foundry configuration
 ///
@@ -191,8 +194,6 @@ pub struct Config {
     /// **Note** for backwards compatibility reasons this also accepts solc_version from the toml
     /// file, see `BackwardsCompatTomlProvider`.
     pub solc: Option<SolcReq>,
-    /// The Vyper instance to use if any.
-    pub vyper: Option<PathBuf>,
     /// whether to autodetect the solc compiler version to use
     pub auto_detect_solc: bool,
     /// Offline mode, if set, network access (downloading solc) is disallowed.
@@ -404,8 +405,8 @@ pub struct Config {
     /// CREATE2 salt to use for the library deployment in scripts.
     pub create2_library_salt: B256,
 
-    /// Vyper optimization mode. "gas", "none" or "codesize"
-    pub vyper_optimize: Option<VyperOptimizationMode>,
+    /// Configuration for Vyper compiler
+    pub vyper: VyperConfig,
 
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
@@ -450,7 +451,7 @@ impl Config {
 
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] =
-        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant", "labels"];
+        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant", "labels", "vyper"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -933,7 +934,7 @@ impl Config {
 
     /// Returns configured [Vyper] compiler.
     pub fn vyper_compiler(&self) -> Result<Option<Vyper>, SolcError> {
-        let vyper = if let Some(path) = &self.vyper {
+        let vyper = if let Some(path) = &self.vyper.path {
             Some(Vyper::new(path)?)
         } else {
             Vyper::new("vyper").ok()
@@ -1279,7 +1280,7 @@ impl Config {
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
         Ok(VyperSettings {
             evm_version: Some(self.evm_version),
-            optimize: self.vyper_optimize,
+            optimize: self.vyper.optimize,
             bytecode_metadata: None,
             // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
             // those for now. It should be enough to run tests and deploy contracts.
@@ -2023,7 +2024,7 @@ impl Default for Config {
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             solc: None,
-            vyper: None,
+            vyper: Default::default(),
             auto_detect_solc: true,
             offline: false,
             optimizer: true,
@@ -2096,7 +2097,6 @@ impl Default for Config {
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
-            vyper_optimize: None,
             skip: vec![],
             __non_exhaustive: (),
             __warnings: vec![],
@@ -2799,7 +2799,10 @@ mod tests {
         etherscan::ResolvedEtherscanConfigs,
     };
     use figment::error::Kind::InvalidType;
-    use foundry_compilers::artifacts::{ModelCheckerEngine, YulDetails};
+    use foundry_compilers::{
+        artifacts::{ModelCheckerEngine, YulDetails},
+        compilers::vyper::settings::VyperOptimizationMode,
+    };
     use similar_asserts::assert_eq;
     use std::{collections::BTreeMap, fs::File, io::Write};
     use tempfile::tempdir;
@@ -4925,6 +4928,31 @@ mod tests {
                         "Uniswap V3: Positions NFT".to_string()
                     ),
                 ])
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_parse_vyper() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [vyper]
+                optimize = "codesize"
+                path = "/path/to/vyper"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(
+                config.vyper,
+                VyperConfig {
+                    optimize: Some(VyperOptimizationMode::Codesize),
+                    path: Some("/path/to/vyper".into())
+                }
             );
 
             Ok(())
