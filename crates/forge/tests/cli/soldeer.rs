@@ -62,8 +62,8 @@ forge-std = { version = "1.8.1" }
 
     let mut file = OpenOptions::new().append(true).open(&foundry_file).unwrap();
 
-    if let Err(e) = write!(file, "{}", foundry_updates) {
-        eprintln!("Couldn't write to file: {}", e);
+    if let Err(e) = write!(file, "{foundry_updates}") {
+        eprintln!("Couldn't write to file: {e}");
     }
 
     cmd.arg("soldeer").arg(command);
@@ -117,8 +117,8 @@ forge-std = "1.8.1"
 
     let mut file = OpenOptions::new().append(true).open(&foundry_file).unwrap();
 
-    if let Err(e) = write!(file, "{}", foundry_updates) {
-        eprintln!("Couldn't write to file: {}", e);
+    if let Err(e) = write!(file, "{foundry_updates}") {
+        eprintln!("Couldn't write to file: {e}");
     }
 
     cmd.arg("soldeer").arg(command);
