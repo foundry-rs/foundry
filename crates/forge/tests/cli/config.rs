@@ -29,7 +29,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
     // explicitly set all values
     let input = Config {
         profile: Config::DEFAULT_PROFILE,
-        __root: Default::default(),
+        root: Default::default(),
         src: "test-src".into(),
         test: "test-test".into(),
         script: "test-script".into(),
@@ -138,8 +138,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         vyper: Default::default(),
         skip: vec![],
         dependencies: Default::default(),
-        __non_exhaustive: (),
-        __warnings: vec![],
+        warnings: vec![],
+        _non_exhaustive: (),
     };
     prj.write_config(input.clone());
     let config = cmd.config();

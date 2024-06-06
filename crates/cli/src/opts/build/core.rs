@@ -192,7 +192,7 @@ impl<'a> From<&'a CoreBuildArgs> for Config {
         // if `--config-path` is set we need to adjust the config's root path to the actual root
         // path for the project, otherwise it will the parent dir of the `--config-path`
         if args.project_paths.config_path.is_some() {
-            config.__root = args.project_paths.project_root().into();
+            config.root = args.project_paths.project_root().into();
         }
         config
     }

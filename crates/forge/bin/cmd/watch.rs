@@ -137,7 +137,7 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
         args.watch.run_all;
 
     let state = WatchTestState {
-        project_root: config.__root.0,
+        project_root: config.root.0,
         no_reconfigure,
         last_test_files: Default::default(),
     };
