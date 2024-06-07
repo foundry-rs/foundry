@@ -33,17 +33,15 @@ impl RandomCallGenerator {
     pub fn new(
         test_address: Address,
         runner: TestRunner,
-        strategy: SBoxedStrategy<CallDetails>,
+        strategy: impl Strategy<Value = CallDetails> + Send + Sync + 'static,
         target_reference: Arc<RwLock<Address>>,
     ) -> Self {
-        let strategy = weighted(0.9, strategy).sboxed();
-
         Self {
             test_address,
             runner: Arc::new(Mutex::new(runner)),
-            strategy,
+            strategy: weighted(0.9, strategy).sboxed(),
             target_reference,
-            last_sequence: Arc::new(RwLock::new(vec![])),
+            last_sequence: Arc::default(),
             replay: false,
             used: false,
         }
