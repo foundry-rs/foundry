@@ -97,7 +97,7 @@ impl CoverageArgs {
     /// Builds the project.
     fn build(&self, config: &Config) -> Result<(Project, ProjectCompileOutput)> {
         // Set up the project
-        let mut project = config.ephemeral_no_artifacts_project()?;
+        let mut project = config.create_project(false, false)?;
         if self.ir_minimum {
             // TODO: How to detect solc version if the user does not specify a solc version in
             // config  case1: specify local installed solc ?
@@ -124,12 +124,12 @@ impl CoverageArgs {
             // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
             // And also in new releases of solidity:
             // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
-            project.settings = project.settings.with_via_ir_minimum_optimization()
+            project.settings.solc = project.settings.solc.with_via_ir_minimum_optimization()
         } else {
-            project.settings.optimizer.disable();
-            project.settings.optimizer.runs = None;
-            project.settings.optimizer.details = None;
-            project.settings.via_ir = None;
+            project.settings.solc.optimizer.disable();
+            project.settings.solc.optimizer.runs = None;
+            project.settings.solc.optimizer.details = None;
+            project.settings.solc.via_ir = None;
         }
 
         let output = ProjectCompiler::default()
@@ -146,7 +146,7 @@ impl CoverageArgs {
 
         // Collect source files.
         let project_paths = &project.paths;
-        let mut versioned_sources = HashMap::<Version, SourceFiles>::new();
+        let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::new();
         for (path, source_file, version) in output.output().sources.sources_with_version() {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
@@ -246,6 +246,8 @@ impl CoverageArgs {
             .set_coverage(true)
             .build(&root, output, env, evm_opts)?;
 
+        let known_contracts = runner.known_contracts.clone();
+
         let outcome = self
             .test
             .run_tests(runner, config.clone(), verbosity, &self.test.filter(&config))
@@ -257,12 +259,10 @@ impl CoverageArgs {
             for result in suite.test_results.values() {
                 let Some(hit_maps) = result.coverage.as_ref() else { continue };
                 for map in hit_maps.0.values() {
-                    if let Some((id, _)) =
-                        suite.known_contracts.find_by_deployed_code(&map.bytecode)
-                    {
+                    if let Some((id, _)) = known_contracts.find_by_deployed_code(&map.bytecode) {
                         hits.push((id, map, true));
                     } else if let Some((id, _)) =
-                        suite.known_contracts.find_by_creation_code(&map.bytecode)
+                        known_contracts.find_by_creation_code(&map.bytecode)
                     {
                         hits.push((id, map, false));
                     }

@@ -7,7 +7,7 @@ use alloy_consensus::{
     TxEnvelope, TxLegacy, TxReceipt,
 };
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256};
+use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256, U64};
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
     other::OtherFields, request::TransactionRequest, AccessList, AnyTransactionReceipt,
@@ -231,13 +231,13 @@ impl From<MaybeImpersonatedTransaction> for TypedTransaction {
 
 impl From<TypedTransaction> for MaybeImpersonatedTransaction {
     fn from(value: TypedTransaction) -> Self {
-        MaybeImpersonatedTransaction::new(value)
+        Self::new(value)
     }
 }
 
 impl Decodable for MaybeImpersonatedTransaction {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        TypedTransaction::decode(buf).map(MaybeImpersonatedTransaction::new)
+        TypedTransaction::decode(buf).map(Self::new)
     }
 }
 
@@ -610,57 +610,57 @@ pub enum TypedTransaction {
 impl TypedTransaction {
     /// Returns true if the transaction uses dynamic fees: EIP1559 or EIP4844
     pub fn is_dynamic_fee(&self) -> bool {
-        matches!(self, TypedTransaction::EIP1559(_)) || matches!(self, TypedTransaction::EIP4844(_))
+        matches!(self, Self::EIP1559(_)) || matches!(self, Self::EIP4844(_))
     }
 
     pub fn gas_price(&self) -> u128 {
         match self {
-            TypedTransaction::Legacy(tx) => tx.tx().gas_price,
-            TypedTransaction::EIP2930(tx) => tx.tx().gas_price,
-            TypedTransaction::EIP1559(tx) => tx.tx().max_fee_per_gas,
-            TypedTransaction::EIP4844(tx) => tx.tx().tx().max_fee_per_gas,
-            TypedTransaction::Deposit(_) => 0,
+            Self::Legacy(tx) => tx.tx().gas_price,
+            Self::EIP2930(tx) => tx.tx().gas_price,
+            Self::EIP1559(tx) => tx.tx().max_fee_per_gas,
+            Self::EIP4844(tx) => tx.tx().tx().max_fee_per_gas,
+            Self::Deposit(_) => 0,
         }
     }
 
     pub fn gas_limit(&self) -> u128 {
         match self {
-            TypedTransaction::Legacy(tx) => tx.tx().gas_limit,
-            TypedTransaction::EIP2930(tx) => tx.tx().gas_limit,
-            TypedTransaction::EIP1559(tx) => tx.tx().gas_limit,
-            TypedTransaction::EIP4844(tx) => tx.tx().tx().gas_limit,
-            TypedTransaction::Deposit(tx) => tx.gas_limit,
+            Self::Legacy(tx) => tx.tx().gas_limit,
+            Self::EIP2930(tx) => tx.tx().gas_limit,
+            Self::EIP1559(tx) => tx.tx().gas_limit,
+            Self::EIP4844(tx) => tx.tx().tx().gas_limit,
+            Self::Deposit(tx) => tx.gas_limit,
         }
     }
 
     pub fn value(&self) -> U256 {
         U256::from(match self {
-            TypedTransaction::Legacy(tx) => tx.tx().value,
-            TypedTransaction::EIP2930(tx) => tx.tx().value,
-            TypedTransaction::EIP1559(tx) => tx.tx().value,
-            TypedTransaction::EIP4844(tx) => tx.tx().tx().value,
-            TypedTransaction::Deposit(tx) => tx.value,
+            Self::Legacy(tx) => tx.tx().value,
+            Self::EIP2930(tx) => tx.tx().value,
+            Self::EIP1559(tx) => tx.tx().value,
+            Self::EIP4844(tx) => tx.tx().tx().value,
+            Self::Deposit(tx) => tx.value,
         })
     }
 
     pub fn data(&self) -> &Bytes {
         match self {
-            TypedTransaction::Legacy(tx) => &tx.tx().input,
-            TypedTransaction::EIP2930(tx) => &tx.tx().input,
-            TypedTransaction::EIP1559(tx) => &tx.tx().input,
-            TypedTransaction::EIP4844(tx) => &tx.tx().tx().input,
-            TypedTransaction::Deposit(tx) => &tx.input,
+            Self::Legacy(tx) => &tx.tx().input,
+            Self::EIP2930(tx) => &tx.tx().input,
+            Self::EIP1559(tx) => &tx.tx().input,
+            Self::EIP4844(tx) => &tx.tx().tx().input,
+            Self::Deposit(tx) => &tx.input,
         }
     }
 
     /// Returns the transaction type
     pub fn r#type(&self) -> Option<u8> {
         match self {
-            TypedTransaction::Legacy(_) => None,
-            TypedTransaction::EIP2930(_) => Some(1),
-            TypedTransaction::EIP1559(_) => Some(2),
-            TypedTransaction::EIP4844(_) => Some(3),
-            TypedTransaction::Deposit(_) => Some(0x7E),
+            Self::Legacy(_) => None,
+            Self::EIP2930(_) => Some(1),
+            Self::EIP1559(_) => Some(2),
+            Self::EIP4844(_) => Some(3),
+            Self::Deposit(_) => Some(0x7E),
         }
     }
 
@@ -682,14 +682,14 @@ impl TypedTransaction {
 
     pub fn blob_gas(&self) -> Option<u128> {
         match self {
-            TypedTransaction::EIP4844(tx) => Some(tx.tx().tx().blob_gas() as u128),
+            Self::EIP4844(tx) => Some(tx.tx().tx().blob_gas() as u128),
             _ => None,
         }
     }
 
     pub fn max_fee_per_blob_gas(&self) -> Option<u128> {
         match self {
-            TypedTransaction::EIP4844(tx) => Some(tx.tx().tx().max_fee_per_blob_gas),
+            Self::EIP4844(tx) => Some(tx.tx().tx().max_fee_per_blob_gas),
             _ => None,
         }
     }
@@ -697,7 +697,7 @@ impl TypedTransaction {
     /// Returns a helper type that contains commonly used values as fields
     pub fn essentials(&self) -> TransactionEssentials {
         match self {
-            TypedTransaction::Legacy(t) => TransactionEssentials {
+            Self::Legacy(t) => TransactionEssentials {
                 kind: t.tx().to,
                 input: t.tx().input.clone(),
                 nonce: t.tx().nonce,
@@ -711,7 +711,7 @@ impl TypedTransaction {
                 chain_id: t.tx().chain_id,
                 access_list: Default::default(),
             },
-            TypedTransaction::EIP2930(t) => TransactionEssentials {
+            Self::EIP2930(t) => TransactionEssentials {
                 kind: t.tx().to,
                 input: t.tx().input.clone(),
                 nonce: t.tx().nonce,
@@ -725,7 +725,7 @@ impl TypedTransaction {
                 chain_id: Some(t.tx().chain_id),
                 access_list: t.tx().access_list.clone(),
             },
-            TypedTransaction::EIP1559(t) => TransactionEssentials {
+            Self::EIP1559(t) => TransactionEssentials {
                 kind: t.tx().to,
                 input: t.tx().input.clone(),
                 nonce: t.tx().nonce,
@@ -739,7 +739,7 @@ impl TypedTransaction {
                 chain_id: Some(t.tx().chain_id),
                 access_list: t.tx().access_list.clone(),
             },
-            TypedTransaction::EIP4844(t) => TransactionEssentials {
+            Self::EIP4844(t) => TransactionEssentials {
                 kind: TxKind::Call(t.tx().tx().to),
                 input: t.tx().tx().input.clone(),
                 nonce: t.tx().tx().nonce,
@@ -753,7 +753,7 @@ impl TypedTransaction {
                 chain_id: Some(t.tx().tx().chain_id),
                 access_list: t.tx().tx().access_list.clone(),
             },
-            TypedTransaction::Deposit(t) => TransactionEssentials {
+            Self::Deposit(t) => TransactionEssentials {
                 kind: t.kind,
                 input: t.input.clone(),
                 nonce: t.nonce,
@@ -772,49 +772,49 @@ impl TypedTransaction {
 
     pub fn nonce(&self) -> u64 {
         match self {
-            TypedTransaction::Legacy(t) => t.tx().nonce,
-            TypedTransaction::EIP2930(t) => t.tx().nonce,
-            TypedTransaction::EIP1559(t) => t.tx().nonce,
-            TypedTransaction::EIP4844(t) => t.tx().tx().nonce,
-            TypedTransaction::Deposit(t) => t.nonce,
+            Self::Legacy(t) => t.tx().nonce,
+            Self::EIP2930(t) => t.tx().nonce,
+            Self::EIP1559(t) => t.tx().nonce,
+            Self::EIP4844(t) => t.tx().tx().nonce,
+            Self::Deposit(t) => t.nonce,
         }
     }
 
     pub fn chain_id(&self) -> Option<u64> {
         match self {
-            TypedTransaction::Legacy(t) => t.tx().chain_id,
-            TypedTransaction::EIP2930(t) => Some(t.tx().chain_id),
-            TypedTransaction::EIP1559(t) => Some(t.tx().chain_id),
-            TypedTransaction::EIP4844(t) => Some(t.tx().tx().chain_id),
-            TypedTransaction::Deposit(t) => t.chain_id(),
+            Self::Legacy(t) => t.tx().chain_id,
+            Self::EIP2930(t) => Some(t.tx().chain_id),
+            Self::EIP1559(t) => Some(t.tx().chain_id),
+            Self::EIP4844(t) => Some(t.tx().tx().chain_id),
+            Self::Deposit(t) => t.chain_id(),
         }
     }
 
     pub fn as_legacy(&self) -> Option<&Signed<TxLegacy>> {
         match self {
-            TypedTransaction::Legacy(tx) => Some(tx),
+            Self::Legacy(tx) => Some(tx),
             _ => None,
         }
     }
 
     /// Returns true whether this tx is a legacy transaction
     pub fn is_legacy(&self) -> bool {
-        matches!(self, TypedTransaction::Legacy(_))
+        matches!(self, Self::Legacy(_))
     }
 
     /// Returns true whether this tx is a EIP1559 transaction
     pub fn is_eip1559(&self) -> bool {
-        matches!(self, TypedTransaction::EIP1559(_))
+        matches!(self, Self::EIP1559(_))
     }
 
     /// Returns true whether this tx is a EIP2930 transaction
     pub fn is_eip2930(&self) -> bool {
-        matches!(self, TypedTransaction::EIP2930(_))
+        matches!(self, Self::EIP2930(_))
     }
 
     /// Returns true whether this tx is a EIP4844 transaction
     pub fn is_eip4844(&self) -> bool {
-        matches!(self, TypedTransaction::EIP4844(_))
+        matches!(self, Self::EIP4844(_))
     }
 
     /// Returns the hash of the transaction.
@@ -823,11 +823,11 @@ impl TypedTransaction {
     /// hash. This allows us to treat impersonated transactions as unique.
     pub fn hash(&self) -> B256 {
         match self {
-            TypedTransaction::Legacy(t) => *t.hash(),
-            TypedTransaction::EIP2930(t) => *t.hash(),
-            TypedTransaction::EIP1559(t) => *t.hash(),
-            TypedTransaction::EIP4844(t) => *t.hash(),
-            TypedTransaction::Deposit(t) => t.hash(),
+            Self::Legacy(t) => *t.hash(),
+            Self::EIP2930(t) => *t.hash(),
+            Self::EIP1559(t) => *t.hash(),
+            Self::EIP4844(t) => *t.hash(),
+            Self::Deposit(t) => t.hash(),
         }
     }
 
@@ -851,22 +851,22 @@ impl TypedTransaction {
     /// Recovers the Ethereum address which was used to sign the transaction.
     pub fn recover(&self) -> Result<Address, alloy_primitives::SignatureError> {
         match self {
-            TypedTransaction::Legacy(tx) => tx.recover_signer(),
-            TypedTransaction::EIP2930(tx) => tx.recover_signer(),
-            TypedTransaction::EIP1559(tx) => tx.recover_signer(),
-            TypedTransaction::EIP4844(tx) => tx.recover_signer(),
-            TypedTransaction::Deposit(tx) => tx.recover(),
+            Self::Legacy(tx) => tx.recover_signer(),
+            Self::EIP2930(tx) => tx.recover_signer(),
+            Self::EIP1559(tx) => tx.recover_signer(),
+            Self::EIP4844(tx) => tx.recover_signer(),
+            Self::Deposit(tx) => tx.recover(),
         }
     }
 
     /// Returns what kind of transaction this is
     pub fn kind(&self) -> TxKind {
         match self {
-            TypedTransaction::Legacy(tx) => tx.tx().to,
-            TypedTransaction::EIP2930(tx) => tx.tx().to,
-            TypedTransaction::EIP1559(tx) => tx.tx().to,
-            TypedTransaction::EIP4844(tx) => TxKind::Call(tx.tx().tx().to),
-            TypedTransaction::Deposit(tx) => tx.kind,
+            Self::Legacy(tx) => tx.tx().to,
+            Self::EIP2930(tx) => tx.tx().to,
+            Self::EIP1559(tx) => tx.tx().to,
+            Self::EIP4844(tx) => TxKind::Call(tx.tx().tx().to),
+            Self::Deposit(tx) => tx.kind,
         }
     }
 
@@ -878,11 +878,11 @@ impl TypedTransaction {
     /// Returns the Signature of the transaction
     pub fn signature(&self) -> Signature {
         match self {
-            TypedTransaction::Legacy(tx) => *tx.signature(),
-            TypedTransaction::EIP2930(tx) => *tx.signature(),
-            TypedTransaction::EIP1559(tx) => *tx.signature(),
-            TypedTransaction::EIP4844(tx) => *tx.signature(),
-            TypedTransaction::Deposit(_) => Signature::from_scalars_and_parity(
+            Self::Legacy(tx) => *tx.signature(),
+            Self::EIP2930(tx) => *tx.signature(),
+            Self::EIP1559(tx) => *tx.signature(),
+            Self::EIP4844(tx) => *tx.signature(),
+            Self::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
                 false,
@@ -895,11 +895,11 @@ impl TypedTransaction {
 impl Encodable for TypedTransaction {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
         match self {
-            TypedTransaction::Legacy(tx) => TxEnvelope::from(tx.clone()).encode(out),
-            TypedTransaction::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode(out),
-            TypedTransaction::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode(out),
-            TypedTransaction::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode(out),
-            TypedTransaction::Deposit(tx) => {
+            Self::Legacy(tx) => TxEnvelope::from(tx.clone()).encode(out),
+            Self::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode(out),
+            Self::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode(out),
+            Self::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode(out),
+            Self::Deposit(tx) => {
                 let tx_payload_len = tx.fields_len();
                 let tx_header_len = Header { list: false, payload_length: tx_payload_len }.length();
                 Header { list: false, payload_length: 1 + tx_payload_len + tx_header_len }
@@ -939,21 +939,21 @@ impl Encodable2718 for TypedTransaction {
 
     fn encode_2718_len(&self) -> usize {
         match self {
-            TypedTransaction::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
-            TypedTransaction::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
-            TypedTransaction::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
-            TypedTransaction::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
-            TypedTransaction::Deposit(tx) => 1 + tx.length(),
+            Self::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
+            Self::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
+            Self::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
+            Self::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
+            Self::Deposit(tx) => 1 + tx.length(),
         }
     }
 
     fn encode_2718(&self, out: &mut dyn BufMut) {
         match self {
-            TypedTransaction::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
-            TypedTransaction::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
-            TypedTransaction::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
-            TypedTransaction::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
-            TypedTransaction::Deposit(tx) => {
+            Self::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
+            Self::EIP2930(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
+            Self::EIP1559(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
+            Self::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
+            Self::Deposit(tx) => {
                 out.put_u8(0x7E);
                 tx.encode(out);
             }
@@ -985,10 +985,10 @@ impl Decodable2718 for TypedTransaction {
 impl From<TxEnvelope> for TypedTransaction {
     fn from(value: TxEnvelope) -> Self {
         match value {
-            TxEnvelope::Legacy(tx) => TypedTransaction::Legacy(tx),
-            TxEnvelope::Eip2930(tx) => TypedTransaction::EIP2930(tx),
-            TxEnvelope::Eip1559(tx) => TypedTransaction::EIP1559(tx),
-            TxEnvelope::Eip4844(tx) => TypedTransaction::EIP4844(tx),
+            TxEnvelope::Legacy(tx) => Self::Legacy(tx),
+            TxEnvelope::Eip2930(tx) => Self::EIP2930(tx),
+            TxEnvelope::Eip1559(tx) => Self::EIP1559(tx),
+            TxEnvelope::Eip4844(tx) => Self::EIP4844(tx),
             _ => unreachable!(),
         }
     }
@@ -1030,8 +1030,10 @@ pub struct TransactionInfo {
 pub struct DepositReceipt<T = alloy_primitives::Log> {
     #[serde(flatten)]
     pub inner: ReceiptWithBloom<T>,
+    #[serde(default, with = "alloy_serde::num::u64_opt_via_ruint")]
     pub deposit_nonce: Option<u64>,
-    pub deposit_nonce_version: Option<u64>,
+    #[serde(default, with = "alloy_serde::num::u64_opt_via_ruint")]
+    pub deposit_receipt_version: Option<u64>,
 }
 
 impl DepositReceipt {
@@ -1041,7 +1043,7 @@ impl DepositReceipt {
             self.inner.logs_bloom.length() +
             self.inner.receipt.logs.length() +
             self.deposit_nonce.map_or(0, |n| n.length()) +
-            self.deposit_nonce_version.map_or(0, |n| n.length())
+            self.deposit_receipt_version.map_or(0, |n| n.length())
     }
 
     /// Returns the rlp header for the receipt payload.
@@ -1059,7 +1061,7 @@ impl DepositReceipt {
         if let Some(n) = self.deposit_nonce {
             n.encode(out);
         }
-        if let Some(n) = self.deposit_nonce_version {
+        if let Some(n) = self.deposit_receipt_version {
             n.encode(out);
         }
     }
@@ -1088,7 +1090,7 @@ impl DepositReceipt {
                 logs_bloom,
             },
             deposit_nonce,
-            deposit_nonce_version,
+            deposit_receipt_version: deposit_nonce_version,
         };
 
         let consumed = started_len - b.len();
@@ -1139,11 +1141,8 @@ pub enum TypedReceipt<T = alloy_primitives::Log> {
 impl<T> TypedReceipt<T> {
     pub fn as_receipt_with_bloom(&self) -> &ReceiptWithBloom<T> {
         match self {
-            TypedReceipt::Legacy(r) |
-            TypedReceipt::EIP1559(r) |
-            TypedReceipt::EIP2930(r) |
-            TypedReceipt::EIP4844(r) => r,
-            TypedReceipt::Deposit(r) => &r.inner,
+            Self::Legacy(r) | Self::EIP1559(r) | Self::EIP2930(r) | Self::EIP4844(r) => r,
+            Self::Deposit(r) => &r.inner,
         }
     }
 }
@@ -1165,10 +1164,10 @@ impl TypedReceipt {
 impl From<ReceiptEnvelope<alloy_rpc_types::Log>> for TypedReceipt<alloy_rpc_types::Log> {
     fn from(value: ReceiptEnvelope<alloy_rpc_types::Log>) -> Self {
         match value {
-            ReceiptEnvelope::Legacy(r) => TypedReceipt::Legacy(r),
-            ReceiptEnvelope::Eip2930(r) => TypedReceipt::EIP2930(r),
-            ReceiptEnvelope::Eip1559(r) => TypedReceipt::EIP1559(r),
-            ReceiptEnvelope::Eip4844(r) => TypedReceipt::EIP4844(r),
+            ReceiptEnvelope::Legacy(r) => Self::Legacy(r),
+            ReceiptEnvelope::Eip2930(r) => Self::EIP2930(r),
+            ReceiptEnvelope::Eip1559(r) => Self::EIP1559(r),
+            ReceiptEnvelope::Eip4844(r) => Self::EIP4844(r),
             _ => unreachable!(),
         }
     }
@@ -1177,33 +1176,33 @@ impl From<ReceiptEnvelope<alloy_rpc_types::Log>> for TypedReceipt<alloy_rpc_type
 impl Encodable for TypedReceipt {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
         match self {
-            TypedReceipt::Legacy(r) => r.encode(out),
+            Self::Legacy(r) => r.encode(out),
             receipt => {
                 let payload_len = match receipt {
-                    TypedReceipt::EIP2930(r) => r.length() + 1,
-                    TypedReceipt::EIP1559(r) => r.length() + 1,
-                    TypedReceipt::EIP4844(r) => r.length() + 1,
-                    TypedReceipt::Deposit(r) => r.length() + 1,
+                    Self::EIP2930(r) => r.length() + 1,
+                    Self::EIP1559(r) => r.length() + 1,
+                    Self::EIP4844(r) => r.length() + 1,
+                    Self::Deposit(r) => r.length() + 1,
                     _ => unreachable!("receipt already matched"),
                 };
 
                 match receipt {
-                    TypedReceipt::EIP2930(r) => {
+                    Self::EIP2930(r) => {
                         Header { list: true, payload_length: payload_len }.encode(out);
                         1u8.encode(out);
                         r.encode(out);
                     }
-                    TypedReceipt::EIP1559(r) => {
+                    Self::EIP1559(r) => {
                         Header { list: true, payload_length: payload_len }.encode(out);
                         2u8.encode(out);
                         r.encode(out);
                     }
-                    TypedReceipt::EIP4844(r) => {
+                    Self::EIP4844(r) => {
                         Header { list: true, payload_length: payload_len }.encode(out);
                         3u8.encode(out);
                         r.encode(out);
                     }
-                    TypedReceipt::Deposit(r) => {
+                    Self::Deposit(r) => {
                         Header { list: true, payload_length: payload_len }.encode(out);
                         0x7Eu8.encode(out);
                         r.encode(out);
@@ -1260,6 +1259,62 @@ impl Decodable for TypedReceipt {
     }
 }
 
+impl Encodable2718 for TypedReceipt {
+    fn type_flag(&self) -> Option<u8> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::EIP2930(_) => Some(1),
+            Self::EIP1559(_) => Some(2),
+            Self::EIP4844(_) => Some(3),
+            Self::Deposit(_) => Some(0x7E),
+        }
+    }
+
+    fn encode_2718_len(&self) -> usize {
+        match self {
+            Self::Legacy(r) => ReceiptEnvelope::Legacy(r.clone()).encode_2718_len(),
+            Self::EIP2930(r) => ReceiptEnvelope::Eip2930(r.clone()).encode_2718_len(),
+            Self::EIP1559(r) => ReceiptEnvelope::Eip1559(r.clone()).encode_2718_len(),
+            Self::EIP4844(r) => ReceiptEnvelope::Eip4844(r.clone()).encode_2718_len(),
+            Self::Deposit(r) => 1 + r.length(),
+        }
+    }
+
+    fn encode_2718(&self, out: &mut dyn BufMut) {
+        match self {
+            Self::Legacy(r) => ReceiptEnvelope::Legacy(r.clone()).encode_2718(out),
+            Self::EIP2930(r) => ReceiptEnvelope::Eip2930(r.clone()).encode_2718(out),
+            Self::EIP1559(r) => ReceiptEnvelope::Eip1559(r.clone()).encode_2718(out),
+            Self::EIP4844(r) => ReceiptEnvelope::Eip4844(r.clone()).encode_2718(out),
+            Self::Deposit(r) => {
+                out.put_u8(0x7E);
+                r.encode(out);
+            }
+        }
+    }
+}
+
+impl Decodable2718 for TypedReceipt {
+    fn typed_decode(ty: u8, buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        if ty == 0x7E {
+            return Ok(Self::Deposit(DepositReceipt::decode(buf)?))
+        }
+        match ReceiptEnvelope::typed_decode(ty, buf)? {
+            ReceiptEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
+            ReceiptEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
+            ReceiptEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
+            _ => unreachable!(),
+        }
+    }
+
+    fn fallback_decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        match ReceiptEnvelope::fallback_decode(buf)? {
+            ReceiptEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
+            _ => unreachable!(),
+        }
+    }
+}
+
 pub type ReceiptResponse = TransactionReceipt<TypedReceipt<alloy_rpc_types::Log>>;
 
 pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<ReceiptResponse> {
@@ -1303,8 +1358,16 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
             0x03 => TypedReceipt::EIP4844(receipt_with_bloom),
             0x7E => TypedReceipt::Deposit(DepositReceipt {
                 inner: receipt_with_bloom,
-                deposit_nonce: other.get("depositNonce").and_then(|v| v.as_u64()),
-                deposit_nonce_version: other.get("depositNonceVersion").and_then(|v| v.as_u64()),
+                deposit_nonce: other
+                    .get_deserialized::<U64>("depositNonce")
+                    .transpose()
+                    .ok()?
+                    .map(|v| v.to()),
+                deposit_receipt_version: other
+                    .get_deserialized::<U64>("depositReceiptVersion")
+                    .transpose()
+                    .ok()?
+                    .map(|v| v.to()),
             }),
             _ => return None,
         },

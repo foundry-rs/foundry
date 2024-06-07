@@ -15,6 +15,9 @@ contract PromptTest is DSTest {
 
         vm._expectCheatcodeRevert();
         vm.promptSecret("test");
+
+        vm._expectCheatcodeRevert();
+        uint256 test = vm.promptSecretUint("test");
     }
 
     function testPrompt_Address() public {

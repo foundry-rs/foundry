@@ -3,6 +3,7 @@ use alloy_primitives::U256;
 use alloy_provider::{network::AnyNetwork, Provider};
 use alloy_transport::Transport;
 use eyre::{ContextCompat, Result};
+use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::{Chain, Config};
 use std::{
     ffi::OsStr,
@@ -81,19 +82,18 @@ pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
     Ok(s)
 }
 
-/// Returns a [RetryProvider](foundry_common::RetryProvider) instantiated using [Config]'s
+/// Returns a [RetryProvider] instantiated using [Config]'s
 /// RPC
-pub fn get_provider(config: &Config) -> Result<foundry_common::provider::RetryProvider> {
+pub fn get_provider(config: &Config) -> Result<RetryProvider> {
     get_provider_builder(config)?.build()
 }
 
-/// Returns a [ProviderBuilder](foundry_common::provider::ProviderBuilder) instantiated using
-/// [Config] values.
+/// Returns a [ProviderBuilder] instantiated using [Config] values.
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
-pub fn get_provider_builder(config: &Config) -> Result<foundry_common::provider::ProviderBuilder> {
+pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
-    let mut builder = foundry_common::provider::ProviderBuilder::new(url.as_ref());
+    let mut builder = ProviderBuilder::new(url.as_ref());
 
     if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
         builder = builder.chain(chain);
@@ -289,7 +289,7 @@ impl<'a> Git<'a> {
 
     #[inline]
     pub fn from_config(config: &'a Config) -> Self {
-        Self::new(config.__root.0.as_path())
+        Self::new(config.root.0.as_path())
     }
 
     pub fn root_of(relative_to: &Path) -> Result<PathBuf> {

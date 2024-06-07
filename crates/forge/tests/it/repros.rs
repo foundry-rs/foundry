@@ -254,7 +254,7 @@ test_repro!(6501, false, None, |res| {
     assert_eq!(test.status, TestStatus::Success);
     assert_eq!(test.decoded_logs, ["a".to_string(), "1".to_string(), "b 2".to_string()]);
 
-    let (kind, traces) = test.traces[1].clone();
+    let (kind, traces) = test.traces.last().unwrap().clone();
     let nodes = traces.into_nodes();
     assert_eq!(kind, TraceKind::Execution);
 
@@ -292,7 +292,7 @@ test_repro!(6538);
 
 // https://github.com/foundry-rs/foundry/issues/6554
 test_repro!(6554; |config| {
-    let path = config.runner.config.__root.0.join("out/default/Issue6554.t.sol");
+    let path = config.runner.config.root.0.join("out/default/Issue6554.t.sol");
 
     let mut prj_config = Config::clone(&config.runner.config);
     prj_config.fs_permissions.add(PathPermission::read_write(path));
@@ -329,3 +329,6 @@ test_repro!(7481);
 
 // https://github.com/foundry-rs/foundry/issues/5739
 test_repro!(5739);
+
+// https://github.com/foundry-rs/foundry/issues/8004
+test_repro!(8004);

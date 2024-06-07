@@ -92,3 +92,20 @@ macro_rules! forgetest_init {
         }
     };
 }
+
+/// Setup forge soldeer
+#[macro_export]
+macro_rules! forgesoldeer {
+    ($(#[$attr:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
+        $crate::forgesoldeer!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
+    };
+    ($(#[$attr:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
+        #[test]
+        $(#[$attr])*
+        fn $test() {
+            let (mut $prj, mut $cmd) = $crate::util::setup_forge(stringify!($test), $style);
+            $crate::util::initialize($prj.root());
+            $e
+        }
+    };
+}

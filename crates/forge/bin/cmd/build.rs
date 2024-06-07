@@ -2,10 +2,8 @@ use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters};
-use foundry_compilers::{
-    compilers::Compiler, Project, ProjectCompileOutput, SparseOutputFileFilter,
-};
+use foundry_common::compile::ProjectCompiler;
+use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::{
     figment::{
         self,
@@ -13,7 +11,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile, Provider,
     },
-    with_resolved_project, Config,
+    Config,
 };
 use serde::Serialize;
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -54,13 +52,6 @@ pub struct BuildArgs {
     #[serde(skip)]
     pub sizes: bool,
 
-    /// Skip building files whose names contain the given filter.
-    ///
-    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
-    #[arg(long, num_args(1..))]
-    #[serde(skip)]
-    pub skip: Option<Vec<SkipBuildFilter>>,
-
     #[command(flatten)]
     #[serde(flatten)]
     pub args: CoreBuildArgs,
@@ -77,7 +68,7 @@ pub struct BuildArgs {
 }
 
 impl BuildArgs {
-    pub fn run(self) -> Result<()> {
+    pub fn run(self) -> Result<ProjectCompileOutput> {
         let mut config = self.try_load_config_emit_warnings()?;
 
         if install::install_missing_dependencies(&mut config, self.args.silent) &&
@@ -87,43 +78,13 @@ impl BuildArgs {
             config = self.load_config();
         }
 
-        with_resolved_project!(config, |project| {
-            let project = project?;
+        let project = config.project()?;
 
-            let filter = if let Some(ref skip) = self.skip {
-                if !skip.is_empty() {
-                    let filter = SkipBuildFilters::new(skip.clone(), project.root().clone())?;
-                    Some(filter)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            self.run_with_project(project, filter)?;
-        });
-
-        Ok(())
-    }
-
-    pub fn run_with_project<C: Compiler>(
-        &self,
-        project: Project<C>,
-        filter: Option<impl SparseOutputFileFilter<C::ParsedSource> + 'static>,
-    ) -> Result<ProjectCompileOutput<C::CompilationError>>
-    where
-        C::CompilationError: Clone,
-    {
-        let mut compiler = ProjectCompiler::new()
+        let compiler = ProjectCompiler::new()
             .print_names(self.names)
             .print_sizes(self.sizes)
             .quiet(self.format_json)
             .bail(!self.format_json);
-
-        if let Some(filter) = filter {
-            compiler = compiler.filter(Box::new(filter));
-        }
 
         let output = compiler.compile(&project)?;
 
@@ -185,21 +146,22 @@ impl Provider for BuildArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::filter::SkipBuildFilter;
 
     #[test]
     fn can_parse_build_filters() {
         let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests"]);
-        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests]));
+        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests]));
 
         let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "scripts"]);
-        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Scripts]));
+        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Scripts]));
 
         let args: BuildArgs =
             BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "--skip", "scripts"]);
-        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
+        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
 
         let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "scripts"]);
-        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
+        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
     }
 
     #[test]

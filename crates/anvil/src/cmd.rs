@@ -417,8 +417,7 @@ pub struct AnvilEvmArgs {
     ///
     /// default value: 330
     ///
-    /// See --fork-url.
-    /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
+    /// See also --fork-url and <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[arg(
         long,
         requires = "fork_url",
@@ -432,8 +431,7 @@ pub struct AnvilEvmArgs {
     ///
     /// default value: false
     ///
-    /// See --fork-url.
-    /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
+    /// See also --fork-url and <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[arg(
         long,
         requires = "fork_url",
@@ -596,7 +594,7 @@ impl Future for PeriodicStateDumper {
             if this.interval.poll_tick(cx).is_ready() {
                 let api = this.api.clone();
                 let path = this.dump_state.clone().expect("exists; see above");
-                this.in_progress_dump = Some(Box::pin(PeriodicStateDumper::dump_state(api, path)));
+                this.in_progress_dump = Some(Box::pin(Self::dump_state(api, path)));
             } else {
                 break
             }
@@ -663,17 +661,17 @@ impl FromStr for ForkUrl {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some((url, block)) = s.rsplit_once('@') {
             if block == "latest" {
-                return Ok(ForkUrl { url: url.to_string(), block: None })
+                return Ok(Self { url: url.to_string(), block: None })
             }
             // this will prevent false positives for auths `user:password@example.com`
             if !block.is_empty() && !block.contains(':') && !block.contains('.') {
                 let block: u64 = block
                     .parse()
                     .map_err(|_| format!("Failed to parse block number: `{block}`"))?;
-                return Ok(ForkUrl { url: url.to_string(), block: Some(block) })
+                return Ok(Self { url: url.to_string(), block: Some(block) })
             }
         }
-        Ok(ForkUrl { url: s.to_string(), block: None })
+        Ok(Self { url: s.to_string(), block: None })
     }
 }
 

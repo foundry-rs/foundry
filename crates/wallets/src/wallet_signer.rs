@@ -57,9 +57,8 @@ impl WalletSigner {
         }
     }
 
-    pub fn from_private_key(private_key: impl AsRef<[u8]>) -> Result<Self> {
-        let wallet = LocalWallet::from_bytes(&B256::from_slice(private_key.as_ref()))?;
-        Ok(Self::Local(wallet))
+    pub fn from_private_key(private_key: &B256) -> Result<Self> {
+        Ok(Self::Local(LocalWallet::from_bytes(private_key)?))
     }
 
     /// Returns a list of addresses available to use with current signer
@@ -71,10 +70,10 @@ impl WalletSigner {
     pub async fn available_senders(&self, max: usize) -> Result<Vec<Address>> {
         let mut senders = Vec::new();
         match self {
-            WalletSigner::Local(local) => {
+            Self::Local(local) => {
                 senders.push(local.address());
             }
-            WalletSigner::Ledger(ledger) => {
+            Self::Ledger(ledger) => {
                 for i in 0..max {
                     if let Ok(address) =
                         ledger.get_address_with_path(&LedgerHDPath::LedgerLive(i)).await
@@ -90,7 +89,7 @@ impl WalletSigner {
                     }
                 }
             }
-            WalletSigner::Trezor(trezor) => {
+            Self::Trezor(trezor) => {
                 for i in 0..max {
                     if let Ok(address) =
                         trezor.get_address_with_path(&TrezorHDPath::TrezorLive(i)).await
@@ -100,7 +99,7 @@ impl WalletSigner {
                 }
             }
             #[cfg(feature = "aws-kms")]
-            WalletSigner::Aws(aws) => {
+            Self::Aws(aws) => {
                 senders.push(alloy_signer::Signer::address(aws));
             }
         }
@@ -213,7 +212,7 @@ impl PendingSigner {
             }
             Self::Interactive => {
                 let private_key = rpassword::prompt_password("Enter private key:")?;
-                Ok(WalletSigner::from_private_key(hex::decode(private_key)?)?)
+                Ok(WalletSigner::from_private_key(&hex::FromHex::from_hex(private_key)?)?)
             }
         }
     }

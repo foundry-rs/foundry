@@ -8,7 +8,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{address, Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
@@ -43,12 +43,21 @@ use std::{
     time::Instant,
 };
 
+/// When running tests, we deploy all external libraries present in the project. To avoid additional
+/// libraries affecting nonces of senders used in tests, we are using separate address to
+/// predeploy libraries.
+///
+/// `address(uint160(uint256(keccak256("foundry library deployer"))))`
+pub const LIBRARY_DEPLOYER: Address = address!("1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
+
 /// A type that executes all tests of a contract
 #[derive(Clone, Debug)]
 pub struct ContractRunner<'a> {
     pub name: &'a str,
     /// The data of the contract being ran.
     pub contract: &'a TestContract,
+    /// The libraries that need to be deployed before the contract.
+    pub libs_to_deploy: &'a Vec<Bytes>,
     /// The executor used by the runner.
     pub executor: Executor,
     /// Revert decoder. Contains all known errors.
@@ -62,10 +71,12 @@ pub struct ContractRunner<'a> {
 }
 
 impl<'a> ContractRunner<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: &'a str,
         executor: Executor,
         contract: &'a TestContract,
+        libs_to_deploy: &'a Vec<Bytes>,
         initial_balance: U256,
         sender: Option<Address>,
         revert_decoder: &'a RevertDecoder,
@@ -75,6 +86,7 @@ impl<'a> ContractRunner<'a> {
             name,
             executor,
             contract,
+            libs_to_deploy,
             initial_balance,
             sender: sender.unwrap_or_default(),
             revert_decoder,
@@ -104,11 +116,13 @@ impl<'a> ContractRunner<'a> {
         self.executor.set_nonce(self.sender, 1)?;
 
         // Deploy libraries
+        self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
+
         let mut logs = Vec::new();
-        let mut traces = Vec::with_capacity(self.contract.libs_to_deploy.len());
-        for code in self.contract.libs_to_deploy.iter() {
+        let mut traces = Vec::with_capacity(self.libs_to_deploy.len());
+        for code in self.libs_to_deploy.iter() {
             match self.executor.deploy(
-                self.sender,
+                LIBRARY_DEPLOYER,
                 code.clone(),
                 U256::ZERO,
                 Some(self.revert_decoder),
@@ -146,9 +160,10 @@ impl<'a> ContractRunner<'a> {
             }
         };
 
-        // Reset `self.sender`s and `CALLER`s balance to the initial balance we want
+        // Reset `self.sender`s, `CALLER`s and `LIBRARY_DEPLOYER`'s balance to the initial balance.
         self.executor.set_balance(self.sender, self.initial_balance)?;
         self.executor.set_balance(CALLER, self.initial_balance)?;
+        self.executor.set_balance(LIBRARY_DEPLOYER, self.initial_balance)?;
 
         self.executor.deploy_create2_deployer()?;
 
@@ -286,8 +301,6 @@ impl<'a> ContractRunner<'a> {
                 [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))]
                     .into(),
                 warnings,
-                self.contract.libraries.clone(),
-                known_contracts,
             )
         }
 
@@ -324,8 +337,6 @@ impl<'a> ContractRunner<'a> {
                 )]
                 .into(),
                 warnings,
-                self.contract.libraries.clone(),
-                known_contracts,
             )
         }
 
@@ -354,6 +365,14 @@ impl<'a> ContractRunner<'a> {
                 let _guard = handle.enter();
 
                 let sig = func.signature();
+                let span = debug_span!("test", name = tracing::field::Empty).entered();
+                if !span.is_disabled() {
+                    if enabled!(tracing::Level::TRACE) {
+                        span.record("name", &sig);
+                    } else {
+                        span.record("name", &func.name);
+                    }
+                }
 
                 let setup = setup.clone();
                 let should_fail = func.is_test_fail();
@@ -383,13 +402,7 @@ impl<'a> ContractRunner<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let duration = start.elapsed();
-        let suite_result = SuiteResult::new(
-            duration,
-            test_results,
-            warnings,
-            self.contract.libraries.clone(),
-            known_contracts,
-        );
+        let suite_result = SuiteResult::new(duration, test_results, warnings);
         info!(
             duration=?suite_result.duration,
             "done. {}/{} successful",
@@ -405,18 +418,8 @@ impl<'a> ContractRunner<'a> {
     ///
     /// State modifications are not committed to the evm database but discarded after the call,
     /// similar to `eth_call`.
+    #[instrument(level = "debug", name = "normal", skip_all)]
     pub fn run_test(&self, func: &Function, should_fail: bool, setup: TestSetup) -> TestResult {
-        let span = info_span!("test", %should_fail);
-        if !span.is_disabled() {
-            let sig = &func.signature()[..];
-            if enabled!(tracing::Level::TRACE) {
-                span.record("sig", sig);
-            } else {
-                span.record("sig", sig.split('(').next().unwrap());
-            }
-        }
-        let _guard = span.enter();
-
         let TestSetup {
             address, mut logs, mut traces, mut labeled_addresses, mut coverage, ..
         } = setup;
@@ -512,7 +515,7 @@ impl<'a> ContractRunner<'a> {
         }
     }
 
-    #[instrument(name = "invariant_test", skip_all)]
+    #[instrument(level = "debug", name = "invariant", skip_all)]
     pub fn run_invariant_test(
         &self,
         runner: TestRunner,
@@ -731,7 +734,7 @@ impl<'a> ContractRunner<'a> {
         }
     }
 
-    #[instrument(name = "fuzz_test", skip_all, fields(name = %func.signature(), %should_fail))]
+    #[instrument(level = "debug", name = "fuzz", skip_all)]
     pub fn run_fuzz_test(
         &self,
         func: &Function,
@@ -740,17 +743,6 @@ impl<'a> ContractRunner<'a> {
         setup: TestSetup,
         fuzz_config: FuzzConfig,
     ) -> TestResult {
-        let span = info_span!("fuzz_test", %should_fail);
-        if !span.is_disabled() {
-            let sig = &func.signature()[..];
-            if enabled!(tracing::Level::TRACE) {
-                span.record("test", sig);
-            } else {
-                span.record("test", sig.split('(').next().unwrap());
-            }
-        }
-        let _guard = span.enter();
-
         let TestSetup {
             address,
             mut logs,
@@ -872,7 +864,7 @@ impl<'a> ContractRunner<'a> {
 fn merge_coverages(mut coverage: Option<HitMaps>, other: Option<HitMaps>) -> Option<HitMaps> {
     let old_coverage = std::mem::take(&mut coverage);
     match (old_coverage, other) {
-        (Some(old_coverage), Some(other)) => Some(old_coverage.merge(other)),
+        (Some(old_coverage), Some(other)) => Some(old_coverage.merged(other)),
         (None, Some(other)) => Some(other),
         (Some(old_coverage), None) => Some(old_coverage),
         (None, None) => None,

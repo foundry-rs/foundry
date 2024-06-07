@@ -420,7 +420,7 @@ impl DebuggerContext<'_> {
 
         let params = OpcodeParam::of(step.instruction);
 
-        let text: Vec<Line> = stack
+        let text: Vec<Line<'_>> = stack
             .iter()
             .rev()
             .enumerate()
@@ -515,7 +515,7 @@ impl DebuggerContext<'_> {
         let height = area.height as usize;
         let end_line = self.draw_memory.current_buf_startline + height;
 
-        let text: Vec<Line> = buf
+        let text: Vec<Line<'_>> = buf
             .chunks(32)
             .enumerate()
             .skip(self.draw_memory.current_buf_startline)

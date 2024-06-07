@@ -52,7 +52,7 @@ struct ParserContext {
 impl Parser {
     /// Create a new instance of [Parser].
     pub fn new(comments: Vec<SolangComment>, source: String) -> Self {
-        Parser { comments, source, ..Default::default() }
+        Self { comments, source, ..Default::default() }
     }
 
     /// Set formatter config on the [Parser]

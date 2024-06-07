@@ -1,7 +1,7 @@
 use clap::{Parser, ValueHint};
 use eyre::{Result, WrapErr};
 use foundry_cli::utils::LoadConfig;
-use foundry_compilers::{resolver::parse::SolData, Graph, Solc};
+use foundry_compilers::{resolver::parse::SolData, Graph};
 use foundry_config::{impl_figment_convert_basic, Config};
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -62,7 +62,7 @@ impl GeigerArgs {
 
         let mut sources: Vec<PathBuf> = {
             if self.paths.is_empty() {
-                Graph::<SolData>::resolve(&config.project_paths::<Solc>())?
+                Graph::<SolData>::resolve(&config.project_paths())?
                     .files()
                     .keys()
                     .cloned()
@@ -98,7 +98,7 @@ impl GeigerArgs {
             eprintln!("{}\n", "ffi enabled".red());
         }
 
-        let root = config.__root.0;
+        let root = config.root.0;
 
         let sum = sources
             .par_iter()

@@ -14,8 +14,6 @@ pub struct CheatsManager {
     state: Arc<RwLock<CheatsState>>,
 }
 
-// === impl CheatsManager ===
-
 impl CheatsManager {
     /// Sets the account to impersonate
     ///

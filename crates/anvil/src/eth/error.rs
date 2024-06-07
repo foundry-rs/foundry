@@ -95,23 +95,23 @@ pub enum BlockchainError {
 
 impl From<RpcError> for BlockchainError {
     fn from(err: RpcError) -> Self {
-        BlockchainError::RpcError(err)
+        Self::RpcError(err)
     }
 }
 
 impl<T> From<EVMError<T>> for BlockchainError
 where
-    T: Into<BlockchainError>,
+    T: Into<Self>,
 {
     fn from(err: EVMError<T>) -> Self {
         match err {
             EVMError::Transaction(err) => InvalidTransactionError::from(err).into(),
             EVMError::Header(err) => match err {
-                InvalidHeader::ExcessBlobGasNotSet => BlockchainError::ExcessBlobGasNotSet,
-                InvalidHeader::PrevrandaoNotSet => BlockchainError::PrevrandaoNotSet,
+                InvalidHeader::ExcessBlobGasNotSet => Self::ExcessBlobGasNotSet,
+                InvalidHeader::PrevrandaoNotSet => Self::PrevrandaoNotSet,
             },
             EVMError::Database(err) => err.into(),
-            EVMError::Custom(err) => BlockchainError::Message(err),
+            EVMError::Custom(err) => Self::Message(err),
         }
     }
 }
@@ -234,58 +234,32 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
     fn from(err: revm::primitives::InvalidTransaction) -> Self {
         use revm::primitives::InvalidTransaction;
         match err {
-            InvalidTransaction::InvalidChainId => InvalidTransactionError::InvalidChainId,
-            InvalidTransaction::PriorityFeeGreaterThanMaxFee => {
-                InvalidTransactionError::TipAboveFeeCap
-            }
-            InvalidTransaction::GasPriceLessThanBasefee => InvalidTransactionError::FeeCapTooLow,
+            InvalidTransaction::InvalidChainId => Self::InvalidChainId,
+            InvalidTransaction::PriorityFeeGreaterThanMaxFee => Self::TipAboveFeeCap,
+            InvalidTransaction::GasPriceLessThanBasefee => Self::FeeCapTooLow,
             InvalidTransaction::CallerGasLimitMoreThanBlock => {
-                InvalidTransactionError::GasTooHigh(ErrDetail {
-                    detail: String::from("CallerGasLimitMoreThanBlock"),
-                })
+                Self::GasTooHigh(ErrDetail { detail: String::from("CallerGasLimitMoreThanBlock") })
             }
             InvalidTransaction::CallGasCostMoreThanGasLimit => {
-                InvalidTransactionError::GasTooHigh(ErrDetail {
-                    detail: String::from("CallGasCostMoreThanGasLimit"),
-                })
+                Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
-            InvalidTransaction::RejectCallerWithCode => InvalidTransactionError::SenderNoEOA,
-            InvalidTransaction::LackOfFundForMaxFee { .. } => {
-                InvalidTransactionError::InsufficientFunds
-            }
-            InvalidTransaction::OverflowPaymentInTransaction => {
-                InvalidTransactionError::GasUintOverflow
-            }
-            InvalidTransaction::NonceOverflowInTransaction => {
-                InvalidTransactionError::NonceMaxValue
-            }
-            InvalidTransaction::CreateInitCodeSizeLimit => {
-                InvalidTransactionError::MaxInitCodeSizeExceeded
-            }
-            InvalidTransaction::NonceTooHigh { .. } => InvalidTransactionError::NonceTooHigh,
-            InvalidTransaction::NonceTooLow { .. } => InvalidTransactionError::NonceTooLow,
-            InvalidTransaction::AccessListNotSupported => {
-                InvalidTransactionError::AccessListNotSupported
-            }
-            InvalidTransaction::BlobGasPriceGreaterThanMax => {
-                InvalidTransactionError::BlobFeeCapTooLow
-            }
+            InvalidTransaction::RejectCallerWithCode => Self::SenderNoEOA,
+            InvalidTransaction::LackOfFundForMaxFee { .. } => Self::InsufficientFunds,
+            InvalidTransaction::OverflowPaymentInTransaction => Self::GasUintOverflow,
+            InvalidTransaction::NonceOverflowInTransaction => Self::NonceMaxValue,
+            InvalidTransaction::CreateInitCodeSizeLimit => Self::MaxInitCodeSizeExceeded,
+            InvalidTransaction::NonceTooHigh { .. } => Self::NonceTooHigh,
+            InvalidTransaction::NonceTooLow { .. } => Self::NonceTooLow,
+            InvalidTransaction::AccessListNotSupported => Self::AccessListNotSupported,
+            InvalidTransaction::BlobGasPriceGreaterThanMax => Self::BlobFeeCapTooLow,
             InvalidTransaction::BlobVersionedHashesNotSupported => {
-                InvalidTransactionError::BlobVersionedHashesNotSupported
+                Self::BlobVersionedHashesNotSupported
             }
-            InvalidTransaction::MaxFeePerBlobGasNotSupported => {
-                InvalidTransactionError::MaxFeePerBlobGasNotSupported
-            }
-            InvalidTransaction::BlobCreateTransaction => {
-                InvalidTransactionError::BlobCreateTransaction
-            }
-            InvalidTransaction::BlobVersionNotSupported => {
-                InvalidTransactionError::BlobVersionNotSupported
-            }
-            InvalidTransaction::EmptyBlobs => InvalidTransactionError::EmptyBlobs,
-            InvalidTransaction::TooManyBlobs { max, have } => {
-                InvalidTransactionError::TooManyBlobs(max, have)
-            }
+            InvalidTransaction::MaxFeePerBlobGasNotSupported => Self::MaxFeePerBlobGasNotSupported,
+            InvalidTransaction::BlobCreateTransaction => Self::BlobCreateTransaction,
+            InvalidTransaction::BlobVersionNotSupported => Self::BlobVersionNotSupported,
+            InvalidTransaction::EmptyBlobs => Self::EmptyBlobs,
+            InvalidTransaction::TooManyBlobs { max, have } => Self::TooManyBlobs(max, have),
             _ => todo!(),
         }
     }

@@ -8,16 +8,13 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
 };
-use foundry_common::{
-    compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters},
-    provider::ProviderBuilder,
-};
+use foundry_common::{compile::ProjectCompiler, provider::ProviderBuilder};
 use foundry_compilers::{
     artifacts::{BytecodeHash, BytecodeObject, CompactContractBytecode},
     info::ContractInfo,
-    Artifact, EvmVersion, SolcSparseFileFilter,
+    Artifact, EvmVersion,
 };
-use foundry_config::{figment, impl_figment_convert, Chain, Config};
+use foundry_config::{figment, filter::SkipBuildFilter, impl_figment_convert, Chain, Config};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
@@ -59,7 +56,8 @@ pub struct VerifyBytecodeArgs {
     #[clap(short = 'r', long, value_name = "RPC_URL", env = "ETH_RPC_URL")]
     pub rpc_url: Option<String>,
 
-    /// Verfication Type: `full` or `partial`. Ref: https://docs.sourcify.dev/docs/full-vs-partial-match/
+    /// Verfication Type: `full` or `partial`.
+    /// Ref: <https://docs.sourcify.dev/docs/full-vs-partial-match/>
     #[clap(long, default_value = "full", value_name = "TYPE")]
     pub verification_type: VerificationType,
 
@@ -224,11 +222,13 @@ impl VerifyBytecodeArgs {
                 (VerificationType::Partial, _) => (VerificationType::Partial, true),
             };
 
+        trace!(?verification_type, has_metadata);
         // Etherscan compilation metadata
         let etherscan_metadata = source_code.items.first().unwrap();
 
         let local_bytecode =
             if let Some(local_bytecode) = self.build_using_cache(etherscan_metadata, &config) {
+                trace!("using cache");
                 local_bytecode
             } else {
                 self.build_project(&config)?
@@ -374,17 +374,8 @@ impl VerifyBytecodeArgs {
 
     fn build_project(&self, config: &Config) -> Result<Bytes> {
         let project = config.project()?;
-        let mut compiler = ProjectCompiler::new();
+        let compiler = ProjectCompiler::new();
 
-        if let Some(skip) = &self.skip {
-            if !skip.is_empty() {
-                let filter = SolcSparseFileFilter::new(SkipBuildFilters::new(
-                    skip.to_owned(),
-                    project.root().to_path_buf(),
-                )?);
-                compiler = compiler.filter(Box::new(filter));
-            }
-        }
         let output = compiler.compile(&project)?;
 
         let artifact = output
@@ -413,37 +404,44 @@ impl VerifyBytecodeArgs {
         for (key, value) in cached_artifacts {
             let name = self.contract.name.to_owned() + ".sol";
             let version = etherscan_settings.compiler_version.to_owned();
+            // Ignores vyper
             if version.starts_with("vyper:") {
                 return None;
             }
             // Parse etherscan version string
             let version =
                 version.split('+').next().unwrap_or("").trim_start_matches('v').to_string();
+
+            // Check if `out/directory` name matches the contract name
             if key.ends_with(name.as_str()) {
-                if let Some(artifact) = value.into_iter().next() {
+                let artifacts =
+                    value.iter().flat_map(|(_, artifacts)| artifacts.iter()).collect::<Vec<_>>();
+                let name = name.replace(".sol", ".json");
+                for artifact in artifacts {
+                    // Check if ABI file matches the name
+                    if !artifact.file.ends_with(&name) {
+                        continue;
+                    }
+
+                    // Check if Solidity version matches
                     if let Ok(version) = Version::parse(&version) {
-                        if let Some(artifact) = artifact.1.iter().find(|a| {
-                            a.version.major == version.major &&
-                                a.version.minor == version.minor &&
-                                a.version.patch == version.patch
-                        }) {
-                            return artifact
-                                .artifact
-                                .bytecode
-                                .as_ref()
-                                .and_then(|bytes| bytes.bytes().to_owned())
-                                .cloned();
+                        if !(artifact.version.major == version.major &&
+                            artifact.version.minor == version.minor &&
+                            artifact.version.patch == version.patch)
+                        {
+                            continue;
                         }
                     }
-                    let artifact = artifact.1.first().unwrap(); // Get the first artifact
-                    let local_bytecode = if let Some(local_bytecode) = &artifact.artifact.bytecode {
-                        local_bytecode.bytes()
-                    } else {
-                        None
-                    };
 
-                    return local_bytecode.map(|bytes| bytes.to_owned());
+                    return artifact
+                        .artifact
+                        .bytecode
+                        .as_ref()
+                        .and_then(|bytes| bytes.bytes().to_owned())
+                        .cloned();
                 }
+
+                return None
             }
         }
 
@@ -462,7 +460,7 @@ impl VerifyBytecodeArgs {
             if !self.json {
                 println!(
                     "{} with status {}",
-                    format!("{:?} code matched", bytecode_type).green().bold(),
+                    format!("{bytecode_type:?} code matched").green().bold(),
                     res.1.unwrap().green().bold()
                 );
             } else {
@@ -478,8 +476,7 @@ impl VerifyBytecodeArgs {
             println!(
                 "{}",
                 format!(
-                    "{:?} code did not match - this may be due to varying compiler settings",
-                    bytecode_type
+                    "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
                 )
                 .red()
                 .bold()
@@ -494,8 +491,7 @@ impl VerifyBytecodeArgs {
                 matched: false,
                 verification_type: self.verification_type,
                 message: Some(format!(
-                    "{:?} code did not match - this may be due to varying compiler settings",
-                    bytecode_type
+                    "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
                 )),
             };
             json_results.push(json_res);
@@ -503,7 +499,8 @@ impl VerifyBytecodeArgs {
     }
 }
 
-/// Enum to represent the type of verification: `full` or `partial`. Ref: https://docs.sourcify.dev/docs/full-vs-partial-match/
+/// Enum to represent the type of verification: `full` or `partial`.
+/// Ref: <https://docs.sourcify.dev/docs/full-vs-partial-match/>
 #[derive(Debug, Clone, clap::ValueEnum, Default, PartialEq, Eq, Serialize, Deserialize, Copy)]
 pub enum VerificationType {
     #[default]
@@ -518,8 +515,8 @@ impl FromStr for VerificationType {
 
     fn from_str(s: &str) -> Result<Self> {
         match s {
-            "full" => Ok(VerificationType::Full),
-            "partial" => Ok(VerificationType::Partial),
+            "full" => Ok(Self::Full),
+            "partial" => Ok(Self::Partial),
             _ => eyre::bail!("Invalid verification type"),
         }
     }
@@ -537,8 +534,8 @@ impl From<VerificationType> for String {
 impl fmt::Display for VerificationType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VerificationType::Full => write!(f, "full"),
-            VerificationType::Partial => write!(f, "partial"),
+            Self::Full => write!(f, "full"),
+            Self::Partial => write!(f, "partial"),
         }
     }
 }

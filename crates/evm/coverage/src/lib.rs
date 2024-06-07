@@ -2,7 +2,8 @@
 //!
 //! EVM bytecode coverage analysis.
 
-#![warn(unreachable_pub, unused_crate_dependencies, rust_2018_idioms)]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -32,17 +33,17 @@ pub use inspector::CoverageCollector;
 /// "anchors"). A single coverage item may be referred to by multiple anchors.
 #[derive(Clone, Debug, Default)]
 pub struct CoverageReport {
-    /// A map of source IDs to the source path
+    /// A map of source IDs to the source path.
     pub source_paths: HashMap<(Version, usize), PathBuf>,
-    /// A map of source paths to source IDs
+    /// A map of source paths to source IDs.
     pub source_paths_to_ids: HashMap<(Version, PathBuf), usize>,
     /// All coverage items for the codebase, keyed by the compiler version.
     pub items: HashMap<Version, Vec<CoverageItem>>,
     /// All item anchors for the codebase, keyed by their contract ID.
     pub anchors: HashMap<ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>)>,
-    /// All the bytecode hits for the codebase
+    /// All the bytecode hits for the codebase.
     pub bytecode_hits: HashMap<ContractId, HitMap>,
-    /// The bytecode -> source mappings
+    /// The bytecode -> source mappings.
     pub source_maps: HashMap<ContractId, (SourceMap, SourceMap)>,
 }
 
@@ -58,7 +59,7 @@ impl CoverageReport {
         self.source_paths_to_ids.get(&(version, path)).copied()
     }
 
-    /// Add the source maps
+    /// Add the source maps.
     pub fn add_source_maps(
         &mut self,
         source_maps: impl IntoIterator<Item = (ContractId, (SourceMap, SourceMap))>,
@@ -66,12 +67,12 @@ impl CoverageReport {
         self.source_maps.extend(source_maps);
     }
 
-    /// Add coverage items to this report
+    /// Add coverage items to this report.
     pub fn add_items(&mut self, version: Version, items: impl IntoIterator<Item = CoverageItem>) {
         self.items.entry(version).or_default().extend(items);
     }
 
-    /// Add anchors to this report
+    /// Add anchors to this report.
     pub fn add_anchors(
         &mut self,
         anchors: impl IntoIterator<Item = (ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>))>,
@@ -79,7 +80,7 @@ impl CoverageReport {
         self.anchors.extend(anchors);
     }
 
-    /// Get coverage summaries by source file path
+    /// Get coverage summaries by source file path.
     pub fn summary_by_file(&self) -> impl Iterator<Item = (PathBuf, CoverageSummary)> {
         let mut summaries = BTreeMap::new();
 
@@ -98,7 +99,7 @@ impl CoverageReport {
         summaries.into_iter()
     }
 
-    /// Get coverage items by source file path
+    /// Get coverage items by source file path.
     pub fn items_by_source(&self) -> impl Iterator<Item = (PathBuf, Vec<CoverageItem>)> {
         let mut items_by_source: BTreeMap<_, Vec<_>> = BTreeMap::new();
 
@@ -116,10 +117,11 @@ impl CoverageReport {
         items_by_source.into_iter()
     }
 
-    /// Processes data from a [HitMap] and sets hit counts for coverage items in this coverage map.
+    /// Processes data from a [`HitMap`] and sets hit counts for coverage items in this coverage
+    /// map.
     ///
     /// This function should only be called *after* all the relevant sources have been processed and
-    /// added to the map (see [add_source]).
+    /// added to the map (see [`add_source`](Self::add_source)).
     pub fn add_hit_map(
         &mut self,
         contract_id: &ContractId,
@@ -150,20 +152,24 @@ impl CoverageReport {
     }
 }
 
-/// A collection of [HitMap]s
+/// A collection of [`HitMap`]s.
 #[derive(Clone, Debug, Default)]
 pub struct HitMaps(pub HashMap<B256, HitMap>);
 
 impl HitMaps {
-    pub fn merge(mut self, other: HitMaps) -> Self {
-        for (code_hash, hit_map) in other.0.into_iter() {
+    pub fn merge(&mut self, other: Self) {
+        for (code_hash, hit_map) in other.0 {
             if let Some(HitMap { hits: extra_hits, .. }) = self.insert(code_hash, hit_map) {
-                for (pc, hits) in extra_hits.into_iter() {
+                for (pc, hits) in extra_hits {
                     self.entry(code_hash)
                         .and_modify(|map| *map.hits.entry(pc).or_default() += hits);
                 }
             }
         }
+    }
+
+    pub fn merged(mut self, other: Self) -> Self {
+        self.merge(other);
         self
     }
 }
@@ -202,14 +208,14 @@ impl HitMap {
     }
 
     /// Merge another hitmap into this, assuming the bytecode is consistent
-    pub fn merge(&mut self, other: &HitMap) -> Result<(), eyre::Report> {
+    pub fn merge(&mut self, other: &Self) -> Result<(), eyre::Report> {
         for (pc, hits) in &other.hits {
             *self.hits.entry(*pc).or_default() += hits;
         }
         Ok(())
     }
 
-    pub fn consistent_bytecode(&self, hm1: &HitMap, hm2: &HitMap) -> bool {
+    pub fn consistent_bytecode(&self, hm1: &Self, hm2: &Self) -> bool {
         // Consider the bytecodes consistent if they are the same out as far as the
         // recorded hits
         let len1 = hm1.hits.last_key_value();

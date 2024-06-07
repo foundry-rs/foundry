@@ -1,4 +1,9 @@
-#![warn(unused_crate_dependencies)]
+//! # foundry-macros
+//!
+//! Internal Foundry proc-macros.
+
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate proc_macro_error;

@@ -309,7 +309,7 @@ async fn main() -> Result<()> {
                 {
                     let resolved = match func_names {
                         Some(v) => v.join("|"),
-                        None => "".to_string(),
+                        None => String::new(),
                     };
                     println!("{selector}\t{arguments:max_args_len$}\t{resolved}");
                 }
@@ -327,6 +327,11 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::Index { key_type, key, slot_number } => {
             println!("{}", SimpleCast::index(&key_type, &key, &slot_number)?);
+        }
+        CastSubcommand::IndexErc7201 { id, formula_id } => {
+            eyre::ensure!(formula_id == "erc7201", "unsupported formula ID: {formula_id}");
+            let id = stdin::unwrap_line(id)?;
+            println!("{}", foundry_common::erc7201(&id));
         }
         CastSubcommand::Implementation { block, who, rpc } => {
             let config = Config::from(&rpc);

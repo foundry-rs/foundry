@@ -91,7 +91,7 @@ async fn test_transact_fork() {
     TestConfig::with_filter(runner, filter).run().await;
 }
 
-/// Tests that we can create the same fork (provider,block) concurretnly in different tests
+/// Tests that we can create the same fork (provider,block) concurrently in different tests
 #[tokio::test(flavor = "multi_thread")]
 async fn test_create_same_fork() {
     let runner = TEST_DATA_DEFAULT.runner();

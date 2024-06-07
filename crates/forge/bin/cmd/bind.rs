@@ -7,6 +7,7 @@ use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
+use regex::Regex;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -32,10 +33,6 @@ pub struct BindArgs {
     /// Create bindings only for contracts whose names match the specified filter(s)
     #[arg(long)]
     pub select: Vec<regex::Regex>,
-
-    /// Create bindings only for contracts whose names do not match the specified filter(s)
-    #[arg(long, conflicts_with = "select")]
-    pub skip: Vec<regex::Regex>,
 
     /// Explicitly generate bindings for all contracts
     ///
@@ -135,18 +132,25 @@ impl BindArgs {
     }
 
     /// Returns the filter to use for `MultiAbigen`
-    fn get_filter(&self) -> ContractFilter {
+    fn get_filter(&self) -> Result<ContractFilter> {
         if self.select_all {
-            return ContractFilter::All
+            return Ok(ContractFilter::All)
         }
         if !self.select.is_empty() {
-            return SelectContracts::default().extend_regex(self.select.clone()).into()
+            return Ok(SelectContracts::default().extend_regex(self.select.clone()).into())
         }
-        if !self.skip.is_empty() {
-            return ExcludeContracts::default().extend_regex(self.skip.clone()).into()
+        if let Some(skip) = self.build_args.skip.as_ref().filter(|s| !s.is_empty()) {
+            return Ok(ExcludeContracts::default()
+                .extend_regex(
+                    skip.clone()
+                        .into_iter()
+                        .map(|s| Regex::new(s.file_pattern()))
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+                .into())
         }
         // This excludes all Test/Script and forge-std contracts
-        ExcludeContracts::default()
+        Ok(ExcludeContracts::default()
             .extend_pattern([
                 ".*Test.*",
                 ".*Script",
@@ -157,33 +161,38 @@ impl BindArgs {
                 "[Vv]m.*",
             ])
             .extend_names(["IMulticall3"])
-            .into()
+            .into())
     }
 
-    fn get_alloy_filter(&self) -> Filter {
+    fn get_alloy_filter(&self) -> Result<Filter> {
         if self.select_all {
             // Select all json files
-            return Filter::All;
+            return Ok(Filter::All);
         }
         if !self.select.is_empty() {
             // Return json files that match the select regex
-            return Filter::Select(self.select.clone());
+            return Ok(Filter::Select(self.select.clone()));
         }
-        if !self.skip.is_empty() {
-            // Exclude json files that match the skip regex
-            return Filter::Skip(self.skip.clone());
+
+        if let Some(skip) = self.build_args.skip.as_ref().filter(|s| !s.is_empty()) {
+            return Ok(Filter::Skip(
+                skip.clone()
+                    .into_iter()
+                    .map(|s| Regex::new(s.file_pattern()))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ));
         }
 
         // Exclude defaults
-        Filter::skip_default(self.skip.clone())
+        Ok(Filter::skip_default())
     }
 
     /// Returns an iterator over the JSON files and the contract name in the `artifacts` directory.
-    fn get_json_files(&self, artifacts: &Path) -> impl Iterator<Item = (String, PathBuf)> {
-        let filter = self.get_filter();
-        let alloy_filter = self.get_alloy_filter();
+    fn get_json_files(&self, artifacts: &Path) -> Result<impl Iterator<Item = (String, PathBuf)>> {
+        let filter = self.get_filter()?;
+        let alloy_filter = self.get_alloy_filter()?;
         let is_alloy = self.alloy;
-        json_files(artifacts)
+        Ok(json_files(artifacts)
             .filter_map(|path| {
                 // Ignore the build info JSON.
                 if path.to_str()?.contains("/build-info/") {
@@ -211,17 +220,17 @@ impl BindArgs {
                         filter.is_match(name)
                     }
                 },
-            )
+            ))
     }
 
     /// Instantiate the multi-abigen
     fn get_multi(&self, artifacts: &Path) -> Result<MultiAbigen> {
         let abigens = self
-            .get_json_files(artifacts)
+            .get_json_files(artifacts)?
             .map(|(name, path)| {
                 trace!(?path, "parsing Abigen from file");
                 let abi = Abigen::new(name, path.to_str().unwrap())
-                    .wrap_err_with(|| format!("failed to parse Abigen from file: {:?}", path));
+                    .wrap_err_with(|| format!("failed to parse Abigen from file: {path:?}"));
                 if !self.skip_extra_derives {
                     abi?.add_derive("serde::Serialize")?.add_derive("serde::Deserialize")
                 } else {
@@ -236,7 +245,7 @@ impl BindArgs {
 
     fn get_solmacrogen(&self, artifacts: &Path) -> Result<MultiSolMacroGen> {
         let instances = self
-            .get_json_files(artifacts)
+            .get_json_files(artifacts)?
             .map(|(name, path)| {
                 trace!(?path, "parsing SolMacroGen from file");
                 SolMacroGen::new(path, name)
@@ -359,14 +368,14 @@ pub enum Filter {
 impl Filter {
     pub fn is_match(&self, name: &str) -> bool {
         match self {
-            Filter::All => true,
-            Filter::Select(regexes) => regexes.iter().any(|regex| regex.is_match(name)),
-            Filter::Skip(regexes) => !regexes.iter().any(|regex| regex.is_match(name)),
+            Self::All => true,
+            Self::Select(regexes) => regexes.iter().any(|regex| regex.is_match(name)),
+            Self::Skip(regexes) => !regexes.iter().any(|regex| regex.is_match(name)),
         }
     }
 
-    pub fn skip_default(skip: Vec<regex::Regex>) -> Self {
-        let default_skip = [
+    pub fn skip_default() -> Self {
+        let skip = [
             ".*Test.*",
             ".*Script",
             "console[2]?",
@@ -380,8 +389,6 @@ impl Filter {
         .map(|pattern| regex::Regex::new(pattern).unwrap())
         .collect::<Vec<_>>();
 
-        let mut skip = skip;
-        skip.extend(default_skip);
-        Filter::Skip(skip)
+        Self::Skip(skip)
     }
 }

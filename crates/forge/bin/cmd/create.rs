@@ -394,7 +394,7 @@ where
     B: Clone,
 {
     fn clone(&self) -> Self {
-        ContractDeploymentTx { deployer: self.deployer.clone(), _contract: self._contract }
+        Self { deployer: self.deployer.clone(), _contract: self._contract }
     }
 }
 
@@ -422,7 +422,7 @@ where
     B: Clone,
 {
     fn clone(&self) -> Self {
-        Deployer {
+        Self {
             tx: self.tx.clone(),
             abi: self.abi.clone(),
             client: self.client.clone(),
@@ -512,7 +512,7 @@ where
     B: Clone,
 {
     fn clone(&self) -> Self {
-        DeploymentTxFactory {
+        Self {
             client: self.client.clone(),
             abi: self.abi.clone(),
             bytecode: self.bytecode.clone(),

@@ -59,8 +59,8 @@ pub struct FailedInvariantCaseData {
     pub revert_reason: String,
     /// Address of the invariant asserter.
     pub addr: Address,
-    /// Function data for invariant check.
-    pub func: Bytes,
+    /// Function calldata for invariant check.
+    pub calldata: Bytes,
     /// Inner fuzzing Sequence coming from overriding calls.
     pub inner_sequence: Vec<Option<BasicTxDetails>>,
     /// Shrink run limit
@@ -79,17 +79,13 @@ impl FailedInvariantCaseData {
         inner_sequence: &[Option<BasicTxDetails>],
     ) -> Self {
         // Collect abis of fuzzed and invariant contracts to decode custom error.
-        let targets = targeted_contracts.targets.lock();
-        let abis = targets
-            .iter()
-            .map(|contract| &contract.1 .1)
-            .chain(std::iter::once(invariant_contract.abi));
-
         let revert_reason = RevertDecoder::new()
-            .with_abis(abis)
+            .with_abis(targeted_contracts.targets.lock().iter().map(|(_, (_, abi, _))| abi))
+            .with_abi(invariant_contract.abi)
             .decode(call_result.result.as_ref(), Some(call_result.exit_reason));
 
         let func = invariant_contract.invariant_function;
+        debug_assert!(func.inputs.is_empty());
         let origin = func.name.as_str();
         Self {
             test_error: proptest::test_runner::TestError::Fail(
@@ -99,7 +95,7 @@ impl FailedInvariantCaseData {
             return_reason: "".into(),
             revert_reason,
             addr: invariant_contract.address,
-            func: func.selector().to_vec().into(),
+            calldata: func.selector().to_vec().into(),
             inner_sequence: inner_sequence.to_vec(),
             shrink_run_limit: invariant_config.shrink_run_limit,
             fail_on_revert: invariant_config.fail_on_revert,

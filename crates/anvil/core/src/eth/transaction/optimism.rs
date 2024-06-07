@@ -286,7 +286,7 @@ impl DepositTransaction {
         len
     }
 
-    /// Decodes the inner [TxDeposit] fields from RLP bytes.
+    /// Decodes the inner fields from RLP bytes
     ///
     /// NOTE: This assumes a RLP header has already been decoded, and _just_ decodes the following
     /// RLP fields in the following order:

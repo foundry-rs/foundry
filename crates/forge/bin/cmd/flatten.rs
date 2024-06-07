@@ -5,7 +5,7 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_common::{compile::compile_target, fs};
-use foundry_compilers::{error::SolcError, flatten::Flattener};
+use foundry_compilers::{compilers::solc::SolcLanguage, error::SolcError, flatten::Flattener};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge flatten`.
@@ -32,14 +32,14 @@ pub struct FlattenArgs {
 
 impl FlattenArgs {
     pub fn run(self) -> Result<()> {
-        let FlattenArgs { target_path, output, project_paths } = self;
+        let Self { target_path, output, project_paths } = self;
 
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
         let build_args = CoreBuildArgs { project_paths, ..Default::default() };
         let mut config = build_args.try_load_config_emit_warnings()?;
         // `Flattener` uses the typed AST for better flattening results.
         config.ast = true;
-        let project = config.ephemeral_no_artifacts_project()?;
+        let project = config.create_project(false, true)?;
 
         let target_path = dunce::canonicalize(target_path)?;
         let compiler_output = compile_target(&target_path, &project, false);
@@ -52,7 +52,7 @@ impl FlattenArgs {
                 // Fallback to the old flattening implementation if we couldn't compile the target
                 // successfully. This would be the case if the target has invalid
                 // syntax. (e.g. Solang)
-                project.paths.flatten(&target_path)
+                project.paths.clone().with_language::<SolcLanguage>().flatten(&target_path)
             }
         }
         .map_err(|err: SolcError| eyre::eyre!("Failed to flatten: {err}"))?;

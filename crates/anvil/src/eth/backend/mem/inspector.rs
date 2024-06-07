@@ -23,8 +23,6 @@ pub struct Inspector {
     pub log_collector: LogCollector,
 }
 
-// === impl Inspector ===
-
 impl Inspector {
     /// Called after the inspecting the evm
     ///

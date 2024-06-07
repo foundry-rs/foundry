@@ -34,7 +34,6 @@ pub struct LocalFork {
     fork_handle: NodeHandle,
 }
 
-// === impl LocalFork ===
 #[allow(dead_code)]
 impl LocalFork {
     /// Spawns two nodes with the test config

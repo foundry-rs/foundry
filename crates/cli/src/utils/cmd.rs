@@ -37,7 +37,7 @@ pub fn remove_contract(
     let contract = if let Some(contract) = output.remove(path.to_string_lossy(), name) {
         contract
     } else {
-        let mut err = format!("could not find artifact: `{}`", name);
+        let mut err = format!("could not find artifact: `{name}`");
         if let Some(suggestion) =
             super::did_you_mean(name, output.artifacts().map(|(name, _)| name)).pop()
         {
@@ -146,7 +146,7 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
     let mut template =
         "{prefix}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} "
             .to_string();
-    write!(template, "{}", label).unwrap();
+    write!(template, "{label}").unwrap();
     template += " ({eta})";
     pb.set_style(
         indicatif::ProgressStyle::with_template(&template)
@@ -192,7 +192,7 @@ pub fn has_batch_support(chain_id: u64) -> bool {
 /// Helpers for loading configuration.
 ///
 /// This is usually implicitly implemented on a "&CmdArgs" struct via impl macros defined in
-/// `forge_config` (See [`forge_config::impl_figment_convert`] for more details) and the impl
+/// `forge_config` (see [`foundry_config::impl_figment_convert`] for more details) and the impl
 /// definition on `T: Into<Config> + Into<Figment>` below.
 ///
 /// Each function also has an `emit_warnings` form which does the same thing as its counterpart but
@@ -265,31 +265,31 @@ where
 
     fn load_config_emit_warnings(self) -> Config {
         let config = self.load_config();
-        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
         config
     }
 
     fn try_load_config_emit_warnings(self) -> Result<Config, ExtractConfigError> {
         let config = self.try_load_config()?;
-        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
         Ok(config)
     }
 
     fn load_config_and_evm_opts_emit_warnings(self) -> Result<(Config, EvmOpts)> {
         let (config, evm_opts) = self.load_config_and_evm_opts()?;
-        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
         Ok((config, evm_opts))
     }
 
     fn load_config_unsanitized_emit_warnings(self) -> Config {
         let config = self.load_config_unsanitized();
-        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
         config
     }
 
     fn try_load_config_unsanitized_emit_warnings(self) -> Result<Config, ExtractConfigError> {
         let config = self.try_load_config_unsanitized()?;
-        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config.warnings.iter().for_each(|w| cli_warn!("{w}"));
         Ok(config)
     }
 }

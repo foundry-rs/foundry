@@ -15,6 +15,7 @@ mod debug;
 mod doc;
 mod multi_script;
 mod script;
+mod soldeer;
 mod svm;
 mod test_cmd;
 mod verify;

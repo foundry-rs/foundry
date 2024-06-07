@@ -1,4 +1,4 @@
-//! Implementations of [`Utils`](crate::Group::Utils) cheatcodes.
+//! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{keccak256, Address, B256, U256};
@@ -90,10 +90,10 @@ impl Cheatcode for deriveKey_3Call {
 impl Cheatcode for rememberKeyCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey } = self;
-        let key = parse_private_key(privateKey)?;
-        let address = LocalWallet::from(key.clone()).address();
+        let wallet = parse_wallet(privateKey)?;
+        let address = wallet.address();
         if let Some(script_wallets) = &ccx.state.script_wallets {
-            script_wallets.add_signer(key.to_bytes())?;
+            script_wallets.add_local_signer(wallet);
         }
         Ok(address.abi_encode())
     }
@@ -204,12 +204,8 @@ fn encode_vrs(sig: alloy_primitives::Signature) -> Vec<u8> {
 pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
     let wallet = parse_wallet(private_key)?;
-
     let sig = wallet.sign_hash_sync(digest)?;
-    let recovered = sig.recover_address_from_prehash(digest)?;
-
-    assert_eq!(recovered, wallet.address());
-
+    debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
     Ok(encode_vrs(sig))
 }
 
@@ -219,7 +215,7 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     digest: &B256,
 ) -> Result {
     let Some(script_wallets) = &ccx.state.script_wallets else {
-        return Err("no wallets are available".into());
+        bail!("no wallets are available");
     };
 
     let mut script_wallets = script_wallets.inner.lock();
@@ -233,19 +229,15 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     } else if signers.len() == 1 {
         *signers.keys().next().unwrap()
     } else {
-        return Err("could not determine signer".into());
+        bail!("could not determine signer");
     };
 
     let wallet = signers
         .get(&signer)
         .ok_or_else(|| fmt_err!("signer with address {signer} is not available"))?;
 
-    let sig =
-        foundry_common::block_on(wallet.sign_hash(digest)).map_err(|err| fmt_err!("{err}"))?;
-
-    let recovered = sig.recover_address_from_prehash(digest).map_err(|err| fmt_err!("{err}"))?;
-    assert_eq!(recovered, signer);
-
+    let sig = foundry_common::block_on(wallet.sign_hash(digest))?;
+    debug_assert_eq!(sig.recover_address_from_prehash(digest)?, signer);
     Ok(encode_vrs(sig))
 }
 
