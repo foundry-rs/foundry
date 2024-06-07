@@ -6,8 +6,7 @@ use alloy_rpc_types::{
     state::StateOverride,
     BlockId, BlockNumberOrTag as BlockNumber, Filter, WithOtherFields,
 };
-use alloy_rpc_types_anvil::Forking;
-use alloy_rpc_types_anvil::MineOptions as EvmMineOptions;
+use alloy_rpc_types_anvil::{Forking, MineOptions as EvmMineOptions};
 use alloy_rpc_types_trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
 
 pub mod block;
