@@ -167,7 +167,7 @@ impl MultiContractRunner {
             find_time,
         );
 
-        contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
+        contracts.par_iter().for_each(|&(id, contract)| {
             let _guard = handle.enter();
             let result = self.run_tests(id, contract, db.clone(), filter, &handle);
             let _ = tx.send((id.identifier(), result));
