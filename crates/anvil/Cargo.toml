@@ -55,6 +55,7 @@ alloy-signer-wallet = { workspace = true, features = ["mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types.workspace = true
+alloy-rpc-types-anvil.workspace = true
 alloy-rpc-types-trace.workspace = true
 alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
 alloy-transport.workspace = true

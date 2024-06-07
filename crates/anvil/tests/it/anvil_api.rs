@@ -9,10 +9,11 @@ use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{address, fixed_bytes, Address, U256, U64};
 use alloy_provider::{ext::TxPoolApi, Provider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, WithOtherFields};
+use alloy_rpc_types_anvil::Forking;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::{
     eth::EthRequest,
-    types::{AnvilMetadata, ForkedNetwork, Forking, NodeEnvironment, NodeForkConfig, NodeInfo},
+    types::{AnvilMetadata, ForkedNetwork, NodeEnvironment, NodeForkConfig, NodeInfo},
 };
 use foundry_evm::revm::primitives::SpecId;
 use std::{

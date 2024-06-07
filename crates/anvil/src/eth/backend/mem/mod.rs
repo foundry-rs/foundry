@@ -41,6 +41,7 @@ use alloy_rpc_types::{
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
     FilteredParams, Header as AlloyHeader, Log, Transaction, TransactionReceipt, WithOtherFields,
 };
+use alloy_rpc_types_anvil::Forking;
 use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
@@ -55,7 +56,7 @@ use anvil_core::{
         },
         utils::meets_eip155,
     },
-    types::{Forking, Index},
+    types::Index,
 };
 use anvil_rpc::error::RpcError;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
@@ -622,7 +623,7 @@ impl Backend {
     /// Returns an error if op-stack deposits are not active
     pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
-            return Ok(())
+            return Ok(());
         }
         Err(BlockchainError::DepositTransactionUnsupported)
     }
@@ -1440,7 +1441,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_hash_full(hash).await?)
+            return Ok(fork.block_by_hash_full(hash).await?);
         }
 
         Ok(None)
@@ -1491,7 +1492,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.block_by_number(number).await?)
+                return Ok(fork.block_by_number(number).await?);
             }
         }
 
@@ -1510,7 +1511,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.block_by_number_full(number).await?)
+                return Ok(fork.block_by_number_full(number).await?);
             }
         }
 
@@ -1875,7 +1876,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.trace_transaction(hash).await?)
+            return Ok(fork.trace_transaction(hash).await?);
         }
 
         Ok(vec![])
@@ -1919,7 +1920,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.debug_trace_transaction(hash, opts).await?)
+            return Ok(fork.debug_trace_transaction(hash, opts).await?);
         }
 
         Ok(GethTrace::Default(Default::default()))
@@ -1945,7 +1946,7 @@ impl Backend {
 
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork(number) {
-                return Ok(fork.trace_block(number).await?)
+                return Ok(fork.trace_block(number).await?);
             }
         }
 
@@ -2120,7 +2121,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork(number) {
-                return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?)
+                return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?);
             }
         }
 
@@ -2137,7 +2138,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.transaction_by_block_hash_and_index(hash, index.into()).await?)
+            return Ok(fork.transaction_by_block_hash_and_index(hash, index.into()).await?);
         }
 
         Ok(None)
@@ -2176,7 +2177,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork.transaction_by_hash(hash).await.map_err(BlockchainError::AlloyForkProvider)
+            return fork.transaction_by_hash(hash).await.map_err(BlockchainError::AlloyForkProvider);
         }
 
         Ok(None)
@@ -2286,7 +2287,7 @@ fn get_pool_transactions_nonce(
         .max()
     {
         let tx_count = highest_nonce.saturating_add(1);
-        return Some(tx_count)
+        return Some(tx_count);
     }
     None
 }
@@ -2316,8 +2317,8 @@ impl TransactionValidator for Backend {
             if chain_id.to::<u64>() != tx_chain_id {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if env.handler_cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
-                        !meets_eip155(chain_id.to::<u64>(), legacy.signature().v())
+                    if env.handler_cfg.spec_id >= SpecId::SPURIOUS_DRAGON
+                        && !meets_eip155(chain_id.to::<u64>(), legacy.signature().v())
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
@@ -2389,17 +2390,17 @@ impl TransactionValidator for Backend {
 
             // Ensure there are blob hashes.
             if blob_count == 0 {
-                return Err(InvalidTransactionError::NoBlobHashes)
+                return Err(InvalidTransactionError::NoBlobHashes);
             }
 
             // Ensure the tx does not exceed the max blobs per block.
             if blob_count > MAX_BLOBS_PER_BLOCK {
-                return Err(InvalidTransactionError::TooManyBlobs(MAX_BLOBS_PER_BLOCK, blob_count))
+                return Err(InvalidTransactionError::TooManyBlobs(MAX_BLOBS_PER_BLOCK, blob_count));
             }
 
             // Check for any blob validation errors
             if let Err(err) = tx.validate(env.cfg.kzg_settings.get()) {
-                return Err(InvalidTransactionError::BlobTransactionValidationError(err))
+                return Err(InvalidTransactionError::BlobTransactionValidationError(err));
             }
         }
 
