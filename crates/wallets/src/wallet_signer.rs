@@ -15,9 +15,12 @@ use std::path::PathBuf;
 use {alloy_signer_aws::AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Client as AwsClient};
 
 #[cfg(feature = "gcp-kms")]
-use alloy_signer_gcp::{GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier};
-use gcloud_sdk::{
-    google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient, GoogleApi,
+use {
+    alloy_signer_gcp::{GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier},
+    gcloud_sdk::{
+        google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient,
+        GoogleApi,
+    },
 };
 
 pub type Result<T> = std::result::Result<T, WalletSignerError>;
