@@ -1,8 +1,8 @@
 use super::{error::ScanFileError, visitor::CheatcodeVisitor};
 use eyre::Result;
-use forge_fmt::{offset_to_line_column, parse, Visitable};
+use forge_fmt::{offset_to_line_column, parse2, FormatterError, Visitable};
 use foundry_common::fs;
-use solang_parser::{diagnostics::Diagnostic, pt::Loc};
+use solang_parser::pt::Loc;
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -12,14 +12,16 @@ use yansi::Paint;
 /// Scan a single file for `unsafe` cheatcode usage.
 pub fn find_cheatcodes_in_file(path: &Path) -> Result<SolFileMetrics, ScanFileError> {
     let contents = fs::read_to_string(path)?;
-    let cheatcodes = find_cheatcodes_in_string(&contents)
-        .map_err(|diagnostic| ScanFileError::ParseSol(diagnostic, path.to_path_buf()))?;
+    let cheatcodes = find_cheatcodes_in_string(&contents, Some(path))?;
     Ok(SolFileMetrics { contents, cheatcodes, file: path.to_path_buf() })
 }
 
 /// Scan a string for unsafe cheatcodes.
-pub fn find_cheatcodes_in_string(src: &str) -> Result<UnsafeCheatcodes, Vec<Diagnostic>> {
-    let mut parsed = parse(src)?;
+pub fn find_cheatcodes_in_string(
+    src: &str,
+    path: Option<&Path>,
+) -> Result<UnsafeCheatcodes, FormatterError> {
+    let mut parsed = parse2(src, path)?;
     let mut visitor = CheatcodeVisitor::default();
     parsed.pt.visit(&mut visitor).unwrap();
     Ok(visitor.cheatcodes)
@@ -140,7 +142,7 @@ mod tests {
         }
         ";
 
-        let count = find_cheatcodes_in_string(s).unwrap();
+        let count = find_cheatcodes_in_string(s, None).unwrap();
         assert_eq!(count.ffi.len(), 1);
         assert!(!count.is_empty());
     }
@@ -156,7 +158,7 @@ mod tests {
         }
         ";
 
-        let count = find_cheatcodes_in_string(s).unwrap();
+        let count = find_cheatcodes_in_string(s, None).unwrap();
         assert_eq!(count.ffi.len(), 1);
         assert!(!count.is_empty());
     }

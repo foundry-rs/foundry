@@ -6,6 +6,7 @@ use crate::{
     comments::{
         CommentPosition, CommentState, CommentStringExt, CommentType, CommentWithMetadata, Comments,
     },
+    format_diagnostics_report,
     helpers::import_path_string,
     macros::*,
     solang_ext::{pt::*, *},
@@ -16,7 +17,8 @@ use crate::{
 use alloy_primitives::Address;
 use foundry_config::fmt::{HexUnderscore, MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
-use std::{fmt::Write, str::FromStr};
+use solang_parser::diagnostics::Diagnostic;
+use std::{fmt::Write, path::PathBuf, str::FromStr};
 use thiserror::Error;
 
 type Result<T, E = FormatterError> = std::result::Result<T, E>;
@@ -28,8 +30,11 @@ pub enum FormatterError {
     #[error(transparent)]
     Fmt(#[from] std::fmt::Error),
     /// Encountered invalid parse tree item.
-    #[error("Encountered invalid parse tree item at {0:?}")]
+    #[error("encountered invalid parse tree item at {0:?}")]
     InvalidParsedItem(Loc),
+    /// Failed to parse the source code
+    #[error("failed to parse file:\n{}", format_diagnostics_report(_0, _1.as_deref(), _2))]
+    Parse(String, Option<PathBuf>, Vec<Diagnostic>),
     /// All other errors
     #[error(transparent)]
     Custom(Box<dyn std::error::Error + Send + Sync>),
@@ -39,6 +44,7 @@ impl FormatterError {
     fn fmt() -> Self {
         Self::Fmt(std::fmt::Error)
     }
+
     fn custom(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::Custom(Box::new(err))
     }

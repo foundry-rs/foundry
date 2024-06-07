@@ -3,7 +3,7 @@
 
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
-use alloy_json_abi::{ContractObject, Function};
+use alloy_json_abi::Function;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{
     utils::{keccak256, ParseUnits, Unit},
@@ -973,19 +973,6 @@ where
     }
 }
 
-pub struct InterfaceSource {
-    pub name: String,
-    pub json_abi: String,
-    pub source: String,
-}
-
-// Local is a path to the directory containing the ABI files
-// In case of etherscan, ABI is fetched from the address on the chain
-pub enum AbiPath {
-    Local { path: String, name: Option<String> },
-    Etherscan { address: Address, chain: Chain, api_key: String },
-}
-
 pub struct SimpleCast;
 
 impl SimpleCast {
@@ -1634,62 +1621,6 @@ impl SimpleCast {
         let func = get_func(sig.as_ref())?;
         let calldata = encode_function_args(&func, args)?;
         Ok(hex::encode_prefixed(calldata))
-    }
-
-    /// Generates an interface in solidity from either a local file ABI or a verified contract on
-    /// Etherscan. It returns a vector of [`InterfaceSource`] structs that contain the source of the
-    /// interface and their name.
-    ///
-    /// Note: This removes the constructor from the ABI before generating the interface.
-    ///
-    /// ```no_run
-    /// use cast::{AbiPath, SimpleCast as Cast};
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let path =
-    ///     AbiPath::Local { path: "utils/testdata/interfaceTestABI.json".to_owned(), name: None };
-    /// let interfaces = Cast::generate_interface(path).await?;
-    /// println!("interface {} {{\n {}\n}}", interfaces[0].name, interfaces[0].source);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn generate_interface(address_or_path: AbiPath) -> Result<Vec<InterfaceSource>> {
-        let (mut contract_abis, contract_names) = match address_or_path {
-            AbiPath::Local { path, name } => {
-                let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
-                let obj: ContractObject = serde_json::from_str(&file)?;
-                let abi =
-                    obj.abi.ok_or_else(|| eyre::eyre!("could not find ABI in file {path}"))?;
-                (vec![abi], vec![name.unwrap_or_else(|| "Interface".to_owned())])
-            }
-            AbiPath::Etherscan { address, chain, api_key } => {
-                let client = Client::new(chain, api_key)?;
-                let source = client.contract_source_code(address).await?;
-                let names = source
-                    .items
-                    .iter()
-                    .map(|item| item.contract_name.clone())
-                    .collect::<Vec<String>>();
-
-                let abis = source.abis()?;
-
-                (abis, names)
-            }
-        };
-        contract_abis
-            .iter_mut()
-            .zip(contract_names)
-            .map(|(contract_abi, name)| {
-                // need to filter out the constructor
-                contract_abi.constructor.take();
-
-                let source = foundry_cli::utils::abi_to_solidity(contract_abi, &name)?;
-                Ok(InterfaceSource {
-                    name,
-                    json_abi: serde_json::to_string_pretty(contract_abi)?,
-                    source,
-                })
-            })
-            .collect::<Result<Vec<InterfaceSource>>>()
     }
 
     /// Prints the slot number for the specified mapping type and input data.
