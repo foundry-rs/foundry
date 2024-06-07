@@ -227,6 +227,28 @@ async fn can_reject_too_high_gas_limits() {
     let _ = pending.unwrap();
 }
 
+// <https://github.com/foundry-rs/foundry/issues/8094>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_mine_large_gas_limit() {
+    let (api, handle) = spawn(NodeConfig::test().disable_block_gas_limit(true)).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let gas_limit = api.gas_limit().to::<u128>();
+    let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
+
+    let tx =
+        TransactionRequest::default().to(to).value(amount).from(from).with_gas_limit(gas_limit * 3);
+
+    // send transaction with higher gas limit
+    let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+
+    let _resp = pending.get_receipt().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reject_underpriced_replacement() {
     let (api, handle) = spawn(NodeConfig::test()).await;
