@@ -29,6 +29,7 @@ pub enum WalletSignerError {
     #[error(transparent)]
     #[cfg(feature = "aws-kms")]
     Aws(#[from] AwsSignerError),
+    #[error(transparent)]
     #[cfg(feature = "gcp-kms")]
     Gcp(#[from] GcpSignerError),
     #[error(transparent)]

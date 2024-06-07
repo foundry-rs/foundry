@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use {alloy_signer_aws::AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Client as AwsClient};
 
 #[cfg(feature = "gcp-kms")]
-use alloy_signer_gcp::{GcpKeyRingRef, GcpSigner, KeySpecifier};
+use alloy_signer_gcp::{GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier};
 use gcloud_sdk::{
     google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient, GoogleApi,
 };
@@ -76,12 +76,16 @@ impl WalletSigner {
         #[cfg(feature = "gcp-kms")]
         {
             let keyring = GcpKeyRingRef::new(&project_id, &location, &keyring);
-            let client = GoogleApi::from_function(
+            let client = match GoogleApi::from_function(
                 KeyManagementServiceClient::new,
                 "https://cloudkms.googleapis.com",
                 None,
             )
-            .await?;
+            .await
+            {
+                Ok(c) => c,
+                Err(e) => return Err(WalletSignerError::from(GcpSignerError::GoogleKmsError(e))),
+            };
 
             let specifier = KeySpecifier::new(keyring, &key_name, key_version);
 
