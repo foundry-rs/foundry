@@ -267,9 +267,9 @@ impl<C: Compiler> ProjectCompiler<C> {
                 let dev_functions =
                     artifact.abi.as_ref().map(|abi| abi.functions()).into_iter().flatten().filter(
                         |func| {
-                            func.name.is_test() ||
-                                func.name.eq("IS_TEST") ||
-                                func.name.eq("IS_SCRIPT")
+                            func.name.is_test()
+                                || func.name.eq("IS_TEST")
+                                || func.name.eq("IS_SCRIPT")
                         },
                     );
 
