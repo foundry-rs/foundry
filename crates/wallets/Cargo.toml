@@ -27,7 +27,7 @@ alloy-dyn-abi.workspace = true
 
 # aws-kms
 alloy-signer-aws = { workspace = true, features = ["eip712"], optional = true }
-aws-config = { version = "1", optional = true }                                 # default-features are necessary
+aws-config = { version = "1", optional = true } # default-features are necessary
 aws-sdk-kms = { version = "1", default-features = false, optional = true }
 
 # gcp-kms
