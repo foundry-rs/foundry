@@ -131,7 +131,7 @@ impl WalletOpts {
 Error accessing local wallet. Did you set a private key, mnemonic or keystore?
 Run `cast send --help` or `forge create --help` and use the corresponding CLI
 flag to set your key via:
---private-key, --mnemonic-path, --aws, ---gcp, --interactive, --trezor or --ledger.
+--private-key, --mnemonic-path, --aws, --gcp, --interactive, --trezor or --ledger.
 Alternatively, if you're using a local node with unlocked accounts,
 use the --unlocked flag and either set the `ETH_FROM` environment variable to the address
 of the unlocked account you want to use, or provide the --from flag with the address directly."
