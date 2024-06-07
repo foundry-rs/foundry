@@ -315,10 +315,10 @@ impl VerifyBytecodeArgs {
             if to != DEFAULT_CREATE2_DEPLOYER {
                 eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
             }
-            let result = executor.commit_tx_with_env(env_with_handler.to_owned())?;
+            let result = executor.call_raw_with_env_committing(env_with_handler.clone())?;
 
-            if result.result.len() > 20 {
-                eyre::bail!("Failed to deploy contract using commit_tx_with_env on fork at block {} | Err: Call result is greater than 20 bytes, cannot be converted to Address", simulation_block);
+            if result.result.len() != 20 {
+                eyre::bail!("Failed to deploy contract on fork at block {simulation_block}: call result is not exactly 20 bytes");
             }
 
             Address::from_slice(&result.result)

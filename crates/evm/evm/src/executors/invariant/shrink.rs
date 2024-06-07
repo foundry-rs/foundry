@@ -4,7 +4,7 @@ use foundry_evm_core::constants::CALLER;
 use foundry_evm_fuzz::invariant::BasicTxDetails;
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
-use std::{borrow::Cow, cmp::min};
+use std::cmp::min;
 
 #[derive(Clone, Copy, Debug)]
 struct Shrink {
@@ -160,13 +160,6 @@ pub fn check_sequence(
 
     // Check the invariant for call sequence.
     let mut call_result = executor.call_raw(CALLER, test_address, calldata, U256::ZERO)?;
-    Ok((
-        executor.is_raw_call_success(
-            test_address,
-            Cow::Owned(call_result.state_changeset.take().unwrap()),
-            &call_result,
-            false,
-        ),
-        true,
-    ))
+    let success = executor.is_raw_call_mut_success(test_address, &mut call_result, false);
+    Ok((success, true))
 }
