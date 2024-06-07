@@ -14,6 +14,15 @@ use std::path::PathBuf;
 #[cfg(feature = "aws-kms")]
 use {alloy_signer_aws::AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Client as AwsClient};
 
+#[cfg(feature = "gcp-kms")]
+use {
+    alloy_signer_gcp::{GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier},
+    gcloud_sdk::{
+        google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient,
+        GoogleApi,
+    },
+};
+
 pub type Result<T> = std::result::Result<T, WalletSignerError>;
 
 /// Wrapper enum around different signers.
@@ -28,6 +37,9 @@ pub enum WalletSigner {
     /// Wrapper around AWS KMS signer.
     #[cfg(feature = "aws-kms")]
     Aws(AwsSigner),
+    /// Wrapper around Google Cloud KMS signer.
+    #[cfg(feature = "gcp-kms")]
+    Gcp(GcpSigner),
 }
 
 impl WalletSigner {
@@ -54,6 +66,43 @@ impl WalletSigner {
         {
             let _ = key_id;
             Err(WalletSignerError::aws_unsupported())
+        }
+    }
+
+    pub async fn from_gcp(
+        project_id: String,
+        location: String,
+        keyring: String,
+        key_name: String,
+        key_version: u64,
+    ) -> Result<Self> {
+        #[cfg(feature = "gcp-kms")]
+        {
+            let keyring = GcpKeyRingRef::new(&project_id, &location, &keyring);
+            let client = match GoogleApi::from_function(
+                KeyManagementServiceClient::new,
+                "https://cloudkms.googleapis.com",
+                None,
+            )
+            .await
+            {
+                Ok(c) => c,
+                Err(e) => return Err(WalletSignerError::from(GcpSignerError::GoogleKmsError(e))),
+            };
+
+            let specifier = KeySpecifier::new(keyring, &key_name, key_version);
+
+            Ok(Self::Gcp(GcpSigner::new(client, specifier, None).await?))
+        }
+
+        #[cfg(not(feature = "gcp-kms"))]
+        {
+            let _ = project_id;
+            let _ = location;
+            let _ = keyring;
+            let _ = key_name;
+            let _ = key_version;
+            Err(WalletSignerError::gcp_unsupported())
         }
     }
 
@@ -102,6 +151,10 @@ impl WalletSigner {
             Self::Aws(aws) => {
                 senders.push(alloy_signer::Signer::address(aws));
             }
+            #[cfg(feature = "gcp-kms")]
+            Self::Gcp(gcp) => {
+                senders.push(alloy_signer::Signer::address(gcp));
+            }
         }
         Ok(senders)
     }
@@ -136,6 +189,8 @@ macro_rules! delegate {
             Self::Trezor($inner) => $e,
             #[cfg(feature = "aws-kms")]
             Self::Aws($inner) => $e,
+            #[cfg(feature = "gcp-kms")]
+            Self::Gcp($inner) => $e,
         }
     };
 }
