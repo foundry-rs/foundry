@@ -4,8 +4,8 @@ use super::{
 };
 use crate::{
     eth::{
-        backend,
         backend::{
+            self,
             db::SerializableState,
             mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
             notifications::NewBlockNotifications,
@@ -23,8 +23,7 @@ use crate::{
             },
             Pool,
         },
-        sign,
-        sign::Signer,
+        sign::{self, Signer},
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
@@ -44,7 +43,10 @@ use alloy_rpc_types::{
     BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Log,
     Transaction, WithOtherFields,
 };
-use alloy_rpc_types_anvil::Forking;
+use alloy_rpc_types_anvil::{
+    ForkedNetwork, Forking, Metadata as AnvilMetadata, MineOptions as EvmMineOptions,
+    NodeEnvironment, NodeForkConfig, NodeInfo,
+};
 use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
@@ -59,10 +61,7 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::{
-        AnvilMetadata, EvmMineOptions, ForkedNetwork, Index, NodeEnvironment, NodeForkConfig,
-        NodeInfo, Work,
-    },
+    types::{Index, Work},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
@@ -1748,21 +1747,23 @@ impl EthApi {
         let env = self.backend.env().read();
         let fork_config = self.backend.get_fork();
         let tx_order = self.transaction_order.read();
+        let hard_fork: &str = env.handler_cfg.spec_id.into();
 
         Ok(NodeInfo {
-            current_block_number: U64::from(self.backend.best_number()),
+            current_block_number: self.backend.best_number(),
             current_block_timestamp: env.block.timestamp.try_into().unwrap_or(u64::MAX),
             current_block_hash: self.backend.best_hash(),
-            hard_fork: env.handler_cfg.spec_id,
+            hard_fork: hard_fork.to_string(),
             transaction_order: match *tx_order {
                 TransactionOrder::Fifo => "fifo".to_string(),
                 TransactionOrder::Fees => "fees".to_string(),
             },
             environment: NodeEnvironment {
-                base_fee: self.backend.base_fee(),
+                // base_fee: self.backend.base_fee(),
+                base_fee: U256::from(self.backend.base_fee()),
                 chain_id: self.backend.chain_id().to::<u64>(),
-                gas_limit: self.backend.gas_limit(),
-                gas_price: self.gas_price(),
+                gas_limit: U256::from(self.backend.gas_limit()),
+                gas_price: U256::from(self.gas_price()),
             },
             fork_config: fork_config
                 .map(|fork| {
@@ -1787,7 +1788,7 @@ impl EthApi {
         let snapshots = self.backend.list_snapshots();
 
         Ok(AnvilMetadata {
-            client_version: CLIENT_VERSION,
+            client_version: CLIENT_VERSION.to_string(),
             chain_id: self.backend.chain_id().to::<u64>(),
             latest_block_hash: self.backend.best_hash(),
             latest_block_number: self.backend.best_number(),

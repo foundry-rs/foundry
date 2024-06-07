@@ -9,11 +9,11 @@ use alloy_network::{EthereumSigner, TransactionBuilder};
 use alloy_primitives::{address, fixed_bytes, Address, U256, U64};
 use alloy_provider::{ext::TxPoolApi, Provider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, WithOtherFields};
-use alloy_rpc_types_anvil::Forking;
+use alloy_rpc_types_anvil::{ForkedNetwork, Forking, Metadata as AnvilMetadata};
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::{
     eth::EthRequest,
-    types::{AnvilMetadata, ForkedNetwork, NodeEnvironment, NodeForkConfig, NodeInfo},
+    types::{NodeEnvironment, NodeForkConfig, NodeInfo},
 };
 use foundry_evm::revm::primitives::SpecId;
 use std::{
@@ -470,7 +470,7 @@ async fn can_get_metadata() {
         latest_block_hash: block.header.hash.unwrap(),
         latest_block_number: block_number,
         chain_id,
-        client_version: CLIENT_VERSION,
+        client_version: CLIENT_VERSION.to_string(),
         instance_id: api.instance_id(),
         forked_network: None,
         snapshots: Default::default(),
@@ -495,7 +495,7 @@ async fn can_get_metadata_on_fork() {
         latest_block_hash: block.header.hash.unwrap(),
         latest_block_number: block_number,
         chain_id,
-        client_version: CLIENT_VERSION,
+        client_version: CLIENT_VERSION.to_string(),
         instance_id: api.instance_id(),
         forked_network: Some(ForkedNetwork {
             chain_id,

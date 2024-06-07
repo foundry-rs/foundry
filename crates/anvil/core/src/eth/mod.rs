@@ -1,7 +1,4 @@
-use crate::{
-    eth::subscription::SubscriptionId,
-    types::{EvmMineOptions, Index},
-};
+use crate::{eth::subscription::SubscriptionId, types::Index};
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
@@ -10,6 +7,7 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, Filter, WithOtherFields,
 };
 use alloy_rpc_types_anvil::Forking;
+use alloy_rpc_types_anvil::MineOptions as EvmMineOptions;
 use alloy_rpc_types_trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
 
 pub mod block;
