@@ -13,6 +13,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Figment, Metadata, Profile, Provider,
     },
+    filter::SkipBuildFilter,
     providers::remappings::Remappings,
     Config,
 };
@@ -118,6 +119,13 @@ pub struct CoreBuildArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
 
+    /// Skip building files whose names contain the given filter.
+    ///
+    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
+    #[arg(long, num_args(1..))]
+    #[serde(skip)]
+    pub skip: Option<Vec<SkipBuildFilter>>,
+
     #[command(flatten)]
     #[serde(flatten)]
     pub compiler: CompilerArgs,
@@ -148,7 +156,7 @@ impl CoreBuildArgs {
 // Loads project's figment and merges the build cli arguments into it
 impl<'a> From<&'a CoreBuildArgs> for Figment {
     fn from(args: &'a CoreBuildArgs) -> Self {
-        let figment = if let Some(ref config_path) = args.project_paths.config_path {
+        let mut figment = if let Some(ref config_path) = args.project_paths.config_path {
             if !config_path.exists() {
                 panic!("error: config-path `{}` does not exist", config_path.display())
             }
@@ -165,7 +173,15 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
         let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings());
         remappings
             .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
-        figment.merge(("remappings", remappings.into_inner())).merge(args)
+        figment = figment.merge(("remappings", remappings.into_inner())).merge(args);
+
+        if let Some(skip) = &args.skip {
+            let mut skip = skip.iter().map(|s| s.file_pattern().to_string()).collect::<Vec<_>>();
+            skip.extend(figment.extract_inner::<Vec<String>>("skip").unwrap_or_default());
+            figment = figment.merge(("skip", skip));
+        };
+
+        figment
     }
 }
 
@@ -176,7 +192,7 @@ impl<'a> From<&'a CoreBuildArgs> for Config {
         // if `--config-path` is set we need to adjust the config's root path to the actual root
         // path for the project, otherwise it will the parent dir of the `--config-path`
         if args.project_paths.config_path.is_some() {
-            config.__root = args.project_paths.project_root().into();
+            config.root = args.project_paths.project_root().into();
         }
         config
     }

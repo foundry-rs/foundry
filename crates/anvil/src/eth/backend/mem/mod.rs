@@ -19,7 +19,7 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
-        fees::{FeeDetails, FeeManager},
+        fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         pool::transactions::PoolTransaction,
         util::get_precompiles_for,
@@ -816,7 +816,7 @@ impl Backend {
         I: InspectorExt<WrapDatabaseRef<DB>>,
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
-        if let Some(ref factory) = self.precompile_factory {
+        if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
         }
         evm
@@ -1140,9 +1140,9 @@ impl Backend {
             env.block.basefee = U256::from(base);
         }
 
-        let gas_price = gas_price
-            .or(max_fee_per_gas)
-            .unwrap_or_else(|| self.fees().raw_gas_price().saturating_add(1e9 as u128));
+        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
+            self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
+        });
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         env.tx = TxEnv {
@@ -2063,7 +2063,7 @@ impl Backend {
             TypedReceipt::Deposit(r) => TypedReceipt::Deposit(DepositReceipt {
                 inner: receipt_with_bloom,
                 deposit_nonce: r.deposit_nonce,
-                deposit_nonce_version: r.deposit_nonce_version,
+                deposit_receipt_version: r.deposit_receipt_version,
             }),
         };
 

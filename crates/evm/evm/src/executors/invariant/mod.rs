@@ -20,9 +20,10 @@ use foundry_evm_fuzz::{
     FuzzCase, FuzzFixtures, FuzzedCases,
 };
 use foundry_evm_traces::CallTraceArena;
+use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{
-    strategy::{BoxedStrategy, Strategy},
+    strategy::{Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
 use result::{assert_invariants, can_continue};
@@ -91,10 +92,6 @@ sol! {
     }
 }
 
-/// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
-type InvariantPreparation =
-    (EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<BasicTxDetails>);
-
 /// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`].
 ///
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contracts with
@@ -139,6 +136,7 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
+        progress: Option<&ProgressBar>,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.invariant_function.inputs.is_empty() {
@@ -318,6 +316,11 @@ impl<'a> InvariantExecutor<'a> {
             // Revert state to not persist values between runs.
             fuzz_state.revert();
 
+            // If running with progress then increment completed runs.
+            if let Some(progress) = progress {
+                progress.inc(1);
+            }
+
             Ok(())
         });
 
@@ -343,7 +346,8 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
-    ) -> Result<InvariantPreparation> {
+    ) -> Result<(EvmFuzzState, FuzzRunIdentifiedContracts, impl Strategy<Value = BasicTxDetails>)>
+    {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -360,8 +364,7 @@ impl<'a> InvariantExecutor<'a> {
             self.config.dictionary.dictionary_weight,
             fuzz_fixtures.clone(),
         )
-        .no_shrink()
-        .boxed();
+        .no_shrink();
 
         // Allows `override_call_strat` to use the address given by the Fuzzer inspector during
         // EVM execution.

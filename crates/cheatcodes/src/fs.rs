@@ -426,6 +426,13 @@ impl Cheatcode for promptSecretCall {
     }
 }
 
+impl Cheatcode for promptSecretUintCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { promptText: text } = self;
+        parse(&prompt(state, text, prompt_password)?, &DynSolType::Uint(256))
+    }
+}
+
 impl Cheatcode for promptAddressCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;

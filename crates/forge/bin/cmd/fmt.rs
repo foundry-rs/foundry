@@ -1,10 +1,10 @@
 use clap::{Parser, ValueHint};
-use eyre::Result;
-use forge_fmt::{format_to, parse, print_diagnostics_report};
+use eyre::{Context, Result};
+use forge_fmt::{format_to, parse};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
-use foundry_common::{fs, glob::expand_globs, term::cli_warn};
+use foundry_common::{fs, term::cli_warn};
 use foundry_compilers::{compilers::solc::SolcLanguage, SOLC_EXTENSIONS};
-use foundry_config::impl_figment_convert_basic;
+use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -48,7 +48,7 @@ impl FmtArgs {
         let config = self.try_load_config_emit_warnings()?;
 
         // Expand ignore globs and canonicalize from the get go
-        let ignored = expand_globs(&config.__root.0, config.fmt.ignore.iter())?
+        let ignored = expand_globs(&config.root.0, config.fmt.ignore.iter())?
             .iter()
             .flat_map(foundry_common::fs::canonicalize_path)
             .collect::<Vec<_>>();
@@ -97,14 +97,13 @@ impl FmtArgs {
         let format = |source: String, path: Option<&Path>| -> Result<_> {
             let name = match path {
                 Some(path) => {
-                    path.strip_prefix(&config.__root.0).unwrap_or(path).display().to_string()
+                    path.strip_prefix(&config.root.0).unwrap_or(path).display().to_string()
                 }
                 None => "stdin".to_string(),
             };
 
-            let parsed = parse(&source).map_err(|diagnostics| {
-                let _ = print_diagnostics_report(&source, path, diagnostics);
-                eyre::eyre!("Failed to parse Solidity code for {name}. Leaving source unchanged.")
+            let parsed = parse(&source).wrap_err_with(|| {
+                format!("Failed to parse Solidity code for {name}. Leaving source unchanged.")
             })?;
 
             if !parsed.invalid_inline_config_items.is_empty() {

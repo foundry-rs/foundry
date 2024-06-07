@@ -1,7 +1,8 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner, TestFilter, TestOptions,
+    progress::TestsProgress, result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner,
+    TestFilter, TestOptions,
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
@@ -140,7 +141,7 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
     ) -> impl Iterator<Item = (String, SuiteResult)> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx);
+        self.test(filter, tx, false);
         rx.into_iter()
     }
 
@@ -150,7 +151,12 @@ impl MultiContractRunner {
     /// before executing all contracts and their tests in _parallel_.
     ///
     /// Each Executor gets its own instance of the `Backend`.
-    pub fn test(&mut self, filter: &dyn TestFilter, tx: mpsc::Sender<(String, SuiteResult)>) {
+    pub fn test(
+        &mut self,
+        filter: &dyn TestFilter,
+        tx: mpsc::Sender<(String, SuiteResult)>,
+        show_progress: bool,
+    ) {
         let handle = tokio::runtime::Handle::current();
         trace!("running all tests");
 
@@ -167,11 +173,45 @@ impl MultiContractRunner {
             find_time,
         );
 
-        contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
-            let _guard = handle.enter();
-            let result = self.run_tests(id, contract, db.clone(), filter, &handle);
-            let _ = tx.send((id.identifier(), result));
-        })
+        if show_progress {
+            let tests_progress = TestsProgress::new(contracts.len(), rayon::current_num_threads());
+            // Collect test suite results to stream at the end of test run.
+            let results: Vec<(String, SuiteResult)> = contracts
+                .par_iter()
+                .map(|&(id, contract)| {
+                    let _guard = handle.enter();
+                    tests_progress.inner.lock().start_suite_progress(&id.identifier());
+
+                    let result = self.run_tests(
+                        id,
+                        contract,
+                        db.clone(),
+                        filter,
+                        &handle,
+                        Some(&tests_progress),
+                    );
+
+                    tests_progress
+                        .inner
+                        .lock()
+                        .end_suite_progress(&id.identifier(), result.summary());
+
+                    (id.identifier(), result)
+                })
+                .collect();
+
+            tests_progress.inner.lock().clear();
+
+            results.iter().for_each(|result| {
+                let _ = tx.send(result.to_owned());
+            });
+        } else {
+            contracts.par_iter().for_each(|&(id, contract)| {
+                let _guard = handle.enter();
+                let result = self.run_tests(id, contract, db.clone(), filter, &handle, None);
+                let _ = tx.send((id.identifier(), result));
+            })
+        }
     }
 
     fn run_tests(
@@ -181,6 +221,7 @@ impl MultiContractRunner {
         db: Backend,
         filter: &dyn TestFilter,
         handle: &tokio::runtime::Handle,
+        progress: Option<&TestsProgress>,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let mut span_name = identifier.as_str();
@@ -222,7 +263,9 @@ impl MultiContractRunner {
             self.sender,
             &self.revert_decoder,
             self.debug,
+            progress,
         );
+
         let r = runner.run_tests(filter, &self.test_options, self.known_contracts.clone(), handle);
 
         debug!(duration=?r.duration, "executed all tests in contract");

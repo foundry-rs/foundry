@@ -97,6 +97,7 @@ scrypt.opt-level = 3
 inherits = "dev"
 opt-level = 1
 debug-assertions = false
+overflow-checks = false
 strip = "debuginfo"
 panic = "abort"
 codegen-units = 16
@@ -152,7 +153,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.3.0", default-features = false }
-foundry-compilers = { version = "0.6.0", default-features = false }
+foundry-compilers = { version = "0.6.2", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -183,6 +184,7 @@ alloy-serde = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", defa
 alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
 alloy-signer-wallet = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
 alloy-signer-aws = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
+alloy-signer-gcp = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
 alloy-signer-ledger = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
 alloy-signer-trezor = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
 alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "cc68b93", default-features = false }
@@ -200,6 +202,7 @@ alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
 ## misc
+ahash = "0.8"
 arrayvec = "0.7"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [
@@ -237,6 +240,8 @@ hyper = "1.0"
 reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
 tower-http = "0.5"
+# soldeer
+soldeer = "0.2.15"
 
 [patch.crates-io]
 revm = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }

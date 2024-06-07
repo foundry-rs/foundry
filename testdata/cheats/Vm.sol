@@ -314,6 +314,7 @@ interface Vm {
     function prompt(string calldata promptText) external returns (string memory input);
     function promptAddress(string calldata promptText) external returns (address);
     function promptSecret(string calldata promptText) external returns (string memory input);
+    function promptSecretUint(string calldata promptText) external returns (uint256);
     function promptUint(string calldata promptText) external returns (uint256);
     function randomAddress() external returns (address);
     function randomUint() external returns (uint256);

@@ -14,7 +14,7 @@ use crate::{
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
-        fees::{FeeDetails, FeeHistoryCache},
+        fees::{FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
@@ -1357,20 +1357,18 @@ impl EthApi {
     }
 
     /// Returns the suggested fee cap.
+    ///
+    /// Returns at least [MIN_SUGGESTED_PRIORITY_FEE]
     fn lowest_suggestion_tip(&self) -> u128 {
         let block_number = self.backend.best_number();
         let latest_cached_block = self.fee_history_cache.lock().get(&block_number).cloned();
 
         match latest_cached_block {
-            Some(block) => block.rewards.iter().copied().min().unwrap_or(1e9 as u128),
-            None => self
-                .fee_history_cache
-                .lock()
-                .values()
-                .flat_map(|b| b.rewards.clone())
-                .min()
-                .unwrap_or(1e9 as u128),
+            Some(block) => block.rewards.iter().copied().min(),
+            None => self.fee_history_cache.lock().values().flat_map(|b| b.rewards.clone()).min(),
         }
+        .map(|fee| fee.max(MIN_SUGGESTED_PRIORITY_FEE))
+        .unwrap_or(MIN_SUGGESTED_PRIORITY_FEE)
     }
 
     /// Creates a filter object, based on filter options, to notify when the state changes (logs).
