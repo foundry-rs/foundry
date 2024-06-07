@@ -343,6 +343,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-rpc-types-anvil"
+version = "0.1.0"
+source = "git+https://github.com/alloy-rs/alloy?rev=cc68b93#cc68b93605f4521c2b0bce1a7efaeff2046cf07c"
+dependencies = [
+ "alloy-primitives",
+ "alloy-serde",
+ "serde",
+]
+
+[[package]]
 name = "alloy-rpc-types-engine"
 version = "0.1.0"
 source = "git+https://github.com/alloy-rs/alloy?rev=cc68b93#cc68b93605f4521c2b0bce1a7efaeff2046cf07c"
@@ -725,6 +735,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-client",
  "alloy-rpc-types",
+ "alloy-rpc-types-anvil",
  "alloy-rpc-types-trace",
  "alloy-signer",
  "alloy-signer-wallet",
@@ -785,6 +796,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types",
+ "alloy-rpc-types-anvil",
  "alloy-rpc-types-trace",
  "alloy-serde",
  "alloy-trie",
