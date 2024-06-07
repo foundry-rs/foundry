@@ -22,7 +22,7 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::CallTraceArena;
 use parking_lot::RwLock;
 use proptest::{
-    strategy::{BoxedStrategy, Strategy},
+    strategy::{Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
 use result::{assert_invariants, can_continue};
@@ -90,10 +90,6 @@ sol! {
         function targetInterfaces() public view returns (FuzzInterface[] memory targetedInterfaces);
     }
 }
-
-/// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
-type InvariantPreparation =
-    (EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<BasicTxDetails>);
 
 /// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`].
 ///
@@ -343,7 +339,8 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
-    ) -> Result<InvariantPreparation> {
+    ) -> Result<(EvmFuzzState, FuzzRunIdentifiedContracts, impl Strategy<Value = BasicTxDetails>)>
+    {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -360,8 +357,7 @@ impl<'a> InvariantExecutor<'a> {
             self.config.dictionary.dictionary_weight,
             fuzz_fixtures.clone(),
         )
-        .no_shrink()
-        .boxed();
+        .no_shrink();
 
         // Allows `override_call_strat` to use the address given by the Fuzzer inspector during
         // EVM execution.
