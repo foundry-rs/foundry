@@ -255,17 +255,16 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::BlockNumber { rpc, block } => {
             let config = Config::from(&rpc);
-            let provider = || utils::get_provider(&config);
+            let provider = utils::get_provider(&config)?;
             let number = match block {
-                Some(BlockId::Number(alloy_rpc_types::BlockNumberOrTag::Number(n))) => n,
-                Some(id) => provider()?
+                Some(id) => provider
                     .get_block(id, false)
                     .await?
                     .ok_or_else(|| eyre::eyre!("block {id:?} not found"))?
                     .header
                     .number
                     .ok_or_else(|| eyre::eyre!("block {id:?} has no block number"))?,
-                None => Cast::new(provider()?).block_number().await?,
+                None => Cast::new(provider).block_number().await?,
             };
             println!("{number}");
         }
