@@ -2,8 +2,9 @@ use crate::executors::{invariant::error::FailedInvariantCaseData, Executor};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_evm_core::constants::CALLER;
 use foundry_evm_fuzz::invariant::BasicTxDetails;
+use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
-use std::borrow::Cow;
+use std::{borrow::Cow, cmp::min};
 
 #[derive(Clone, Copy, Debug)]
 struct Shrink {
@@ -83,8 +84,16 @@ pub(crate) fn shrink_sequence(
     failed_case: &FailedInvariantCaseData,
     calls: &[BasicTxDetails],
     executor: &Executor,
+    progress: Option<&ProgressBar>,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
+
+    // Reset run count and display shrinking message.
+    if let Some(progress) = progress {
+        progress.set_length(min(calls.len(), failed_case.shrink_run_limit as usize) as u64);
+        progress.reset();
+        progress.set_message(" Shrink");
+    }
 
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
@@ -111,6 +120,10 @@ pub(crate) fn shrink_sequence(
             // calls if possible.
             Ok((true, _)) if !shrinker.complicate() => break,
             _ => {}
+        }
+
+        if let Some(progress) = progress {
+            progress.inc(1);
         }
     }
 

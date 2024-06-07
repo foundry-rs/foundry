@@ -20,6 +20,7 @@ use foundry_evm_fuzz::{
     FuzzCase, FuzzFixtures, FuzzedCases,
 };
 use foundry_evm_traces::CallTraceArena;
+use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{
     strategy::{Strategy, ValueTree},
@@ -135,6 +136,7 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
+        progress: Option<&ProgressBar>,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.invariant_function.inputs.is_empty() {
@@ -313,6 +315,11 @@ impl<'a> InvariantExecutor<'a> {
 
             // Revert state to not persist values between runs.
             fuzz_state.revert();
+
+            // If running with progress then increment completed runs.
+            if let Some(progress) = progress {
+                progress.inc(1);
+            }
 
             Ok(())
         });
