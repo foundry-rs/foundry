@@ -330,9 +330,10 @@ pub enum CastSubcommand {
     /// Get the latest block number.
     #[command(visible_alias = "bn")]
     BlockNumber {
+        /// The hash or tag to query. If not specified, the latest number is returned.
+        block: Option<BlockId>,
         #[command(flatten)]
         rpc: RpcOpts,
-        block: Option<BlockId>,
     },
 
     /// Perform a call on an account without publishing a transaction.
