@@ -1,8 +1,7 @@
 use clap::Parser;
 use forge::TestFilter;
-use foundry_common::glob::GlobMatcher;
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
-use foundry_config::Config;
+use foundry_config::{filter::GlobMatcher, Config};
 use std::{fmt, path::Path};
 
 /// The filter to use during testing.
@@ -163,8 +162,6 @@ pub struct ProjectPathsAwareFilter {
     args_filter: FilterArgs,
     paths: ProjectPathsConfig,
 }
-
-// === impl ProjectPathsAwareFilter ===
 
 impl ProjectPathsAwareFilter {
     /// Returns true if the filter is empty.

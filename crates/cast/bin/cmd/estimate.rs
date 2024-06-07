@@ -67,7 +67,7 @@ pub enum EstimateSubcommands {
 
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
-        let EstimateArgs { to, mut sig, mut args, mut tx, block, eth, command } = self;
+        let Self { to, mut sig, mut args, mut tx, block, eth, command } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
@@ -104,7 +104,7 @@ impl EstimateArgs {
             .build_raw(sender)
             .await?;
 
-        let gas = provider.estimate_gas(&tx).block_id(block.unwrap_or_default()).await?;
+        let gas = provider.estimate_gas(&tx).block(block.unwrap_or_default()).await?;
         println!("{gas}");
         Ok(())
     }

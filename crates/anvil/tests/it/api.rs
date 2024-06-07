@@ -268,10 +268,7 @@ async fn can_call_with_state_override() {
         *simple_storage_contract.address(),
         AccountOverride {
             // The `lastSender` is in the first storage slot
-            state_diff: Some(HashMap::from([(
-                B256::ZERO,
-                U256::from_be_slice(B256::from(account.into_word()).as_slice()),
-            )])),
+            state_diff: Some(HashMap::from([(B256::ZERO, account.into_word())])),
             ..Default::default()
         },
     )]);
@@ -295,10 +292,7 @@ async fn can_call_with_state_override() {
         *simple_storage_contract.address(),
         AccountOverride {
             // The `lastSender` is in the first storage slot
-            state: Some(HashMap::from([(
-                B256::ZERO,
-                U256::from_be_slice(B256::from(account.into_word()).as_slice()),
-            )])),
+            state: Some(HashMap::from([(B256::ZERO, account.into_word())])),
             ..Default::default()
         },
     )]);

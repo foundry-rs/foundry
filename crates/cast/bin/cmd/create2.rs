@@ -81,7 +81,7 @@ pub struct Create2Output {
 
 impl Create2Args {
     pub fn run(self) -> Result<Create2Output> {
-        let Create2Args {
+        let Self {
             starts_with,
             ends_with,
             matching,

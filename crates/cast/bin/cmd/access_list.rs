@@ -49,7 +49,7 @@ pub struct AccessListArgs {
 
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
-        let AccessListArgs { to, sig, args, tx, eth, block, json: to_json } = self;
+        let Self { to, sig, args, tx, eth, block, json: to_json } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
@@ -73,7 +73,7 @@ impl AccessListArgs {
 
         let access_list: String = cast.access_list(&tx, block, to_json).await?;
 
-        println!("{}", access_list);
+        println!("{access_list}");
 
         Ok(())
     }

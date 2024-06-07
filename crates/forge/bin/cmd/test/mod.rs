@@ -166,10 +166,10 @@ impl TestArgs {
             *selection = OutputSelection::common_output_selection(["abi".to_string()]);
         });
 
-        let output = project.compile_sparse(Box::new(filter.clone()))?;
+        let output = project.compile()?;
 
         if output.has_compiler_errors() {
-            println!("{}", output);
+            println!("{output}");
             eyre::bail!("Compilation failed");
         }
 

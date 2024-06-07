@@ -64,7 +64,7 @@ pub struct ProjectPathsArgs {
 }
 
 impl ProjectPathsArgs {
-    /// Returns the root directory to use for configuring the [Project]
+    /// Returns the root directory to use for configuring the project.
     ///
     /// This will be the `--root` argument if provided, otherwise see [find_project_root_path()]
     ///

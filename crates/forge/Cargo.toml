@@ -10,6 +10,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "forge"
 path = "bin/main.rs"
@@ -96,8 +99,12 @@ hyper.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
 opener = "0.6"
 
+# soldeer
+soldeer.workspace = true
+
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }
+
 
 [dev-dependencies]
 anvil.workspace = true

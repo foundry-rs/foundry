@@ -37,7 +37,7 @@ impl Default for RetryArgs {
 
 impl From<RetryArgs> for Retry {
     fn from(r: RetryArgs) -> Self {
-        Retry::new(r.retries, Some(Duration::from_secs(r.delay as u64)))
+        Self::new(r.retries, Some(Duration::from_secs(r.delay as u64)))
     }
 }
 

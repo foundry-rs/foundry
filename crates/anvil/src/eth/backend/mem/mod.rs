@@ -1,4 +1,5 @@
-//! In memory blockchain backend
+//! In-memory blockchain backend.
+
 use self::state::trie_storage;
 use crate::{
     config::PruneStateHistoryConfig,
@@ -18,7 +19,7 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
-        fees::{FeeDetails, FeeManager},
+        fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         pool::transactions::PoolTransaction,
         util::get_precompiles_for,
@@ -115,8 +116,8 @@ pub enum BlockRequest {
 impl BlockRequest {
     pub fn block_number(&self) -> BlockNumber {
         match *self {
-            BlockRequest::Pending(_) => BlockNumber::Pending,
-            BlockRequest::Number(n) => BlockNumber::Number(n),
+            Self::Pending(_) => BlockNumber::Pending,
+            Self::Number(n) => BlockNumber::Number(n),
         }
     }
 }
@@ -130,7 +131,7 @@ pub struct Backend {
     /// the evm during its execution.
     ///
     /// At time of writing, there are two different types of `Db`:
-    ///   - [`MemDb`](crate::mem::MemDb): everything is stored in memory
+    ///   - [`MemDb`](crate::mem::in_memory_db::MemDb): everything is stored in memory
     ///   - [`ForkDb`](crate::mem::fork_db::ForkedDatabase): forks off a remote client, missing
     ///     data is retrieved via RPC-calls
     ///
@@ -141,7 +142,7 @@ pub struct Backend {
     /// potentially blocks for some time, even taking into account the rate limits of RPC
     /// endpoints. Therefor the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
     /// need to read from it, while it's currently written to, don't block. E.g. a new block is
-    /// currently mined and a new [`Self::set_storage()`] request is being executed.
+    /// currently mined and a new [`Self::set_storage_at()`] request is being executed.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// stores all block related data in memory
     blockchain: Blockchain,
@@ -815,7 +816,7 @@ impl Backend {
         I: InspectorExt<WrapDatabaseRef<DB>>,
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
-        if let Some(ref factory) = self.precompile_factory {
+        if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
         }
         evm
@@ -1139,9 +1140,9 @@ impl Backend {
             env.block.basefee = U256::from(base);
         }
 
-        let gas_price = gas_price
-            .or(max_fee_per_gas)
-            .unwrap_or_else(|| self.fees().raw_gas_price().saturating_add(1e9 as u128));
+        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
+            self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
+        });
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         env.tx = TxEnv {
@@ -1161,7 +1162,6 @@ impl Backend {
             access_list: access_list.unwrap_or_default().flattened(),
             blob_hashes: blob_versioned_hashes.unwrap_or_default(),
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
-            ..Default::default()
         };
 
         if env.block.basefee == revm::primitives::U256::ZERO {
@@ -2063,7 +2063,7 @@ impl Backend {
             TypedReceipt::Deposit(r) => TypedReceipt::Deposit(DepositReceipt {
                 inner: receipt_with_bloom,
                 deposit_nonce: r.deposit_nonce,
-                deposit_nonce_version: r.deposit_nonce_version,
+                deposit_receipt_version: r.deposit_receipt_version,
             }),
         };
 

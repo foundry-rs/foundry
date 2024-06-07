@@ -54,7 +54,7 @@ pub enum MakeTxSubcommands {
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        let MakeTxArgs { to, mut sig, mut args, command, tx, eth } = self;
+        let Self { to, mut sig, mut args, command, tx, eth } = self;
 
         let code = if let Some(MakeTxSubcommands::Create {
             code,

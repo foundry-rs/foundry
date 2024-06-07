@@ -146,7 +146,7 @@ impl CoverageArgs {
 
         // Collect source files.
         let project_paths = &project.paths;
-        let mut versioned_sources = HashMap::<Version, SourceFiles>::new();
+        let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::new();
         for (path, source_file, version) in output.output().sources.sources_with_version() {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 

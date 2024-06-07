@@ -6373,6 +6373,26 @@
     },
     {
       "func": {
+        "id": "promptSecretUint",
+        "description": "Prompts the user for hidden uint256 in the terminal (usually pk).",
+        "declaration": "function promptSecretUint(string calldata promptText) external returns (uint256);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "promptSecretUint(string)",
+        "selector": "0x69ca02b7",
+        "selectorBytes": [
+          105,
+          202,
+          2,
+          183
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "promptUint",
         "description": "Prompts the user for uint256 in the terminal.",
         "declaration": "function promptUint(string calldata promptText) external returns (uint256);",

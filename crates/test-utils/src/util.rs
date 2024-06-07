@@ -733,18 +733,18 @@ impl TestCommand {
     }
 
     /// Replaces the underlying command.
-    pub fn set_cmd(&mut self, cmd: Command) -> &mut TestCommand {
+    pub fn set_cmd(&mut self, cmd: Command) -> &mut Self {
         self.cmd = cmd;
         self
     }
 
     /// Resets the command to the default `forge` command.
-    pub fn forge_fuse(&mut self) -> &mut TestCommand {
+    pub fn forge_fuse(&mut self) -> &mut Self {
         self.set_cmd(self.project.forge_bin())
     }
 
     /// Resets the command to the default `cast` command.
-    pub fn cast_fuse(&mut self) -> &mut TestCommand {
+    pub fn cast_fuse(&mut self) -> &mut Self {
         self.set_cmd(self.project.cast_bin())
     }
 
@@ -758,13 +758,13 @@ impl TestCommand {
     }
 
     /// Add an argument to pass to the command.
-    pub fn arg<A: AsRef<OsStr>>(&mut self, arg: A) -> &mut TestCommand {
+    pub fn arg<A: AsRef<OsStr>>(&mut self, arg: A) -> &mut Self {
         self.cmd.arg(arg);
         self
     }
 
     /// Add any number of arguments to the command.
-    pub fn args<I, A>(&mut self, args: I) -> &mut TestCommand
+    pub fn args<I, A>(&mut self, args: I) -> &mut Self
     where
         I: IntoIterator<Item = A>,
         A: AsRef<OsStr>,
@@ -773,13 +773,13 @@ impl TestCommand {
         self
     }
 
-    pub fn stdin(&mut self, fun: impl FnOnce(ChildStdin) + 'static) -> &mut TestCommand {
+    pub fn stdin(&mut self, fun: impl FnOnce(ChildStdin) + 'static) -> &mut Self {
         self.stdin_fun = Some(Box::new(fun));
         self
     }
 
     /// Convenience function to add `--root project.root()` argument
-    pub fn root_arg(&mut self) -> &mut TestCommand {
+    pub fn root_arg(&mut self) -> &mut Self {
         let root = self.project.root().to_path_buf();
         self.arg("--root").arg(root)
     }
@@ -809,7 +809,7 @@ impl TestCommand {
     /// Note that this does not need to be called normally, since the creation
     /// of this TestCommand causes its working directory to be set to the
     /// test's directory automatically.
-    pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut TestCommand {
+    pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
         self.cmd.current_dir(dir);
         self
     }
@@ -961,7 +961,7 @@ impl TestCommand {
         fs::write(format!("{}.stderr", name.display()), &output.stderr).unwrap();
     }
 
-    /// Runs the command and asserts that it resulted in an error exit code.
+    /// Runs the command and asserts that it **failed** (resulted in an error exit code).
     #[track_caller]
     pub fn assert_err(&mut self) {
         let out = self.execute();
@@ -970,7 +970,7 @@ impl TestCommand {
         }
     }
 
-    /// Runs the command and asserts that something was printed to stderr.
+    /// Runs the command and asserts that it **failed** and something was printed to stderr.
     #[track_caller]
     pub fn assert_non_empty_stderr(&mut self) {
         let out = self.execute();
@@ -979,7 +979,7 @@ impl TestCommand {
         }
     }
 
-    /// Runs the command and asserts that something was printed to stdout.
+    /// Runs the command and asserts that it **succeeded** and something was printed to stdout.
     #[track_caller]
     pub fn assert_non_empty_stdout(&mut self) {
         let out = self.execute();
@@ -988,7 +988,7 @@ impl TestCommand {
         }
     }
 
-    /// Runs the command and asserts that nothing was printed to stdout.
+    /// Runs the command and asserts that it **failed** nothing was printed to stdout.
     #[track_caller]
     pub fn assert_empty_stdout(&mut self) {
         let out = self.execute();

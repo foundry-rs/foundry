@@ -172,7 +172,7 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            WalletSubcommands::New { path, unsafe_password, number, json, .. } => {
+            Self::New { path, unsafe_password, number, json, .. } => {
                 let mut rng = thread_rng();
 
                 let mut json_values = if json { Some(vec![]) } else { None };
@@ -240,7 +240,7 @@ impl WalletSubcommands {
                     }
                 }
             }
-            WalletSubcommands::NewMnemonic { words, accounts } => {
+            Self::NewMnemonic { words, accounts } => {
                 let mut rng = thread_rng();
                 let phrase = Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase();
 
@@ -261,10 +261,10 @@ impl WalletSubcommands {
                     println!("Private key: 0x{}\n", hex::encode(wallet.signer().to_bytes()));
                 }
             }
-            WalletSubcommands::Vanity(cmd) => {
+            Self::Vanity(cmd) => {
                 cmd.run()?;
             }
-            WalletSubcommands::Address { wallet, private_key_override } => {
+            Self::Address { wallet, private_key_override } => {
                 let wallet = private_key_override
                     .map(|pk| WalletOpts {
                         raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
@@ -276,7 +276,7 @@ impl WalletSubcommands {
                 let addr = wallet.address();
                 println!("{}", addr.to_checksum(None));
             }
-            WalletSubcommands::Sign { message, data, from_file, no_hash, wallet } => {
+            Self::Sign { message, data, from_file, no_hash, wallet } => {
                 let wallet = wallet.signer().await?;
                 let sig = if data {
                     let typed_data: TypedData = if from_file {
@@ -294,20 +294,15 @@ impl WalletSubcommands {
                 };
                 println!("0x{}", hex::encode(sig.as_bytes()));
             }
-            WalletSubcommands::Verify { message, signature, address } => {
+            Self::Verify { message, signature, address } => {
                 let recovered_address = Self::recover_address_from_message(&message, &signature)?;
                 if address == recovered_address {
                     println!("Validation succeeded. Address {address} signed this message.");
                 } else {
-                    println!("Validation failed. Address {address} did not sign this message.");
+                    eyre::bail!("Validation failed. Address {address} did not sign this message.");
                 }
             }
-            WalletSubcommands::Import {
-                account_name,
-                keystore_dir,
-                unsafe_password,
-                raw_wallet_options,
-            } => {
+            Self::Import { account_name, keystore_dir, unsafe_password, raw_wallet_options } => {
                 // Set up keystore directory
                 let dir = if let Some(path) = keystore_dir {
                     Path::new(&path).to_path_buf()
@@ -365,10 +360,10 @@ flag to set your key via:
                 );
                 println!("{}", success_message.green());
             }
-            WalletSubcommands::List(cmd) => {
+            Self::List(cmd) => {
                 cmd.run().await?;
             }
-            WalletSubcommands::DerivePrivateKey { mnemonic, mnemonic_index } => {
+            Self::DerivePrivateKey { mnemonic, mnemonic_index } => {
                 let phrase = Mnemonic::<English>::new_from_phrase(mnemonic.as_str())?.to_phrase();
                 let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
                 let derivation_path = "m/44'/60'/0'/0/";
@@ -381,7 +376,7 @@ flag to set your key via:
                 println!("Address:     {}", wallet.address());
                 println!("Private key: 0x{}\n", hex::encode(wallet.signer().to_bytes()));
             }
-            WalletSubcommands::DecryptKeystore { account_name, keystore_dir, unsafe_password } => {
+            Self::DecryptKeystore { account_name, keystore_dir, unsafe_password } => {
                 // Set up keystore directory
                 let dir = if let Some(path) = keystore_dir {
                     Path::new(&path).to_path_buf()
@@ -433,11 +428,9 @@ flag to set your key via:
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use alloy_primitives::address;
-
     use super::*;
+    use alloy_primitives::address;
+    use std::str::FromStr;
 
     #[test]
     fn can_parse_wallet_sign_message() {

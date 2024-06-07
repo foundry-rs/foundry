@@ -1,4 +1,4 @@
-//! Implementations of [`Testing`](crate::Group::Testing) cheatcodes.
+//! Implementations of [`Testing`](spec::Group::Testing) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Error, Result, Vm::*};
 use alloy_primitives::Address;

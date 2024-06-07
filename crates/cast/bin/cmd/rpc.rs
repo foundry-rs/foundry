@@ -35,7 +35,7 @@ pub struct RpcArgs {
 
 impl RpcArgs {
     pub async fn run(self) -> Result<()> {
-        let RpcArgs { raw, method, params, rpc } = self;
+        let Self { raw, method, params, rpc } = self;
 
         let config = Config::from(&rpc);
         let provider = utils::get_provider(&config)?;

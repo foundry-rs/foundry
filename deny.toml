@@ -59,6 +59,7 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "notify" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
+    { allow = ["CC0-1.0"], name = "constant_time_eq" },
 ]
 #copyleft = "deny"
 
@@ -88,4 +89,5 @@ unknown-git = "deny"
 allow-git = [
     "https://github.com/alloy-rs/alloy",
     "https://github.com/paradigmxyz/revm-inspectors",
+    "https://github.com/bluealloy/revm",
 ]

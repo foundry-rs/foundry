@@ -32,7 +32,7 @@ pub struct FlattenArgs {
 
 impl FlattenArgs {
     pub fn run(self) -> Result<()> {
-        let FlattenArgs { target_path, output, project_paths } = self;
+        let Self { target_path, output, project_paths } = self;
 
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
         let build_args = CoreBuildArgs { project_paths, ..Default::default() };

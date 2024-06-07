@@ -30,9 +30,9 @@ pub struct BlockchainDb {
 }
 
 impl BlockchainDb {
-    /// Creates a new instance of the [BlockchainDb]
+    /// Creates a new instance of the [BlockchainDb].
     ///
-    /// if a `cache_path` is provided it attempts to load a previously stored [JsonBlockCacheData]
+    /// If a `cache_path` is provided it attempts to load a previously stored [JsonBlockCacheData]
     /// and will try to use the cached entries it holds.
     ///
     /// This will return a new and empty [MemDb] if
@@ -99,7 +99,7 @@ impl BlockchainDb {
         &self.db.block_hashes
     }
 
-    /// Returns the [revm::Env] related metadata
+    /// Returns the Env related metadata
     pub fn meta(&self) -> &Arc<RwLock<BlockchainDbMeta>> {
         &self.meta
     }
@@ -132,11 +132,7 @@ impl BlockchainDbMeta {
             .and_then(|url| url.host().map(|host| host.to_string()))
             .unwrap_or(url);
 
-        BlockchainDbMeta {
-            cfg_env: env.cfg.clone(),
-            block_env: env.block,
-            hosts: BTreeSet::from([host]),
-        }
+        Self { cfg_env: env.cfg.clone(), block_env: env.block, hosts: BTreeSet::from([host]) }
     }
 }
 
@@ -331,7 +327,7 @@ impl DatabaseCommit for MemDb {
     }
 }
 
-/// A [BlockCacheDB] that stores the cached content in a json file
+/// A DB that stores the cached content in a json file
 #[derive(Debug)]
 pub struct JsonBlockCacheDB {
     /// Where this cache file is stored.
@@ -451,7 +447,7 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
         let Data { meta, data: StateSnapshot { accounts, storage, block_hashes } } =
             Data::deserialize(deserializer)?;
 
-        Ok(JsonBlockCacheData {
+        Ok(Self {
             meta: Arc::new(RwLock::new(meta)),
             data: Arc::new(MemDb {
                 accounts: RwLock::new(accounts),

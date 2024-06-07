@@ -70,8 +70,6 @@ pub struct Shell {
     verbosity: Verbosity,
 }
 
-// === impl Shell ===
-
 impl Shell {
     /// Creates a new shell instance
     pub fn new(output: ShellOut, verbosity: Verbosity) -> Self {
@@ -105,14 +103,14 @@ impl Shell {
 
     /// Write a fragment to stdout
     ///
-    /// Caller is responsible for deciding whether [`Shell::verbosity`] is affects output.
+    /// Caller is responsible for deciding whether [`Shell`] verbosity affects output.
     pub fn write_stdout(&self, fragment: impl fmt::Display) -> io::Result<()> {
         self.output.write_stdout(fragment)
     }
 
     /// Write a fragment to stderr
     ///
-    /// Caller is responsible for deciding whether [`Shell::verbosity`] is affects output.
+    /// Caller is responsible for deciding whether [`Shell`] verbosity affects output.
     pub fn write_stderr(&self, fragment: impl fmt::Display) -> io::Result<()> {
         self.output.write_stderr(fragment)
     }
@@ -210,25 +208,23 @@ pub enum ShellOut {
     Stream,
 }
 
-// === impl ShellOut ===
-
 impl ShellOut {
     /// Creates a new shell that writes to memory
     pub fn memory() -> Self {
         #[allow(clippy::box_default)]
         #[allow(clippy::arc_with_non_send_sync)]
-        ShellOut::Write(WriteShellOut(Arc::new(Mutex::new(Box::new(Vec::new())))))
+        Self::Write(WriteShellOut(Arc::new(Mutex::new(Box::new(Vec::new())))))
     }
 
     /// Write a fragment to stdout
     fn write_stdout(&self, fragment: impl fmt::Display) -> io::Result<()> {
         match *self {
-            ShellOut::Stream => {
+            Self::Stream => {
                 let stdout = io::stdout();
                 let mut handle = stdout.lock();
                 writeln!(handle, "{fragment}")?;
             }
-            ShellOut::Write(ref w) => {
+            Self::Write(ref w) => {
                 w.write(fragment)?;
             }
         }
@@ -238,12 +234,12 @@ impl ShellOut {
     /// Write output to stderr
     fn write_stderr(&self, fragment: impl fmt::Display) -> io::Result<()> {
         match *self {
-            ShellOut::Stream => {
+            Self::Stream => {
                 let stderr = io::stderr();
                 let mut handle = stderr.lock();
                 writeln!(handle, "{fragment}")?;
             }
-            ShellOut::Write(ref w) => {
+            Self::Write(ref w) => {
                 w.write(fragment)?;
             }
         }
@@ -256,12 +252,12 @@ impl ShellOut {
         for<'r> F: FnOnce(&'r mut (dyn Write + 'r)) -> R,
     {
         match *self {
-            ShellOut::Stream => {
+            Self::Stream => {
                 let stdout = io::stdout();
                 let mut handler = stdout.lock();
                 f(&mut handler)
             }
-            ShellOut::Write(ref w) => w.with_stdout(f),
+            Self::Write(ref w) => w.with_stdout(f),
         }
     }
 
@@ -272,12 +268,12 @@ impl ShellOut {
         for<'r> F: FnOnce(&'r mut (dyn Write + 'r)) -> R,
     {
         match *self {
-            ShellOut::Stream => {
+            Self::Stream => {
                 let stderr = io::stderr();
                 let mut handler = stderr.lock();
                 f(&mut handler)
             }
-            ShellOut::Write(ref w) => w.with_err(f),
+            Self::Write(ref w) => w.with_err(f),
         }
     }
 }
@@ -294,21 +290,19 @@ pub enum Verbosity {
     Silent,
 }
 
-// === impl Verbosity ===
-
 impl Verbosity {
     /// Returns true if json mode
     pub fn is_json(&self) -> bool {
-        matches!(self, Verbosity::Json)
+        matches!(self, Self::Json)
     }
 
     /// Returns true if silent
     pub fn is_silent(&self) -> bool {
-        matches!(self, Verbosity::Silent)
+        matches!(self, Self::Silent)
     }
 
     /// Returns true if normal verbosity
     pub fn is_normal(&self) -> bool {
-        matches!(self, Verbosity::Normal)
+        matches!(self, Self::Normal)
     }
 }

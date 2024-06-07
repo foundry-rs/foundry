@@ -1,4 +1,4 @@
-//! Implementations of [`Filesystem`](crate::Group::Filesystem) cheatcodes.
+//! Implementations of [`Filesystem`](spec::Group::Filesystem) cheatcodes.
 
 use super::string::parse;
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
@@ -423,6 +423,13 @@ impl Cheatcode for promptSecretCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
         prompt(state, text, prompt_password).map(|res| res.abi_encode())
+    }
+}
+
+impl Cheatcode for promptSecretUintCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { promptText: text } = self;
+        parse(&prompt(state, text, prompt_password)?, &DynSolType::Uint(256))
     }
 }
 

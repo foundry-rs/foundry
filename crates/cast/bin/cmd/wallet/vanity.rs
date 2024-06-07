@@ -64,7 +64,7 @@ struct Wallets {
 
 impl WalletData {
     pub fn new(wallet: &LocalWallet) -> Self {
-        WalletData {
+        Self {
             address: wallet.address().to_checksum(None),
             private_key: format!("0x{}", hex::encode(wallet.signer().to_bytes())),
         }

@@ -2,7 +2,8 @@
 //!
 //! EVM fuzzing implementation using [`proptest`].
 
-#![warn(unreachable_pub, unused_crate_dependencies, rust_2018_idioms)]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -67,7 +68,7 @@ impl BaseCounterExample {
             if let Some(func) = abi.functions().find(|f| f.selector() == bytes[..4]) {
                 // skip the function selector when decoding
                 if let Ok(args) = func.abi_decode_input(&bytes[4..], false) {
-                    return BaseCounterExample {
+                    return Self {
                         sender: Some(sender),
                         addr: Some(addr),
                         calldata: bytes.clone(),
@@ -82,7 +83,7 @@ impl BaseCounterExample {
             }
         }
 
-        BaseCounterExample {
+        Self {
             sender: Some(sender),
             addr: Some(addr),
             calldata: bytes.clone(),
@@ -99,7 +100,7 @@ impl BaseCounterExample {
         args: Vec<DynSolValue>,
         traces: Option<CallTraceArena>,
     ) -> Self {
-        BaseCounterExample {
+        Self {
             sender: None,
             addr: None,
             calldata: bytes,
@@ -132,7 +133,7 @@ impl fmt::Display for BaseCounterExample {
         }
 
         if let Some(args) = &self.args {
-            write!(f, " args=[{}]", args)
+            write!(f, " args=[{args}]")
         } else {
             write!(f, " args=[]")
         }
@@ -308,7 +309,7 @@ pub struct FuzzFixtures {
 }
 
 impl FuzzFixtures {
-    pub fn new(fixtures: HashMap<String, DynSolValue>) -> FuzzFixtures {
+    pub fn new(fixtures: HashMap<String, DynSolValue>) -> Self {
         Self { inner: Arc::new(fixtures) }
     }
 

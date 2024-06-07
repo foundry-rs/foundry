@@ -442,13 +442,13 @@ pub enum TestKindReport {
 impl fmt::Display for TestKindReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TestKindReport::Standard { gas } => {
+            Self::Standard { gas } => {
                 write!(f, "(gas: {gas})")
             }
-            TestKindReport::Fuzz { runs, mean_gas, median_gas } => {
+            Self::Fuzz { runs, mean_gas, median_gas } => {
                 write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
-            TestKindReport::Invariant { runs, calls, reverts } => {
+            Self::Invariant { runs, calls, reverts } => {
                 write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
             }
         }
@@ -459,11 +459,11 @@ impl TestKindReport {
     /// Returns the main gas value to compare against
     pub fn gas(&self) -> u64 {
         match self {
-            TestKindReport::Standard { gas } => *gas,
+            Self::Standard { gas } => *gas,
             // We use the median for comparisons
-            TestKindReport::Fuzz { median_gas, .. } => *median_gas,
+            Self::Fuzz { median_gas, .. } => *median_gas,
             // We return 0 since it's not applicable
-            TestKindReport::Invariant { .. } => 0,
+            Self::Invariant { .. } => 0,
         }
     }
 }
@@ -497,11 +497,11 @@ impl TestKind {
     /// The gas consumed by this test
     pub fn report(&self) -> TestKindReport {
         match self {
-            TestKind::Standard(gas) => TestKindReport::Standard { gas: *gas },
-            TestKind::Fuzz { runs, mean_gas, median_gas, .. } => {
+            Self::Standard(gas) => TestKindReport::Standard { gas: *gas },
+            Self::Fuzz { runs, mean_gas, median_gas, .. } => {
                 TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
             }
-            TestKind::Invariant { runs, calls, reverts } => {
+            Self::Invariant { runs, calls, reverts } => {
                 TestKindReport::Invariant { runs: *runs, calls: *calls, reverts: *reverts }
             }
         }

@@ -94,7 +94,7 @@ fn test_formatter(
     struct PrettyString(String);
 
     impl PartialEq for PrettyString {
-        fn eq(&self, other: &PrettyString) -> bool {
+        fn eq(&self, other: &Self) -> bool {
             self.0.lines().eq(other.0.lines())
         }
     }

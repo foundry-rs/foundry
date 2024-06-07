@@ -10,9 +10,11 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 forge-fmt.workspace = true
-foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 

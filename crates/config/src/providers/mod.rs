@@ -1,3 +1,5 @@
+//! Config providers.
+
 use crate::{Config, Warning, DEPRECATIONS};
 use figment::{
     value::{Dict, Map, Value},

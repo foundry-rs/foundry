@@ -2,7 +2,7 @@ use crate::cmd::{
     bind::BindArgs, build::BuildArgs, cache::CacheArgs, clone::CloneArgs, config, coverage,
     create::CreateArgs, debug::DebugArgs, doc::DocArgs, flatten, fmt::FmtArgs, geiger, generate,
     init::InitArgs, inspect, install::InstallArgs, remappings::RemappingArgs, remove::RemoveArgs,
-    selectors::SelectorsSubcommands, snapshot, test, tree, update,
+    selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -161,6 +161,9 @@ pub enum ForgeSubcommand {
     /// Verify the deployed bytecode against its source.
     #[clap(visible_alias = "vb")]
     VerifyBytecode(VerifyBytecodeArgs),
+
+    /// Soldeer dependency manager.
+    Soldeer(soldeer::SoldeerArgs),
 }
 
 #[cfg(test)]
