@@ -27,10 +27,11 @@ macro_rules! get_counterexample {
 async fn test_invariant() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/(target|targetAbi|common)");
     let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options = TEST_DATA_DEFAULT.test_opts.clone();
     runner.test_options.invariant.failure_persist_dir =
         Some(tempfile::tempdir().unwrap().into_path());
-    let results = runner.test_collect(&filter);
 
+    let results = runner.test_collect(&filter);
     assert_multiple(
         &results,
         BTreeMap::from([
@@ -229,6 +230,26 @@ async fn test_invariant() {
                     None,
                     None,
                 )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantTearDown.t.sol:InvariantTearDownTest",
+                vec![
+                    (
+                        "invariant_tear_down_failure()",
+                        false,
+                        Some("revert: teardown failure".into()),
+                        None,
+                        None,
+                    ),
+                    (
+                        "invariant_failure()",
+                        false,
+                        Some("revert: invariant failure".into()),
+                        None,
+                        None,
+                    ),
+                    ("invariant_success()", true, None, None, None),
+                ],
             )
         ]),
     );
