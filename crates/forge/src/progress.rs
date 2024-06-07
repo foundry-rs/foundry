@@ -28,7 +28,7 @@ impl TestsProgressState {
                 .progress_chars("##-"),
         );
         overall_progress.set_message(format!("completed (with {} threads)", threads_no as u64));
-        TestsProgressState { multi, overall_progress, suites_progress: HashMap::default() }
+        Self { multi, overall_progress, suites_progress: HashMap::default() }
     }
 
     /// Creates new test suite progress and add it to overall progress.
@@ -39,7 +39,7 @@ impl TestsProgressState {
                 .unwrap()
                 .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
         );
-        suite_progress.set_message(format!("{} ", suite_name));
+        suite_progress.set_message(format!("{suite_name} "));
         suite_progress.enable_steady_tick(Duration::from_millis(100));
         self.suites_progress.insert(suite_name.to_owned(), suite_progress);
     }
@@ -48,7 +48,7 @@ impl TestsProgressState {
     pub fn end_suite_progress(&mut self, suite_name: &String, result_summary: String) {
         if let Some(suite_progress) = self.suites_progress.remove(suite_name) {
             self.multi.suspend(|| {
-                println!("{}\n  ↪ {}", suite_name, result_summary);
+                println!("{suite_name}\n  ↪ {result_summary}");
             });
             suite_progress.finish_and_clear();
             // Increment test progress bar to reflect completed test suite.
