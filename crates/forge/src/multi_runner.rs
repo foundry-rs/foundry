@@ -206,7 +206,7 @@ impl MultiContractRunner {
                 let _ = tx.send(result.to_owned());
             });
         } else {
-            contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
+            contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = handle.enter();
                 let result = self.run_tests(id, contract, db.clone(), filter, &handle, None);
                 let _ = tx.send((id.identifier(), result));
