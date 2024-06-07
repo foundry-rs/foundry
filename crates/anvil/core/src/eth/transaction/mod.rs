@@ -7,7 +7,10 @@ use alloy_consensus::{
     TxEnvelope, TxLegacy, TxReceipt,
 };
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256, U64};
+
+use alloy_primitives::{
+    Address, Bloom, Bytes, Log, Parity, Signature, TxHash, TxKind, B256, U256, U64,
+};
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
     other::OtherFields, request::TransactionRequest, AccessList, AnyTransactionReceipt,
@@ -23,13 +26,6 @@ use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
 
 pub mod optimism;
-
-/// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
-#[cfg(feature = "impersonated-tx")]
-pub fn impersonated_signature() -> Signature {
-    Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false)
-        .unwrap()
-}
 
 /// Converts a [TransactionRequest] into a [TypedTransactionRequest].
 /// Should be removed once the call builder abstraction for providers is in place.
@@ -69,7 +65,7 @@ pub fn transaction_request_to_typed(
             gas_limit: gas.unwrap_or_default(),
             is_system_tx: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
             input: input.into_input().unwrap_or_default(),
-        }))
+        }));
     }
 
     match (
@@ -84,8 +80,8 @@ pub fn transaction_request_to_typed(
         to,
     ) {
         // legacy transaction
-        (Some(0), _, None, None, None, None, None, None, _) |
-        (None, Some(_), None, None, None, None, None, None, _) => {
+        (Some(0), _, None, None, None, None, None, None, _)
+        | (None, Some(_), None, None, None, None, None, None, _) => {
             Some(TypedTransactionRequest::Legacy(TxLegacy {
                 nonce: nonce.unwrap_or_default(),
                 gas_price: gas_price.unwrap_or_default(),
@@ -97,8 +93,8 @@ pub fn transaction_request_to_typed(
             }))
         }
         // EIP2930
-        (Some(1), _, None, None, _, None, None, None, _) |
-        (None, _, None, None, Some(_), None, None, None, _) => {
+        (Some(1), _, None, None, _, None, None, None, _)
+        | (None, _, None, None, Some(_), None, None, None, _) => {
             Some(TypedTransactionRequest::EIP2930(TxEip2930 {
                 nonce: nonce.unwrap_or_default(),
                 gas_price: gas_price.unwrap_or_default(),
@@ -111,10 +107,10 @@ pub fn transaction_request_to_typed(
             }))
         }
         // EIP1559
-        (Some(2), None, _, _, _, _, None, None, _) |
-        (None, None, Some(_), _, _, _, None, None, _) |
-        (None, None, _, Some(_), _, _, None, None, _) |
-        (None, None, None, None, None, _, None, None, _) => {
+        (Some(2), None, _, _, _, _, None, None, _)
+        | (None, None, Some(_), _, _, _, None, None, _)
+        | (None, None, _, Some(_), _, _, None, None, _)
+        | (None, None, None, None, None, _, None, None, _) => {
             // Empty fields fall back to the canonical transaction schema.
             Some(TypedTransactionRequest::EIP1559(TxEip1559 {
                 nonce: nonce.unwrap_or_default(),
@@ -155,9 +151,9 @@ pub fn transaction_request_to_typed(
 }
 
 fn has_optimism_fields(other: &OtherFields) -> bool {
-    other.contains_key("sourceHash") &&
-        other.contains_key("mint") &&
-        other.contains_key("isSystemTx")
+    other.contains_key("sourceHash")
+        && other.contains_key("mint")
+        && other.contains_key("isSystemTx")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -197,9 +193,18 @@ impl MaybeImpersonatedTransaction {
     #[cfg(feature = "impersonated-tx")]
     pub fn recover(&self) -> Result<Address, alloy_primitives::SignatureError> {
         if let Some(sender) = self.impersonated_sender {
-            return Ok(sender)
+            return Ok(sender);
         }
         self.transaction.recover()
+    }
+
+    /// Returns whether the transaction is impersonated
+    ///
+    /// Note: this is feature gated so it does not conflict with the `Deref`ed
+    /// [TypedTransaction::hash] function by default.
+    #[cfg(feature = "impersonated-tx")]
+    pub fn is_impersonated(&self) -> bool {
+        self.impersonated_sender.is_some()
     }
 
     /// Returns the hash of the transaction
@@ -208,10 +213,8 @@ impl MaybeImpersonatedTransaction {
     /// [TypedTransaction::hash] function by default.
     #[cfg(feature = "impersonated-tx")]
     pub fn hash(&self) -> B256 {
-        if self.transaction.is_impersonated() {
-            if let Some(sender) = self.impersonated_sender {
-                return self.transaction.impersonated_hash(sender)
-            }
+        if let Some(sender) = self.impersonated_sender {
+            return self.transaction.impersonated_hash(sender);
         }
         self.transaction.hash()
     }
@@ -287,7 +290,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             signature: Some(RpcSignature {
                 r: t.signature().r(),
                 s: t.signature().s(),
-                v: U256::from(t.signature().v().y_parity_byte()),
+                v: U256::from(t.signature().v().to_u64()),
                 y_parity: None,
             }),
             access_list: None,
@@ -314,7 +317,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             signature: Some(RpcSignature {
                 r: t.signature().r(),
                 s: t.signature().s(),
-                v: U256::from(t.signature().v().y_parity_byte()),
+                v: U256::from(t.signature().v().to_u64()),
                 y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
             }),
             access_list: Some(t.tx().access_list.clone()),
@@ -341,7 +344,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             signature: Some(RpcSignature {
                 r: t.signature().r(),
                 s: t.signature().s(),
-                v: U256::from(t.signature().v().y_parity_byte()),
+                v: U256::from(t.signature().v().to_u64()),
                 y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
             }),
             access_list: Some(t.tx().access_list.clone()),
@@ -368,7 +371,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             signature: Some(RpcSignature {
                 r: t.signature().r(),
                 s: t.signature().s(),
-                v: U256::from(t.signature().v().y_parity_byte()),
+                v: U256::from(t.signature().v().to_u64()),
                 y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
             }),
             access_list: Some(t.tx().tx().access_list.clone()),
@@ -831,12 +834,6 @@ impl TypedTransaction {
         }
     }
 
-    /// Returns true if the transaction was impersonated (using the impersonate Signature)
-    #[cfg(feature = "impersonated-tx")]
-    pub fn is_impersonated(&self) -> bool {
-        self.signature() == impersonated_signature()
-    }
-
     /// Returns the hash if the transaction is impersonated (using a fake signature)
     ///
     /// This appends the `address` before hashing it
@@ -885,7 +882,7 @@ impl TypedTransaction {
             Self::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
-                false,
+                Parity::Parity(false),
             )
             .unwrap(),
         }
@@ -918,7 +915,7 @@ impl Decodable for TypedTransaction {
 
         // Legacy TX
         if header.list {
-            return Ok(TxEnvelope::decode(buf)?.into())
+            return Ok(TxEnvelope::decode(buf)?.into());
         }
 
         // Check byte after header
@@ -964,7 +961,7 @@ impl Encodable2718 for TypedTransaction {
 impl Decodable2718 for TypedTransaction {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         if ty == 0x7E {
-            return Ok(Self::Deposit(DepositTransaction::decode(buf)?))
+            return Ok(Self::Deposit(DepositTransaction::decode(buf)?));
         }
         match TxEnvelope::typed_decode(ty, buf)? {
             TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
@@ -1038,12 +1035,12 @@ pub struct DepositReceipt<T = alloy_primitives::Log> {
 
 impl DepositReceipt {
     fn payload_len(&self) -> usize {
-        self.inner.receipt.status.length() +
-            self.inner.receipt.cumulative_gas_used.length() +
-            self.inner.logs_bloom.length() +
-            self.inner.receipt.logs.length() +
-            self.deposit_nonce.map_or(0, |n| n.length()) +
-            self.deposit_receipt_version.map_or(0, |n| n.length())
+        self.inner.receipt.status.length()
+            + self.inner.receipt.cumulative_gas_used.length()
+            + self.inner.logs_bloom.length()
+            + self.inner.receipt.logs.length()
+            + self.deposit_nonce.map_or(0, |n| n.length())
+            + self.deposit_receipt_version.map_or(0, |n| n.length())
     }
 
     /// Returns the rlp header for the receipt payload.
@@ -1297,7 +1294,7 @@ impl Encodable2718 for TypedReceipt {
 impl Decodable2718 for TypedReceipt {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         if ty == 0x7E {
-            return Ok(Self::Deposit(DepositReceipt::decode(buf)?))
+            return Ok(Self::Deposit(DepositReceipt::decode(buf)?));
         }
         match ReceiptEnvelope::typed_decode(ty, buf)? {
             ReceiptEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
