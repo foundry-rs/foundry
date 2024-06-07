@@ -3,6 +3,7 @@
 use crate::{
     fuzz::{invariant::BasicTxDetails, BaseCounterExample},
     multi_runner::{is_matching_test, TestContract},
+    progress::{start_fuzz_progress, TestsProgress},
     result::{SuiteResult, TestKind, TestResult, TestSetup, TestStatus},
     TestFilter, TestOptions,
 };
@@ -68,6 +69,8 @@ pub struct ContractRunner<'a> {
     pub sender: Address,
     /// Should generate debug traces
     pub debug: bool,
+    /// Overall test run progress.
+    progress: Option<&'a TestsProgress>,
 }
 
 impl<'a> ContractRunner<'a> {
@@ -81,6 +84,7 @@ impl<'a> ContractRunner<'a> {
         sender: Option<Address>,
         revert_decoder: &'a RevertDecoder,
         debug: bool,
+        progress: Option<&'a TestsProgress>,
     ) -> Self {
         Self {
             name,
@@ -91,6 +95,7 @@ impl<'a> ContractRunner<'a> {
             sender: sender.unwrap_or_default(),
             revert_decoder,
             debug,
+            progress,
         }
     }
 }
@@ -404,6 +409,7 @@ impl<'a> ContractRunner<'a> {
                 let res = if func.is_invariant_test() {
                     let runner = test_options.invariant_runner(self.name, &func.name);
                     let invariant_config = test_options.invariant_config(self.name, &func.name);
+
                     self.run_invariant_test(
                         runner,
                         setup,
@@ -417,6 +423,7 @@ impl<'a> ContractRunner<'a> {
                     debug_assert!(func.is_test());
                     let runner = test_options.fuzz_runner(self.name, &func.name);
                     let fuzz_config = test_options.fuzz_config(self.name, &func.name);
+
                     self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
                 } else {
                     debug_assert!(func.is_test());
@@ -664,8 +671,11 @@ impl<'a> ContractRunner<'a> {
             }
         }
 
+        let progress =
+            start_fuzz_progress(self.progress, self.name, &func.name, invariant_config.runs);
         let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs, gas_report_traces } =
-            match evm.invariant_fuzz(invariant_contract.clone(), &fuzz_fixtures) {
+            match evm.invariant_fuzz(invariant_contract.clone(), &fuzz_fixtures, progress.as_ref())
+            {
                 Ok(x) => x,
                 Err(e) => {
                     return TestResult {
@@ -703,6 +713,7 @@ impl<'a> ContractRunner<'a> {
                         &mut logs,
                         &mut traces,
                         &mut coverage,
+                        progress.as_ref(),
                     ) {
                         Ok(call_sequence) => {
                             if !call_sequence.is_empty() {
@@ -787,6 +798,7 @@ impl<'a> ContractRunner<'a> {
         } = setup;
 
         // Run fuzz test
+        let progress = start_fuzz_progress(self.progress, self.name, &func.name, fuzz_config.runs);
         let start = Instant::now();
         let fuzzed_executor = FuzzedExecutor::new(
             self.executor.clone(),
@@ -794,8 +806,14 @@ impl<'a> ContractRunner<'a> {
             self.sender,
             fuzz_config.clone(),
         );
-        let result =
-            fuzzed_executor.fuzz(func, &fuzz_fixtures, address, should_fail, self.revert_decoder);
+        let result = fuzzed_executor.fuzz(
+            func,
+            &fuzz_fixtures,
+            address,
+            should_fail,
+            self.revert_decoder,
+            progress.as_ref(),
+        );
 
         let mut debug = Default::default();
         let mut breakpoints = Default::default();

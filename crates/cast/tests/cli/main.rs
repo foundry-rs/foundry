@@ -898,6 +898,6 @@ casttest!(index7201, |_prj, cmd| {
     }
 });
 
-casttest!(index_unknown_formula_id, |_prj, cmd| {
+casttest!(index7201_unknown_formula_id, |_prj, cmd| {
     cmd.args(["index-7201", "test", "--formula-id", "unknown"]).assert_err();
 });

@@ -316,10 +316,7 @@ impl FuzzFixtures {
     /// Returns configured fixtures for `param_name` fuzzed parameter.
     pub fn param_fixtures(&self, param_name: &str) -> Option<&[DynSolValue]> {
         if let Some(param_fixtures) = self.inner.get(&normalize_fixture(param_name)) {
-            match param_fixtures {
-                DynSolValue::FixedArray(_) => param_fixtures.as_fixed_array(),
-                _ => param_fixtures.as_array(),
-            }
+            param_fixtures.as_fixed_array().or_else(|| param_fixtures.as_array())
         } else {
             None
         }
@@ -334,5 +331,5 @@ pub fn fixture_name(function_name: String) -> String {
 
 /// Normalize fixture parameter name, for example `_Owner` to `owner`.
 fn normalize_fixture(param_name: &str) -> String {
-    param_name.trim_matches(&['_']).to_ascii_lowercase()
+    param_name.trim_matches('_').to_ascii_lowercase()
 }

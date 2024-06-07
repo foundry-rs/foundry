@@ -16,7 +16,7 @@ pub fn override_call_strat(
     contracts: FuzzRunIdentifiedContracts,
     target: Arc<RwLock<Address>>,
     fuzz_fixtures: FuzzFixtures,
-) -> SBoxedStrategy<CallDetails> {
+) -> impl Strategy<Value = CallDetails> + Send + Sync + 'static {
     let contracts_ref = contracts.targets.clone();
     proptest::prop_oneof![
         80 => proptest::strategy::LazyJust::new(move || *target.read()),
@@ -44,7 +44,6 @@ pub fn override_call_strat(
             fuzz_contract_with_calldata(&fuzz_state, &fuzz_fixtures, target_address, func)
         })
     })
-    .sboxed()
 }
 
 /// Creates the invariant strategy.
@@ -64,20 +63,6 @@ pub fn invariant_strat(
     dictionary_weight: u32,
     fuzz_fixtures: FuzzFixtures,
 ) -> impl Strategy<Value = BasicTxDetails> {
-    // We only want to seed the first value, since we want to generate the rest as we mutate the
-    // state
-    generate_call(fuzz_state, senders, contracts, dictionary_weight, fuzz_fixtures)
-}
-
-/// Strategy to generate a transaction where the `sender`, `target` and `calldata` are all generated
-/// through specific strategies.
-fn generate_call(
-    fuzz_state: EvmFuzzState,
-    senders: SenderFilters,
-    contracts: FuzzRunIdentifiedContracts,
-    dictionary_weight: u32,
-    fuzz_fixtures: FuzzFixtures,
-) -> BoxedStrategy<BasicTxDetails> {
     let senders = Rc::new(senders);
     any::<prop::sample::Selector>()
         .prop_flat_map(move |selector| {
@@ -102,7 +87,6 @@ fn generate_call(
             })
         })
         .prop_map(|(sender, call_details)| BasicTxDetails { sender, call_details })
-        .boxed()
 }
 
 /// Strategy to select a sender address:
@@ -112,20 +96,16 @@ fn select_random_sender(
     fuzz_state: &EvmFuzzState,
     senders: Rc<SenderFilters>,
     dictionary_weight: u32,
-) -> BoxedStrategy<Address> {
+) -> impl Strategy<Value = Address> {
     if !senders.targeted.is_empty() {
-        any::<prop::sample::Selector>()
-            .prop_map(move |selector| *selector.select(&senders.targeted))
-            .boxed()
+        any::<prop::sample::Index>().prop_map(move |index| *index.get(&senders.targeted)).boxed()
     } else {
+        assert!(dictionary_weight <= 100, "dictionary_weight must be <= 100");
         proptest::prop_oneof![
-            100 - dictionary_weight => fuzz_param(&alloy_dyn_abi::DynSolType::Address, None)
-                .prop_map(move |addr| addr.as_address().unwrap())
-                .boxed(),
-            dictionary_weight => fuzz_param_from_state(&alloy_dyn_abi::DynSolType::Address, fuzz_state)
-                .prop_map(move |addr| addr.as_address().unwrap())
-                .boxed(),
+            100 - dictionary_weight => fuzz_param(&alloy_dyn_abi::DynSolType::Address),
+            dictionary_weight => fuzz_param_from_state(&alloy_dyn_abi::DynSolType::Address, fuzz_state),
         ]
+        .prop_map(move |addr| addr.as_address().unwrap())
         // Too many exclusions can slow down testing.
         .prop_filter("excluded sender", move |addr| !senders.excluded.contains(addr))
         .boxed()
@@ -139,15 +119,11 @@ fn select_random_sender(
 fn select_random_function(
     abi: &JsonAbi,
     targeted_functions: &[Function],
-) -> BoxedStrategy<Function> {
-    if !targeted_functions.is_empty() {
-        let targeted_functions = targeted_functions.to_vec();
-        let selector = any::<prop::sample::Selector>()
-            .prop_map(move |selector| selector.select(&targeted_functions).clone());
-        selector.boxed()
+) -> impl Strategy<Value = Function> {
+    let functions = if !targeted_functions.is_empty() {
+        targeted_functions.to_vec()
     } else {
-        let possible_funcs: Vec<Function> = abi
-            .functions()
+        abi.functions()
             .filter(|&func| {
                 !matches!(
                     func.state_mutability,
@@ -155,11 +131,9 @@ fn select_random_function(
                 )
             })
             .cloned()
-            .collect();
-        let total_random = any::<prop::sample::Selector>()
-            .prop_map(move |selector| selector.select(&possible_funcs).clone());
-        total_random.boxed()
-    }
+            .collect()
+    };
+    any::<prop::sample::Index>().prop_map(move |index| index.get(&functions).clone())
 }
 
 /// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata
