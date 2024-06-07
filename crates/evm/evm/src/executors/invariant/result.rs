@@ -1,6 +1,7 @@
 use super::{error::FailedInvariantCaseData, InvariantFailures, InvariantFuzzError};
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
+use alloy_primitives::{Address, Bytes};
 use eyre::Result;
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{constants::CALLER, utils::StateChangeset};
@@ -60,20 +61,11 @@ pub(crate) fn assert_invariants(
         }
     }
 
-    let func = invariant_contract.invariant_function;
-    let mut call_result = executor.call_raw(
-        CALLER,
+    let (call_result, success) = call_invariant_function(
+        executor,
         invariant_contract.address,
-        func.abi_encode_input(&[])?.into(),
-        U256::ZERO,
+        invariant_contract.invariant_function.abi_encode_input(&[])?.into(),
     )?;
-
-    let success = executor.is_raw_call_success(
-        invariant_contract.address,
-        Cow::Owned(call_result.state_changeset.take().unwrap()),
-        &call_result,
-        false,
-    );
     if !success {
         // We only care about invariants which we haven't broken yet.
         if invariant_failures.error.is_none() {
@@ -154,4 +146,46 @@ pub(crate) fn can_continue(
         }
     }
     Ok(RichInvariantResults::new(true, call_results))
+}
+
+/// Given the executor state, asserts conditions within `tearDown` function.
+/// If call fails then the invariant test is considered failed.
+pub(crate) fn assert_tear_down(
+    invariant_contract: &InvariantContract<'_>,
+    invariant_config: &InvariantConfig,
+    targeted_contracts: &FuzzRunIdentifiedContracts,
+    executor: &mut Executor,
+    invariant_failures: &mut InvariantFailures,
+    inputs: &[BasicTxDetails],
+) -> Result<bool> {
+    let (call_result, success) = executor.tear_down(invariant_contract.address)?;
+    // Fail the test case if tearDown doesn't succeed.
+    if !success {
+        let case_data = FailedInvariantCaseData::new(
+            invariant_contract,
+            invariant_config,
+            targeted_contracts,
+            inputs,
+            call_result,
+            &[],
+        );
+        invariant_failures.error = Some(InvariantFuzzError::BrokenInvariant(case_data));
+    }
+    Ok(success)
+}
+
+/// Calls the invariant function and returns call result and if succeeded.
+pub(crate) fn call_invariant_function(
+    executor: &Executor,
+    address: Address,
+    calldata: Bytes,
+) -> Result<(RawCallResult, bool)> {
+    let mut call_result = executor.call_raw(CALLER, address, calldata, U256::ZERO)?;
+    let success = executor.is_raw_call_success(
+        address,
+        Cow::Owned(call_result.state_changeset.take().unwrap()),
+        &call_result,
+        false,
+    );
+    Ok((call_result, success))
 }

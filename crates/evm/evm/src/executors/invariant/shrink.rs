@@ -1,9 +1,10 @@
-use crate::executors::{invariant::error::FailedInvariantCaseData, Executor};
+use crate::executors::{
+    invariant::{error::FailedInvariantCaseData, result::call_invariant_function},
+    Executor,
+};
 use alloy_primitives::{Address, Bytes, U256};
-use foundry_evm_core::constants::CALLER;
 use foundry_evm_fuzz::invariant::BasicTxDetails;
 use proptest::bits::{BitSetLike, VarBitSet};
-use std::borrow::Cow;
 
 #[derive(Clone, Copy, Debug)]
 struct Shrink {
@@ -83,14 +84,15 @@ pub(crate) fn shrink_sequence(
     failed_case: &FailedInvariantCaseData,
     calls: &[BasicTxDetails],
     executor: &Executor,
+    needs_tear_down: bool,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
 
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
-    let error_call_result =
-        executor.call_raw(CALLER, failed_case.addr, failed_case.calldata.clone(), U256::ZERO)?;
-    if error_call_result.reverted {
+    let (_, success) =
+        call_invariant_function(executor, failed_case.addr, failed_case.calldata.clone())?;
+    if !success {
         return Ok(vec![]);
     }
 
@@ -104,6 +106,7 @@ pub(crate) fn shrink_sequence(
             failed_case.addr,
             failed_case.calldata.clone(),
             failed_case.fail_on_revert,
+            needs_tear_down,
         ) {
             // If candidate sequence still fails then shrink more if possible.
             Ok((false, _)) if !shrinker.simplify() => break,
@@ -120,7 +123,8 @@ pub(crate) fn shrink_sequence(
 /// Checks if the given call sequence breaks the invariant.
 /// Used in shrinking phase for checking candidate sequences and in replay failures phase to test
 /// persisted failures.
-/// Returns the result of invariant check and if sequence was entirely applied.
+/// Returns the result of invariant check (and tear down call if needed) and if sequence was
+/// entirely applied.
 pub fn check_sequence(
     mut executor: Executor,
     calls: &[BasicTxDetails],
@@ -128,6 +132,7 @@ pub fn check_sequence(
     test_address: Address,
     calldata: Bytes,
     fail_on_revert: bool,
+    needs_tear_down: bool,
 ) -> eyre::Result<(bool, bool)> {
     // Apply the call sequence.
     for call_index in sequence {
@@ -146,14 +151,10 @@ pub fn check_sequence(
     }
 
     // Check the invariant for call sequence.
-    let mut call_result = executor.call_raw(CALLER, test_address, calldata, U256::ZERO)?;
-    Ok((
-        executor.is_raw_call_success(
-            test_address,
-            Cow::Owned(call_result.state_changeset.take().unwrap()),
-            &call_result,
-            false,
-        ),
-        true,
-    ))
+    let (_, mut success) = call_invariant_function(&executor, test_address, calldata)?;
+    // Check tear down result if invariant is success and tearDown function is declared.
+    if success && needs_tear_down {
+        (_, success) = executor.tear_down(test_address)?;
+    }
+    Ok((success, true))
 }

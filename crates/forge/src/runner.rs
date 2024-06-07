@@ -281,9 +281,7 @@ impl<'a> ContractRunner<'a> {
 
         let setup_fns: Vec<_> =
             self.contract.abi.functions().filter(|func| func.name.is_setup()).collect();
-
         let needs_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
-
         // There is a single miss-cased `setUp` function, so we add a warning
         for &setup_fn in setup_fns.iter() {
             if setup_fn.name != "setUp" {
@@ -293,7 +291,6 @@ impl<'a> ContractRunner<'a> {
                 ));
             }
         }
-
         // There are multiple setUp function, so we return a single test result for `setUp`
         if setup_fns.len() > 1 {
             return SuiteResult::new(
@@ -303,6 +300,34 @@ impl<'a> ContractRunner<'a> {
                 warnings,
             )
         }
+
+        let tear_down_fns: Vec<_> =
+            self.contract.abi.functions().filter(|func| func.name.is_tear_down()).collect();
+        if tear_down_fns.len() > 1 {
+            // Return a single test result failure if multiple functions declared.
+            return SuiteResult::new(
+                start.elapsed(),
+                [(
+                    "tearDown()".to_string(),
+                    TestResult::fail("multiple tearDown functions".to_string()),
+                )]
+                .into(),
+                warnings,
+            )
+        }
+        let needs_tear_down = match tear_down_fns.first() {
+            Some(tear_down_fn) => {
+                let match_sig = tear_down_fn.name == "tearDown";
+                if !match_sig {
+                    warnings.push(format!(
+                        "Found invalid teardown function \"{}\" did you mean \"tearDown()\"?",
+                        tear_down_fn.signature()
+                    ));
+                }
+                match_sig
+            }
+            None => false,
+        };
 
         let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
 
@@ -384,6 +409,7 @@ impl<'a> ContractRunner<'a> {
                         setup,
                         invariant_config.clone(),
                         func,
+                        needs_tear_down,
                         &known_contracts,
                         identified_contracts.as_ref().unwrap(),
                     )
@@ -516,12 +542,14 @@ impl<'a> ContractRunner<'a> {
     }
 
     #[instrument(level = "debug", name = "invariant", skip_all)]
+    #[allow(clippy::too_many_arguments)]
     pub fn run_invariant_test(
         &self,
         runner: TestRunner,
         setup: TestSetup,
         invariant_config: InvariantConfig,
         func: &Function,
+        needs_tear_down: bool,
         known_contracts: &ContractsByArtifact,
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
@@ -559,8 +587,12 @@ impl<'a> ContractRunner<'a> {
             identified_contracts,
             known_contracts,
         );
-        let invariant_contract =
-            InvariantContract { address, invariant_function: func, abi: &self.contract.abi };
+        let invariant_contract = InvariantContract {
+            address,
+            invariant_function: func,
+            needs_tear_down,
+            abi: &self.contract.abi,
+        };
 
         let mut logs = logs.clone();
         let mut traces = traces.clone();
@@ -592,6 +624,7 @@ impl<'a> ContractRunner<'a> {
                 invariant_contract.address,
                 invariant_contract.invariant_function.selector().to_vec().into(),
                 invariant_config.fail_on_revert,
+                invariant_contract.needs_tear_down,
             ) {
                 if !success {
                     // If sequence still fails then replay error to collect traces and

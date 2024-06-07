@@ -25,7 +25,7 @@ use proptest::{
     strategy::{BoxedStrategy, Strategy},
     test_runner::{TestCaseError, TestRunner},
 };
-use result::{assert_invariants, can_continue};
+use result::{assert_invariants, assert_tear_down, can_continue};
 use revm::primitives::HashMap;
 use shrink::shrink_sequence;
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
@@ -300,6 +300,19 @@ impl<'a> InvariantExecutor<'a> {
                         .map_err(|_| TestCaseError::Fail("Could not generate case".into()))?
                         .current(),
                 );
+            }
+
+            // Assert `tearDown` only if it is declared and test didn't fail already.
+            if invariant_contract.needs_tear_down && failures.borrow().error.is_none() {
+                assert_tear_down(
+                    &invariant_contract,
+                    &self.config,
+                    &targeted_contracts,
+                    &mut executor,
+                    &mut failures.borrow_mut(),
+                    &inputs,
+                )
+                .map_err(|_| TestCaseError::Fail("Failed to call tearDown".into()))?;
             }
 
             // We clear all the targeted contracts created during this run.

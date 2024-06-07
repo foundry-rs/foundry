@@ -75,6 +75,20 @@ async fn test_core() {
                     None,
                 )],
             ),
+            (
+                "default/core/MultipleTearDown.t.sol:MultipleTearDown",
+                vec![(
+                    "tearDown()",
+                    false,
+                    Some("multiple tearDown functions".to_string()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/core/BadSigTearDown.t.sol:BadSigTearDown",
+                vec![("testShouldPassWithWarning()", true, None, None, None)],
+            ),
         ]),
     );
 }

@@ -1,10 +1,9 @@
 use super::{error::FailedInvariantCaseData, shrink_sequence};
-use crate::executors::Executor;
+use crate::executors::{invariant::result::call_invariant_function, Executor};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::Log;
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::constants::CALLER;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     invariant::{BasicTxDetails, InvariantContract},
@@ -74,14 +73,20 @@ pub fn replay_run(
     // Checking after each call doesn't add valuable info for passing scenario
     // (invariant call result is always success) nor for failed scenarios
     // (invariant call result is always success until the last call that breaks it).
-    let invariant_result = executor.call_raw(
-        CALLER,
+    let (invariant_result, invariant_success) = call_invariant_function(
+        &executor,
         invariant_contract.address,
         invariant_contract.invariant_function.abi_encode_input(&[])?.into(),
-        U256::ZERO,
     )?;
     traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
     logs.extend(invariant_result.logs);
+
+    // Collect tear down logs and traces.
+    if invariant_contract.needs_tear_down && invariant_success {
+        let (tear_down_result, _) = executor.tear_down(invariant_contract.address)?;
+        traces.push((TraceKind::Execution, tear_down_result.traces.clone().unwrap()));
+        logs.extend(tear_down_result.logs);
+    }
 
     Ok(counterexample_sequence)
 }
@@ -103,7 +108,8 @@ pub fn replay_error(
         TestError::Abort(_) => Ok(vec![]),
         TestError::Fail(_, ref calls) => {
             // Shrink sequence of failed calls.
-            let calls = shrink_sequence(failed_case, calls, &executor)?;
+            let calls =
+                shrink_sequence(failed_case, calls, &executor, invariant_contract.needs_tear_down)?;
 
             set_up_inner_replay(&mut executor, &failed_case.inner_sequence);
 
