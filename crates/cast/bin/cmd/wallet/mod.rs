@@ -377,9 +377,9 @@ flag to set your key via:
             Self::PrivateKey { wallet, mnemonic_override, mnemonic_index_override } => {
                 let wallet = mnemonic_override
                     .map(|mnemonic| WalletOpts {
-                        raw: RawWalletOpts { 
-                            mnemonic: Some(mnemonic), 
-                            mnemonic_index: mnemonic_index_override.unwrap_or_default(), 
+                        raw: RawWalletOpts {
+                            mnemonic: Some(mnemonic),
+                            mnemonic_index: mnemonic_index_override.unwrap_or_default(),
                             ..Default::default()
                         },
                         ..Default::default()
@@ -391,10 +391,10 @@ flag to set your key via:
                     WalletSigner::Local(wallet) => {
                         let pk_bytes = wallet.signer().to_bytes();
                         println!("0x{}", hex::encode(pk_bytes));
-                    },
+                    }
                     _ => {
                         eyre::bail!("Only local wallets are supported by this command.");
-                    },
+                    }
                 }
             }
             Self::DecryptKeystore { account_name, keystore_dir, unsafe_password } => {
