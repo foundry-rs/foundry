@@ -229,6 +229,10 @@ async fn test_invariant() {
                     None,
                     None,
                 )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantExcludedSenders.t.sol:InvariantExcludedSendersTest",
+                vec![("invariant_check_sender()", true, None, None, None)],
             )
         ]),
     );
@@ -665,6 +669,21 @@ async fn test_invariant_roll_fork_handler() {
                 None,
                 None,
             )],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_excluded_senders() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantExcludedSenders.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.fail_on_revert = true;
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/fuzz/invariant/common/InvariantExcludedSenders.t.sol:InvariantExcludedSendersTest",
+            vec![("invariant_check_sender()", true, None, None, None)],
         )]),
     );
 }
