@@ -497,7 +497,7 @@ impl<'a> InvariantExecutor<'a> {
         let mut excluded_senders =
             self.call_sol_default(to, &IInvariantTest::excludeSendersCall {}).excludedSenders;
         // Extend with default excluded addresses - https://github.com/foundry-rs/foundry/issues/4163
-        excluded_senders.extend(vec![
+        excluded_senders.extend([
             CHEATCODE_ADDRESS,
             HARDHAT_CONSOLE_ADDRESS,
             DEFAULT_CREATE2_DEPLOYER,
