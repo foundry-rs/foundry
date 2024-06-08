@@ -47,6 +47,10 @@ revm = { workspace = true, features = [
 ] }
 revm-inspectors.workspace = true
 
+revm-jit = { path = "../../../../../paradigmxyz/revm-jit/crates/revm-jit/", features = [
+    "llvm-prefer-dynamic",
+] }
+
 arrayvec.workspace = true
 auto_impl = "1"
 derive_more.workspace = true

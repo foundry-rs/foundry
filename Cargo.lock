@@ -3789,6 +3789,7 @@ dependencies = [
  "parking_lot",
  "revm",
  "revm-inspectors",
+ "revm-jit",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -5020,6 +5021,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "inkwell"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b597a7b2cdf279aeef6d7149071e35e4bc87c2cf05a5b7f2d731300bffe587ea"
+dependencies = [
+ "either",
+ "inkwell_internals",
+ "libc",
+ "llvm-sys",
+ "once_cell",
+ "thiserror",
+]
+
+[[package]]
+name = "inkwell_internals"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fa4d8d74483041a882adaa9a29f633253a66dde85055f0495c121620ac484b2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.66",
+]
+
+[[package]]
 name = "inlinable_string"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5334,6 +5360,20 @@ name = "litemap"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "643cb0b8d4fcc284004d5fd0d67ccf61dfffadb7f75e1e71bc420f4688a3a704"
+
+[[package]]
+name = "llvm-sys"
+version = "170.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eed90f72df5504c0af2e3a08ee7762a4a3e42ec2605811fc19f64879de40c50a"
+dependencies = [
+ "anyhow",
+ "cc",
+ "lazy_static",
+ "libc",
+ "regex-lite",
+ "semver 1.0.23",
+]
 
 [[package]]
 name = "lock_api"
@@ -6938,6 +6978,62 @@ source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d2
 dependencies = [
  "revm-primitives",
  "serde",
+]
+
+[[package]]
+name = "revm-jit"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "bitflags 2.5.0",
+ "bitvec",
+ "revm-interpreter",
+ "revm-jit-backend",
+ "revm-jit-builtins",
+ "revm-jit-context",
+ "revm-jit-llvm",
+ "revm-primitives",
+ "rustc-hash",
+ "tracing",
+]
+
+[[package]]
+name = "revm-jit-backend"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "ruint",
+ "tracing",
+]
+
+[[package]]
+name = "revm-jit-builtins"
+version = "0.1.0"
+dependencies = [
+ "paste",
+ "revm-interpreter",
+ "revm-jit-backend",
+ "revm-jit-context",
+ "revm-primitives",
+ "tracing",
+]
+
+[[package]]
+name = "revm-jit-context"
+version = "0.1.0"
+dependencies = [
+ "revm-interpreter",
+ "revm-primitives",
+]
+
+[[package]]
+name = "revm-jit-llvm"
+version = "0.1.0"
+dependencies = [
+ "inkwell",
+ "revm-jit-backend",
+ "rustc-hash",
+ "tracing",
 ]
 
 [[package]]

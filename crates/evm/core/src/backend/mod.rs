@@ -794,9 +794,29 @@ impl Backend {
         inspector: I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
+
+        let cx = revm_jit::llvm::Context::create();
+        let cx = jit::JitContext::new(&cx, inspector);
+
+        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), cx);
+
+        if std::env::var("JIT").is_ok() {
+            jit::register_jit_handler(&mut evm.handler);
+        }
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
+
+        eprintln!("res.result = {:#?}", res.result);
+        eprintln!(
+            "res.state = {:#?}",
+            res.state
+                .iter()
+                .map(|(k, v)| (
+                    k,
+                    (&v.info, v.storage.iter().collect::<BTreeMap<_, _>>(), v.status)
+                ))
+                .collect::<BTreeMap<_, _>>()
+        );
 
         env.env = evm.context.evm.inner.env;
 
@@ -1945,4 +1965,184 @@ fn apply_state_changeset(
     update_state(&mut fork.journaled_state.state, &mut fork.db, Some(persistent_accounts))?;
 
     Ok(())
+}
+
+mod jit {
+    use super::*;
+    use alloy_primitives::Bytes;
+    use revm::{
+        interpreter::{
+            CallInputs, CallOutcome, CreateInputs, CreateOutcome, EOFCreateInputs,
+            EOFCreateOutcome, Interpreter,
+        },
+        primitives::SpecId,
+        EvmContext, GetInspector, Inspector,
+    };
+    use std::sync::Arc;
+
+    pub(super) struct JitContext<'ctx, I> {
+        ctx: revm_jit::EvmCompiler<revm_jit::EvmLlvmBackend<'ctx>>,
+        inner: I,
+        contracts: std::collections::HashMap<(Bytes, SpecId), revm_jit::EvmCompilerFn>,
+    }
+
+    impl<DB: Database, I: Inspector<DB>> Inspector<DB> for JitContext<'_, I> {
+        #[inline]
+        fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+            self.inner.initialize_interp(interp, context);
+        }
+
+        #[inline]
+        fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+            self.inner.step(interp, context);
+        }
+
+        #[inline]
+        fn step_end(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+            self.inner.step_end(interp, context);
+        }
+
+        #[inline]
+        fn log(&mut self, context: &mut EvmContext<DB>, log: &Log) {
+            self.inner.log(context, log);
+        }
+
+        #[inline]
+        fn call(
+            &mut self,
+            context: &mut EvmContext<DB>,
+            inputs: &mut CallInputs,
+        ) -> Option<CallOutcome> {
+            self.inner.call(context, inputs)
+        }
+
+        #[inline]
+        fn call_end(
+            &mut self,
+            context: &mut EvmContext<DB>,
+            inputs: &CallInputs,
+            outcome: CallOutcome,
+        ) -> CallOutcome {
+            self.inner.call_end(context, inputs, outcome)
+        }
+
+        #[inline]
+        fn create(
+            &mut self,
+            context: &mut EvmContext<DB>,
+            inputs: &mut CreateInputs,
+        ) -> Option<CreateOutcome> {
+            self.inner.create(context, inputs)
+        }
+
+        #[inline]
+        fn create_end(
+            &mut self,
+            context: &mut EvmContext<DB>,
+            inputs: &CreateInputs,
+            outcome: CreateOutcome,
+        ) -> CreateOutcome {
+            self.inner.create_end(context, inputs, outcome)
+        }
+
+        fn eofcreate(
+            &mut self,
+            context: &mut EvmContext<DB>,
+            inputs: &mut EOFCreateInputs,
+        ) -> Option<EOFCreateOutcome> {
+            self.inner.eofcreate(context, inputs)
+        }
+
+        fn eofcreate_end(
+            &mut self,
+            context: &mut EvmContext<DB>,
+            inputs: &EOFCreateInputs,
+            outcome: EOFCreateOutcome,
+        ) -> EOFCreateOutcome {
+            self.inner.eofcreate_end(context, inputs, outcome)
+        }
+
+        #[inline]
+        fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+            self.inner.selfdestruct(contract, target, value);
+        }
+    }
+
+    impl<DB: Database, I: InspectorExt<DB>> InspectorExt<DB> for JitContext<'_, I> {
+        fn should_use_create2_factory(
+            &mut self,
+            context: &mut EvmContext<DB>,
+            inputs: &mut CreateInputs,
+        ) -> bool {
+            self.inner.should_use_create2_factory(context, inputs)
+        }
+    }
+
+    impl<'ctx, I> JitContext<'ctx, I> {
+        pub(super) fn new(cx: &'ctx revm_jit::llvm::inkwell::context::Context, inner: I) -> Self {
+            Self {
+                ctx: revm_jit::EvmCompiler::new(
+                    revm_jit::EvmLlvmBackend::new(
+                        cx,
+                        false,
+                        revm_jit::OptimizationLevel::Aggressive,
+                    )
+                    .unwrap(),
+                ),
+                inner,
+                contracts: Default::default(),
+            }
+        }
+
+        pub(super) fn get_or_compile(
+            &mut self,
+            address: revm::primitives::Address,
+            bytecode: Bytes,
+            spec_id: SpecId,
+        ) -> revm_jit::EvmCompilerFn {
+            if self.contracts.len() > 1 {
+                self.clear();
+            }
+            *self
+                .contracts
+                .entry((bytecode.clone(), spec_id))
+                .or_insert_with(|| Self::compile(&mut self.ctx, &address, &bytecode, spec_id))
+        }
+
+        pub(super) fn compile(
+            ctx: &mut revm_jit::EvmCompiler<revm_jit::EvmLlvmBackend<'ctx>>,
+            address: &revm::primitives::Address,
+            bytecode: &[u8],
+            spec_id: SpecId,
+        ) -> revm_jit::EvmCompilerFn {
+            let name = format!("_{address}");
+            // eprintln!("compile({:?}, {:?}, {:?})", name, bytecode.len(), spec_id);
+            unsafe { ctx.clear().unwrap() };
+            ctx.jit(Some(&name), bytecode, spec_id)
+                .unwrap_or_else(|e| panic!("failed to compile for {address}: {e}"))
+        }
+
+        pub(super) fn clear(&mut self) {
+            self.contracts.clear();
+            unsafe { self.ctx.clear().unwrap() };
+        }
+    }
+
+    pub(super) fn register_jit_handler<'a, 'ctx, DB: revm::Database, I: GetInspector<DB>>(
+        handler: &mut revm::handler::register::EvmHandler<'a, JitContext<'ctx, I>, DB>,
+    ) {
+        handler.execution.execute_frame = Arc::new(|frame, memory, _tables, context| {
+            let interpreter = frame.interpreter_mut();
+
+            let address = interpreter.contract.target_address;
+            let bytecode = interpreter.contract.bytecode.original_bytes();
+            let spec_id = context.evm.spec_id();
+            let f = context.external.get_or_compile(address, bytecode, spec_id);
+
+            interpreter.shared_memory = std::mem::take(memory);
+            let r = unsafe { f.call_with_interpreter(interpreter, context) };
+            *memory = interpreter.take_memory();
+            Ok(r)
+        });
+    }
 }
