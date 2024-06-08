@@ -149,8 +149,8 @@ pub enum WalletSubcommands {
     List(ListArgs),
 
     /// Derives private key from mnemonic
-    #[command(name = "derive-private-key", visible_aliases = &["--derive-private-key"])]
-    DerivePrivateKey {
+    #[command(name = "private-key", visible_alias = "pk")]
+    PrivateKey {
         /// If provided, the private key will be derived from the specified menomonic phrase.
         #[arg(value_name = "MNEMONIC")]
         mnemonic_override: Option<String>,
@@ -374,7 +374,7 @@ flag to set your key via:
             Self::List(cmd) => {
                 cmd.run().await?;
             }
-            Self::DerivePrivateKey { wallet, mnemonic_override, mnemonic_index_override } => {
+            Self::PrivateKey { wallet, mnemonic_override, mnemonic_index_override } => {
                 let wallet = mnemonic_override
                     .map(|mnemonic| WalletOpts {
                         raw: RawWalletOpts { 
