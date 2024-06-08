@@ -7689,7 +7689,7 @@ dependencies = [
  "futures",
  "once_cell",
  "regex",
- "reqwest",
+ "reqwest 0.12.4",
  "rpassword",
  "serde",
  "serde_derive",
