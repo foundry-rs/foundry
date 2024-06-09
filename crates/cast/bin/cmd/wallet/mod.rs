@@ -393,13 +393,11 @@ flag to set your key via:
                     .await?;
                 match wallet {
                     WalletSigner::Local(wallet) => {
-                        let pk_bytes = wallet.signer().to_bytes();
                         if verbose {
-                            let address = wallet.address();
-                            println!("Address: {address}");
-                            println!("Private key: 0x{}", hex::encode(pk_bytes));
+                            println!("Address:     {}", wallet.address());
+                            println!("Private key: 0x{}", hex::encode(wallet.signer().to_bytes()));
                         } else {
-                            println!("0x{}", hex::encode(pk_bytes));
+                            println!("0x{}", hex::encode(wallet.signer().to_bytes()));
                         }
                     }
                     _ => {
