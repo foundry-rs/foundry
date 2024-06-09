@@ -159,6 +159,10 @@ pub enum WalletSubcommands {
         #[arg(value_name = "MNEMONIC_INDEX")]
         mnemonic_index_override: Option<u32>,
 
+        /// Verbose mode, print the address and private key.
+        #[arg(short = 'v', long)]
+        verbose: bool,
+
         #[command(flatten)]
         wallet: WalletOpts,
     },
@@ -374,7 +378,7 @@ flag to set your key via:
             Self::List(cmd) => {
                 cmd.run().await?;
             }
-            Self::PrivateKey { wallet, mnemonic_override, mnemonic_index_override } => {
+            Self::PrivateKey { wallet, mnemonic_override, mnemonic_index_override, verbose } => {
                 let wallet = mnemonic_override
                     .map(|mnemonic| WalletOpts {
                         raw: RawWalletOpts {
@@ -390,7 +394,13 @@ flag to set your key via:
                 match wallet {
                     WalletSigner::Local(wallet) => {
                         let pk_bytes = wallet.signer().to_bytes();
-                        println!("0x{}", hex::encode(pk_bytes));
+                        if verbose {
+                            let address = wallet.address();
+                            println!("Address: {address}");
+                            println!("Private key: 0x{}", hex::encode(pk_bytes));
+                        } else {
+                            println!("0x{}", hex::encode(pk_bytes));
+                        }
                     }
                     _ => {
                         eyre::bail!("Only local wallets are supported by this command.");
