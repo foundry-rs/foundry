@@ -155,9 +155,10 @@ pub enum WalletSubcommands {
         #[arg(value_name = "MNEMONIC")]
         mnemonic_override: Option<String>,
 
-        /// If provided, the private key will be derived from the specified mnemonic index.
-        #[arg(value_name = "MNEMONIC_INDEX")]
-        mnemonic_index_override: Option<u32>,
+        /// If provided, the private key will be derived using the
+        /// specified mnemonic index (if integer) or derivation path.
+        #[arg(value_name = "MNEMONIC_INDEX_OR_DERIVATION_PATH")]
+        mnemonic_index_or_derivation_path_override: Option<String>,
 
         /// Verbose mode, print the address and private key.
         #[arg(short = 'v', long)]
@@ -378,19 +379,31 @@ flag to set your key via:
             Self::List(cmd) => {
                 cmd.run().await?;
             }
-            Self::PrivateKey { wallet, mnemonic_override, mnemonic_index_override, verbose } => {
-                let wallet = mnemonic_override
-                    .map(|mnemonic| WalletOpts {
-                        raw: RawWalletOpts {
-                            mnemonic: Some(mnemonic),
-                            mnemonic_index: mnemonic_index_override.unwrap_or_default(),
-                            ..Default::default()
+            Self::PrivateKey {
+                wallet,
+                mnemonic_override,
+                mnemonic_index_or_derivation_path_override,
+                verbose,
+            } => {
+                let (index_override, derivation_path_override) =
+                    match mnemonic_index_or_derivation_path_override {
+                        Some(value) => match value.parse::<u32>() {
+                            Ok(index) => (Some(index), None),
+                            Err(_) => (None, Some(value)),
                         },
-                        ..Default::default()
-                    })
-                    .unwrap_or(wallet)
-                    .signer()
-                    .await?;
+                        None => (None, None),
+                    };
+                let wallet = WalletOpts {
+                    raw: RawWalletOpts {
+                        mnemonic: mnemonic_override.or(wallet.raw.mnemonic),
+                        mnemonic_index: index_override.unwrap_or(wallet.raw.mnemonic_index),
+                        hd_path: derivation_path_override.or(wallet.raw.hd_path),
+                        ..wallet.raw
+                    },
+                    ..wallet
+                }
+                .signer()
+                .await?;
                 match wallet {
                     WalletSigner::Local(wallet) => {
                         if verbose {
