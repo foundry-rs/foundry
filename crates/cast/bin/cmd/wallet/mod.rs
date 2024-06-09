@@ -149,7 +149,7 @@ pub enum WalletSubcommands {
     List(ListArgs),
 
     /// Derives private key from mnemonic
-    #[command(name = "private-key", visible_alias = "pk")]
+    #[command(name = "private-key", visible_aliases = &["pk", "derive-private-key", "--derive-private-key"])]
     PrivateKey {
         /// If provided, the private key will be derived from the specified menomonic phrase.
         #[arg(value_name = "MNEMONIC")]
