@@ -6,11 +6,10 @@ use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     artifacts::{BytecodeObject, ContractBytecodeSome, Libraries, Source},
-    compilers::{solc::SolcCompiler, CompilationError, Compiler},
+    compilers::{multi::MultiCompilerLanguage, solc::SolcCompiler, Compiler},
     remappings::Remapping,
     report::{BasicStdoutReporter, NoReporter, Report},
-    Artifact, ArtifactId, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, Solc,
-    SolcConfig,
+    Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, Solc, SolcConfig,
 };
 use foundry_linking::Linker;
 use num_format::{Locale, ToFormattedString};
@@ -20,6 +19,7 @@ use std::{
     fmt::Display,
     io::IsTerminal,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Instant,
 };
 
@@ -122,10 +122,7 @@ impl ProjectCompiler {
     }
 
     /// Compiles the project.
-    pub fn compile<C: Compiler>(
-        mut self,
-        project: &Project<C>,
-    ) -> Result<ProjectCompileOutput<C::CompilationError>> {
+    pub fn compile<C: Compiler>(mut self, project: &Project<C>) -> Result<ProjectCompileOutput<C>> {
         // TODO: Avoid process::exit
         if !project.paths.has_input_files() && self.files.is_empty() {
             println!("Nothing to compile");
@@ -159,9 +156,9 @@ impl ProjectCompiler {
     /// ProjectCompiler::new().compile_with(|| Ok(prj.compile()?)).unwrap();
     /// ```
     #[instrument(target = "forge::compile", skip_all)]
-    fn compile_with<E: CompilationError, F>(self, f: F) -> Result<ProjectCompileOutput<E>>
+    fn compile_with<C: Compiler, F>(self, f: F) -> Result<ProjectCompileOutput<C>>
     where
-        F: FnOnce() -> Result<ProjectCompileOutput<E>>,
+        F: FnOnce() -> Result<ProjectCompileOutput<C>>,
     {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
@@ -209,7 +206,7 @@ impl ProjectCompiler {
     }
 
     /// If configured, this will print sizes or names
-    fn handle_output<E>(&self, output: &ProjectCompileOutput<E>) {
+    fn handle_output<C: Compiler>(&self, output: &ProjectCompileOutput<C>) {
         let print_names = self.print_names.unwrap_or(false);
         let print_sizes = self.print_sizes.unwrap_or(false);
 
@@ -274,88 +271,125 @@ impl ProjectCompiler {
     }
 }
 
-/// Contract source code and bytecode.
+#[derive(Clone, Debug)]
+pub struct SourceData {
+    pub source: Arc<String>,
+    pub language: MultiCompilerLanguage,
+}
+
+#[derive(Clone, Debug)]
+pub struct ArtifactData {
+    pub bytecode: ContractBytecodeSome,
+    pub build_id: String,
+    pub file_id: u32,
+}
+
+/// Contract source code and bytecode data used for debugger.
 #[derive(Clone, Debug, Default)]
 pub struct ContractSources {
-    /// Map over artifacts' contract names -> vector of file IDs
-    pub ids_by_name: HashMap<String, Vec<u32>>,
-    /// Map over file_id -> source code
-    pub sources_by_id: FxHashMap<u32, String>,
-    /// Map over file_id -> contract name -> bytecode
-    pub artifacts_by_id: FxHashMap<u32, HashMap<String, ContractBytecodeSome>>,
+    /// Map over build_id -> file_id -> (source code, language)
+    pub sources_by_id: HashMap<String, FxHashMap<u32, SourceData>>,
+    /// Map over contract name -> Vec<(bytecode, build_id, file_id)>
+    pub artifacts_by_name: HashMap<String, Vec<ArtifactData>>,
 }
 
 impl ContractSources {
     /// Collects the contract sources and artifacts from the project compile output.
     pub fn from_project_output(
         output: &ProjectCompileOutput,
-        root: &Path,
-        libraries: &Libraries,
+        link_data: Option<(&Path, &Libraries)>,
     ) -> Result<Self> {
-        let linker = Linker::new(root, output.artifact_ids().collect());
-
         let mut sources = Self::default();
+
+        sources.insert(output, link_data)?;
+
+        Ok(sources)
+    }
+
+    pub fn insert<C: Compiler>(
+        &mut self,
+        output: &ProjectCompileOutput<C>,
+        link_data: Option<(&Path, &Libraries)>,
+    ) -> Result<()>
+    where
+        C::Language: Into<MultiCompilerLanguage>,
+    {
+        let link_data = link_data.map(|(root, libraries)| {
+            let linker = Linker::new(root, output.artifact_ids().collect());
+            (linker, libraries)
+        });
+
         for (id, artifact) in output.artifact_ids() {
             if let Some(file_id) = artifact.id {
-                let abs_path = root.join(&id.source);
-                let source_code = std::fs::read_to_string(abs_path).wrap_err_with(|| {
-                    format!("failed to read artifact source file for `{}`", id.identifier())
-                })?;
-                let linked = linker.link(&id, libraries)?;
-                let contract = compact_to_contract(linked.into_contract_bytecode())?;
-                sources.insert(&id, file_id, source_code, contract);
+                let artifact = if let Some((linker, libraries)) = link_data.as_ref() {
+                    linker.link(&id, &libraries)?.into_contract_bytecode()
+                } else {
+                    artifact.clone().into_contract_bytecode()
+                };
+                let bytecode = compact_to_contract(artifact.clone().into_contract_bytecode())?;
+
+                self.artifacts_by_name.entry(id.name.clone()).or_default().push(ArtifactData {
+                    bytecode,
+                    build_id: id.build_id.clone(),
+                    file_id,
+                });
             } else {
                 warn!(id = id.identifier(), "source not found");
             }
         }
-        Ok(sources)
-    }
 
-    /// Inserts a contract into the sources.
-    pub fn insert(
-        &mut self,
-        artifact_id: &ArtifactId,
-        file_id: u32,
-        source: String,
-        bytecode: ContractBytecodeSome,
-    ) {
-        self.ids_by_name.entry(artifact_id.name.clone()).or_default().push(file_id);
-        self.sources_by_id.insert(file_id, source);
-        self.artifacts_by_id.entry(file_id).or_default().insert(artifact_id.name.clone(), bytecode);
-    }
+        // Not all source files produce artifacts, so we are populating sources by using build
+        // infos.
+        let mut files: BTreeMap<PathBuf, Arc<String>> = BTreeMap::new();
+        for (build_id, build) in output.builds() {
+            for (source_id, source) in &build.source_id_to_path {
+                let source_code = if let Some(source) = files.get(source) {
+                    source.clone()
+                } else {
+                    let source_code = std::fs::read_to_string(source).wrap_err_with(|| {
+                        format!("failed to read artifact source file for `{}`", source.display())
+                    })?;
+                    let source_code = Arc::new(source_code);
+                    files.insert(source.to_path_buf(), source_code.clone());
+                    source_code
+                };
 
-    /// Returns the source for a contract by file ID.
-    pub fn get(&self, id: u32) -> Option<&String> {
-        self.sources_by_id.get(&id)
+                self.sources_by_id.entry(build_id.clone()).or_default().insert(
+                    *source_id,
+                    SourceData { source: source_code, language: build.language.into() },
+                );
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns all sources for a contract by name.
-    pub fn get_sources<'a>(
-        &'a self,
-        name: &'a str,
-    ) -> Option<impl Iterator<Item = (u32, &'_ str, &'_ ContractBytecodeSome)>> {
-        self.ids_by_name.get(name).map(|ids| {
-            ids.iter().filter_map(|id| {
-                Some((
-                    *id,
-                    self.sources_by_id.get(id)?.as_ref(),
-                    self.artifacts_by_id.get(id)?.get(name)?,
-                ))
+    pub fn get_sources(
+        &self,
+        name: &str,
+    ) -> Option<impl Iterator<Item = (&ArtifactData, &SourceData)>> {
+        self.artifacts_by_name.get(name).map(|artifacts| {
+            artifacts.iter().filter_map(|artifact| {
+                let source =
+                    self.sources_by_id.get(artifact.build_id.as_str())?.get(&artifact.file_id)?;
+                Some((artifact, source))
             })
         })
     }
 
-    /// Returns all (name, source, bytecode) sets.
-    pub fn entries(&self) -> impl Iterator<Item = (&str, &str, &ContractBytecodeSome)> {
-        self.artifacts_by_id
+    /// Returns all (name, bytecode, source) sets.
+    pub fn entries(&self) -> impl Iterator<Item = (&str, &ArtifactData, &SourceData)> {
+        self.artifacts_by_name
             .iter()
-            .filter_map(|(id, artifacts)| {
-                let source = self.sources_by_id.get(id)?;
-                Some(
-                    artifacts
-                        .iter()
-                        .map(move |(name, bytecode)| (name.as_ref(), source.as_ref(), bytecode)),
-                )
+            .map(|(name, artifacts)| {
+                artifacts.iter().filter_map(|artifact| {
+                    let source = self
+                        .sources_by_id
+                        .get(artifact.build_id.as_str())?
+                        .get(&artifact.file_id)?;
+                    Some((name.as_str(), artifact, source))
+                })
             })
             .flatten()
     }
@@ -464,7 +498,7 @@ pub fn compile_target<C: Compiler>(
     target_path: &Path,
     project: &Project<C>,
     quiet: bool,
-) -> Result<ProjectCompileOutput<C::CompilationError>> {
+) -> Result<ProjectCompileOutput<C>> {
     ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
 }
 
@@ -472,7 +506,7 @@ pub fn compile_target<C: Compiler>(
 /// Returns the artifact_id, the file_id, and the bytecode
 pub async fn compile_from_source(
     metadata: &Metadata,
-) -> Result<(ArtifactId, u32, ContractBytecodeSome)> {
+) -> Result<ProjectCompileOutput<SolcCompiler>> {
     let root = tempfile::tempdir()?;
     let root_path = root.path();
     let project = etherscan_project(metadata, root_path)?;
@@ -483,23 +517,9 @@ pub async fn compile_from_source(
         eyre::bail!("{project_output}")
     }
 
-    let (artifact_id, file_id, contract) = project_output
-        .into_artifacts()
-        .find(|(artifact_id, _)| artifact_id.name == metadata.contract_name)
-        .map(|(aid, art)| {
-            (aid, art.source_file().expect("no source file").id, art.into_contract_bytecode())
-        })
-        .ok_or_else(|| {
-            eyre::eyre!(
-                "Unable to find bytecode in compiled output for contract: {}",
-                metadata.contract_name
-            )
-        })?;
-    let bytecode = compact_to_contract(contract)?;
-
     root.close()?;
 
-    Ok((artifact_id, file_id, bytecode))
+    return Ok(project_output);
 }
 
 /// Creates a [Project] from an Etherscan source.
