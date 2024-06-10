@@ -505,6 +505,7 @@ impl Cheatcodes {
         &mut self,
         params: CreateParams<'_, DB, CallType>,
         create_outcome_fn: &CreateOutcomeFn,
+        log_debug_fn: impl Fn(&Self, &CallType),
     ) -> Option<CommonCreateOutcome>
     where
         DB: DatabaseExt,
@@ -584,8 +585,7 @@ impl Cheatcodes {
                         },
                     });
 
-                    let kind = "create";
-                    debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
+                    log_debug_fn(self, call);
                 }
             }
         }
@@ -1367,7 +1367,15 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         self.create_common(params, &|result, address, _| {
             CommonCreateOutcome::Create(CreateOutcome { result, address })
-        })
+        },
+        |this, call| {
+            let kind = match call.scheme {
+                CreateScheme::Create => "create",
+                CreateScheme::Create2 { .. } => "create2",
+            };
+            debug!(target: "cheatcodes", tx=?this.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
+        }
+        )
         .and_then(|outcome| match outcome {
             CommonCreateOutcome::Create(outcome) => Some(outcome),
             _ => None,
@@ -1441,7 +1449,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 address: address.unwrap_or(created_address),
                 return_memory_range: return_memory_range.unwrap_or_default(),
             })
-        })
+        },
+        |this, _| {
+            debug!(target: "cheatcodes", tx=?this.broadcastable_transactions.back().unwrap(), "broadcastable eofcreate");
+        }
+        )
         .and_then(|outcome| match outcome {
             CommonCreateOutcome::EOFCreate(outcome) => Some(outcome),
             _ => None,
