@@ -13,8 +13,8 @@ use foundry_evm_traces::CallTraceArena;
 use revm::{
     inspectors::CustomPrintTracer,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
-        Interpreter, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInput,
+        EOFCreateOutcome, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
     primitives::{
         BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult, Output, TransactTo,
@@ -813,6 +813,75 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
                 let new_outcome = inspector.create_end(ecx, call, outcome.clone());
+
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                let different = new_outcome.result.result != result ||
+                    (new_outcome.result.result == InstructionResult::Revert &&
+                        new_outcome.output() != outcome.output());
+                different.then_some(new_outcome)
+            },
+            self,
+            ecx
+        );
+
+        outcome
+    }
+
+    fn eofcreate(
+        &mut self,
+        ecx: &mut EvmContext<&mut DB>,
+        create: &mut EOFCreateInput,
+    ) -> Option<EOFCreateOutcome> {
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
+            self.adjust_evm_data_for_inner_context(ecx);
+            return None;
+        }
+
+        call_inspectors_adjust_depth!(
+            [&mut self.debugger, &mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
+            |inspector| inspector.eofcreate(ecx, create).map(Some),
+            self,
+            ecx
+        );
+
+        if self.enable_isolation && !self.in_inner_context && ecx.journaled_state.depth == 1 {
+            let (result, _) = self.transact_inner(
+                ecx,
+                TransactTo::Create,
+                create.caller,
+                create.eof_init_code.raw.clone(),
+                create.gas_limit,
+                create.value,
+            );
+            return Some(EOFCreateOutcome {
+                result,
+                address: create.created_address,
+                return_memory_range: create.return_memory_range.clone(),
+            })
+        }
+
+        None
+    }
+
+    fn eofcreate_end(
+        &mut self,
+        ecx: &mut EvmContext<&mut DB>,
+        call: &EOFCreateInput,
+        outcome: EOFCreateOutcome,
+    ) -> EOFCreateOutcome {
+        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
+        // Avoid processing twice.
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
+            return outcome
+        }
+
+        let result = outcome.result.result;
+
+        call_inspectors_adjust_depth!(
+            [&mut self.debugger, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
+            |inspector| {
+                let new_outcome = inspector.eofcreate_end(ecx, call, outcome.clone());
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something

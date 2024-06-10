@@ -14,6 +14,7 @@ use foundry_evm::{
     traces::TracingInspectorConfig,
     InspectorExt,
 };
+use revm::interpreter::{EOFCreateInput, EOFCreateOutcome};
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
@@ -117,6 +118,35 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         outcome
     }
 
+    #[inline]
+    fn eofcreate(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        inputs: &mut EOFCreateInput,
+    ) -> Option<EOFCreateOutcome> {
+        if let Some(tracer) = &mut self.tracer {
+            if let Some(out) = tracer.eofcreate(ecx, inputs) {
+                return Some(out);
+            }
+        }
+        None
+    }
+
+    #[inline]
+    fn eofcreate_end(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        inputs: &EOFCreateInput,
+        outcome: EOFCreateOutcome,
+    ) -> EOFCreateOutcome {
+        if let Some(tracer) = &mut self.tracer {
+            return tracer.eofcreate_end(ecx, inputs, outcome);
+        }
+
+        outcome
+    }
+
+    #[inline]
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         if let Some(tracer) = &mut self.tracer {
             revm::Inspector::<DB>::selfdestruct(tracer, contract, target, value);
