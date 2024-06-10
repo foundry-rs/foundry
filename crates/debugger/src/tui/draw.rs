@@ -354,6 +354,9 @@ impl DebuggerContext<'_> {
 
                 let pc_ic_map = if is_create { create_map } else { rt_map };
                 let ic = pc_ic_map.get(pc)?;
+
+                // Solc indexes source maps by instruction counter, but Vyper indexes by program
+                // counter.
                 let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
                     source_map.get(ic)?
                 } else {
