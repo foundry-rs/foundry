@@ -1,6 +1,6 @@
-use foundry_common::fs::read_to_string;
+use foundry_common::fs::{read_json_file, read_to_string};
 use foundry_config::Config;
-use foundry_test_utils::forgetest;
+use foundry_test_utils::{forgetest, util::normalize_output};
 use globset::Glob;
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -27,9 +27,8 @@ contract Dummy {
         serde_json::from_str(&cmd.stdout_lossy()).unwrap();
     output.remove("build_infos");
 
-    let output = serde_json::to_string_pretty(&output).unwrap();
-    let expected = read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/compile_json.stdout"),
+    let expected: BTreeMap<String, serde_json::Value> = read_json_file(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/compile_json.stdout"),
     )
     .unwrap();
 
