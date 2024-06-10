@@ -149,8 +149,24 @@ pub enum WalletSubcommands {
     List(ListArgs),
 
     /// Derives private key from mnemonic
-    #[command(name = "derive-private-key", visible_aliases = &["--derive-private-key"])]
-    DerivePrivateKey { mnemonic: String, mnemonic_index: Option<u8> },
+    #[command(name = "private-key", visible_alias = "pk", aliases = &["derive-private-key", "--derive-private-key"])]
+    PrivateKey {
+        /// If provided, the private key will be derived from the specified menomonic phrase.
+        #[arg(value_name = "MNEMONIC")]
+        mnemonic_override: Option<String>,
+
+        /// If provided, the private key will be derived using the
+        /// specified mnemonic index (if integer) or derivation path.
+        #[arg(value_name = "MNEMONIC_INDEX_OR_DERIVATION_PATH")]
+        mnemonic_index_or_derivation_path_override: Option<String>,
+
+        /// Verbose mode, print the address and private key.
+        #[arg(short = 'v', long)]
+        verbose: bool,
+
+        #[command(flatten)]
+        wallet: WalletOpts,
+    },
 
     /// Decrypt a keystore file to get the private key
     #[command(name = "decrypt-keystore", visible_alias = "dk")]
@@ -363,18 +379,44 @@ flag to set your key via:
             Self::List(cmd) => {
                 cmd.run().await?;
             }
-            Self::DerivePrivateKey { mnemonic, mnemonic_index } => {
-                let phrase = Mnemonic::<English>::new_from_phrase(mnemonic.as_str())?.to_phrase();
-                let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
-                let derivation_path = "m/44'/60'/0'/0/";
-                let index = mnemonic_index.unwrap_or_default();
-                let wallet = builder
-                    .clone()
-                    .derivation_path(format!("{derivation_path}{index}"))?
-                    .build()?;
-                println!("- Account:");
-                println!("Address:     {}", wallet.address());
-                println!("Private key: 0x{}\n", hex::encode(wallet.signer().to_bytes()));
+            Self::PrivateKey {
+                wallet,
+                mnemonic_override,
+                mnemonic_index_or_derivation_path_override,
+                verbose,
+            } => {
+                let (index_override, derivation_path_override) =
+                    match mnemonic_index_or_derivation_path_override {
+                        Some(value) => match value.parse::<u32>() {
+                            Ok(index) => (Some(index), None),
+                            Err(_) => (None, Some(value)),
+                        },
+                        None => (None, None),
+                    };
+                let wallet = WalletOpts {
+                    raw: RawWalletOpts {
+                        mnemonic: mnemonic_override.or(wallet.raw.mnemonic),
+                        mnemonic_index: index_override.unwrap_or(wallet.raw.mnemonic_index),
+                        hd_path: derivation_path_override.or(wallet.raw.hd_path),
+                        ..wallet.raw
+                    },
+                    ..wallet
+                }
+                .signer()
+                .await?;
+                match wallet {
+                    WalletSigner::Local(wallet) => {
+                        if verbose {
+                            println!("Address:     {}", wallet.address());
+                            println!("Private key: 0x{}", hex::encode(wallet.signer().to_bytes()));
+                        } else {
+                            println!("0x{}", hex::encode(wallet.signer().to_bytes()));
+                        }
+                    }
+                    _ => {
+                        eyre::bail!("Only local wallets are supported by this command.");
+                    }
+                }
             }
             Self::DecryptKeystore { account_name, keystore_dir, unsafe_password } => {
                 // Set up keystore directory

@@ -163,6 +163,46 @@ casttest!(wallet_list_local_accounts, |prj, cmd| {
     assert_eq!(list_output.matches('\n').count(), 10);
 });
 
+// tests that `cast wallet private-key` with arguments outputs the private key
+casttest!(wallet_private_key_from_mnemonic_arg, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "private-key",
+        "test test test test test test test test test test test junk",
+        "1",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+});
+
+// tests that `cast wallet private-key` with options outputs the private key
+casttest!(wallet_private_key_from_mnemonic_option, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "private-key",
+        "--mnemonic",
+        "test test test test test test test test test test test junk",
+        "--mnemonic-index",
+        "1",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+});
+
+// tests that `cast wallet private-key` with derivation path outputs the private key
+casttest!(wallet_private_key_with_derivation_path, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "private-key",
+        "--mnemonic",
+        "test test test test test test test test test test test junk",
+        "--mnemonic-derivation-path",
+        "m/44'/60'/0'/0/1",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+});
+
 // tests that `cast wallet import` creates a keystore for a private key and that `cast wallet
 // decrypt-keystore` can access it
 casttest!(wallet_import_and_decrypt, |prj, cmd| {
