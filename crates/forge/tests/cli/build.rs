@@ -1,6 +1,6 @@
-use foundry_common::fs::{read_json_file, read_to_string};
+use foundry_common::fs::read_json_file;
 use foundry_config::Config;
-use foundry_test_utils::{forgetest, util::normalize_output};
+use foundry_test_utils::forgetest;
 use globset::Glob;
 use std::{collections::BTreeMap, path::PathBuf};
 

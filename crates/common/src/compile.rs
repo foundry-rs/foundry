@@ -322,7 +322,7 @@ impl ContractSources {
         for (id, artifact) in output.artifact_ids() {
             if let Some(file_id) = artifact.id {
                 let artifact = if let Some((linker, libraries)) = link_data.as_ref() {
-                    linker.link(&id, &libraries)?.into_contract_bytecode()
+                    linker.link(&id, libraries)?.into_contract_bytecode()
                 } else {
                     artifact.clone().into_contract_bytecode()
                 };
@@ -380,18 +380,13 @@ impl ContractSources {
 
     /// Returns all (name, bytecode, source) sets.
     pub fn entries(&self) -> impl Iterator<Item = (&str, &ArtifactData, &SourceData)> {
-        self.artifacts_by_name
-            .iter()
-            .map(|(name, artifacts)| {
-                artifacts.iter().filter_map(|artifact| {
-                    let source = self
-                        .sources_by_id
-                        .get(artifact.build_id.as_str())?
-                        .get(&artifact.file_id)?;
-                    Some((name.as_str(), artifact, source))
-                })
+        self.artifacts_by_name.iter().flat_map(|(name, artifacts)| {
+            artifacts.iter().filter_map(|artifact| {
+                let source =
+                    self.sources_by_id.get(artifact.build_id.as_str())?.get(&artifact.file_id)?;
+                Some((name.as_str(), artifact, source))
             })
-            .flatten()
+        })
     }
 }
 
@@ -519,7 +514,7 @@ pub async fn compile_from_source(
 
     root.close()?;
 
-    return Ok(project_output);
+    Ok(project_output)
 }
 
 /// Creates a [Project] from an Etherscan source.
