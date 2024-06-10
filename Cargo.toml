@@ -244,7 +244,7 @@ tower-http = "0.5"
 soldeer = "0.2.15"
 
 [patch.crates-io]
-foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "ad6ac98" }
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "6010918" }
 revm = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
 revm-precompile = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
