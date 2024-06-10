@@ -184,6 +184,27 @@ where
     allow_cheatcodes_fn: AllowCheatcodesFn<'a, DB, CallType>,
 }
 
+enum CommonEndOutcome {
+    Create(CreateOutcome),
+    EOFCreate(EOFCreateOutcome),
+}
+
+struct EndParams<'a, DB>
+where
+    DB: DatabaseExt,
+{
+    ecx: &'a mut EvmContext<DB>,
+    prank_origin: Option<Address>,
+    single_call_prank: bool,
+    original_origin: Option<Address>,
+    single_call_broadcast: bool,
+    depth: u64,
+    expected_revert: Option<ExpectedRevert>,
+    outcome_result: InstructionResult,
+    outcome_output: Bytes,
+    address: Option<Address>,
+}
+
 /// Helps collecting transactions from different forks.
 #[derive(Clone, Debug, Default)]
 pub struct BroadcastableTransaction {
@@ -595,6 +616,130 @@ impl Cheatcodes {
         }
 
         None
+    }
+
+    fn end_common<DB>(
+        &mut self,
+        params: EndParams<'_, DB>,
+        create_outcome_fn: impl Fn(InstructionResult, Bytes, Option<Address>) -> CommonEndOutcome,
+    ) -> CommonEndOutcome
+    where
+        DB: DatabaseExt,
+    {
+        let EndParams {
+            ecx,
+            prank_origin,
+            single_call_prank,
+            original_origin,
+            single_call_broadcast,
+            depth,
+            expected_revert,
+            mut outcome_result,
+            mut outcome_output,
+            mut address,
+        } = params;
+
+        // Clean up pranks
+        if let Some(prank_origin) = prank_origin {
+            if ecx.inner.journaled_state.depth() == depth {
+                ecx.inner.env.tx.caller = prank_origin;
+
+                // Clean single-call prank once we have returned to the original depth
+                if single_call_prank {
+                    std::mem::take(&mut self.prank);
+                }
+            }
+        }
+
+        // Clean up broadcasts
+        if let Some(original_origin) = original_origin {
+            if ecx.inner.journaled_state.depth() == depth {
+                ecx.inner.env.tx.caller = original_origin;
+
+                // Clean single-call broadcast once we have returned to the original depth
+                if single_call_broadcast {
+                    std::mem::take(&mut self.broadcast);
+                }
+            }
+        }
+
+        // Handle expected reverts
+        if let Some(expected_revert) = expected_revert {
+            if ecx.inner.journaled_state.depth() <= expected_revert.depth &&
+                matches!(expected_revert.kind, ExpectedRevertKind::Default)
+            {
+                let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                return match expect::handle_expect_revert(
+                    true,
+                    expected_revert.reason.as_deref(),
+                    outcome_result,
+                    outcome_output.clone(),
+                ) {
+                    Ok((new_address, retdata)) => {
+                        outcome_result = InstructionResult::Return;
+                        outcome_output = retdata;
+                        address = new_address;
+                        create_outcome_fn(outcome_result, outcome_output, address)
+                    }
+                    Err(err) => {
+                        outcome_result = InstructionResult::Revert;
+                        outcome_output = err.abi_encode().into();
+                        create_outcome_fn(outcome_result, outcome_output, address)
+                    }
+                };
+            }
+        }
+
+        // If `startStateDiffRecording` has been called, update the `reverted` status of the
+        // previous call depth's recorded accesses, if any
+        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
+            // The root call cannot be recorded.
+            if ecx.inner.journaled_state.depth() > 0 {
+                let mut last_depth =
+                    recorded_account_diffs_stack.pop().expect("missing CREATE account accesses");
+                // Update the reverted status of all deeper calls if this call reverted, in
+                // accordance with EVM behavior
+                if outcome_result.is_revert() {
+                    last_depth.iter_mut().for_each(|element| {
+                        element.reverted = true;
+                        element
+                            .storageAccesses
+                            .iter_mut()
+                            .for_each(|storage_access| storage_access.reverted = true);
+                    })
+                }
+                let create_access = last_depth.first_mut().expect("empty AccountAccesses");
+                // Assert that we're at the correct depth before recording post-create state
+                // changes. Depending on what depth the cheat was called at, there
+                // may not be any pending calls to update if execution has
+                // percolated up to a higher depth.
+                if create_access.depth == ecx.inner.journaled_state.depth() {
+                    debug_assert_eq!(
+                        create_access.kind as u8,
+                        crate::Vm::AccountAccessKind::Create as u8
+                    );
+                    if let Some(address) = address {
+                        if let Ok((created_acc, _)) =
+                            ecx.inner.journaled_state.load_account(address, &mut ecx.inner.db)
+                        {
+                            create_access.newBalance = created_acc.info.balance;
+                            create_access.deployedCode =
+                                created_acc.info.code.clone().unwrap_or_default().original_bytes();
+                        }
+                    }
+                }
+                // Merge the last depth's AccountAccesses into the AccountAccesses at the current
+                // depth, or push them back onto the pending vector if higher depths were not
+                // recorded. This preserves ordering of accesses.
+                if let Some(last) = recorded_account_diffs_stack.last_mut() {
+                    last.append(&mut last_depth);
+                } else {
+                    recorded_account_diffs_stack.push(last_depth);
+                }
+            }
+        }
+
+        create_outcome_fn(outcome_result, outcome_output, address)
     }
 }
 
@@ -1233,111 +1378,35 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         &mut self,
         ecx: &mut EvmContext<DB>,
         _call: &CreateInputs,
-        mut outcome: CreateOutcome,
+        outcome: CreateOutcome,
     ) -> CreateOutcome {
-        let ecx = &mut ecx.inner;
+        let depth = ecx.inner.journaled_state.depth();
 
-        // Clean up pranks
-        if let Some(prank) = &self.prank {
-            if ecx.journaled_state.depth() == prank.depth {
-                ecx.env.tx.caller = prank.prank_origin;
+        let params = EndParams {
+            ecx,
+            prank_origin: self.prank.as_ref().map(|prank| prank.prank_origin),
+            single_call_prank: self.prank.as_ref().map_or(false, |prank| prank.single_call),
+            original_origin: self.broadcast.as_ref().map(|broadcast| broadcast.original_origin),
+            single_call_broadcast: self
+                .broadcast
+                .as_ref()
+                .map_or(false, |broadcast| broadcast.single_call),
+            depth,
+            expected_revert: self.expected_revert.clone(),
+            outcome_result: outcome.result.result,
+            outcome_output: outcome.result.output.clone(),
+            address: outcome.address,
+        };
 
-                // Clean single-call prank once we have returned to the original depth
-                if prank.single_call {
-                    std::mem::take(&mut self.prank);
-                }
-            }
+        match self.end_common(params, |result, output, address| {
+            CommonEndOutcome::Create(CreateOutcome {
+                result: InterpreterResult { result, output, gas: outcome.result.gas },
+                address,
+            })
+        }) {
+            CommonEndOutcome::Create(outcome) => outcome,
+            _ => outcome, // This case should never happen
         }
-
-        // Clean up broadcasts
-        if let Some(broadcast) = &self.broadcast {
-            if ecx.journaled_state.depth() == broadcast.depth {
-                ecx.env.tx.caller = broadcast.original_origin;
-
-                // Clean single-call broadcast once we have returned to the original depth
-                if broadcast.single_call {
-                    std::mem::take(&mut self.broadcast);
-                }
-            }
-        }
-
-        // Handle expected reverts
-        if let Some(expected_revert) = &self.expected_revert {
-            if ecx.journaled_state.depth() <= expected_revert.depth &&
-                matches!(expected_revert.kind, ExpectedRevertKind::Default)
-            {
-                let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match expect::handle_expect_revert(
-                    true,
-                    expected_revert.reason.as_deref(),
-                    outcome.result.result,
-                    outcome.result.output.clone(),
-                ) {
-                    Ok((address, retdata)) => {
-                        outcome.result.result = InstructionResult::Return;
-                        outcome.result.output = retdata;
-                        outcome.address = address;
-                        outcome
-                    }
-                    Err(err) => {
-                        outcome.result.result = InstructionResult::Revert;
-                        outcome.result.output = err.abi_encode().into();
-                        outcome
-                    }
-                };
-            }
-        }
-
-        // If `startStateDiffRecording` has been called, update the `reverted` status of the
-        // previous call depth's recorded accesses, if any
-        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
-            // The root call cannot be recorded.
-            if ecx.journaled_state.depth() > 0 {
-                let mut last_depth =
-                    recorded_account_diffs_stack.pop().expect("missing CREATE account accesses");
-                // Update the reverted status of all deeper calls if this call reverted, in
-                // accordance with EVM behavior
-                if outcome.result.is_revert() {
-                    last_depth.iter_mut().for_each(|element| {
-                        element.reverted = true;
-                        element
-                            .storageAccesses
-                            .iter_mut()
-                            .for_each(|storage_access| storage_access.reverted = true);
-                    })
-                }
-                let create_access = last_depth.first_mut().expect("empty AccountAccesses");
-                // Assert that we're at the correct depth before recording post-create state
-                // changes. Depending on what depth the cheat was called at, there
-                // may not be any pending calls to update if execution has
-                // percolated up to a higher depth.
-                if create_access.depth == ecx.journaled_state.depth() {
-                    debug_assert_eq!(
-                        create_access.kind as u8,
-                        crate::Vm::AccountAccessKind::Create as u8
-                    );
-                    if let Some(address) = outcome.address {
-                        if let Ok((created_acc, _)) =
-                            ecx.journaled_state.load_account(address, &mut ecx.db)
-                        {
-                            create_access.newBalance = created_acc.info.balance;
-                            create_access.deployedCode =
-                                created_acc.info.code.clone().unwrap_or_default().original_bytes();
-                        }
-                    }
-                }
-                // Merge the last depth's AccountAccesses into the AccountAccesses at the current
-                // depth, or push them back onto the pending vector if higher depths were not
-                // recorded. This preserves ordering of accesses.
-                if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                    last.append(&mut last_depth);
-                } else {
-                    recorded_account_diffs_stack.push(last_depth);
-                }
-            }
-        }
-
-        outcome
     }
 
     fn eofcreate(
@@ -1383,109 +1452,36 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         &mut self,
         ecx: &mut EvmContext<DB>,
         call: &EOFCreateInput,
-        mut outcome: EOFCreateOutcome,
+        outcome: EOFCreateOutcome,
     ) -> EOFCreateOutcome {
-        let ecx = &mut ecx.inner;
+        let depth = ecx.inner.journaled_state.depth();
 
-        // Clean up pranks
-        if let Some(prank) = &self.prank {
-            if ecx.journaled_state.depth() == prank.depth {
-                ecx.env.tx.caller = prank.prank_origin;
+        let params = EndParams {
+            ecx,
+            prank_origin: self.prank.as_ref().map(|prank| prank.prank_origin),
+            single_call_prank: self.prank.as_ref().map_or(false, |prank| prank.single_call),
+            original_origin: self.broadcast.as_ref().map(|broadcast| broadcast.original_origin),
+            single_call_broadcast: self
+                .broadcast
+                .as_ref()
+                .map_or(false, |broadcast| broadcast.single_call),
+            depth,
+            expected_revert: self.expected_revert.clone(),
+            outcome_result: outcome.result.result,
+            outcome_output: outcome.result.output.clone(),
+            address: Some(outcome.address),
+        };
 
-                // Clean single-call prank once we have returned to the original depth
-                if prank.single_call {
-                    std::mem::take(&mut self.prank);
-                }
-            }
+        match self.end_common(params, |result, output, address| {
+            CommonEndOutcome::EOFCreate(EOFCreateOutcome {
+                result: InterpreterResult { result, output, gas: outcome.result.gas },
+                address: address.unwrap_or(call.created_address),
+                return_memory_range: outcome.return_memory_range.clone(),
+            })
+        }) {
+            CommonEndOutcome::EOFCreate(outcome) => outcome,
+            _ => outcome, // This case should never happen
         }
-
-        // Clean up broadcasts
-        if let Some(broadcast) = &self.broadcast {
-            if ecx.journaled_state.depth() == broadcast.depth {
-                ecx.env.tx.caller = broadcast.original_origin;
-
-                // Clean single-call broadcast once we have returned to the original depth
-                if broadcast.single_call {
-                    std::mem::take(&mut self.broadcast);
-                }
-            }
-        }
-
-        // Handle expected reverts
-        if let Some(expected_revert) = &self.expected_revert {
-            if ecx.journaled_state.depth() <= expected_revert.depth &&
-                matches!(expected_revert.kind, ExpectedRevertKind::Default)
-            {
-                let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match expect::handle_expect_revert(
-                    true,
-                    expected_revert.reason.as_deref(),
-                    outcome.result.result,
-                    outcome.result.output.clone(),
-                ) {
-                    Ok((_address, retdata)) => {
-                        outcome.result.result = InstructionResult::Return;
-                        outcome.result.output = retdata;
-                        outcome.address = call.created_address;
-                        outcome
-                    }
-                    Err(err) => {
-                        outcome.result.result = InstructionResult::Revert;
-                        outcome.result.output = err.abi_encode().into();
-                        outcome
-                    }
-                };
-            }
-        }
-
-        // If `startStateDiffRecording` has been called, update the `reverted` status of the
-        // previous call depth's recorded accesses, if any
-        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
-            // The root call cannot be recorded.
-            if ecx.journaled_state.depth() > 0 {
-                let mut last_depth =
-                    recorded_account_diffs_stack.pop().expect("missing CREATE account accesses");
-                // Update the reverted status of all deeper calls if this call reverted, in
-                // accordance with EVM behavior
-                if outcome.result.is_revert() {
-                    last_depth.iter_mut().for_each(|element| {
-                        element.reverted = true;
-                        element
-                            .storageAccesses
-                            .iter_mut()
-                            .for_each(|storage_access| storage_access.reverted = true);
-                    })
-                }
-                let create_access = last_depth.first_mut().expect("empty AccountAccesses");
-                // Assert that we're at the correct depth before recording post-create state
-                // changes. Depending on what depth the cheat was called at, there
-                // may not be any pending calls to update if execution has
-                // percolated up to a higher depth.
-                if create_access.depth == ecx.journaled_state.depth() {
-                    debug_assert_eq!(
-                        create_access.kind as u8,
-                        crate::Vm::AccountAccessKind::Create as u8
-                    );
-                    if let Ok((created_acc, _)) =
-                        ecx.journaled_state.load_account(outcome.address, &mut ecx.db)
-                    {
-                        create_access.newBalance = created_acc.info.balance;
-                        create_access.deployedCode =
-                            created_acc.info.code.clone().unwrap_or_default().original_bytes();
-                    }
-                }
-                // Merge the last depth's AccountAccesses into the AccountAccesses at the current
-                // depth, or push them back onto the pending vector if higher depths were not
-                // recorded. This preserves ordering of accesses.
-                if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                    last.append(&mut last_depth);
-                } else {
-                    recorded_account_diffs_stack.push(last_depth);
-                }
-            }
-        }
-
-        outcome
     }
 }
 
