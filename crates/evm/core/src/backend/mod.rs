@@ -1918,10 +1918,7 @@ pub fn update_state<DB: Database>(
     persistent_accounts: Option<&HashSet<Address>>,
 ) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
-        let is_persistent =
-            if let Some(accounts) = persistent_accounts { accounts.contains(addr) } else { false };
-
-        if !is_persistent {
+        if !persistent_accounts.map_or(false, |accounts| accounts.contains(addr)) {
             acc.info = db.basic(*addr)?.unwrap_or_default();
             for (key, val) in acc.storage.iter_mut() {
                 val.present_value = db.storage(*addr, *key)?;
