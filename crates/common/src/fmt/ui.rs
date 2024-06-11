@@ -209,7 +209,7 @@ blobGasUsed             {}",
             serde_json::to_string(&logs).unwrap(),
             logs_bloom.pretty(),
             state_root.pretty(),
-            pretty_status(*status),
+            pretty_status(status.coerce_status()),
             transaction_hash.pretty(),
             transaction_index.pretty(),
             transaction_type,
@@ -397,7 +397,7 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
         "value" => Some(transaction.value.pretty()),
         other => {
             if let Some(value) = transaction.other.get(other) {
-                return Some(value.to_string().trim_matches('"').to_string())
+                return Some(value.to_string().trim_matches('"').to_string());
             }
             None
         }
@@ -424,7 +424,7 @@ pub fn get_pretty_tx_receipt_attr(
         "logsBloom" | "logs_bloom" => Some(receipt.receipt.inner.inner.inner.logs_bloom.pretty()),
         "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root.pretty()),
         "status" | "statusCode" | "status_code" => {
-            Some(pretty_status(receipt.receipt.inner.inner.inner.receipt.status))
+            Some(pretty_status(receipt.receipt.inner.inner.inner.receipt.status.coerce_status()))
         }
         "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
         "transactionIndex" | "transaction_index" => {
@@ -461,7 +461,7 @@ pub fn get_pretty_block_attr(block: &Block, attr: &str) -> Option<String> {
         other => {
             if let Some(value) = block.other.get(other) {
                 let val = EthValue::from(value.clone());
-                return Some(val.pretty())
+                return Some(val.pretty());
             }
             None
         }

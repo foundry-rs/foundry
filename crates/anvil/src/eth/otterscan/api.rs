@@ -66,8 +66,8 @@ impl EthApi {
         node_info!("ots_getTransactionError");
 
         if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
-            if !receipt.inner.inner.as_receipt_with_bloom().receipt.status {
-                return Ok(receipt.out.map(|b| b.0.into()).unwrap_or(Bytes::default()))
+            if !receipt.inner.inner.as_receipt_with_bloom().receipt.status.coerce_status() {
+                return Ok(receipt.out.map(|b| b.0.into()).unwrap_or(Bytes::default()));
             }
         }
 
@@ -149,7 +149,7 @@ impl EthApi {
                     .unique();
 
                 if res.len() >= page_size {
-                    break
+                    break;
                 }
 
                 res.extend(hashes);
@@ -196,7 +196,7 @@ impl EthApi {
                     .unique();
 
                 if res.len() >= page_size {
-                    break
+                    break;
                 }
 
                 res.extend(hashes);
@@ -229,7 +229,7 @@ impl EthApi {
             if let Some(txs) = self.backend.mined_transactions_by_block_number(n.into()).await {
                 for tx in txs {
                     if U256::from(tx.nonce) == nonce && tx.from == address {
-                        return Ok(Some(tx.hash))
+                        return Ok(Some(tx.hash));
                     }
                 }
             }

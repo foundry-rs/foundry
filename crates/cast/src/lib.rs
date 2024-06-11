@@ -333,7 +333,7 @@ where
 
         let block = self
             .provider
-            .get_block(block, full)
+            .get_block(block, full.into())
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
@@ -855,7 +855,8 @@ where
             Some(block) => match block {
                 BlockId::Number(block_number) => Ok(Some(block_number)),
                 BlockId::Hash(hash) => {
-                    let block = self.provider.get_block_by_hash(hash.block_hash, false).await?;
+                    let block =
+                        self.provider.get_block_by_hash(hash.block_hash, false.into()).await?;
                     Ok(block.map(|block| block.header.number.unwrap()).map(BlockNumberOrTag::from))
                 }
             },
@@ -1087,7 +1088,7 @@ impl SimpleCast {
     pub fn to_ascii(hex: &str) -> Result<String> {
         let bytes = hex::decode(hex)?;
         if !bytes.iter().all(u8::is_ascii) {
-            return Err(eyre::eyre!("Invalid ASCII bytes"))
+            return Err(eyre::eyre!("Invalid ASCII bytes"));
         }
         Ok(String::from_utf8(bytes).unwrap())
     }
@@ -1389,7 +1390,7 @@ impl SimpleCast {
         let base_in = Base::unwrap_or_detect(base_in, value)?;
         let base_out: Base = base_out.parse()?;
         if base_in == base_out {
-            return Ok(value.to_string())
+            return Ok(value.to_string());
         }
 
         let mut n = NumberWithBase::parse_int(value, Some(&base_in.to_string()))?;
@@ -1453,7 +1454,7 @@ impl SimpleCast {
         let s = if let Some(stripped) = s.strip_prefix("000000000000000000000000") {
             stripped
         } else {
-            return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"))
+            return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"));
         };
 
         let lowercase_address_string = format!("0x{s}");
@@ -1661,20 +1662,20 @@ impl SimpleCast {
         match v_ty {
             // For value types, `h` pads the value to 32 bytes in the same way as when storing the
             // value in memory.
-            DynSolType::Bool |
-            DynSolType::Int(_) |
-            DynSolType::Uint(_) |
-            DynSolType::FixedBytes(_) |
-            DynSolType::Address |
-            DynSolType::Function => hasher.update(v.as_word().unwrap()),
+            DynSolType::Bool
+            | DynSolType::Int(_)
+            | DynSolType::Uint(_)
+            | DynSolType::FixedBytes(_)
+            | DynSolType::Address
+            | DynSolType::Function => hasher.update(v.as_word().unwrap()),
 
             // For strings and byte arrays, `h(k)` is just the unpadded data.
             DynSolType::String | DynSolType::Bytes => hasher.update(v.as_packed_seq().unwrap()),
 
-            DynSolType::Array(..) |
-            DynSolType::FixedArray(..) |
-            DynSolType::Tuple(..) |
-            DynSolType::CustomStruct { .. } => {
+            DynSolType::Array(..)
+            | DynSolType::FixedArray(..)
+            | DynSolType::Tuple(..)
+            | DynSolType::CustomStruct { .. } => {
                 eyre::bail!("Type `{v_ty}` is not supported as a mapping key")
             }
         }
@@ -1877,7 +1878,7 @@ impl SimpleCast {
         }
         if optimize == 0 {
             let selector = get_func(signature)?.selector();
-            return Ok((selector.to_string(), String::from(signature)))
+            return Ok((selector.to_string(), String::from(signature)));
         }
         let Some((name, params)) = signature.split_once('(') else {
             eyre::bail!("invalid function signature");
@@ -1899,7 +1900,7 @@ impl SimpleCast {
 
                     if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
                         found.store(true, Ordering::Relaxed);
-                        return Some((nonce, hex::encode_prefixed(selector), input))
+                        return Some((nonce, hex::encode_prefixed(selector), input));
                     }
 
                     nonce += nonce_step;

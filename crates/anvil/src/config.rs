@@ -1026,7 +1026,7 @@ impl NodeConfig {
         };
 
         let block = provider
-            .get_block(BlockNumberOrTag::Number(fork_block_number).into(), false)
+            .get_block(BlockNumberOrTag::Number(fork_block_number).into(), false.into())
             .await
             .expect("Failed to get fork block");
 
@@ -1282,7 +1282,7 @@ async fn find_latest_fork_block<P: Provider<T, AnyNetwork>, T: Transport + Clone
     // walk back from the head of the chain, but at most 2 blocks, which should be more than enough
     // leeway
     for _ in 0..2 {
-        if let Some(block) = provider.get_block(num.into(), false).await? {
+        if let Some(block) = provider.get_block(num.into(), false.into()).await? {
             if block.header.hash.is_some() {
                 break;
             }

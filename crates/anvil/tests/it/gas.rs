@@ -27,7 +27,7 @@ async fn test_basefee_full_block() {
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let base_fee = provider
-        .get_block(BlockId::latest(), false)
+        .get_block(BlockId::latest(), false.into())
         .await
         .unwrap()
         .unwrap()
@@ -38,7 +38,7 @@ async fn test_basefee_full_block() {
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let next_base_fee = provider
-        .get_block(BlockId::latest(), false)
+        .get_block(BlockId::latest(), false.into())
         .await
         .unwrap()
         .unwrap()
@@ -77,7 +77,7 @@ async fn test_basefee_half_block() {
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let next_base_fee = provider
-        .get_block(BlockId::latest(), false)
+        .get_block(BlockId::latest(), false.into())
         .await
         .unwrap()
         .unwrap()
@@ -104,7 +104,7 @@ async fn test_basefee_empty_block() {
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     let base_fee = provider
-        .get_block(BlockId::latest(), false)
+        .get_block(BlockId::latest(), false.into())
         .await
         .unwrap()
         .unwrap()
@@ -116,7 +116,7 @@ async fn test_basefee_empty_block() {
     api.mine_one().await;
 
     let next_base_fee = provider
-        .get_block(BlockId::latest(), false)
+        .get_block(BlockId::latest(), false.into())
         .await
         .unwrap()
         .unwrap()

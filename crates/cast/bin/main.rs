@@ -258,7 +258,7 @@ async fn main() -> Result<()> {
             let provider = utils::get_provider(&config)?;
             let number = match block {
                 Some(id) => provider
-                    .get_block(id, false)
+                    .get_block(id, false.into())
                     .await?
                     .ok_or_else(|| eyre::eyre!("block {id:?} not found"))?
                     .header

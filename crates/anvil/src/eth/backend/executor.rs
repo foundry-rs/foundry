@@ -54,9 +54,12 @@ impl ExecutedTransaction {
 
         // successful return see [Return]
         let status_code = u8::from(self.exit_reason as u8 <= InstructionResult::SelfDestruct as u8);
-        let receipt_with_bloom: ReceiptWithBloom =
-            Receipt { status: status_code == 1, cumulative_gas_used: *cumulative_gas_used, logs }
-                .into();
+        let receipt_with_bloom: ReceiptWithBloom = Receipt {
+            status: (status_code == 1).into(),
+            cumulative_gas_used: *cumulative_gas_used,
+            logs,
+        }
+        .into();
 
         match &self.transaction.pending_transaction.transaction.transaction {
             TypedTransaction::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
@@ -139,22 +142,22 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 }
                 TransactionExecutionOutcome::Exhausted(tx) => {
                     trace!(target: "backend",  tx_gas_limit = %tx.pending_transaction.transaction.gas_limit(), ?tx,  "block gas limit exhausting, skipping transaction");
-                    continue
+                    continue;
                 }
                 TransactionExecutionOutcome::BlobGasExhausted(tx) => {
                     trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
-                    continue
+                    continue;
                 }
                 TransactionExecutionOutcome::Invalid(tx, _) => {
                     trace!(target: "backend", ?tx,  "skipping invalid transaction");
                     invalid.push(tx);
-                    continue
+                    continue;
                 }
                 TransactionExecutionOutcome::DatabaseError(_, err) => {
                     // Note: this is only possible in forking mode, if for example a rpc request
                     // failed
                     trace!(target: "backend", ?err,  "Failed to execute transaction due to database error");
-                    continue
+                    continue;
                 }
             };
             if is_cancun {
@@ -273,7 +276,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         // check that we comply with the block's gas limit, if not disabled
         let max_gas = self.gas_used.saturating_add(env.tx.gas_limit as u128);
         if !env.cfg.disable_block_gas_limit && max_gas > env.block.gas_limit.to::<u128>() {
-            return Some(TransactionExecutionOutcome::Exhausted(transaction))
+            return Some(TransactionExecutionOutcome::Exhausted(transaction));
         }
 
         // check that we comply with the block's blob gas limit
@@ -281,7 +284,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0u128),
         );
         if max_blob_gas > MAX_BLOB_GAS_PER_BLOCK as u128 {
-            return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
+            return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction));
         }
 
         // validate before executing
@@ -291,7 +294,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             &env,
         ) {
             warn!(target: "backend", "Skipping invalid tx execution [{:?}] {}", transaction.hash(), err);
-            return Some(TransactionExecutionOutcome::Invalid(transaction, err))
+            return Some(TransactionExecutionOutcome::Invalid(transaction, err));
         }
 
         let nonce = account.nonce;

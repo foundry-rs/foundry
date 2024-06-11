@@ -198,7 +198,7 @@ async fn can_check_blob_fields_on_genesis() {
 
     let provider = http_provider(&handle.http_endpoint());
 
-    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
 
     assert_eq!(block.header.blob_gas_used, Some(0));
     assert_eq!(block.header.excess_blob_gas, Some(0));
