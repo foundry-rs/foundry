@@ -152,8 +152,8 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.3.0", default-features = false }
-foundry-compilers = { version = "0.6.2", default-features = false }
+foundry-block-explorers = { version = "0.4.0", default-features = false }
+foundry-compilers = { version = "0.7.0", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -244,7 +244,6 @@ tower-http = "0.5"
 soldeer = "0.2.15"
 
 [patch.crates-io]
-foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "6010918" }
 revm = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
 revm-precompile = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
