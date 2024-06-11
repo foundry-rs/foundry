@@ -175,7 +175,7 @@ where
 {
     ecx: &'a mut EvmContext<DB>,
     call: &'a mut CallType,
-    call_caller: &'a mut Address,
+    call_caller: Address,
     call_gas_limit: u64,
     call_value: U256,
     call_init_code: Bytes,
@@ -514,7 +514,7 @@ impl Cheatcodes {
         let CreateParams {
             ecx,
             call,
-            call_caller,
+            mut call_caller,
             call_gas_limit,
             call_value,
             call_init_code,
@@ -525,12 +525,11 @@ impl Cheatcodes {
 
         // Apply our prank
         if let Some(prank) = &self.prank {
-            if ecx.inner.journaled_state.depth() >= prank.depth &&
-                *call_caller == prank.prank_caller
+            if ecx.inner.journaled_state.depth() >= prank.depth && call_caller == prank.prank_caller
             {
                 // At the target depth we set `msg.sender`
                 if ecx.inner.journaled_state.depth() == prank.depth {
-                    *call_caller = prank.new_caller;
+                    call_caller = prank.new_caller;
                 }
 
                 // At the target depth, or deeper, we set `tx.origin`
@@ -543,7 +542,7 @@ impl Cheatcodes {
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
             if ecx.inner.journaled_state.depth() >= broadcast.depth &&
-                *call_caller == broadcast.original_caller
+                call_caller == broadcast.original_caller
             {
                 if let Err(err) =
                     ecx.inner.journaled_state.load_account(broadcast.new_origin, &mut ecx.inner.db)
@@ -562,7 +561,7 @@ impl Cheatcodes {
                 ecx.env.tx.caller = broadcast.new_origin;
 
                 if ecx.journaled_state.depth() == broadcast.depth {
-                    *call_caller = broadcast.new_origin;
+                    call_caller = broadcast.new_origin;
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call_gas_limit);
 
                     let account = &ecx.inner.journaled_state.state()[&broadcast.new_origin];
@@ -598,7 +597,7 @@ impl Cheatcodes {
                     forkId: ecx.db.active_fork_id().unwrap_or_default(),
                     chainId: U256::from(ecx.env.cfg.chain_id),
                 },
-                accessor: *call_caller,
+                accessor: call_caller,
                 account: address,
                 kind: crate::Vm::AccountAccessKind::Create,
                 initialized: true,
@@ -1344,7 +1343,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         ecx: &mut EvmContext<DB>,
         call: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        let mut call_caller = call.caller;
+        let call_caller = call.caller;
         let call_gas_limit = call.gas_limit;
         let call_value = call.value;
         let call_init_code = call.init_code.clone();
@@ -1352,7 +1351,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let params = CreateParams {
             ecx,
             call,
-            call_caller: &mut call_caller,
+            call_caller,
             call_gas_limit,
             call_value,
             call_init_code,
@@ -1419,7 +1418,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         ecx: &mut EvmContext<DB>,
         call: &mut EOFCreateInput,
     ) -> Option<EOFCreateOutcome> {
-        let mut call_caller = call.caller;
+        let call_caller = call.caller;
         let call_gas_limit = call.gas_limit;
         let call_value = call.value;
         let call_init_code = call.eof_init_code.raw.clone();
@@ -1429,7 +1428,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let params = CreateParams {
             ecx,
             call,
-            call_caller: &mut call_caller,
+            call_caller,
             call_gas_limit,
             call_value,
             call_init_code,
