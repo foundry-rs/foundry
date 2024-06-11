@@ -503,7 +503,7 @@ impl Cheatcodes {
 
     fn create_common<DB, CallType>(
         &mut self,
-        params: CreateParams<'_, DB, CallType>,
+        params: &mut CreateParams<'_, DB, CallType>,
         create_outcome_fn: &CreateOutcomeFn,
         log_debug_fn: impl Fn(&Self, &CallType),
         allow_cheatcodes_fn: &AllowCheatcodesFn<DB, CallType>,
@@ -521,7 +521,7 @@ impl Cheatcodes {
             return_memory_range,
             created_address,
         } = params;
-        let gas = Gas::new(call_gas_limit);
+        let gas = Gas::new(*call_gas_limit);
 
         // Apply our prank
         if let Some(prank) = &self.prank {
@@ -530,6 +530,7 @@ impl Cheatcodes {
                 // At the target depth we set `msg.sender`
                 if ecx.inner.journaled_state.depth() == prank.depth {
                     call_caller = prank.new_caller;
+                    params.call_caller = prank.new_caller;
                 }
 
                 // At the target depth, or deeper, we set `tx.origin`
@@ -553,7 +554,7 @@ impl Cheatcodes {
                             output: Error::encode(err),
                             gas,
                         },
-                        created_address,
+                        *created_address,
                         return_memory_range.clone(),
                     ));
                 }
@@ -562,7 +563,8 @@ impl Cheatcodes {
 
                 if ecx.journaled_state.depth() == broadcast.depth {
                     call_caller = broadcast.new_origin;
-                    let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call_gas_limit);
+                    params.call_caller = broadcast.new_origin;
+                    let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, *call_gas_limit);
 
                     let account = &ecx.inner.journaled_state.state()[&broadcast.new_origin];
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -570,11 +572,11 @@ impl Cheatcodes {
                         transaction: TransactionRequest {
                             from: Some(broadcast.new_origin),
                             to: None,
-                            value: Some(call_value),
+                            value: Some(*call_value),
                             input: TransactionInput::new(call_init_code.clone()),
                             nonce: Some(account.info.nonce),
                             gas: if is_fixed_gas_limit {
-                                Some(call_gas_limit as u128)
+                                Some(*call_gas_limit as u128)
                             } else {
                                 None
                             },
@@ -603,7 +605,7 @@ impl Cheatcodes {
                 initialized: true,
                 oldBalance: U256::ZERO, // updated on (eof)create_end
                 newBalance: U256::ZERO, // updated on (eof)create_end
-                value: call_value,
+                value: *call_value,
                 data: call_init_code.clone(),
                 reverted: false,
                 deployedCode: Bytes::new(), // updated on (eof)create_end
@@ -1348,7 +1350,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let call_value = call.value;
         let call_init_code = call.init_code.clone();
 
-        let params = CreateParams {
+        let mut params = CreateParams {
             ecx,
             call,
             call_caller,
@@ -1359,7 +1361,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             created_address: None,
         };
 
-        self.create_common(params, &|result, address, _| {
+        let outcome = self.create_common(&mut params, &|result, address, _| {
             CommonCreateOutcome::Create(CreateOutcome { result, address })
         },
         |this, call| {
@@ -1375,7 +1377,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         .and_then(|outcome| match outcome {
             CommonCreateOutcome::Create(outcome) => Some(outcome),
             _ => None,
-        })
+        });
+
+        call.caller = params.call_caller;
+
+        outcome
     }
 
     fn create_end(
@@ -1425,7 +1431,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let return_memory_range = call.return_memory_range.clone();
         let created_address = call.created_address;
 
-        let params = CreateParams {
+        let mut params = CreateParams {
             ecx,
             call,
             call_caller,
@@ -1436,7 +1442,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             created_address: Some(created_address),
         };
 
-        self.create_common(params, &move |result, address, return_memory_range| {
+        let outcome = self.create_common(&mut params, &move |result, address, return_memory_range| {
             CommonCreateOutcome::EOFCreate(EOFCreateOutcome {
                 result,
                 address: address.unwrap_or(created_address),
@@ -1452,7 +1458,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         .and_then(|outcome| match outcome {
             CommonCreateOutcome::EOFCreate(outcome) => Some(outcome),
             _ => None,
-        })
+        });
+
+        call.caller = params.call_caller;
+
+        outcome
     }
 
     fn eofcreate_end(
