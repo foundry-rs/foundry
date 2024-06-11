@@ -41,7 +41,7 @@ impl SolMacroGen {
         let abi_val = json.get("abi").ok_or_eyre("No ABI found in JSON file")?;
         let json_abi = serde_json::from_str(&abi_val.clone().to_string())?;
 
-        let bytecode = json.get("bytecode").map(|b| b.to_string());
+        let bytecode = json.get("bytecode").and_then(|b| b.get("object")).map(|o| o.to_string());
 
         Ok((json_abi, bytecode))
     }
@@ -72,7 +72,7 @@ impl MultiSolMacroGen {
 
     pub fn generate_bindings(&mut self) -> Result<()> {
         for instance in &mut self.instances {
-            let (mut json_abi, _maybe_bytecode) = instance.get_json_abi()?;
+            let (mut json_abi, maybe_bytecode) = instance.get_json_abi()?;
 
             json_abi.dedup();
             let sol_str = json_abi.to_sol(&instance.name, None);
@@ -82,10 +82,21 @@ impl MultiSolMacroGen {
             let tokens = tokens_for_sol(&ident_name, &sol_str)
                 .map_err(|e| eyre::eyre!("Failed to get sol tokens: {e}"))?;
 
-            let tokens = quote::quote! {
-                #[derive(Debug)]
-                #[sol(rpc)]
-                #tokens
+            let tokens = if let Some(bytecode) = maybe_bytecode {
+                let bytecode = proc_macro2::TokenStream::from_str(&bytecode).map_err(|e| {
+                    eyre::eyre!("Failed to convert bytecode String to TokenStream {e}")
+                })?;
+                quote::quote! {
+                    #[derive(Debug)]
+                    #[sol(rpc, bytecode = #bytecode)]
+                    #tokens
+                }
+            } else {
+                quote::quote! {
+                    #[derive(Debug)]
+                    #[sol(rpc)]
+                    #tokens
+                }
             };
 
             let input: SolInput =
