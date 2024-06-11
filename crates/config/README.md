@@ -103,7 +103,7 @@ eth_rpc_url = "https://example.com/"
 # Setting this option enables decoding of error traces from mainnet deployed / verfied contracts via etherscan
 etherscan_api_key = "YOURETHERSCANAPIKEY"
 # ignore solc warnings for missing license and exceeded contract size
-# known error codes are: ["unreachable", "unused-return", "unused-param", "unused-var", "code-size", "shadowing", "func-mutability", "license", "pragma-solidity", "virtual-interfaces", "same-varname"]
+# known error codes are: ["unreachable", "unused-return", "unused-param", "unused-var", "code-size", "shadowing", "func-mutability", "license", "pragma-solidity", "virtual-interfaces", "same-varname", "too-many-warnings"]
 # additional warnings can be added using their numeric error code: ["license", 1337]
 ignored_error_codes = ["license", "code-size"]
 ignored_warnings_from = ["path_to_ignore"]
