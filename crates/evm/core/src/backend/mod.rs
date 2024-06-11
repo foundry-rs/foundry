@@ -900,6 +900,7 @@ impl Backend {
     ) -> eyre::Result<Option<Transaction>> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
+        let persistent_accounts = self.inner.persistent_accounts.clone();
         let fork_id = self.ensure_fork_id(id)?.clone();
 
         let env = self.env_with_handler_cfg(env);
@@ -929,6 +930,7 @@ impl Backend {
                     journaled_state,
                     fork,
                     &fork_id,
+                    &persistent_accounts,
                     &mut NoOpInspector,
                 )?;
             }
@@ -1248,6 +1250,7 @@ impl DatabaseExt for Backend {
         inspector: &mut I,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
+        let persistent_accounts = self.inner.persistent_accounts.clone();
         let id = self.ensure_fork(maybe_id)?;
         let fork_id = self.ensure_fork_id(id).cloned()?;
 
@@ -1265,7 +1268,15 @@ impl DatabaseExt for Backend {
 
         let env = self.env_with_handler_cfg(env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
-        commit_transaction(tx, env, journaled_state, fork, &fork_id, inspector)
+        commit_transaction(
+            tx,
+            env,
+            journaled_state,
+            fork,
+            &fork_id,
+            &persistent_accounts,
+            inspector,
+        )
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
@@ -1879,6 +1890,7 @@ fn commit_transaction<I: InspectorExt<Backend>>(
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
     fork_id: &ForkId,
+    persistent_accounts: &HashSet<Address>,
     inspector: I,
 ) -> eyre::Result<()> {
     configure_tx_env(&mut env.env, &tx);
@@ -1894,16 +1906,26 @@ fn commit_transaction<I: InspectorExt<Backend>>(
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
-    apply_state_changeset(res.state, journaled_state, fork)?;
+    apply_state_changeset(res.state, journaled_state, fork, persistent_accounts)?;
     Ok(())
 }
 
 /// Helper method which updates data in the state with the data from the database.
-pub fn update_state<DB: Database>(state: &mut EvmState, db: &mut DB) -> Result<(), DB::Error> {
+/// Does not change state for persistent accounts (for roll fork to transaction and transact).
+pub fn update_state<DB: Database>(
+    state: &mut EvmState,
+    db: &mut DB,
+    persistent_accounts: Option<&HashSet<Address>>,
+) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
-        acc.info = db.basic(*addr)?.unwrap_or_default();
-        for (key, val) in acc.storage.iter_mut() {
-            val.present_value = db.storage(*addr, *key)?;
+        let is_persistent =
+            if let Some(accounts) = persistent_accounts { accounts.contains(addr) } else { false };
+
+        if !is_persistent {
+            acc.info = db.basic(*addr)?.unwrap_or_default();
+            for (key, val) in acc.storage.iter_mut() {
+                val.present_value = db.storage(*addr, *key)?;
+            }
         }
     }
 
@@ -1916,12 +1938,13 @@ fn apply_state_changeset(
     state: Map<revm::primitives::Address, Account>,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
+    persistent_accounts: &HashSet<Address>,
 ) -> Result<(), DatabaseError> {
     // commit the state and update the loaded accounts
     fork.db.commit(state);
 
-    update_state(&mut journaled_state.state, &mut fork.db)?;
-    update_state(&mut fork.journaled_state.state, &mut fork.db)?;
+    update_state(&mut journaled_state.state, &mut fork.db, Some(persistent_accounts))?;
+    update_state(&mut fork.journaled_state.state, &mut fork.db, Some(persistent_accounts))?;
 
     Ok(())
 }
