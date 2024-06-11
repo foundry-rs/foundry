@@ -84,8 +84,8 @@ pub fn transaction_request_to_typed(
         to,
     ) {
         // legacy transaction
-        (Some(0), _, None, None, None, None, None, None, _)
-        | (None, Some(_), None, None, None, None, None, None, _) => {
+        (Some(0), _, None, None, None, None, None, None, _) |
+        (None, Some(_), None, None, None, None, None, None, _) => {
             Some(TypedTransactionRequest::Legacy(TxLegacy {
                 nonce: nonce.unwrap_or_default(),
                 gas_price: gas_price.unwrap_or_default(),
@@ -97,8 +97,8 @@ pub fn transaction_request_to_typed(
             }))
         }
         // EIP2930
-        (Some(1), _, None, None, _, None, None, None, _)
-        | (None, _, None, None, Some(_), None, None, None, _) => {
+        (Some(1), _, None, None, _, None, None, None, _) |
+        (None, _, None, None, Some(_), None, None, None, _) => {
             Some(TypedTransactionRequest::EIP2930(TxEip2930 {
                 nonce: nonce.unwrap_or_default(),
                 gas_price: gas_price.unwrap_or_default(),
@@ -111,10 +111,10 @@ pub fn transaction_request_to_typed(
             }))
         }
         // EIP1559
-        (Some(2), None, _, _, _, _, None, None, _)
-        | (None, None, Some(_), _, _, _, None, None, _)
-        | (None, None, _, Some(_), _, _, None, None, _)
-        | (None, None, None, None, None, _, None, None, _) => {
+        (Some(2), None, _, _, _, _, None, None, _) |
+        (None, None, Some(_), _, _, _, None, None, _) |
+        (None, None, _, Some(_), _, _, None, None, _) |
+        (None, None, None, None, None, _, None, None, _) => {
             // Empty fields fall back to the canonical transaction schema.
             Some(TypedTransactionRequest::EIP1559(TxEip1559 {
                 nonce: nonce.unwrap_or_default(),
@@ -155,9 +155,9 @@ pub fn transaction_request_to_typed(
 }
 
 fn has_optimism_fields(other: &OtherFields) -> bool {
-    other.contains_key("sourceHash")
-        && other.contains_key("mint")
-        && other.contains_key("isSystemTx")
+    other.contains_key("sourceHash") &&
+        other.contains_key("mint") &&
+        other.contains_key("isSystemTx")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1038,12 +1038,12 @@ pub struct DepositReceipt<T = alloy_primitives::Log> {
 
 impl DepositReceipt {
     fn payload_len(&self) -> usize {
-        self.inner.receipt.status.length()
-            + self.inner.receipt.cumulative_gas_used.length()
-            + self.inner.logs_bloom.length()
-            + self.inner.receipt.logs.length()
-            + self.deposit_nonce.map_or(0, |n| n.length())
-            + self.deposit_receipt_version.map_or(0, |n| n.length())
+        self.inner.receipt.status.length() +
+            self.inner.receipt.cumulative_gas_used.length() +
+            self.inner.logs_bloom.length() +
+            self.inner.receipt.logs.length() +
+            self.deposit_nonce.map_or(0, |n| n.length()) +
+            self.deposit_receipt_version.map_or(0, |n| n.length())
     }
 
     /// Returns the rlp header for the receipt payload.

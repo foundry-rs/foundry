@@ -425,9 +425,9 @@ impl VerifyBytecodeArgs {
 
                     // Check if Solidity version matches
                     if let Ok(version) = Version::parse(&version) {
-                        if !(artifact.version.major == version.major
-                            && artifact.version.minor == version.minor
-                            && artifact.version.patch == version.patch)
+                        if !(artifact.version.major == version.major &&
+                            artifact.version.minor == version.minor &&
+                            artifact.version.patch == version.patch)
                         {
                             continue;
                         }

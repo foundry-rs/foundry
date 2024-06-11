@@ -1662,20 +1662,20 @@ impl SimpleCast {
         match v_ty {
             // For value types, `h` pads the value to 32 bytes in the same way as when storing the
             // value in memory.
-            DynSolType::Bool
-            | DynSolType::Int(_)
-            | DynSolType::Uint(_)
-            | DynSolType::FixedBytes(_)
-            | DynSolType::Address
-            | DynSolType::Function => hasher.update(v.as_word().unwrap()),
+            DynSolType::Bool |
+            DynSolType::Int(_) |
+            DynSolType::Uint(_) |
+            DynSolType::FixedBytes(_) |
+            DynSolType::Address |
+            DynSolType::Function => hasher.update(v.as_word().unwrap()),
 
             // For strings and byte arrays, `h(k)` is just the unpadded data.
             DynSolType::String | DynSolType::Bytes => hasher.update(v.as_packed_seq().unwrap()),
 
-            DynSolType::Array(..)
-            | DynSolType::FixedArray(..)
-            | DynSolType::Tuple(..)
-            | DynSolType::CustomStruct { .. } => {
+            DynSolType::Array(..) |
+            DynSolType::FixedArray(..) |
+            DynSolType::Tuple(..) |
+            DynSolType::CustomStruct { .. } => {
                 eyre::bail!("Type `{v_ty}` is not supported as a mapping key")
             }
         }
