@@ -158,8 +158,8 @@ impl Context {
     }
 }
 
-type AllowCheatcodesFn<'a, DB, CallType> =
-    Box<dyn Fn(&mut Cheatcodes, &mut EvmContext<DB>, &mut CallType) -> Address + 'a>;
+type AllowCheatcodesFn<DB, CallType> =
+    dyn Fn(&mut Cheatcodes, &mut EvmContext<DB>, &mut CallType) -> Address;
 type CreateOutcomeFn =
     dyn Fn(InterpreterResult, Option<Address>, Option<Range<usize>>) -> CommonCreateOutcome;
 
@@ -181,7 +181,6 @@ where
     call_init_code: Bytes,
     return_memory_range: Option<Range<usize>>,
     created_address: Option<Address>,
-    allow_cheatcodes_fn: AllowCheatcodesFn<'a, DB, CallType>,
 }
 
 enum CommonEndOutcome {
@@ -189,6 +188,7 @@ enum CommonEndOutcome {
     EOFCreate(EOFCreateOutcome),
 }
 
+/// Parameters for legacy and EOF create_end actions.
 struct EndParams<'a, DB>
 where
     DB: DatabaseExt,
@@ -506,6 +506,7 @@ impl Cheatcodes {
         params: CreateParams<'_, DB, CallType>,
         create_outcome_fn: &CreateOutcomeFn,
         log_debug_fn: impl Fn(&Self, &CallType),
+        allow_cheatcodes_fn: &AllowCheatcodesFn<DB, CallType>,
     ) -> Option<CommonCreateOutcome>
     where
         DB: DatabaseExt,
@@ -519,9 +520,7 @@ impl Cheatcodes {
             call_init_code,
             return_memory_range,
             created_address,
-            allow_cheatcodes_fn,
         } = params;
-
         let gas = Gas::new(call_gas_limit);
 
         // Apply our prank
@@ -567,7 +566,6 @@ impl Cheatcodes {
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call_gas_limit);
 
                     let account = &ecx.inner.journaled_state.state()[&broadcast.new_origin];
-
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc: ecx.inner.db.active_fork_url(),
                         transaction: TransactionRequest {
@@ -604,13 +602,13 @@ impl Cheatcodes {
                 account: address,
                 kind: crate::Vm::AccountAccessKind::Create,
                 initialized: true,
-                oldBalance: U256::ZERO, // updated on eofcreate_end
-                newBalance: U256::ZERO, // updated on eofcreate_end
+                oldBalance: U256::ZERO, // updated on (eof)create_end
+                newBalance: U256::ZERO, // updated on (eof)create_end
                 value: call_value,
                 data: call_init_code.clone(),
                 reverted: false,
-                deployedCode: Bytes::new(), // updated on eofcreate_end
-                storageAccesses: vec![],    // updated on eofcreate_end
+                deployedCode: Bytes::new(), // updated on (eof)create_end
+                storageAccesses: vec![],    // updated on (eof)create_end
                 depth: ecx.journaled_state.depth(),
             }]);
         }
@@ -1360,9 +1358,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             call_init_code,
             return_memory_range: None,
             created_address: None,
-            allow_cheatcodes_fn: Box::new(|this, ecx, call| {
-                this.allow_cheatcodes_on_create(ecx, call)
-            }),
         };
 
         self.create_common(params, &|result, address, _| {
@@ -1374,7 +1369,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 CreateScheme::Create2 { .. } => "create2",
             };
             debug!(target: "cheatcodes", tx=?this.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
-        }
+        }, &|this, ecx, call| {
+                this.allow_cheatcodes_on_create(ecx, call)
+            }
         )
         .and_then(|outcome| match outcome {
             CommonCreateOutcome::Create(outcome) => Some(outcome),
@@ -1438,9 +1435,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             call_init_code,
             return_memory_range: Some(return_memory_range.clone()),
             created_address: Some(created_address),
-            allow_cheatcodes_fn: Box::new(|this, ecx, call| {
-                this.allow_cheatcodes_on_eofcreate(ecx, call)
-            }),
         };
 
         self.create_common(params, &move |result, address, return_memory_range| {
@@ -1452,7 +1446,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         },
         |this, _| {
             debug!(target: "cheatcodes", tx=?this.broadcastable_transactions.back().unwrap(), "broadcastable eofcreate");
-        }
+        }, &|this, ecx, call| {
+                this.allow_cheatcodes_on_eofcreate(ecx, call)
+            }
         )
         .and_then(|outcome| match outcome {
             CommonCreateOutcome::EOFCreate(outcome) => Some(outcome),
