@@ -135,6 +135,7 @@ rustls = [
 openssl = ["foundry-cli/openssl", "reqwest/default-tls"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
+aws-kms = ["foundry-wallets/aws-kms"]
 
 [[bench]]
 name = "test"

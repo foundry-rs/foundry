@@ -11,6 +11,15 @@ A local Ethereum node, akin to Ganache, designed for development with [**Forge**
     -   mining modes: auto, interval, manual, none
     -   ...
 
+## Supported Versions
+
+- **anvil**:
+  - **evm**: Cancun
+- **forge**:
+  - **solc**: Latest
+  - **evm**: Cancun
+
+  
 ## Installation
 
 `anvil` binary is available via [`foundryup`](../../README.md#installation).

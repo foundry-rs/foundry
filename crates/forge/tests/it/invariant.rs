@@ -222,11 +222,21 @@ async fn test_invariant() {
                 )],
             ),
             (
-                "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkTest",
+                "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkBlockTest",
                 vec![(
                     "invariant_fork_handler_block()",
                     false,
                     Some("revert: too many blocks mined".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkStateTest",
+                vec![(
+                    "invariant_fork_handler_state()",
+                    false,
+                    Some("revert: wrong supply".into()),
                     None,
                     None,
                 )],
@@ -679,18 +689,31 @@ async fn test_invariant_roll_fork_handler() {
         Some(tempfile::tempdir().unwrap().into_path());
 
     let results = runner.test_collect(&filter);
+
     assert_multiple(
         &results,
-        BTreeMap::from([(
-            "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkTest",
-            vec![(
-                "invariant_fork_handler_block()",
-                false,
-                Some("revert: too many blocks mined".into()),
-                None,
-                None,
-            )],
-        )]),
+        BTreeMap::from([
+            (
+                "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkBlockTest",
+                vec![(
+                    "invariant_fork_handler_block()",
+                    false,
+                    Some("revert: too many blocks mined".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkStateTest",
+                vec![(
+                    "invariant_fork_handler_state()",
+                    false,
+                    Some("revert: wrong supply".into()),
+                    None,
+                    None,
+                )],
+            ),
+        ]),
     );
 }
 
