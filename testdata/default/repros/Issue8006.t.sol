@@ -15,7 +15,7 @@ contract Mock {
 }
 
 // https://github.com/foundry-rs/foundry/issues/8006
-contract Issue5739Test is DSTest {
+contract Issue8006Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     IERC20 dai;
     bytes32 transaction = 0x67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace;
