@@ -221,6 +221,10 @@ pub struct MultiWalletOpts {
     /// Use AWS Key Management Service.
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "aws-kms"))]
     pub aws: bool,
+
+    /// Use Google Cloud Key Management Service.
+    #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "gcp-kms"))]
+    pub gcp: bool,
 }
 
 impl MultiWalletOpts {
