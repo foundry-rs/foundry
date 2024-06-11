@@ -8,7 +8,7 @@ struct FuzzSelector {
     bytes4[] selectors;
 }
 
-contract TearDownHandler {
+contract AfterInvariantHandler {
     uint256 public count;
 
     function inc() external {
@@ -16,11 +16,11 @@ contract TearDownHandler {
     }
 }
 
-contract InvariantTearDownTest is DSTest {
-    TearDownHandler handler;
+contract InvariantAfterInvariantTest is DSTest {
+    AfterInvariantHandler handler;
 
     function setUp() public {
-        handler = new TearDownHandler();
+        handler = new AfterInvariantHandler();
     }
 
     function targetSelectors() public returns (FuzzSelector[] memory) {
@@ -31,14 +31,14 @@ contract InvariantTearDownTest is DSTest {
         return targets;
     }
 
-    function tearDown() public {
-        require(handler.count() < 10, "teardown failure");
+    function afterInvariant() public {
+        require(handler.count() < 10, "afterInvariant failure");
     }
 
     /// forge-config: default.invariant.runs = 1
     /// forge-config: default.invariant.depth = 11
-    function invariant_tear_down_failure() public view {
-        require(handler.count() < 20, "invariant tear down failure");
+    function invariant_after_invariant_failure() public view {
+        require(handler.count() < 20, "invariant after invariant failure");
     }
 
     /// forge-config: default.invariant.runs = 1

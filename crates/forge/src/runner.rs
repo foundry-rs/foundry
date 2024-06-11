@@ -306,35 +306,31 @@ impl<'a> ContractRunner<'a> {
             )
         }
 
-        let tear_down_fns: Vec<_> =
-            self.contract.abi.functions().filter(|func| func.name.is_tear_down()).collect();
-        if tear_down_fns.len() > 1 {
+        let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
+        let after_invariant_fns: Vec<_> =
+            self.contract.abi.functions().filter(|func| func.name.is_after_invariant()).collect();
+        if after_invariant_fns.len() > 1 {
             // Return a single test result failure if multiple functions declared.
             return SuiteResult::new(
                 start.elapsed(),
                 [(
-                    "tearDown()".to_string(),
-                    TestResult::fail("multiple tearDown functions".to_string()),
+                    "afterInvariant()".to_string(),
+                    TestResult::fail("multiple afterInvariant functions".to_string()),
                 )]
                 .into(),
                 warnings,
             )
         }
-        let needs_tear_down = match tear_down_fns.first() {
-            Some(tear_down_fn) => {
-                let match_sig = tear_down_fn.name == "tearDown";
-                if !match_sig {
-                    warnings.push(format!(
-                        "Found invalid teardown function \"{}\" did you mean \"tearDown()\"?",
-                        tear_down_fn.signature()
-                    ));
-                }
-                match_sig
+        let needs_after_invariant = after_invariant_fns.first().map_or(false, |after_invariant_fn| {
+            let match_sig = after_invariant_fn.name == "afterInvariant";
+            if !match_sig {
+                warnings.push(format!(
+                    "Found invalid afterInvariant function \"{}\" did you mean \"afterInvariant()\"?",
+                    after_invariant_fn.signature()
+                ));
             }
-            None => false,
-        };
-
-        let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
+            match_sig
+        });
 
         // Invariant testing requires tracing to figure out what contracts were created.
         let tmp_tracing = self.executor.inspector.tracer.is_none() && has_invariants && needs_setup;
@@ -415,7 +411,7 @@ impl<'a> ContractRunner<'a> {
                         setup,
                         invariant_config.clone(),
                         func,
-                        needs_tear_down,
+                        needs_after_invariant,
                         &known_contracts,
                         identified_contracts.as_ref().unwrap(),
                     )
@@ -556,7 +552,7 @@ impl<'a> ContractRunner<'a> {
         setup: TestSetup,
         invariant_config: InvariantConfig,
         func: &Function,
-        needs_tear_down: bool,
+        needs_after_invariant: bool,
         known_contracts: &ContractsByArtifact,
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
@@ -597,7 +593,7 @@ impl<'a> ContractRunner<'a> {
         let invariant_contract = InvariantContract {
             address,
             invariant_function: func,
-            needs_tear_down,
+            needs_after_invariant,
             abi: &self.contract.abi,
         };
 
@@ -631,7 +627,7 @@ impl<'a> ContractRunner<'a> {
                 invariant_contract.address,
                 invariant_contract.invariant_function.selector().to_vec().into(),
                 invariant_config.fail_on_revert,
-                invariant_contract.needs_tear_down,
+                invariant_contract.needs_after_invariant,
             ) {
                 if !success {
                     // If sequence still fails then replay error to collect traces and

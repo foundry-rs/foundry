@@ -2,7 +2,7 @@ use crate::{
     executors::{Executor, RawCallResult},
     inspectors::Fuzzer,
 };
-use alloy_primitives::{Address, FixedBytes, Selector, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, Selector, U256};
 use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -28,10 +28,10 @@ use proptest::{
     strategy::{Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
-use result::{assert_invariants, assert_tear_down, can_continue};
+use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::primitives::HashMap;
 use shrink::shrink_sequence;
-use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
+use std::{borrow::Cow, cell::RefCell, collections::BTreeMap, sync::Arc};
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError};
@@ -43,6 +43,7 @@ mod result;
 pub use result::InvariantFuzzTestResult;
 
 mod shrink;
+use crate::executors::EvmError;
 pub use shrink::check_sequence;
 
 sol! {
@@ -64,6 +65,8 @@ sol! {
             address addr;
             string[] artifacts;
         }
+
+        function afterInvariant() external;
 
         #[derive(Default)]
         function excludeArtifacts() public view returns (string[] memory excludedArtifacts);
@@ -302,9 +305,9 @@ impl<'a> InvariantExecutor<'a> {
                 );
             }
 
-            // Assert `tearDown` only if it is declared and test didn't fail already.
-            if invariant_contract.needs_tear_down && failures.borrow().error.is_none() {
-                assert_tear_down(
+            // Call `afterInvariant` only if it is declared and test didn't fail already.
+            if invariant_contract.needs_after_invariant && failures.borrow().error.is_none() {
+                assert_after_invariant(
                     &invariant_contract,
                     &self.config,
                     &targeted_contracts,
@@ -312,7 +315,7 @@ impl<'a> InvariantExecutor<'a> {
                     &mut failures.borrow_mut(),
                     &inputs,
                 )
-                .map_err(|_| TestCaseError::Fail("Failed to call tearDown".into()))?;
+                .map_err(|_| TestCaseError::Fail("Failed to call afterInvariant".into()))?;
             }
 
             // We clear all the targeted contracts created during this run.
@@ -702,4 +705,38 @@ fn collect_data(
     if let Some(changed) = sender_changeset {
         state_changeset.insert(tx.sender, changed);
     }
+}
+
+/// Calls the `afterInvariant()` function on a contract.
+/// Returns call result and if call succeeded.
+/// The state after the call is not persisted.
+pub(crate) fn call_after_invariant(
+    executor: &Executor,
+    to: Address,
+) -> std::result::Result<(RawCallResult, bool), EvmError> {
+    let calldata = Bytes::from_static(&IInvariantTest::afterInvariantCall::SELECTOR);
+    let mut call_result = executor.call_raw(CALLER, to, calldata, U256::ZERO)?;
+    let success = executor.is_raw_call_success(
+        to,
+        Cow::Owned(call_result.state_changeset.take().unwrap()),
+        &call_result,
+        false,
+    );
+    Ok((call_result, success))
+}
+
+/// Calls the invariant function and returns call result and if succeeded.
+pub(crate) fn call_invariant(
+    executor: &Executor,
+    address: Address,
+    calldata: Bytes,
+) -> Result<(RawCallResult, bool)> {
+    let mut call_result = executor.call_raw(CALLER, address, calldata, U256::ZERO)?;
+    let success = executor.is_raw_call_success(
+        address,
+        Cow::Owned(call_result.state_changeset.take().unwrap()),
+        &call_result,
+        false,
+    );
+    Ok((call_result, success))
 }

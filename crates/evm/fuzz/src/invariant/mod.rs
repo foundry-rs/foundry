@@ -71,8 +71,8 @@ pub struct InvariantContract<'a> {
     pub address: Address,
     /// Invariant function present in the test contract.
     pub invariant_function: &'a Function,
-    /// If true, `tearDown` function is called after each invariant run.
-    pub needs_tear_down: bool,
+    /// If true, `afterInvariant` function is called after each invariant run.
+    pub needs_after_invariant: bool,
     /// ABI of the test contract.
     pub abi: &'a JsonAbi,
 }

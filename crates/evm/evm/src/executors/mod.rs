@@ -50,7 +50,6 @@ pub use tracing::TracingExecutor;
 sol! {
     interface ITest {
         function setUp() external;
-        function tearDown() external;
         function failed() external view returns (bool failed);
     }
 }
@@ -228,21 +227,6 @@ impl Executor {
         }
 
         Ok(res)
-    }
-
-    /// Calls the `tearDown()` function on a contract.
-    /// Returns call result and if call succeeded.
-    /// The state after the call is not persisted.
-    pub fn tear_down(&mut self, to: Address) -> Result<(RawCallResult, bool), EvmError> {
-        let calldata = Bytes::from_static(&ITest::tearDownCall::SELECTOR);
-        let mut call_result = self.call_raw(CALLER, to, calldata, U256::ZERO)?;
-        let success = self.is_raw_call_success(
-            to,
-            Cow::Owned(call_result.state_changeset.take().unwrap()),
-            &call_result,
-            false,
-        );
-        Ok((call_result, success))
     }
 
     /// Performs a call to an account on the current state of the VM.

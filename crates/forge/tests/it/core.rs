@@ -76,17 +76,17 @@ async fn test_core() {
                 )],
             ),
             (
-                "default/core/MultipleTearDown.t.sol:MultipleTearDown",
+                "default/core/MultipleAfterInvariant.t.sol:MultipleAfterInvariant",
                 vec![(
-                    "tearDown()",
+                    "afterInvariant()",
                     false,
-                    Some("multiple tearDown functions".to_string()),
+                    Some("multiple afterInvariant functions".to_string()),
                     None,
                     None,
                 )],
             ),
             (
-                "default/core/BadSigTearDown.t.sol:BadSigTearDown",
+                "default/core/BadSigAfterInvariant.t.sol:BadSigAfterInvariant",
                 vec![("testShouldPassWithWarning()", true, None, None, None)],
             ),
         ]),
