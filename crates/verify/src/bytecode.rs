@@ -441,7 +441,7 @@ impl VerifyBytecodeArgs {
                         .cloned();
                 }
 
-                return None;
+                return None
             }
         }
 
