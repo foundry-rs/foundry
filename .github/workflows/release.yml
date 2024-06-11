@@ -142,14 +142,20 @@ jobs:
 
           [[ "$target" == *windows* ]] && exe=".exe"
 
-          cargo build --release --bins --target "$target" "${flags[@]}"
-
           bins=(anvil cast chisel forge)
           for name in "${bins[@]}"; do
-            bin=./target/$target/release/$name$exe
-            file "$bin" || true
-            ldd "$bin" || true
-            $bin --version || true
+            if [[ $name == "forge" || $name == "cast" ]]; then
+              cargo build --release --bin $name --target "$target" --features aws-kms "${flags[@]}"
+              bin=./target/$target/release/$name$exe
+              file "$bin" || true
+              ldd "$bin" || true
+              $bin --version || true
+            else
+              cargo build --release --bin $name --target "$target" "${flags[@]}"
+              bin=./target/$target/release/$name$exe
+              file "$bin" || true
+              $bin --version || true
+            fi
           done
 
       - name: Archive binaries
