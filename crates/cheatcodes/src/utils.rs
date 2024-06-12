@@ -92,7 +92,7 @@ impl Cheatcode for rememberKeyCall {
         let Self { privateKey } = self;
         let wallet = parse_wallet(privateKey)?;
         let address = wallet.address();
-        if let Some(script_wallets) = &ccx.state.script_wallets {
+        if let Some(script_wallets) = ccx.state.script_wallets() {
             script_wallets.add_local_signer(wallet);
         }
         Ok(address.abi_encode())
@@ -214,7 +214,7 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     signer: Option<Address>,
     digest: &B256,
 ) -> Result {
-    let Some(script_wallets) = &ccx.state.script_wallets else {
+    let Some(script_wallets) = ccx.state.script_wallets() else {
         bail!("no wallets are available");
     };
 

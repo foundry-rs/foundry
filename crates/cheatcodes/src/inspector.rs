@@ -106,7 +106,7 @@ pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 ///   contract deployed on the live network is able to execute cheatcodes by simply calling the
 ///   cheatcode address: by default, the caller, test contract and newly deployed contracts are
 ///   allowed to execute cheatcodes
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Cheatcodes {
     /// The block environment
     ///
@@ -122,9 +122,6 @@ pub struct Cheatcodes {
 
     /// Address labels
     pub labels: HashMap<Address, String>,
-
-    /// Remembered private keys
-    pub script_wallets: Option<ScriptWallets>,
 
     /// Prank information
     pub prank: Option<Prank>,
@@ -210,13 +207,51 @@ pub struct Cheatcodes {
     pub breakpoints: Breakpoints,
 }
 
+// This is not derived because calling this in `fn new` with `..Default::default()` creates a second
+// `CheatsConfig` which is unused, and inside it `ProjectPathsConfig` is relatively expensive to
+// create.
+impl Default for Cheatcodes {
+    fn default() -> Self {
+        Self::new(Arc::default())
+    }
+}
+
 impl Cheatcodes {
     /// Creates a new `Cheatcodes` with the given settings.
-    #[inline]
     pub fn new(config: Arc<CheatsConfig>) -> Self {
-        let labels = config.labels.clone();
-        let script_wallets = config.script_wallets.clone();
-        Self { config, fs_commit: true, labels, script_wallets, ..Default::default() }
+        Self {
+            fs_commit: true,
+            labels: config.labels.clone(),
+            config,
+            block: Default::default(),
+            gas_price: Default::default(),
+            prank: Default::default(),
+            expected_revert: Default::default(),
+            fork_revert_diagnostic: Default::default(),
+            accesses: Default::default(),
+            recorded_account_diffs_stack: Default::default(),
+            recorded_logs: Default::default(),
+            last_call_gas: Default::default(),
+            mocked_calls: Default::default(),
+            expected_calls: Default::default(),
+            expected_emits: Default::default(),
+            allowed_mem_writes: Default::default(),
+            broadcast: Default::default(),
+            broadcastable_transactions: Default::default(),
+            context: Default::default(),
+            serialized_jsons: Default::default(),
+            eth_deals: Default::default(),
+            gas_metering: Default::default(),
+            gas_metering_create: Default::default(),
+            mapping_slots: Default::default(),
+            pc: Default::default(),
+            breakpoints: Default::default(),
+        }
+    }
+
+    /// Returns the configured script wallets.
+    pub fn script_wallets(&self) -> Option<&ScriptWallets> {
+        self.config.script_wallets.as_ref()
     }
 
     fn apply_cheatcode<DB: DatabaseExt>(
