@@ -10,7 +10,7 @@ use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
 use revm::{
     db::{CacheDB, DatabaseRef, DbAccount},
     interpreter::opcode,
-    primitives::AccountInfo,
+    primitives::{AccountInfo, Bytecode},
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -245,12 +245,26 @@ impl FuzzDictionary {
             // Insert push bytes
             if let Some(code) = &account_info.code {
                 self.insert_address(*address);
-                self.collect_push_bytes(code.bytes_slice());
+                self.collect_push_bytes(code);
             }
         }
     }
 
-    fn collect_push_bytes(&mut self, code: &[u8]) {
+    fn collect_push_bytes(&mut self, code: &Bytecode) {
+        let mut code = code.original_byte_slice();
+        if code.is_empty() {
+            return;
+        }
+
+        // Remove metadata by looking up the last two bytes of original bytecode.
+        if code.len() > 2 {
+            let metadata_len = &code[code.len() - 2..];
+            let metadata_len = u16::from_be_bytes([metadata_len[0], metadata_len[1]]).into();
+            if code.len() > metadata_len {
+                code = &code[..code.len() - 2 - metadata_len];
+            }
+        }
+
         let mut i = 0;
         let len = code.len().min(PUSH_BYTE_ANALYSIS_LIMIT);
         while i < len {
