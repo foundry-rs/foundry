@@ -410,57 +410,20 @@ impl Cheatcodes {
         )
     }
 
-    /// Determines the address of the contract and marks it as allowed.
-    ///
-    /// Returns the address of the contract created.
+    /// Grants cheat code access for new contracts if the caller also has
+    /// cheatcode access or the new contract is created in top most call.
     ///
     /// There may be cheatcodes in the constructor of the new contract, in order to allow them
     /// automatically we need to determine the new address.
     fn allow_cheatcodes_on_create<DB: DatabaseExt>(
         &self,
         ecx: &mut InnerEvmContext<DB>,
-        inputs: &CreateInputs,
-    ) -> Address {
-        let old_nonce = ecx
-            .journaled_state
-            .state
-            .get(&inputs.caller)
-            .map(|acc| acc.info.nonce)
-            .unwrap_or_default();
-        let created_address = inputs.created_address(old_nonce);
-
-        if ecx.journaled_state.depth > 1 && !ecx.db.has_cheatcode_access(&inputs.caller) {
-            // we only grant cheat code access for new contracts if the caller also has
-            // cheatcode access and the new contract is created in top most call
-            return created_address;
+        caller: Address,
+        created_address: Address,
+    ) {
+        if ecx.journaled_state.depth <= 1 || ecx.db.has_cheatcode_access(&caller) {
+            ecx.db.allow_cheatcode_access(created_address);
         }
-
-        ecx.db.allow_cheatcode_access(created_address);
-
-        created_address
-    }
-
-    /// Determines the address of the EOF contract and marks it as allowed
-    /// Returns the address of the contract created
-    ///
-    /// There may be cheatcodes in the constructor of the new contract, in order to allow them
-    /// automatically we need to determine the new address
-    fn allow_cheatcodes_on_eofcreate<DB: DatabaseExt>(
-        &self,
-        ecx: &mut InnerEvmContext<DB>,
-        inputs: &EOFCreateInput,
-    ) -> Address {
-        let created_address = inputs.created_address;
-
-        if ecx.journaled_state.depth > 1 && !ecx.db.has_cheatcode_access(&inputs.caller) {
-            // we only grant cheat code access for new contracts if the caller also has
-            // cheatcode access and the new contract is created in top most call
-            return created_address;
-        }
-
-        ecx.db.allow_cheatcode_access(created_address);
-
-        created_address
     }
 
     /// Called when there was a revert.
@@ -501,7 +464,7 @@ impl Cheatcodes {
         DB: DatabaseExt,
         F: FnMut(InterpreterResult, Option<Address>, Option<Range<usize>>) -> CommonCreateOutcome,
         G: FnMut(&Self, &CallType),
-        H: FnMut(&mut Self, &mut EvmContext<DB>, &mut CallType) -> Address,
+        H: FnMut(&mut Self, &mut InnerEvmContext<DB>, &mut CallType, Address) -> Address,
     {
         let gas = Gas::new(params.call_gas_limit);
 
@@ -575,7 +538,7 @@ impl Cheatcodes {
         }
 
         // Allow cheatcodes from the address of the new contract
-        let address = allow_cheatcodes_fn(self, params.ecx, params.call);
+        let address = allow_cheatcodes_fn(self, params.ecx, params.call, params.call_caller);
 
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
@@ -1344,10 +1307,21 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             debug!(target: "cheatcodes", tx=?this.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
         };
 
-        let mut allow_cheatcodes_fn =
-            |this: &mut Self, ecx: &mut EvmContext<DB>, call: &mut CreateInputs| {
-                this.allow_cheatcodes_on_create(ecx, call)
-            };
+        let mut allow_cheatcodes_fn = |this: &mut Self,
+                                       ecx: &mut InnerEvmContext<DB>,
+                                       call: &mut CreateInputs,
+                                       caller: Address| {
+            let old_nonce = ecx
+                .journaled_state
+                .state
+                .get(&caller)
+                .map(|acc| acc.info.nonce)
+                .unwrap_or_default();
+            call.caller = caller;
+            let created_address = call.created_address(old_nonce);
+            this.allow_cheatcodes_on_create(ecx, caller, created_address);
+            created_address
+        };
 
         let outcome = self
             .create_common(
@@ -1428,10 +1402,13 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             debug!(target: "cheatcodes", tx=?this.broadcastable_transactions.back().unwrap(), "broadcastable eofcreate");
         };
 
-        let mut allow_cheatcodes_fn =
-            |this: &mut Self, ecx: &mut EvmContext<DB>, call: &mut EOFCreateInput| {
-                this.allow_cheatcodes_on_eofcreate(ecx, call)
-            };
+        let mut allow_cheatcodes_fn = |this: &mut Self,
+                                       ecx: &mut InnerEvmContext<DB>,
+                                       _call: &mut EOFCreateInput,
+                                       caller: Address| {
+            this.allow_cheatcodes_on_create(ecx, caller, created_address);
+            created_address
+        };
 
         let outcome = self
             .create_common(
