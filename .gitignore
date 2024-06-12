@@ -5,5 +5,3 @@ out.json
 .idea
 .vscode
 bloat*
-/test_implem/
-/test_alloy_rcp/

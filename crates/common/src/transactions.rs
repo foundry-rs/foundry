@@ -182,9 +182,9 @@ impl From<TxEnvelope> for TransactionMaybeSigned {
     }
 }
 
-impl Into<TransactionRequest> for TransactionMaybeSigned {
-    fn into(self) -> TransactionRequest {
-        self.tx
+impl From<TransactionMaybeSigned> for TransactionRequest {
+    fn from(val: TransactionMaybeSigned) -> Self {
+        val.tx
     }
 }
 
