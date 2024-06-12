@@ -1334,6 +1334,7 @@ impl DatabaseExt for Backend {
             Some(TxKind::Create) => TransactTo::create(),
             None => TransactTo::create(),
         };
+        env.tx.chain_id = tx.chain_id;
 
         self.commit(journaled_state.state.clone());
 
@@ -1344,7 +1345,7 @@ impl DatabaseExt for Backend {
         };
 
         self.commit(res.state);
-        update_state(&mut journaled_state.state, self)?;
+        update_state(&mut journaled_state.state, self, None)?;
 
         Ok(())
     }
