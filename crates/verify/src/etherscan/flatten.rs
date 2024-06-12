@@ -4,6 +4,7 @@ use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
 use foundry_compilers::{
     artifacts::{BytecodeHash, Source},
+    buildinfo::RawBuildInfo,
     compilers::{
         solc::{SolcCompiler, SolcLanguage, SolcVersionedInput},
         Compiler, CompilerInput,
@@ -87,8 +88,8 @@ impl EtherscanFlattenedSource {
 
         let out = SolcCompiler::Specific(solc).compile(&input)?;
         if out.errors.iter().any(|e| e.is_error()) {
-            let mut o = AggregatedCompilerOutput::default();
-            o.extend(version, out);
+            let mut o = AggregatedCompilerOutput::<SolcCompiler>::default();
+            o.extend(version.clone(), RawBuildInfo::new(&input, &out, false)?, out);
             let diags = o.diagnostics(&[], &[], Default::default());
 
             eyre::bail!(

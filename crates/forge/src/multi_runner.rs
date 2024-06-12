@@ -8,7 +8,9 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
-use foundry_compilers::{artifacts::Libraries, Artifact, ArtifactId, ProjectCompileOutput};
+use foundry_compilers::{
+    artifacts::Libraries, compilers::Compiler, Artifact, ArtifactId, ProjectCompileOutput,
+};
 use foundry_config::Config;
 use foundry_evm::{
     backend::Backend, decode::RevertDecoder, executors::ExecutorBuilder, fork::CreateFork,
@@ -356,10 +358,10 @@ impl MultiContractRunnerBuilder {
 
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
-    pub fn build<E>(
+    pub fn build<C: Compiler>(
         self,
         root: &Path,
-        output: ProjectCompileOutput<E>,
+        output: ProjectCompileOutput<C>,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
