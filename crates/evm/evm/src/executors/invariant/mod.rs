@@ -212,7 +212,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Execute call from the randomly generated sequence and commit state changes.
                 let call_result = executor
-                    .call_raw_committing(
+                    .transact_raw(
                         tx.sender,
                         tx.call_details.target,
                         tx.call_details.calldata.clone(),

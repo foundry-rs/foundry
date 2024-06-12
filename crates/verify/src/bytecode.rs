@@ -315,7 +315,7 @@ impl VerifyBytecodeArgs {
             if to != DEFAULT_CREATE2_DEPLOYER {
                 eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
             }
-            let result = executor.call_raw_with_env_committing(env_with_handler.clone())?;
+            let result = executor.transact_with_env(env_with_handler.clone())?;
 
             if result.result.len() != 20 {
                 eyre::bail!("Failed to deploy contract on fork at block {simulation_block}: call result is not exactly 20 bytes");

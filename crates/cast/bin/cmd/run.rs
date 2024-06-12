@@ -176,7 +176,7 @@ impl RunArgs {
 
                     if let Some(to) = tx.to {
                         trace!(tx=?tx.hash,?to, "executing previous call transaction");
-                        executor.call_raw_with_env_committing(env.clone()).wrap_err_with(|| {
+                        executor.transact_with_env(env.clone()).wrap_err_with(|| {
                             format!(
                                 "Failed to execute transaction: {:?} in block {}",
                                 tx.hash, env.block.number
@@ -213,10 +213,7 @@ impl RunArgs {
 
             if let Some(to) = tx.to {
                 trace!(tx=?tx.hash, to=?to, "executing call transaction");
-                TraceResult::from_raw(
-                    executor.call_raw_with_env_committing(env)?,
-                    TraceKind::Execution,
-                )
+                TraceResult::from_raw(executor.transact_with_env(env)?, TraceKind::Execution)
             } else {
                 trace!(tx=?tx.hash, "executing create transaction");
                 TraceResult::try_from(executor.deploy_with_env(env, None))?

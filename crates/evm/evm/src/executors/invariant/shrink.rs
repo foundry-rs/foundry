@@ -145,7 +145,7 @@ pub fn check_sequence(
     // Apply the call sequence.
     for call_index in sequence {
         let tx = &calls[call_index];
-        let call_result = executor.call_raw_committing(
+        let call_result = executor.transact_raw(
             tx.sender,
             tx.call_details.target,
             tx.call_details.calldata.clone(),
