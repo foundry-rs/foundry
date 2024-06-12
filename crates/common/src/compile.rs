@@ -346,7 +346,7 @@ impl ContractSources {
                 let source_code = if let Some(source) = files.get(path) {
                     source.clone()
                 } else {
-                    let source = Source::read(&path).wrap_err_with(|| {
+                    let source = Source::read(path).wrap_err_with(|| {
                         format!("failed to read artifact source file for `{}`", path.display())
                     })?;
                     files.insert(path.clone(), source.content.clone());
