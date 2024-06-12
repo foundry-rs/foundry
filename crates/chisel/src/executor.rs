@@ -1010,7 +1010,7 @@ impl Type {
             }
 
             // Check if the first element of the custom type is a known contract. If it is, begin
-            // our recursion on on that contract's definitions.
+            // our recursion on that contract's definitions.
             let name = custom_type.last().unwrap();
             let contract = intermediate.intermediate_contracts.get(name);
             if contract.is_some() {

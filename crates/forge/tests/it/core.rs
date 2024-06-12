@@ -721,7 +721,7 @@ async fn test_trace() {
             assert_eq!(
                 execution_traces.count(),
                 1,
-                "Test {test_name} did not not have exactly 1 execution trace."
+                "Test {test_name} did not have exactly 1 execution trace."
             );
         }
     }
