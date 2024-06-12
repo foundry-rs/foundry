@@ -286,7 +286,7 @@ impl VerifyBytecodeArgs {
         let mut executor =
             TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false);
         env.block.number = U256::from(simulation_block);
-        let block = provider.get_block(simulation_block.into(), true).await?;
+        let block = provider.get_block(simulation_block.into(), true.into()).await?;
 
         // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
         // block.

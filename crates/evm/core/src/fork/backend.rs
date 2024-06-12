@@ -234,8 +234,10 @@ where
     fn request_full_block(&mut self, number: BlockId, sender: FullBlockSender) {
         let provider = self.provider.clone();
         let fut = Box::pin(async move {
-            let block =
-                provider.get_block(number, true).await.wrap_err("could not fetch block {number:?}");
+            let block = provider
+                .get_block(number, true.into())
+                .await
+                .wrap_err("could not fetch block {number:?}");
             (sender, block, number)
         });
 

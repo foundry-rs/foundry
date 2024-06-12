@@ -54,9 +54,12 @@ impl ExecutedTransaction {
 
         // successful return see [Return]
         let status_code = u8::from(self.exit_reason as u8 <= InstructionResult::SelfDestruct as u8);
-        let receipt_with_bloom: ReceiptWithBloom =
-            Receipt { status: status_code == 1, cumulative_gas_used: *cumulative_gas_used, logs }
-                .into();
+        let receipt_with_bloom: ReceiptWithBloom = Receipt {
+            status: (status_code == 1).into(),
+            cumulative_gas_used: *cumulative_gas_used,
+            logs,
+        }
+        .into();
 
         match &self.transaction.pending_transaction.transaction.transaction {
             TypedTransaction::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),

@@ -113,7 +113,7 @@ impl RunArgs {
             tx.block_number.ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
 
         // fetch the block the transaction was mined in
-        let block = provider.get_block(tx_block_number.into(), true).await?;
+        let block = provider.get_block(tx_block_number.into(), true.into()).await?;
 
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
