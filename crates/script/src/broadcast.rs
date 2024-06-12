@@ -224,8 +224,8 @@ impl BundledState {
                 .unzip();
 
         let required_addresses =
-            required_addresses.into_iter().filter_map(|a| a).collect::<HashSet<Address>>();
-        let signed_txs = signed_txs.into_iter().filter_map(|a| a).collect::<Vec<TxEnvelope>>();
+            required_addresses.into_iter().flatten().collect::<HashSet<Address>>();
+        let signed_txs = signed_txs.into_iter().flatten().collect::<Vec<TxEnvelope>>();
 
         if required_addresses.contains(&Config::DEFAULT_SENDER) {
             eyre::bail!(

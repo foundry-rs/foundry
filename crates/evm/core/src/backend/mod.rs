@@ -1233,7 +1233,7 @@ impl DatabaseExt for Backend {
         )
     }
 
-    fn transact_from_tx<I: InspectorExt<Backend>>(
+    fn transact_from_tx<I: InspectorExt<Self>>(
         &mut self,
         tx: TransactionRequest,
         env: &Env,

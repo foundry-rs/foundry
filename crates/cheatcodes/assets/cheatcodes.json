@@ -7134,7 +7134,7 @@
     {
       "func": {
         "id": "sendRawTransaction",
-        "description": "takes a signed transaction as `bytes` and executes it",
+        "description": "takes a signed transaction as bytes and executes it",
         "declaration": "function sendRawTransaction(bytes calldata data) external;",
         "visibility": "external",
         "mutability": "",
