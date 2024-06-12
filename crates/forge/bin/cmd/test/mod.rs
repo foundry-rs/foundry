@@ -337,8 +337,7 @@ impl TestArgs {
 
             let sources = ContractSources::from_project_output(
                 output_clone.as_ref().unwrap(),
-                project.root(),
-                &libraries,
+                Some((project.root(), &libraries)),
             )?;
 
             // Run the debugger.

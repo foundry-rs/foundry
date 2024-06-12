@@ -59,14 +59,11 @@ impl EtherscanIdentifier {
     /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
         // TODO: Add caching so we dont double-fetch contracts.
-        let contracts_iter = self
+        let outputs_fut = self
             .contracts
             .iter()
             // filter out vyper files
-            .filter(|(_, metadata)| !metadata.is_vyper());
-
-        let outputs_fut = contracts_iter
-            .clone()
+            .filter(|(_, metadata)| !metadata.is_vyper())
             .map(|(address, metadata)| {
                 println!("Compiling: {} {address}", metadata.contract_name);
                 let err_msg =
@@ -76,15 +73,13 @@ impl EtherscanIdentifier {
             .collect::<Vec<_>>();
 
         // poll all the futures concurrently
-        let artifacts = join_all(outputs_fut).await;
+        let outputs = join_all(outputs_fut).await;
 
         let mut sources: ContractSources = Default::default();
 
         // construct the map
-        for (results, (_, metadata)) in artifacts.into_iter().zip(contracts_iter) {
-            // get the inner type
-            let (artifact_id, file_id, bytecode) = results?;
-            sources.insert(&artifact_id, file_id, metadata.source_code(), bytecode);
+        for output in outputs {
+            sources.insert(&output?, None)?;
         }
 
         Ok(sources)

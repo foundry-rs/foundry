@@ -66,12 +66,12 @@ impl Debugger {
     ) -> Self {
         let pc_ic_maps = contracts_sources
             .entries()
-            .filter_map(|(contract_name, _, contract)| {
+            .filter_map(|(name, artifact, _)| {
                 Some((
-                    contract_name.to_owned(),
+                    name.to_owned(),
                     (
-                        PcIcMap::new(contract.bytecode.bytes()?),
-                        PcIcMap::new(contract.deployed_bytecode.bytes()?),
+                        PcIcMap::new(artifact.bytecode.bytecode.bytes()?),
+                        PcIcMap::new(artifact.bytecode.deployed_bytecode.bytes()?),
                     ),
                 ))
             })

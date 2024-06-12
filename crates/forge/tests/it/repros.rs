@@ -339,3 +339,6 @@ test_repro!(2851, false, None, |res| {
     let test = res.test_results.remove("invariantNotZero()").unwrap();
     assert_eq!(test.status, TestStatus::Failure);
 });
+
+// https://github.com/foundry-rs/foundry/issues/8006
+test_repro!(8006);
