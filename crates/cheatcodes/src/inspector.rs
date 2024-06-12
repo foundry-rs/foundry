@@ -189,12 +189,6 @@ where
     DB: DatabaseExt,
 {
     ecx: &'a mut EvmContext<DB>,
-    prank_origin: Option<Address>,
-    single_call_prank: bool,
-    original_origin: Option<Address>,
-    single_call_broadcast: bool,
-    depth: u64,
-    expected_revert: Option<ExpectedRevert>,
     outcome_result: InstructionResult,
     outcome_output: Bytes,
     address: Option<Address>,
@@ -618,31 +612,31 @@ impl Cheatcodes {
         F: FnMut(InstructionResult, Bytes, Option<Address>) -> CommonEndOutcome,
     {
         // Clean up pranks
-        if let Some(prank_origin) = params.prank_origin {
-            if params.ecx.inner.journaled_state.depth() == params.depth {
-                params.ecx.inner.env.tx.caller = prank_origin;
+        if let Some(prank) = &self.prank {
+            if params.ecx.inner.journaled_state.depth() == prank.depth {
+                params.ecx.inner.env.tx.caller = prank.prank_origin;
 
                 // Clean single-call prank once we have returned to the original depth
-                if params.single_call_prank {
+                if prank.single_call {
                     std::mem::take(&mut self.prank);
                 }
             }
         }
 
         // Clean up broadcasts
-        if let Some(original_origin) = params.original_origin {
-            if params.ecx.inner.journaled_state.depth() == params.depth {
-                params.ecx.inner.env.tx.caller = original_origin;
+        if let Some(broadcast) = &self.broadcast {
+            if params.ecx.inner.journaled_state.depth() == broadcast.depth {
+                params.ecx.inner.env.tx.caller = broadcast.original_origin;
 
                 // Clean single-call broadcast once we have returned to the original depth
-                if params.single_call_broadcast {
+                if broadcast.single_call {
                     std::mem::take(&mut self.broadcast);
                 }
             }
         }
 
         // Handle expected reverts
-        if let Some(expected_revert) = &params.expected_revert {
+        if let Some(expected_revert) = &self.expected_revert {
             if params.ecx.inner.journaled_state.depth() <= expected_revert.depth &&
                 matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
@@ -654,24 +648,13 @@ impl Cheatcodes {
                     params.outcome_output.clone(),
                 ) {
                     Ok((new_address, retdata)) => {
-                        params.outcome_result = InstructionResult::Return;
-                        params.outcome_output = retdata;
-                        params.address = new_address;
-                        create_outcome_fn(
-                            params.outcome_result,
-                            params.outcome_output.clone(),
-                            params.address,
-                        )
+                        create_outcome_fn(InstructionResult::Return, retdata.clone(), new_address)
                     }
-                    Err(err) => {
-                        params.outcome_result = InstructionResult::Revert;
-                        params.outcome_output = err.abi_encode().into();
-                        create_outcome_fn(
-                            params.outcome_result,
-                            params.outcome_output.clone(),
-                            params.address,
-                        )
-                    }
+                    Err(err) => create_outcome_fn(
+                        InstructionResult::Revert,
+                        Bytes::from(err.abi_encode()),
+                        params.address,
+                    ),
                 };
             }
         }
@@ -727,7 +710,6 @@ impl Cheatcodes {
                 }
             }
         }
-
         create_outcome_fn(params.outcome_result, params.outcome_output.clone(), params.address)
     }
 }
@@ -1390,19 +1372,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         _call: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
-        let depth = ecx.inner.journaled_state.depth();
-
         let mut params = EndParams {
             ecx,
-            prank_origin: self.prank.as_ref().map(|prank| prank.prank_origin),
-            single_call_prank: self.prank.as_ref().map_or(false, |prank| prank.single_call),
-            original_origin: self.broadcast.as_ref().map(|broadcast| broadcast.original_origin),
-            single_call_broadcast: self
-                .broadcast
-                .as_ref()
-                .map_or(false, |broadcast| broadcast.single_call),
-            depth,
-            expected_revert: self.expected_revert.clone(),
             outcome_result: outcome.result.result,
             outcome_output: outcome.result.output.clone(),
             address: outcome.address,
@@ -1485,19 +1456,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         call: &EOFCreateInput,
         outcome: EOFCreateOutcome,
     ) -> EOFCreateOutcome {
-        let depth = ecx.inner.journaled_state.depth();
-
         let mut params = EndParams {
             ecx,
-            prank_origin: self.prank.as_ref().map(|prank| prank.prank_origin),
-            single_call_prank: self.prank.as_ref().map_or(false, |prank| prank.single_call),
-            original_origin: self.broadcast.as_ref().map(|broadcast| broadcast.original_origin),
-            single_call_broadcast: self
-                .broadcast
-                .as_ref()
-                .map_or(false, |broadcast| broadcast.single_call),
-            depth,
-            expected_revert: self.expected_revert.clone(),
             outcome_result: outcome.result.result,
             outcome_output: outcome.result.output.clone(),
             address: Some(outcome.address),
