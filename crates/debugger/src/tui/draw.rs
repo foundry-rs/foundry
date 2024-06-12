@@ -322,6 +322,14 @@ impl DebuggerContext<'_> {
             lines.push(u_num, line, u_text);
         }
 
+        // pad with empty to each line to ensure the previous text is cleared
+        for line in &mut lines.lines {
+            // note that the \n is not included in the line length
+            if area.width as usize > line.width() + 1 {
+                line.push_span(Span::raw(" ".repeat(area.width as usize - line.width() - 1)));
+            }
+        }
+
         Text::from(lines.lines)
     }
 
