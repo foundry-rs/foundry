@@ -342,16 +342,15 @@ impl ContractSources {
         // infos.
         let mut files: BTreeMap<PathBuf, Arc<String>> = BTreeMap::new();
         for (build_id, build) in output.builds() {
-            for (source_id, source) in &build.source_id_to_path {
-                let source_code = if let Some(source) = files.get(source) {
+            for (source_id, path) in &build.source_id_to_path {
+                let source_code = if let Some(source) = files.get(path) {
                     source.clone()
                 } else {
-                    let source_code = std::fs::read_to_string(source).wrap_err_with(|| {
-                        format!("failed to read artifact source file for `{}`", source.display())
+                    let source = Source::read(&path).wrap_err_with(|| {
+                        format!("failed to read artifact source file for `{}`", path.display())
                     })?;
-                    let source_code = Arc::new(source_code);
-                    files.insert(source.to_path_buf(), source_code.clone());
-                    source_code
+                    files.insert(path.clone(), source.content.clone());
+                    source.content
                 };
 
                 self.sources_by_id.entry(build_id.clone()).or_default().insert(
