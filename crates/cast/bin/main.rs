@@ -168,9 +168,17 @@ async fn main() -> Result<()> {
             let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
-        CastSubcommand::AbiEncode { sig, packed, args } => {
+        CastSubcommand::AbiEncode { sig, packed, with_selector, args } => {
             if !packed {
-                println!("{}", SimpleCast::abi_encode(&sig, &args)?);
+                if !with_selector {
+                    println!("{}", SimpleCast::abi_encode(&sig, &args)?);
+                } else {
+                    println!(
+                        "{}{}",
+                        SimpleCast::get_selector(&sig, 0),
+                        SimpleCast::abi_encode(&sig, &args)?
+                    );
+                }
             } else {
                 println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?);
             }

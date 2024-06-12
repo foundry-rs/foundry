@@ -510,6 +510,10 @@ pub enum CastSubcommand {
         #[arg(long)]
         packed: bool,
 
+        /// Whether to prepend selector.
+        #[arg(long)]
+        with_selector: bool,
+
         /// The arguments of the function.
         #[arg(allow_hyphen_values = true)]
         args: Vec<String>,
