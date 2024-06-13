@@ -293,20 +293,76 @@ enum CommonCreateOutcome {
     EOFCreate(EOFCreateOutcome),
 }
 
+trait CommonEndInput {
+    fn outcome_result(&self) -> InstructionResult;
+    fn outcome_output(&self) -> Bytes;
+    fn outcome_gas(&self) -> Gas;
+    fn address(&self) -> Option<Address>;
+    fn create_outcome(
+        &self,
+        result: InstructionResult,
+        output: Bytes,
+        address: Option<Address>,
+    ) -> CommonEndOutcome;
+}
+
+impl CommonEndInput for CreateOutcome {
+    fn outcome_result(&self) -> InstructionResult {
+        self.result.result
+    }
+    fn outcome_output(&self) -> Bytes {
+        self.result.output.clone()
+    }
+    fn outcome_gas(&self) -> Gas {
+        self.result.gas
+    }
+    fn address(&self) -> Option<Address> {
+        self.address
+    }
+
+    fn create_outcome(
+        &self,
+        result: InstructionResult,
+        output: Bytes,
+        address: Option<Address>,
+    ) -> CommonEndOutcome {
+        CommonEndOutcome::Create(Self {
+            result: InterpreterResult { result, output, gas: self.outcome_gas() },
+            address,
+        })
+    }
+}
+
+impl CommonEndInput for EOFCreateOutcome {
+    fn outcome_result(&self) -> InstructionResult {
+        self.result.result
+    }
+    fn outcome_output(&self) -> Bytes {
+        self.result.output.clone()
+    }
+    fn outcome_gas(&self) -> Gas {
+        self.result.gas
+    }
+    fn address(&self) -> Option<Address> {
+        Some(self.address)
+    }
+    fn create_outcome(
+        &self,
+        result: InstructionResult,
+        output: Bytes,
+        address: Option<Address>,
+    ) -> CommonEndOutcome {
+        CommonEndOutcome::EOFCreate(Self {
+            result: InterpreterResult { result, output, gas: self.outcome_gas() },
+            address: address.unwrap_or_default(),
+            return_memory_range: self.return_memory_range.clone(),
+        })
+    }
+}
+
 enum CommonEndOutcome {
     Create(CreateOutcome),
     EOFCreate(EOFCreateOutcome),
-}
-
-/// Parameters for legacy and EOF create_end actions.
-struct EndParams<'a, DB>
-where
-    DB: DatabaseExt,
-{
-    ecx: &'a mut EvmContext<DB>,
-    outcome_result: InstructionResult,
-    outcome_output: Bytes,
-    address: Option<Address>,
 }
 
 /// Helps collecting transactions from different forks.
@@ -672,19 +728,15 @@ impl Cheatcodes {
         None
     }
 
-    fn end_common<DB, F>(
-        &mut self,
-        params: &mut EndParams<'_, DB>,
-        create_outcome_fn: &mut F,
-    ) -> CommonEndOutcome
+    fn end_common<DB, Input>(&mut self, ecx: &mut EvmContext<DB>, input: Input) -> CommonEndOutcome
     where
         DB: DatabaseExt,
-        F: FnMut(InstructionResult, Bytes, Option<Address>) -> CommonEndOutcome,
+        Input: CommonEndInput,
     {
         // Clean up pranks
         if let Some(prank) = &self.prank {
-            if params.ecx.inner.journaled_state.depth() == prank.depth {
-                params.ecx.inner.env.tx.caller = prank.prank_origin;
+            if ecx.inner.journaled_state.depth() == prank.depth {
+                ecx.inner.env.tx.caller = prank.prank_origin;
 
                 // Clean single-call prank once we have returned to the original depth
                 if prank.single_call {
@@ -695,8 +747,8 @@ impl Cheatcodes {
 
         // Clean up broadcasts
         if let Some(broadcast) = &self.broadcast {
-            if params.ecx.inner.journaled_state.depth() == broadcast.depth {
-                params.ecx.inner.env.tx.caller = broadcast.original_origin;
+            if ecx.inner.journaled_state.depth() == broadcast.depth {
+                ecx.inner.env.tx.caller = broadcast.original_origin;
 
                 // Clean single-call broadcast once we have returned to the original depth
                 if broadcast.single_call {
@@ -707,23 +759,25 @@ impl Cheatcodes {
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if params.ecx.inner.journaled_state.depth() <= expected_revert.depth &&
+            if ecx.inner.journaled_state.depth() <= expected_revert.depth &&
                 matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match expect::handle_expect_revert(
                     true,
                     expected_revert.reason.as_deref(),
-                    params.outcome_result,
-                    params.outcome_output.clone(),
+                    input.outcome_result(),
+                    input.outcome_output().clone(),
                 ) {
-                    Ok((new_address, retdata)) => {
-                        create_outcome_fn(InstructionResult::Return, retdata.clone(), new_address)
-                    }
-                    Err(err) => create_outcome_fn(
+                    Ok((new_address, retdata)) => input.create_outcome(
+                        InstructionResult::Return,
+                        retdata.clone(),
+                        new_address,
+                    ),
+                    Err(err) => input.create_outcome(
                         InstructionResult::Revert,
                         Bytes::from(err.abi_encode()),
-                        params.address,
+                        input.address(),
                     ),
                 };
             }
@@ -733,12 +787,12 @@ impl Cheatcodes {
         // previous call depth's recorded accesses, if any
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
-            if params.ecx.inner.journaled_state.depth() > 0 {
+            if ecx.inner.journaled_state.depth() > 0 {
                 let mut last_depth =
                     recorded_account_diffs_stack.pop().expect("missing CREATE account accesses");
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
-                if params.outcome_result.is_revert() {
+                if input.outcome_result().is_revert() {
                     last_depth.iter_mut().for_each(|element| {
                         element.reverted = true;
                         element
@@ -752,17 +806,14 @@ impl Cheatcodes {
                 // changes. Depending on what depth the cheat was called at, there
                 // may not be any pending calls to update if execution has
                 // percolated up to a higher depth.
-                if create_access.depth == params.ecx.inner.journaled_state.depth() {
+                if create_access.depth == ecx.inner.journaled_state.depth() {
                     debug_assert_eq!(
                         create_access.kind as u8,
                         crate::Vm::AccountAccessKind::Create as u8
                     );
-                    if let Some(address) = params.address {
-                        if let Ok((created_acc, _)) = params
-                            .ecx
-                            .inner
-                            .journaled_state
-                            .load_account(address, &mut params.ecx.inner.db)
+                    if let Some(address) = input.address() {
+                        if let Ok((created_acc, _)) =
+                            ecx.inner.journaled_state.load_account(address, &mut ecx.inner.db)
                         {
                             create_access.newBalance = created_acc.info.balance;
                             create_access.deployedCode =
@@ -780,7 +831,11 @@ impl Cheatcodes {
                 }
             }
         }
-        create_outcome_fn(params.outcome_result, params.outcome_output.clone(), params.address)
+        input.create_outcome(
+            input.outcome_result(),
+            input.outcome_output().clone(),
+            input.address(),
+        )
     }
 }
 
@@ -1399,21 +1454,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         _call: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
-        let mut params = EndParams {
-            ecx,
-            outcome_result: outcome.result.result,
-            outcome_output: outcome.result.output.clone(),
-            address: outcome.address,
-        };
-
-        let mut create_outcome_fn = |result, output, address| {
-            CommonEndOutcome::Create(CreateOutcome {
-                result: InterpreterResult { result, output, gas: outcome.result.gas },
-                address,
-            })
-        };
-
-        match self.end_common(&mut params, &mut create_outcome_fn) {
+        match self.end_common(ecx, outcome.clone()) {
             CommonEndOutcome::Create(outcome) => outcome,
             _ => outcome, // This case should never happen
         }
@@ -1433,25 +1474,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     fn eofcreate_end(
         &mut self,
         ecx: &mut EvmContext<DB>,
-        call: &EOFCreateInput,
+        _call: &EOFCreateInput,
         outcome: EOFCreateOutcome,
     ) -> EOFCreateOutcome {
-        let mut params = EndParams {
-            ecx,
-            outcome_result: outcome.result.result,
-            outcome_output: outcome.result.output.clone(),
-            address: Some(outcome.address),
-        };
-
-        let mut create_outcome_fn = |result, output, address: Option<Address>| {
-            CommonEndOutcome::EOFCreate(EOFCreateOutcome {
-                result: InterpreterResult { result, output, gas: outcome.result.gas },
-                address: address.unwrap_or(call.created_address),
-                return_memory_range: outcome.return_memory_range.clone(),
-            })
-        };
-
-        match self.end_common(&mut params, &mut create_outcome_fn) {
+        match self.end_common(ecx, outcome.clone()) {
             CommonEndOutcome::EOFCreate(outcome) => outcome,
             _ => outcome, // This case should never happen
         }
