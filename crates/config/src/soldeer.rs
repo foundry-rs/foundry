@@ -11,7 +11,7 @@ pub struct SoldeerDependency {
     pub version: String,
 
     /// The url from where the dependency was retrieved
-    pub url: String,
+    pub url: Option<String>,
 }
 
 /// Type for Soldeer configs, under dependencies tag in the foundry.toml
