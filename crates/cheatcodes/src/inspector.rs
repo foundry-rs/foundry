@@ -158,25 +158,139 @@ impl Context {
     }
 }
 
+trait CommonCreateInput<DB: DatabaseExt> {
+    fn caller(&self) -> Address;
+    fn gas_limit(&self) -> u64;
+    fn value(&self) -> U256;
+    fn init_code(&self) -> Bytes;
+    fn scheme(&self) -> Option<CreateScheme>;
+    fn set_caller(&mut self, caller: Address);
+    fn create_outcome(
+        &self,
+        interpreter_result: InterpreterResult,
+        created_address: Option<Address>,
+        return_memory_range: Option<Range<usize>>,
+    ) -> CommonCreateOutcome;
+    fn log_debug(&self, cheatcode: &mut Cheatcodes, scheme: &CreateScheme);
+    fn allow_cheatcodes(
+        &self,
+        cheatcodes: &mut Cheatcodes,
+        ecx: &mut InnerEvmContext<DB>,
+    ) -> Address;
+    fn computed_created_address(&self) -> Option<Address>;
+    fn return_memory_range(&self) -> Option<Range<usize>>;
+}
+
+impl<DB: DatabaseExt> CommonCreateInput<DB> for &mut CreateInputs {
+    fn caller(&self) -> Address {
+        self.caller
+    }
+    fn gas_limit(&self) -> u64 {
+        self.gas_limit
+    }
+    fn value(&self) -> U256 {
+        self.value
+    }
+    fn init_code(&self) -> Bytes {
+        self.init_code.clone()
+    }
+    fn scheme(&self) -> Option<CreateScheme> {
+        Some(self.scheme)
+    }
+    fn set_caller(&mut self, caller: Address) {
+        self.caller = caller;
+    }
+    fn create_outcome(
+        &self,
+        result: InterpreterResult,
+        address: Option<Address>,
+        _return_memory_range: Option<Range<usize>>,
+    ) -> CommonCreateOutcome {
+        CommonCreateOutcome::Create(CreateOutcome { result, address })
+    }
+    fn log_debug(&self, cheatcode: &mut Cheatcodes, scheme: &CreateScheme) {
+        let kind = match scheme {
+            CreateScheme::Create => "create",
+            CreateScheme::Create2 { .. } => "create2",
+        };
+        debug!(target: "cheatcodes", tx=?cheatcode.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
+    }
+    fn allow_cheatcodes(
+        &self,
+        cheatcodes: &mut Cheatcodes,
+        ecx: &mut InnerEvmContext<DB>,
+    ) -> Address {
+        let old_nonce = ecx
+            .journaled_state
+            .state
+            .get(&self.caller)
+            .map(|acc| acc.info.nonce)
+            .unwrap_or_default();
+        let created_address = self.created_address(old_nonce);
+        cheatcodes.allow_cheatcodes_on_create(ecx, self.caller, created_address);
+        created_address
+    }
+    fn computed_created_address(&self) -> Option<Address> {
+        None
+    }
+    fn return_memory_range(&self) -> Option<Range<usize>> {
+        None
+    }
+}
+
+impl<DB: DatabaseExt> CommonCreateInput<DB> for &mut EOFCreateInput {
+    fn caller(&self) -> Address {
+        self.caller
+    }
+    fn gas_limit(&self) -> u64 {
+        self.gas_limit
+    }
+    fn value(&self) -> U256 {
+        self.value
+    }
+    fn init_code(&self) -> Bytes {
+        self.eof_init_code.raw.clone()
+    }
+    fn scheme(&self) -> Option<CreateScheme> {
+        None
+    }
+    fn set_caller(&mut self, caller: Address) {
+        self.caller = caller;
+    }
+    fn create_outcome(
+        &self,
+        result: InterpreterResult,
+        address: Option<Address>,
+        return_memory_range: Option<Range<usize>>,
+    ) -> CommonCreateOutcome {
+        CommonCreateOutcome::EOFCreate(EOFCreateOutcome {
+            result,
+            address: address.unwrap_or(self.created_address),
+            return_memory_range: return_memory_range.unwrap_or_default(),
+        })
+    }
+    fn log_debug(&self, cheatcode: &mut Cheatcodes, _scheme: &CreateScheme) {
+        debug!(target: "cheatcodes", tx=?cheatcode.broadcastable_transactions.back().unwrap(), "broadcastable eofcreate");
+    }
+    fn allow_cheatcodes(
+        &self,
+        cheatcodes: &mut Cheatcodes,
+        ecx: &mut InnerEvmContext<DB>,
+    ) -> Address {
+        cheatcodes.allow_cheatcodes_on_create(ecx, self.caller, self.created_address);
+        self.created_address
+    }
+    fn computed_created_address(&self) -> Option<Address> {
+        Some(self.created_address)
+    }
+    fn return_memory_range(&self) -> Option<Range<usize>> {
+        Some(self.return_memory_range.clone())
+    }
+}
+
 enum CommonCreateOutcome {
     Create(CreateOutcome),
     EOFCreate(EOFCreateOutcome),
-}
-
-/// Parameters for legacy and EOF create actions.
-struct CreateParams<'a, DB, CallType>
-where
-    DB: DatabaseExt,
-{
-    ecx: &'a mut EvmContext<DB>,
-    call: &'a mut CallType,
-    call_caller: Address,
-    call_gas_limit: u64,
-    call_value: U256,
-    call_init_code: Bytes,
-    call_scheme: Option<CreateScheme>,
-    return_memory_range: Option<Range<usize>>,
-    created_address: Option<Address>,
 }
 
 enum CommonEndOutcome {
@@ -454,78 +568,70 @@ impl Cheatcodes {
         }
     }
 
-    fn create_common<DB, CallType, F, G, H>(
+    fn create_common<DB, Input>(
         &mut self,
-        params: &mut CreateParams<'_, DB, CallType>,
-        create_outcome_fn: &mut F,
-        log_debug_fn: &mut G,
-        allow_cheatcodes_fn: &mut H,
+        ecx: &mut EvmContext<DB>,
+        mut input: Input,
     ) -> Option<CommonCreateOutcome>
     where
         DB: DatabaseExt,
-        F: FnMut(InterpreterResult, Option<Address>, Option<Range<usize>>) -> CommonCreateOutcome,
-        G: FnMut(&Self, &CreateScheme),
-        H: FnMut(&mut Self, &mut InnerEvmContext<DB>, &mut CallType, Address) -> Address,
+        Input: CommonCreateInput<DB>,
     {
-        let gas = Gas::new(params.call_gas_limit);
+        let gas = Gas::new(input.gas_limit());
 
         // Apply our prank
         if let Some(prank) = &self.prank {
-            if params.ecx.inner.journaled_state.depth() >= prank.depth &&
-                params.call_caller == prank.prank_caller
+            if ecx.inner.journaled_state.depth() >= prank.depth &&
+                input.caller() == prank.prank_caller
             {
                 // At the target depth we set `msg.sender`
-                if params.ecx.inner.journaled_state.depth() == prank.depth {
-                    params.call_caller = prank.new_caller;
+                if ecx.inner.journaled_state.depth() == prank.depth {
+                    input.set_caller(prank.new_caller);
                 }
 
                 // At the target depth, or deeper, we set `tx.origin`
                 if let Some(new_origin) = prank.new_origin {
-                    params.ecx.env.tx.caller = new_origin;
+                    ecx.env.tx.caller = new_origin;
                 }
             }
         }
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if params.ecx.inner.journaled_state.depth() >= broadcast.depth &&
-                params.call_caller == broadcast.original_caller
+            if ecx.inner.journaled_state.depth() >= broadcast.depth &&
+                input.caller() == broadcast.original_caller
             {
-                if let Err(err) = params
-                    .ecx
-                    .inner
-                    .journaled_state
-                    .load_account(broadcast.new_origin, &mut params.ecx.inner.db)
+                if let Err(err) =
+                    ecx.inner.journaled_state.load_account(broadcast.new_origin, &mut ecx.inner.db)
                 {
-                    return Some(create_outcome_fn(
+                    return Some(input.create_outcome(
                         InterpreterResult {
                             result: InstructionResult::Revert,
                             output: Error::encode(err),
                             gas,
                         },
-                        params.created_address,
-                        params.return_memory_range.clone(),
+                        input.computed_created_address(),
+                        input.return_memory_range().clone(),
                     ));
                 }
 
-                params.ecx.env.tx.caller = broadcast.new_origin;
+                ecx.env.tx.caller = broadcast.new_origin;
 
-                if params.ecx.journaled_state.depth() == broadcast.depth {
-                    params.call_caller = broadcast.new_origin;
-                    let is_fixed_gas_limit =
-                        check_if_fixed_gas_limit(params.ecx, params.call_gas_limit);
+                if ecx.journaled_state.depth() == broadcast.depth {
+                    input.set_caller(broadcast.new_origin);
+                    let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, input.gas_limit());
 
-                    let account = &params.ecx.inner.journaled_state.state()[&broadcast.new_origin];
+                    let account = &ecx.inner.journaled_state.state()[&broadcast.new_origin];
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                        rpc: params.ecx.inner.db.active_fork_url(),
+                        rpc: ecx.inner.db.active_fork_url(),
                         transaction: TransactionRequest {
                             from: Some(broadcast.new_origin),
                             to: None,
-                            value: Some(params.call_value),
-                            input: TransactionInput::new(params.call_init_code.clone()),
+                            value: Some(input.value()),
+                            input: TransactionInput::new(input.init_code().clone()),
                             nonce: Some(account.info.nonce),
                             gas: if is_fixed_gas_limit {
-                                Some(params.call_gas_limit as u128)
+                                Some(input.gas_limit() as u128)
                             } else {
                                 None
                             },
@@ -533,33 +639,33 @@ impl Cheatcodes {
                         },
                     });
 
-                    log_debug_fn(self, &params.call_scheme.unwrap_or(CreateScheme::Create));
+                    input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));
                 }
             }
         }
 
         // Allow cheatcodes from the address of the new contract
-        let address = allow_cheatcodes_fn(self, params.ecx, params.call, params.call_caller);
+        let address = input.allow_cheatcodes(self, ecx);
 
         // If `recordAccountAccesses` has been called, record the create
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             recorded_account_diffs_stack.push(vec![AccountAccess {
                 chainInfo: crate::Vm::ChainInfo {
-                    forkId: params.ecx.db.active_fork_id().unwrap_or_default(),
-                    chainId: U256::from(params.ecx.env.cfg.chain_id),
+                    forkId: ecx.db.active_fork_id().unwrap_or_default(),
+                    chainId: U256::from(ecx.env.cfg.chain_id),
                 },
-                accessor: params.call_caller,
+                accessor: input.caller(),
                 account: address,
                 kind: crate::Vm::AccountAccessKind::Create,
                 initialized: true,
                 oldBalance: U256::ZERO, // updated on (eof)create_end
                 newBalance: U256::ZERO, // updated on (eof)create_end
-                value: params.call_value,
-                data: params.call_init_code.clone(),
+                value: input.value(),
+                data: input.init_code().clone(),
                 reverted: false,
                 deployedCode: Bytes::new(), // updated on (eof)create_end
                 storageAccesses: vec![],    // updated on (eof)create_end
-                depth: params.ecx.journaled_state.depth(),
+                depth: ecx.journaled_state.depth(),
             }]);
         }
 
@@ -1281,66 +1387,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         ecx: &mut EvmContext<DB>,
         call: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        let call_caller = call.caller;
-        let call_gas_limit = call.gas_limit;
-        let call_value = call.value;
-        let call_init_code = call.init_code.clone();
-        let call_scheme = Some(call.scheme);
-
-        let mut params = CreateParams {
-            ecx,
-            call,
-            call_caller,
-            call_gas_limit,
-            call_value,
-            call_init_code,
-            return_memory_range: None,
-            created_address: None,
-            call_scheme,
-        };
-
-        let mut create_outcome_fn =
-            |result, address, _| CommonCreateOutcome::Create(CreateOutcome { result, address });
-
-        let mut log_debug_fn = |this: &Self, scheme: &CreateScheme| {
-            let kind = match scheme {
-                CreateScheme::Create => "create",
-                CreateScheme::Create2 { .. } => "create2",
-            };
-            debug!(target: "cheatcodes", tx=?this.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
-        };
-
-        let mut allow_cheatcodes_fn = |this: &mut Self,
-                                       ecx: &mut InnerEvmContext<DB>,
-                                       call: &mut CreateInputs,
-                                       caller: Address| {
-            let old_nonce = ecx
-                .journaled_state
-                .state
-                .get(&caller)
-                .map(|acc| acc.info.nonce)
-                .unwrap_or_default();
-            call.caller = caller;
-            let created_address = call.created_address(old_nonce);
-            this.allow_cheatcodes_on_create(ecx, caller, created_address);
-            created_address
-        };
-
-        let outcome = self
-            .create_common(
-                &mut params,
-                &mut create_outcome_fn,
-                &mut log_debug_fn,
-                &mut allow_cheatcodes_fn,
-            )
-            .and_then(|outcome| match outcome {
-                CommonCreateOutcome::Create(outcome) => Some(outcome),
-                _ => None,
-            });
-
-        call.caller = params.call_caller;
-
-        outcome
+        self.create_common(ecx, call).and_then(|outcome| match outcome {
+            CommonCreateOutcome::Create(outcome) => Some(outcome),
+            _ => None,
+        })
     }
 
     fn create_end(
@@ -1374,62 +1424,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         ecx: &mut EvmContext<DB>,
         call: &mut EOFCreateInput,
     ) -> Option<EOFCreateOutcome> {
-        let call_caller = call.caller;
-        let call_gas_limit = call.gas_limit;
-        let call_value = call.value;
-        let call_init_code = call.eof_init_code.raw.clone();
-        let call_scheme = None;
-        let return_memory_range = call.return_memory_range.clone();
-        let created_address = call.created_address;
-
-        let mut params = CreateParams {
-            ecx,
-            call,
-            call_caller,
-            call_gas_limit,
-            call_value,
-            call_init_code,
-            call_scheme,
-            return_memory_range: Some(return_memory_range.clone()),
-            created_address: Some(created_address),
-        };
-
-        let mut create_outcome_fn =
-            move |result, address: Option<Address>, return_memory_range: Option<Range<usize>>| {
-                CommonCreateOutcome::EOFCreate(EOFCreateOutcome {
-                    result,
-                    address: address.unwrap_or(created_address),
-                    return_memory_range: return_memory_range.unwrap_or_default(),
-                })
-            };
-
-        let mut log_debug_fn = |this: &Self, _: &CreateScheme| {
-            debug!(target: "cheatcodes", tx=?this.broadcastable_transactions.back().unwrap(), "broadcastable eofcreate");
-        };
-
-        let mut allow_cheatcodes_fn = |this: &mut Self,
-                                       ecx: &mut InnerEvmContext<DB>,
-                                       _call: &mut EOFCreateInput,
-                                       caller: Address| {
-            this.allow_cheatcodes_on_create(ecx, caller, created_address);
-            created_address
-        };
-
-        let outcome = self
-            .create_common(
-                &mut params,
-                &mut create_outcome_fn,
-                &mut log_debug_fn,
-                &mut allow_cheatcodes_fn,
-            )
-            .and_then(|outcome| match outcome {
-                CommonCreateOutcome::EOFCreate(outcome) => Some(outcome),
-                _ => None,
-            });
-
-        call.caller = params.call_caller;
-
-        outcome
+        self.create_common(ecx, call).and_then(|outcome| match outcome {
+            CommonCreateOutcome::EOFCreate(outcome) => Some(outcome),
+            _ => None,
+        })
     }
 
     fn eofcreate_end(
