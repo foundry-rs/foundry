@@ -137,7 +137,7 @@ fn broadcast<DB: DatabaseExt>(
     let mut new_origin = new_origin.cloned();
 
     if new_origin.is_none() {
-        if let Some(script_wallets) = &ccx.state.script_wallets {
+        if let Some(script_wallets) = ccx.state.script_wallets() {
             let mut script_wallets = script_wallets.inner.lock();
             if let Some(provided_sender) = script_wallets.provided_sender {
                 new_origin = Some(provided_sender);
@@ -176,7 +176,7 @@ fn broadcast_key<DB: DatabaseExt>(
 
     let result = broadcast(ccx, Some(&new_origin), single_call);
     if result.is_ok() {
-        if let Some(script_wallets) = &ccx.state.script_wallets {
+        if let Some(script_wallets) = ccx.state.script_wallets() {
             script_wallets.add_local_signer(wallet);
         }
     }
