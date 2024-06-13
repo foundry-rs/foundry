@@ -283,12 +283,10 @@ impl<'a> ContractRunner<'a> {
         let start = Instant::now();
         let mut warnings = Vec::new();
 
+        // Check if `setUp` function with valid signature declared.
         let setup_fns: Vec<_> =
             self.contract.abi.functions().filter(|func| func.name.is_setup()).collect();
-
-        // Whether to call the `setUp` function.
         let call_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
-
         // There is a single miss-cased `setUp` function, so we add a warning
         for &setup_fn in setup_fns.iter() {
             if setup_fn.name != "setUp" {
@@ -308,7 +306,7 @@ impl<'a> ContractRunner<'a> {
             )
         }
 
-        let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
+        // Check if `afterInvariant` function with valid signature declared.
         let after_invariant_fns: Vec<_> =
             self.contract.abi.functions().filter(|func| func.name.is_after_invariant()).collect();
         if after_invariant_fns.len() > 1 {
@@ -335,6 +333,7 @@ impl<'a> ContractRunner<'a> {
         });
 
         // Invariant testing requires tracing to figure out what contracts were created.
+        let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
         let tmp_tracing = self.executor.inspector.tracer.is_none() && has_invariants && call_setup;
         if tmp_tracing {
             self.executor.set_tracing(true);
