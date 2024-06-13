@@ -3,7 +3,11 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::compile::ProjectCompiler;
-use foundry_compilers::{utils::source_files_iter, Project, ProjectCompileOutput};
+use foundry_compilers::{
+    compilers::{multi::MultiCompilerLanguage, Language},
+    utils::source_files_iter,
+    Project, ProjectCompileOutput,
+};
 use foundry_config::{
     figment::{
         self,
@@ -17,9 +21,6 @@ use serde::Serialize;
 use watchexec::config::{InitConfig, RuntimeConfig};
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
-
-// Extensions accepted by `forge build`
-const BUILD_EXTENSIONS: &[&str] = &["sol", "yul", "vy", "vyi"];
 
 /// CLI arguments for `forge build`.
 ///
@@ -87,7 +88,7 @@ impl BuildArgs {
         let mut files = vec![];
         if let Some(dirs) = self.args.paths {
             for dir in dirs {
-                files.extend(source_files_iter(dir, BUILD_EXTENSIONS));
+                files.extend(source_files_iter(dir, MultiCompilerLanguage::FILE_EXTENSIONS));
             }
         }
 
