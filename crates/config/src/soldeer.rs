@@ -11,6 +11,7 @@ pub struct SoldeerDependency {
     pub version: String,
 
     /// The url from where the dependency was retrieved
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
 }
 
