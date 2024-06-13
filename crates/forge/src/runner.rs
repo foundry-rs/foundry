@@ -436,8 +436,7 @@ impl<'a> ContractRunner<'a> {
         } = setup;
 
         // Run unit test
-        let mut executor = self.executor.clone();
-        let (mut raw_call_result, reason) = match executor.transact(
+        let (mut raw_call_result, reason) = match self.executor.call(
             self.sender,
             address,
             func,
@@ -470,7 +469,7 @@ impl<'a> ContractRunner<'a> {
         };
 
         let success =
-            executor.is_raw_call_mut_success(setup.address, &mut raw_call_result, should_fail);
+            self.executor.is_raw_call_mut_success(setup.address, &mut raw_call_result, should_fail);
 
         let RawCallResult {
             gas_used: gas,
