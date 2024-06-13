@@ -155,7 +155,7 @@ impl<'a> InvariantExecutor<'a> {
         let failures = RefCell::new(InvariantFailures::new());
 
         // Stores the calldata in the last run.
-        let last_run_calldata: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
+        let last_run_inputs: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
 
         // Stores additional traces for gas report.
         let gas_report_traces: RefCell<Vec<Vec<CallTraceArena>>> = RefCell::default();
@@ -212,7 +212,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Execute call from the randomly generated sequence and commit state changes.
                 let call_result = executor
-                    .call_raw_committing(
+                    .transact_raw(
                         tx.sender,
                         tx.call_details.target,
                         tx.call_details.calldata.clone(),
@@ -233,7 +233,7 @@ impl<'a> InvariantExecutor<'a> {
                     }
                 } else {
                     // Collect data for fuzzing from the state changeset.
-                    let mut state_changeset = call_result.state_changeset.to_owned().unwrap();
+                    let mut state_changeset = call_result.state_changeset.clone().unwrap();
 
                     if !call_result.reverted {
                         collect_data(
@@ -281,7 +281,7 @@ impl<'a> InvariantExecutor<'a> {
                     .map_err(|e| TestCaseError::fail(e.to_string()))?;
 
                     if !result.can_continue || current_run == self.config.depth - 1 {
-                        last_run_calldata.borrow_mut().clone_from(&inputs);
+                        last_run_inputs.borrow_mut().clone_from(&inputs);
                     }
 
                     if !result.can_continue {
@@ -335,7 +335,7 @@ impl<'a> InvariantExecutor<'a> {
             error,
             cases: fuzz_cases.into_inner(),
             reverts,
-            last_run_inputs: last_run_calldata.take(),
+            last_run_inputs: last_run_inputs.into_inner(),
             gas_report_traces: gas_report_traces.into_inner(),
         })
     }

@@ -38,7 +38,6 @@ use foundry_evm::{
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{
-    borrow::Cow,
     cmp::min,
     collections::{BTreeMap, HashMap},
     time::Instant,
@@ -437,8 +436,7 @@ impl<'a> ContractRunner<'a> {
         } = setup;
 
         // Run unit test
-        let mut executor = self.executor.clone();
-        let (raw_call_result, reason) = match executor.execute_test(
+        let (mut raw_call_result, reason) = match self.executor.call(
             self.sender,
             address,
             func,
@@ -470,15 +468,16 @@ impl<'a> ContractRunner<'a> {
             }
         };
 
+        let success =
+            self.executor.is_raw_call_mut_success(setup.address, &mut raw_call_result, should_fail);
+
         let RawCallResult {
-            reverted,
             gas_used: gas,
             stipend,
             logs: execution_logs,
             traces: execution_trace,
             coverage: execution_coverage,
             labels: new_labels,
-            state_changeset,
             debug,
             cheatcodes,
             ..
@@ -490,13 +489,6 @@ impl<'a> ContractRunner<'a> {
         labeled_addresses.extend(new_labels);
         logs.extend(execution_logs);
         coverage = merge_coverages(coverage, execution_coverage);
-
-        let success = executor.is_success(
-            setup.address,
-            reverted,
-            Cow::Owned(state_changeset.unwrap()),
-            should_fail,
-        );
 
         TestResult {
             status: match success {
@@ -532,7 +524,7 @@ impl<'a> ContractRunner<'a> {
             setup;
 
         // First, run the test normally to see if it needs to be skipped.
-        if let Err(EvmError::SkipError) = self.executor.clone().execute_test(
+        if let Err(EvmError::SkipError) = self.executor.call(
             self.sender,
             address,
             func,
