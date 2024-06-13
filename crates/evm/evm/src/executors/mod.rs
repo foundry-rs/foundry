@@ -461,9 +461,19 @@ impl Executor {
         state_changeset: Cow<'_, StateChangeset>,
         should_fail: bool,
     ) -> bool {
+        let success = self.is_success_raw(address, reverted, state_changeset);
+        should_fail ^ success
+    }
+
+    fn is_success_raw(
+        &self,
+        address: Address,
+        reverted: bool,
+        state_changeset: Cow<'_, StateChangeset>,
+    ) -> bool {
         if self.backend.has_snapshot_failure() {
             // a failure occurred in a reverted snapshot, which is considered a failed test
-            return should_fail;
+            return false;
         }
 
         let mut success = !reverted;
@@ -473,9 +483,9 @@ impl Executor {
 
             // We only clone the test contract and cheatcode accounts,
             // that's all we need to evaluate success.
-            for addr in [address, CHEATCODE_ADDRESS] {
-                let Ok(acc) = self.backend.basic_ref(addr) else { return false };
-                backend.insert_account_info(addr, acc.unwrap_or_default());
+            for address in [address, CHEATCODE_ADDRESS] {
+                let Ok(acc) = self.backend.basic_ref(address) else { return false };
+                backend.insert_account_info(address, acc.unwrap_or_default());
             }
 
             // If this test failed any asserts, then this changeset will contain changes
@@ -498,8 +508,7 @@ impl Executor {
                 }
             }
         }
-
-        should_fail ^ success
+        success
     }
 
     /// Creates the environment to use when executing a transaction in a test context
