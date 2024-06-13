@@ -14,6 +14,7 @@ use foundry_config::{
     Config,
 };
 use serde::Serialize;
+use std::fs;
 use watchexec::config::{InitConfig, RuntimeConfig};
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
@@ -80,7 +81,22 @@ impl BuildArgs {
 
         let project = config.project()?;
 
+        // Collect sources to compile if build subdirectories specified.
+        let mut files = vec![];
+        if let Some(dirs) = self.args.dirs {
+            for dir in dirs {
+                for entry in fs::read_dir(dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.is_file() {
+                        files.push(entry.path());
+                    }
+                }
+            }
+        }
+
         let compiler = ProjectCompiler::new()
+            .files(files)
             .print_names(self.names)
             .print_sizes(self.sizes)
             .quiet(self.format_json)

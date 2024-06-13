@@ -1667,6 +1667,58 @@ function test_run() external {}
     );
 });
 
+forgetest_init!(can_build_specific_dir, |prj, cmd| {
+    prj.wipe();
+    prj.add_source(
+        "Counter.sol",
+        r"
+contract Counter {
+function count() external {}
+}",
+    )
+    .unwrap();
+    prj.add_test(
+        "Foo.sol",
+        r"
+contract Foo {
+function test_foo() external {}
+}",
+    )
+    .unwrap();
+    prj.add_test(
+        "Bar.sol",
+        r"
+contract Bar {
+function test_bar() external {}
+}",
+    )
+    .unwrap();
+
+    // Build only files within test dir
+    prj.clear();
+    cmd.args(["build", "--dirs", "test", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_test_dir.stdout"),
+    );
+
+    // Build only files within src dir
+    prj.clear();
+    cmd.forge_fuse();
+    cmd.args(["build", "--dirs", "src", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_src_dir.stdout"),
+    );
+
+    // Build multiple dirs
+    prj.clear();
+    cmd.forge_fuse();
+    cmd.args(["build", "--dirs", "src", "--dirs", "test", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_multiple_dirs.stdout"),
+    );
+});
+
 // checks that build --sizes includes all contracts even if unchanged
 forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
     prj.clear_cache();
