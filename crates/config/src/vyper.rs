@@ -1,6 +1,6 @@
 //! Vyper specific configuration types.
 
-use foundry_compilers::compilers::vyper::settings::VyperOptimizationMode;
+use foundry_compilers::artifacts::vyper::VyperOptimizationMode;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

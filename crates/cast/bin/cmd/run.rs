@@ -9,7 +9,7 @@ use foundry_cli::{
     utils::{handle_traces, init_progress, TraceResult},
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
-use foundry_compilers::EvmVersion;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
     executors::{EvmError, TracingExecutor},

@@ -3,7 +3,9 @@
 use super::context::{BufferKind, DebuggerContext};
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
-use foundry_compilers::{compilers::multi::MultiCompilerLanguage, sourcemap::SourceElement};
+use foundry_compilers::{
+    artifacts::sourcemap::SourceElement, compilers::multi::MultiCompilerLanguage,
+};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},

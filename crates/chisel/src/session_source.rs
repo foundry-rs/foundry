@@ -7,8 +7,8 @@
 use eyre::Result;
 use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_compilers::{
-    artifacts::{Settings, Source, Sources},
-    CompilerOutput, Solc, SolcInput,
+    artifacts::{CompilerOutput, Settings, SolcInput, Source, Sources},
+    compilers::solc::Solc,
 };
 use foundry_config::{Config, SolcReq};
 use foundry_evm::{backend::Backend, opts::EvmOpts};

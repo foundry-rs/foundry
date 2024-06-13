@@ -1,5 +1,5 @@
 use crate::executors::{Executor, ExecutorBuilder};
-use foundry_compilers::EvmVersion;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{utils::evm_spec_id, Chain, Config};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
 use revm::primitives::{Env, SpecId};

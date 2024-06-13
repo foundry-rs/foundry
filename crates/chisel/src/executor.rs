@@ -1392,7 +1392,7 @@ impl<'a> Iterator for InstructionIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::{error::SolcError, Solc};
+    use foundry_compilers::{error::SolcError, solc::Solc};
     use semver::Version;
     use std::sync::Mutex;
 

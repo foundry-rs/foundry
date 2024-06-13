@@ -1881,7 +1881,7 @@ dependencies = [
  "foundry-block-explorers",
  "foundry-cli",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "foundry-evm",
  "foundry-test-utils",
@@ -1958,7 +1958,7 @@ dependencies = [
  "foundry-block-explorers",
  "foundry-cli",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "foundry-evm",
  "once_cell",
@@ -3277,7 +3277,7 @@ dependencies = [
  "foundry-block-explorers",
  "foundry-cli",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "foundry-debugger",
  "foundry-evm",
@@ -3334,7 +3334,7 @@ dependencies = [
  "derive_more",
  "eyre",
  "forge-fmt",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "itertools 0.13.0",
  "mdbook",
@@ -3389,7 +3389,7 @@ dependencies = [
  "foundry-cheatcodes",
  "foundry-cli",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "foundry-debugger",
  "foundry-evm",
@@ -3423,7 +3423,7 @@ dependencies = [
  "foundry-block-explorers",
  "foundry-cli",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "foundry-evm",
  "foundry-test-utils",
@@ -3454,13 +3454,12 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35344cf275788b0450c4b36d452b812d1122d622bafb29887ce244b8099a86ad"
+source = "git+https://github.com/foundry-rs/block-explorers.git?rev=9a64182#9a641823e5506861984548108ec0c859d189402c"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
  "alloy-primitives",
- "foundry-compilers",
+ "foundry-compilers-project",
  "reqwest 0.12.4",
  "semver 1.0.23",
  "serde",
@@ -3488,7 +3487,7 @@ dependencies = [
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "foundry-evm-core",
  "foundry-wallets",
@@ -3536,7 +3535,7 @@ dependencies = [
  "eyre",
  "forge-fmt",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "foundry-debugger",
  "foundry-evm",
@@ -3582,7 +3581,7 @@ dependencies = [
  "dunce",
  "eyre",
  "foundry-block-explorers",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "foundry-linking",
  "foundry-macros",
@@ -3605,30 +3604,72 @@ dependencies = [
 ]
 
 [[package]]
-name = "foundry-compilers"
+name = "foundry-compilers-artifacts"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81f9b10619d07d765a0336b1990ffcb1bb7b806a59b4d2e65cb78f5d77f373c5"
+source = "git+https://github.com/foundry-rs/compilers?rev=12d3173#12d31739fef0c9b84d57050e433904f6a8e33b66"
+dependencies = [
+ "alloy-json-abi",
+ "alloy-primitives",
+ "foundry-compilers-core",
+ "futures-util",
+ "md-5",
+ "path-slash",
+ "rayon",
+ "semver 1.0.23",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "walkdir",
+ "yansi",
+]
+
+[[package]]
+name = "foundry-compilers-core"
+version = "0.7.0"
+source = "git+https://github.com/foundry-rs/compilers?rev=12d3173#12d31739fef0c9b84d57050e433904f6a8e33b66"
+dependencies = [
+ "alloy-primitives",
+ "cfg-if",
+ "dunce",
+ "fs_extra",
+ "memmap2 0.9.4",
+ "once_cell",
+ "path-slash",
+ "regex",
+ "semver 1.0.23",
+ "serde",
+ "serde_json",
+ "svm-rs",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "walkdir",
+]
+
+[[package]]
+name = "foundry-compilers-project"
+version = "0.7.0"
+source = "git+https://github.com/foundry-rs/compilers?rev=12d3173#12d31739fef0c9b84d57050e433904f6a8e33b66"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "auto_impl",
- "cfg-if",
  "derivative",
  "dirs 5.0.1",
- "dunce",
  "dyn-clone",
+ "foundry-compilers-artifacts",
+ "foundry-compilers-core",
  "fs_extra",
  "futures-util",
  "home",
  "itertools 0.13.0",
  "md-5",
- "memmap2 0.9.4",
  "once_cell",
  "path-slash",
  "rand",
  "rayon",
- "regex",
  "semver 1.0.23",
  "serde",
  "serde_json",
@@ -3640,7 +3681,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "walkdir",
  "winnow 0.6.13",
  "yansi",
 ]
@@ -3657,7 +3697,7 @@ dependencies = [
  "eyre",
  "figment",
  "foundry-block-explorers",
- "foundry-compilers",
+ "foundry-compilers-project",
  "glob",
  "globset",
  "number_prefix",
@@ -3688,7 +3728,7 @@ dependencies = [
  "crossterm",
  "eyre",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-evm-core",
  "foundry-evm-traces",
  "ratatui",
@@ -3709,7 +3749,7 @@ dependencies = [
  "eyre",
  "foundry-cheatcodes",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "foundry-evm-core",
  "foundry-evm-coverage",
@@ -3768,7 +3808,7 @@ dependencies = [
  "alloy-primitives",
  "eyre",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-evm-core",
  "rayon",
  "revm",
@@ -3787,7 +3827,7 @@ dependencies = [
  "alloy-primitives",
  "eyre",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "foundry-evm-core",
  "foundry-evm-coverage",
@@ -3815,7 +3855,7 @@ dependencies = [
  "eyre",
  "foundry-block-explorers",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "foundry-evm-core",
  "futures",
@@ -3835,7 +3875,7 @@ name = "foundry-linking"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
- "foundry-compilers",
+ "foundry-compilers-project",
  "semver 1.0.23",
  "thiserror",
 ]
@@ -3859,7 +3899,7 @@ dependencies = [
  "eyre",
  "fd-lock 4.0.2",
  "foundry-common",
- "foundry-compilers",
+ "foundry-compilers-project",
  "foundry-config",
  "once_cell",
  "parking_lot",
@@ -6387,7 +6427,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.11.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.66",

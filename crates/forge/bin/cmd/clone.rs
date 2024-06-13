@@ -10,9 +10,13 @@ use foundry_block_explorers::{
 use foundry_cli::{opts::EtherscanOpts, p_println, utils::Git};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
-    artifacts::{output_selection::ContractOutputSelection, Settings, StorageLayout},
-    remappings::{RelativeRemapping, Remapping},
-    ConfigurableContractArtifact, ProjectCompileOutput, ProjectPathsConfig, Solc,
+    artifacts::{
+        output_selection::ContractOutputSelection,
+        remappings::{RelativeRemapping, Remapping},
+        ConfigurableContractArtifact, Settings, StorageLayout,
+    },
+    compilers::solc::Solc,
+    ProjectCompileOutput, ProjectPathsConfig,
 };
 use foundry_config::{Chain, Config};
 use std::{
@@ -388,9 +392,9 @@ fn update_config_by_metadata(
     }
 
     // apply remapping on libraries
-    let path_config = config.project_paths();
+    let path_config: ProjectPathsConfig = config.project_paths();
     let libraries = libraries
-        .with_applied_remappings(&path_config)
+        .apply(|libs| path_config.apply_lib_remappings(libs))
         .with_stripped_file_prefixes(&path_config.root);
 
     // update libraries
