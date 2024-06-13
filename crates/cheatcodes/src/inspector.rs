@@ -158,6 +158,7 @@ impl Context {
     }
 }
 
+/// Common behaviour of legacy and EOF create inputs.
 trait CommonCreateInput<DB: DatabaseExt> {
     fn caller(&self) -> Address;
     fn gas_limit(&self) -> u64;
@@ -293,6 +294,7 @@ enum CommonCreateOutcome {
     EOFCreate(EOFCreateOutcome),
 }
 
+/// Common behaviour of legacy and EOF create_end inputs.
 trait CommonEndInput {
     fn outcome_result(&self) -> InstructionResult;
     fn outcome_output(&self) -> Bytes;
@@ -633,15 +635,14 @@ impl Cheatcodes {
         DB: DatabaseExt,
         Input: CommonCreateInput<DB>,
     {
+        let ecx = &mut ecx.inner;
         let gas = Gas::new(input.gas_limit());
 
         // Apply our prank
         if let Some(prank) = &self.prank {
-            if ecx.inner.journaled_state.depth() >= prank.depth &&
-                input.caller() == prank.prank_caller
-            {
+            if ecx.journaled_state.depth() >= prank.depth && input.caller() == prank.prank_caller {
                 // At the target depth we set `msg.sender`
-                if ecx.inner.journaled_state.depth() == prank.depth {
+                if ecx.journaled_state.depth() == prank.depth {
                     input.set_caller(prank.new_caller);
                 }
 
@@ -654,11 +655,11 @@ impl Cheatcodes {
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if ecx.inner.journaled_state.depth() >= broadcast.depth &&
+            if ecx.journaled_state.depth() >= broadcast.depth &&
                 input.caller() == broadcast.original_caller
             {
                 if let Err(err) =
-                    ecx.inner.journaled_state.load_account(broadcast.new_origin, &mut ecx.inner.db)
+                    ecx.journaled_state.load_account(broadcast.new_origin, &mut ecx.db)
                 {
                     return Some(input.create_outcome(
                         InterpreterResult {
@@ -677,9 +678,9 @@ impl Cheatcodes {
                     input.set_caller(broadcast.new_origin);
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, input.gas_limit());
 
-                    let account = &ecx.inner.journaled_state.state()[&broadcast.new_origin];
+                    let account = &ecx.journaled_state.state()[&broadcast.new_origin];
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                        rpc: ecx.inner.db.active_fork_url(),
+                        rpc: ecx.db.active_fork_url(),
                         transaction: TransactionRequest {
                             from: Some(broadcast.new_origin),
                             to: None,
@@ -733,10 +734,12 @@ impl Cheatcodes {
         DB: DatabaseExt,
         Input: CommonEndInput,
     {
+        let ecx = &mut ecx.inner;
+
         // Clean up pranks
         if let Some(prank) = &self.prank {
-            if ecx.inner.journaled_state.depth() == prank.depth {
-                ecx.inner.env.tx.caller = prank.prank_origin;
+            if ecx.journaled_state.depth() == prank.depth {
+                ecx.env.tx.caller = prank.prank_origin;
 
                 // Clean single-call prank once we have returned to the original depth
                 if prank.single_call {
@@ -747,8 +750,8 @@ impl Cheatcodes {
 
         // Clean up broadcasts
         if let Some(broadcast) = &self.broadcast {
-            if ecx.inner.journaled_state.depth() == broadcast.depth {
-                ecx.inner.env.tx.caller = broadcast.original_origin;
+            if ecx.journaled_state.depth() == broadcast.depth {
+                ecx.env.tx.caller = broadcast.original_origin;
 
                 // Clean single-call broadcast once we have returned to the original depth
                 if broadcast.single_call {
@@ -759,7 +762,7 @@ impl Cheatcodes {
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if ecx.inner.journaled_state.depth() <= expected_revert.depth &&
+            if ecx.journaled_state.depth() <= expected_revert.depth &&
                 matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
@@ -787,7 +790,7 @@ impl Cheatcodes {
         // previous call depth's recorded accesses, if any
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
-            if ecx.inner.journaled_state.depth() > 0 {
+            if ecx.journaled_state.depth() > 0 {
                 let mut last_depth =
                     recorded_account_diffs_stack.pop().expect("missing CREATE account accesses");
                 // Update the reverted status of all deeper calls if this call reverted, in
@@ -806,14 +809,14 @@ impl Cheatcodes {
                 // changes. Depending on what depth the cheat was called at, there
                 // may not be any pending calls to update if execution has
                 // percolated up to a higher depth.
-                if create_access.depth == ecx.inner.journaled_state.depth() {
+                if create_access.depth == ecx.journaled_state.depth() {
                     debug_assert_eq!(
                         create_access.kind as u8,
                         crate::Vm::AccountAccessKind::Create as u8
                     );
                     if let Some(address) = input.address() {
                         if let Ok((created_acc, _)) =
-                            ecx.inner.journaled_state.load_account(address, &mut ecx.inner.db)
+                            ecx.journaled_state.load_account(address, &mut ecx.db)
                         {
                             create_access.newBalance = created_acc.info.balance;
                             create_access.deployedCode =
