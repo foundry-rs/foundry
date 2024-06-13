@@ -263,7 +263,7 @@ impl WalletSubcommands {
             Self::NewMnemonic { words, accounts, entropy } => {
                 let phrase = if let Some(entropy) = entropy {
                     let entropy = Entropy::from_slice(&hex::decode(entropy)?)?;
-                    println!("{}", "Generating mnemonic from provided entropy...".red());
+                    println!("{}", "Generating mnemonic from provided entropy...".yellow());
                     Mnemonic::<English>::new_from_entropy(entropy).to_phrase()
                 } else {
                     let mut rng = thread_rng();
