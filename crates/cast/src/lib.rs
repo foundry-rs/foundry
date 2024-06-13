@@ -333,7 +333,7 @@ where
 
         let block = self
             .provider
-            .get_block(block, full)
+            .get_block(block, full.into())
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
@@ -855,7 +855,8 @@ where
             Some(block) => match block {
                 BlockId::Number(block_number) => Ok(Some(block_number)),
                 BlockId::Hash(hash) => {
-                    let block = self.provider.get_block_by_hash(hash.block_hash, false).await?;
+                    let block =
+                        self.provider.get_block_by_hash(hash.block_hash, false.into()).await?;
                     Ok(block.map(|block| block.header.number.unwrap()).map(BlockNumberOrTag::from))
                 }
             },

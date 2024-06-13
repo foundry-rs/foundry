@@ -31,7 +31,7 @@ use proptest::{
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::primitives::HashMap;
 use shrink::shrink_sequence;
-use std::{borrow::Cow, cell::RefCell, collections::BTreeMap, sync::Arc};
+use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError};
@@ -158,7 +158,7 @@ impl<'a> InvariantExecutor<'a> {
         let failures = RefCell::new(InvariantFailures::new());
 
         // Stores the calldata in the last run.
-        let last_run_calldata: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
+        let last_run_inputs: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
 
         // Stores additional traces for gas report.
         let gas_report_traces: RefCell<Vec<Vec<CallTraceArena>>> = RefCell::default();
@@ -215,7 +215,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Execute call from the randomly generated sequence and commit state changes.
                 let call_result = executor
-                    .call_raw_committing(
+                    .transact_raw(
                         tx.sender,
                         tx.call_details.target,
                         tx.call_details.calldata.clone(),
@@ -236,7 +236,7 @@ impl<'a> InvariantExecutor<'a> {
                     }
                 } else {
                     // Collect data for fuzzing from the state changeset.
-                    let mut state_changeset = call_result.state_changeset.to_owned().unwrap();
+                    let mut state_changeset = call_result.state_changeset.clone().unwrap();
 
                     if !call_result.reverted {
                         collect_data(
@@ -284,7 +284,7 @@ impl<'a> InvariantExecutor<'a> {
                     .map_err(|e| TestCaseError::fail(e.to_string()))?;
 
                     if !result.can_continue || current_run == self.config.depth - 1 {
-                        last_run_calldata.borrow_mut().clone_from(&inputs);
+                        last_run_inputs.borrow_mut().clone_from(&inputs);
                     }
 
                     if !result.can_continue {
@@ -306,7 +306,7 @@ impl<'a> InvariantExecutor<'a> {
             }
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
-            if invariant_contract.needs_after_invariant && failures.borrow().error.is_none() {
+            if invariant_contract.call_after_invariant && failures.borrow().error.is_none() {
                 assert_after_invariant(
                     &invariant_contract,
                     &self.config,
@@ -351,7 +351,7 @@ impl<'a> InvariantExecutor<'a> {
             error,
             cases: fuzz_cases.into_inner(),
             reverts,
-            last_run_inputs: last_run_calldata.take(),
+            last_run_inputs: last_run_inputs.into_inner(),
             gas_report_traces: gas_report_traces.into_inner(),
         })
     }
@@ -710,33 +710,23 @@ fn collect_data(
 /// Calls the `afterInvariant()` function on a contract.
 /// Returns call result and if call succeeded.
 /// The state after the call is not persisted.
-pub(crate) fn call_after_invariant(
+pub(crate) fn call_after_invariant_function(
     executor: &Executor,
     to: Address,
 ) -> std::result::Result<(RawCallResult, bool), EvmError> {
     let calldata = Bytes::from_static(&IInvariantTest::afterInvariantCall::SELECTOR);
     let mut call_result = executor.call_raw(CALLER, to, calldata, U256::ZERO)?;
-    let success = executor.is_raw_call_success(
-        to,
-        Cow::Owned(call_result.state_changeset.take().unwrap()),
-        &call_result,
-        false,
-    );
+    let success = executor.is_raw_call_mut_success(to, &mut call_result, false);
     Ok((call_result, success))
 }
 
 /// Calls the invariant function and returns call result and if succeeded.
-pub(crate) fn call_invariant(
+pub(crate) fn call_invariant_function(
     executor: &Executor,
     address: Address,
     calldata: Bytes,
 ) -> Result<(RawCallResult, bool)> {
     let mut call_result = executor.call_raw(CALLER, address, calldata, U256::ZERO)?;
-    let success = executor.is_raw_call_success(
-        address,
-        Cow::Owned(call_result.state_changeset.take().unwrap()),
-        &call_result,
-        false,
-    );
+    let success = executor.is_raw_call_mut_success(address, &mut call_result, false);
     Ok((call_result, success))
 }

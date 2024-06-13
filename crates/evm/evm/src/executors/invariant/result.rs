@@ -1,6 +1,6 @@
 use super::{
-    call_after_invariant, call_invariant, error::FailedInvariantCaseData, InvariantFailures,
-    InvariantFuzzError,
+    call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
+    InvariantFailures, InvariantFuzzError,
 };
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
@@ -62,7 +62,7 @@ pub(crate) fn assert_invariants(
         }
     }
 
-    let (call_result, success) = call_invariant(
+    let (call_result, success) = call_invariant_function(
         executor,
         invariant_contract.address,
         invariant_contract.invariant_function.abi_encode_input(&[])?.into(),
@@ -104,7 +104,7 @@ pub(crate) fn can_continue(
     let mut call_results = None;
 
     let handlers_succeeded = || {
-        targeted_contracts.targets.lock().iter().all(|(address, ..)| {
+        targeted_contracts.targets.lock().keys().all(|address| {
             executor.is_success(*address, false, Cow::Borrowed(state_changeset), false)
         })
     };
@@ -159,7 +159,8 @@ pub(crate) fn assert_after_invariant(
     invariant_failures: &mut InvariantFailures,
     inputs: &[BasicTxDetails],
 ) -> Result<bool> {
-    let (call_result, success) = call_after_invariant(executor, invariant_contract.address)?;
+    let (call_result, success) =
+        call_after_invariant_function(executor, invariant_contract.address)?;
     // Fail the test case if `afterInvariant` doesn't succeed.
     if !success {
         let case_data = FailedInvariantCaseData::new(

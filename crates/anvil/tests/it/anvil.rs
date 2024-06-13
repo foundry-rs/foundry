@@ -62,7 +62,7 @@ async fn test_can_set_genesis_timestamp() {
 
     assert_eq!(
         genesis_timestamp,
-        provider.get_block(0.into(), false).await.unwrap().unwrap().header.timestamp
+        provider.get_block(0.into(), false.into()).await.unwrap().unwrap().header.timestamp
     );
 }
 
@@ -71,5 +71,8 @@ async fn test_can_use_default_genesis_timestamp() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
-    assert_ne!(0u64, provider.get_block(0.into(), false).await.unwrap().unwrap().header.timestamp);
+    assert_ne!(
+        0u64,
+        provider.get_block(0.into(), false.into()).await.unwrap().unwrap().header.timestamp
+    );
 }

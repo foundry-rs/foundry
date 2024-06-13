@@ -1,5 +1,6 @@
 use super::{
-    call_after_invariant, call_invariant, error::FailedInvariantCaseData, shrink_sequence,
+    call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
+    shrink_sequence,
 };
 use crate::executors::Executor;
 use alloy_dyn_abi::JsonAbiExt;
@@ -38,7 +39,7 @@ pub fn replay_run(
 
     // Replay each call from the sequence, collect logs, traces and coverage.
     for tx in inputs.iter() {
-        let call_result = executor.call_raw_committing(
+        let call_result = executor.transact_raw(
             tx.sender,
             tx.call_details.target,
             tx.call_details.calldata.clone(),
@@ -76,7 +77,7 @@ pub fn replay_run(
     // Checking after each call doesn't add valuable info for passing scenario
     // (invariant call result is always success) nor for failed scenarios
     // (invariant call result is always success until the last call that breaks it).
-    let (invariant_result, invariant_success) = call_invariant(
+    let (invariant_result, invariant_success) = call_invariant_function(
         &executor,
         invariant_contract.address,
         invariant_contract.invariant_function.abi_encode_input(&[])?.into(),
@@ -85,9 +86,9 @@ pub fn replay_run(
     logs.extend(invariant_result.logs);
 
     // Collect after invariant logs and traces.
-    if invariant_contract.needs_after_invariant && invariant_success {
+    if invariant_contract.call_after_invariant && invariant_success {
         let (after_invariant_result, _) =
-            call_after_invariant(&executor, invariant_contract.address)?;
+            call_after_invariant_function(&executor, invariant_contract.address)?;
         traces.push((TraceKind::Execution, after_invariant_result.traces.clone().unwrap()));
         logs.extend(after_invariant_result.logs);
     }
@@ -117,7 +118,7 @@ pub fn replay_error(
                 failed_case,
                 calls,
                 &executor,
-                invariant_contract.needs_after_invariant,
+                invariant_contract.call_after_invariant,
                 progress,
             )?;
 

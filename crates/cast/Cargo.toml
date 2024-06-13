@@ -39,7 +39,7 @@ alloy-primitives.workspace = true
 alloy-rlp.workspace = true
 alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
 alloy-transport.workspace = true
-alloy-rpc-types.workspace = true
+alloy-rpc-types = { workspace = true, features = ["eth"] }
 alloy-json-rpc.workspace = true
 alloy-signer.workspace = true
 alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }

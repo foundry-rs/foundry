@@ -286,7 +286,7 @@ impl VerifyBytecodeArgs {
         let mut executor =
             TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false);
         env.block.number = U256::from(simulation_block);
-        let block = provider.get_block(simulation_block.into(), true).await?;
+        let block = provider.get_block(simulation_block.into(), true.into()).await?;
 
         // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
         // block.
@@ -315,10 +315,10 @@ impl VerifyBytecodeArgs {
             if to != DEFAULT_CREATE2_DEPLOYER {
                 eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
             }
-            let result = executor.commit_tx_with_env(env_with_handler.to_owned())?;
+            let result = executor.transact_with_env(env_with_handler.clone())?;
 
-            if result.result.len() > 20 {
-                eyre::bail!("Failed to deploy contract using commit_tx_with_env on fork at block {} | Err: Call result is greater than 20 bytes, cannot be converted to Address", simulation_block);
+            if result.result.len() != 20 {
+                eyre::bail!("Failed to deploy contract on fork at block {simulation_block}: call result is not exactly 20 bytes");
             }
 
             Address::from_slice(&result.result)

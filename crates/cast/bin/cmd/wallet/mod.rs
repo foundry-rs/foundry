@@ -2,7 +2,7 @@ use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, Signature, B256};
 use alloy_signer::Signer;
 use alloy_signer_wallet::{
-    coins_bip39::{English, Mnemonic},
+    coins_bip39::{English, Entropy, Mnemonic},
     LocalWallet, MnemonicBuilder,
 };
 use clap::Parser;
@@ -61,6 +61,10 @@ pub enum WalletSubcommands {
         /// Number of accounts to display
         #[arg(long, short, default_value = "1")]
         accounts: u8,
+
+        /// Entropy to use for the mnemonic
+        #[arg(long, short, conflicts_with = "words")]
+        entropy: Option<String>,
     },
 
     /// Generate a vanity address.
@@ -256,9 +260,15 @@ impl WalletSubcommands {
                     }
                 }
             }
-            Self::NewMnemonic { words, accounts } => {
-                let mut rng = thread_rng();
-                let phrase = Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase();
+            Self::NewMnemonic { words, accounts, entropy } => {
+                let phrase = if let Some(entropy) = entropy {
+                    let entropy = Entropy::from_slice(&hex::decode(entropy)?)?;
+                    println!("{}", "Generating mnemonic from provided entropy...".yellow());
+                    Mnemonic::<English>::new_from_entropy(entropy).to_phrase()
+                } else {
+                    let mut rng = thread_rng();
+                    Mnemonic::<English>::new_with_count(&mut rng, words)?.to_phrase()
+                };
 
                 let builder = MnemonicBuilder::<English>::default().phrase(phrase.as_str());
                 let derivation_path = "m/44'/60'/0'/0/";

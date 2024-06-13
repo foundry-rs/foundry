@@ -170,7 +170,7 @@ impl CallArgs {
                     TraceResult::try_from(deploy_result)?
                 }
                 TxKind::Call(to) => TraceResult::from_raw(
-                    executor.call_raw_committing(sender, to, input, value)?,
+                    executor.transact_raw(sender, to, input, value)?,
                     TraceKind::Execution,
                 ),
             };

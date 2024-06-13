@@ -163,6 +163,13 @@ casttest!(wallet_list_local_accounts, |prj, cmd| {
     assert_eq!(list_output.matches('\n').count(), 10);
 });
 
+// tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic
+casttest!(wallet_mnemonic_from_entropy, |_prj, cmd| {
+    cmd.args(["wallet", "new-mnemonic", "--entropy", "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c"]);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("test test test test test test test test test test test junk"));
+});
+
 // tests that `cast wallet private-key` with arguments outputs the private key
 casttest!(wallet_private_key_from_mnemonic_arg, |_prj, cmd| {
     cmd.args([

@@ -54,14 +54,17 @@ sol! {
     }
 }
 
-/// A type that can execute calls
+/// EVM executor.
 ///
 /// The executor can be configured with various `revm::Inspector`s, like `Cheatcodes`.
 ///
-/// There are two ways of executing calls:
-/// - `committing`: any state changes made during the call are recorded and are persisting
-/// - `raw`: state changes only exist for the duration of the call and are discarded afterwards, in
-///   other words: the state of the underlying database remains unchanged.
+/// There are multiple ways of interacting the EVM:
+/// - `call`: executes a transaction, but does not persist any state changes; similar to `eth_call`,
+///   where the EVM state is unchanged after the call.
+/// - `transact`: executes a transaction and persists the state changes
+/// - `deploy`: a special case of `transact`, specialized for persisting the state of a contract
+///   deployment
+/// - `setup`: a special case of `transact`, used to set up the environment for a test
 #[derive(Clone, Debug)]
 pub struct Executor {
     /// The underlying `revm::Database` that contains the EVM storage.
@@ -81,6 +84,7 @@ pub struct Executor {
 }
 
 impl Executor {
+    /// Creates a new `Executor` with the given arguments.
     #[inline]
     pub fn new(
         mut backend: Backend,
@@ -104,7 +108,7 @@ impl Executor {
         Self { backend, env, inspector, gas_limit }
     }
 
-    /// Returns the spec id of the executor
+    /// Returns the spec ID of the executor.
     pub fn spec_id(&self) -> SpecId {
         self.env.handler_cfg.spec_id
     }
@@ -153,17 +157,16 @@ impl Executor {
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<&mut Self> {
         let mut account = self.backend.basic_ref(address)?.unwrap_or_default();
         account.nonce = nonce;
-
         self.backend.insert_account_info(address, account);
         Ok(self)
     }
 
-    /// Gets the nonce of an account
+    /// Returns the nonce of an account.
     pub fn get_nonce(&self, address: Address) -> DatabaseResult<u64> {
         Ok(self.backend.basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
     }
 
-    /// Returns true if account has no code.
+    /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> DatabaseResult<bool> {
         Ok(self.backend.basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
     }
@@ -192,190 +195,19 @@ impl Executor {
         self
     }
 
-    /// Calls the `setUp()` function on a contract.
+    /// Deploys a contract and commits the new state to the underlying database.
     ///
-    /// This will commit any state changes to the underlying database.
-    ///
-    /// Ayn changes made during the setup call to env's block environment are persistent, for
-    /// example `vm.chainId()` will change the `block.chainId` for all subsequent test calls.
-    pub fn setup(
-        &mut self,
-        from: Option<Address>,
-        to: Address,
-        rd: Option<&RevertDecoder>,
-    ) -> Result<RawCallResult, EvmError> {
-        trace!(?from, ?to, "setting up contract");
-
-        let from = from.unwrap_or(CALLER);
-        self.backend.set_test_contract(to).set_caller(from);
-        let calldata = Bytes::from_static(&ITest::setUpCall::SELECTOR);
-        let mut res = self.call_raw_committing(from, to, calldata, U256::ZERO)?;
-        res = res.into_result(rd)?;
-
-        // record any changes made to the block's environment during setup
-        self.env.block = res.env.block.clone();
-        // and also the chainid, which can be set manually
-        self.env.cfg.chain_id = res.env.cfg.chain_id;
-
-        if let Some(changeset) = res.state_changeset.as_ref() {
-            let success = self
-                .ensure_success(to, res.reverted, Cow::Borrowed(changeset), false)
-                .map_err(|err| EvmError::Eyre(eyre::eyre!(err)))?;
-            if !success {
-                return Err(res.into_execution_error("execution error".to_string()).into());
-            }
-        }
-
-        Ok(res)
-    }
-
-    /// Performs a call to an account on the current state of the VM.
-    ///
-    /// The state after the call is persisted.
-    pub fn call_committing(
+    /// Executes a CREATE transaction with the contract `code` and persistent database state
+    /// modifications.
+    pub fn deploy(
         &mut self,
         from: Address,
-        to: Address,
-        func: &Function,
-        args: &[DynSolValue],
+        code: Bytes,
         value: U256,
         rd: Option<&RevertDecoder>,
-    ) -> Result<CallResult, EvmError> {
-        let calldata = Bytes::from(func.abi_encode_input(args)?);
-        let result = self.call_raw_committing(from, to, calldata, value)?;
-        result.into_decoded_result(func, rd)
-    }
-
-    /// Performs a raw call to an account on the current state of the VM.
-    ///
-    /// The state after the call is persisted.
-    pub fn call_raw_committing(
-        &mut self,
-        from: Address,
-        to: Address,
-        calldata: Bytes,
-        value: U256,
-    ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
-        let mut result = self.call_raw_with_env(env)?;
-        self.commit(&mut result);
-        Ok(result)
-    }
-
-    /// Executes the test function call
-    pub fn execute_test(
-        &mut self,
-        from: Address,
-        test_contract: Address,
-        func: &Function,
-        args: &[DynSolValue],
-        value: U256,
-        rd: Option<&RevertDecoder>,
-    ) -> Result<CallResult, EvmError> {
-        let calldata = Bytes::from(func.abi_encode_input(args)?);
-
-        // execute the call
-        let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
-        let result = self.call_raw_with_env(env)?;
-        result.into_decoded_result(func, rd)
-    }
-
-    /// Performs a call to an account on the current state of the VM.
-    ///
-    /// The state after the call is not persisted.
-    pub fn call(
-        &self,
-        from: Address,
-        to: Address,
-        func: &Function,
-        args: &[DynSolValue],
-        value: U256,
-        rd: Option<&RevertDecoder>,
-    ) -> Result<CallResult, EvmError> {
-        let calldata = Bytes::from(func.abi_encode_input(args)?);
-        let result = self.call_raw(from, to, calldata, value)?;
-        result.into_decoded_result(func, rd)
-    }
-
-    /// Performs a call to an account on the current state of the VM.
-    ///
-    /// The state after the call is not persisted.
-    pub fn call_sol<C: SolCall>(
-        &self,
-        from: Address,
-        to: Address,
-        args: &C,
-        value: U256,
-        rd: Option<&RevertDecoder>,
-    ) -> Result<CallResult<C::Return>, EvmError> {
-        let calldata = Bytes::from(args.abi_encode());
-        let mut raw = self.call_raw(from, to, calldata, value)?;
-        raw = raw.into_result(rd)?;
-        Ok(CallResult { decoded_result: C::abi_decode_returns(&raw.result, false)?, raw })
-    }
-
-    /// Performs a raw call to an account on the current state of the VM.
-    ///
-    /// Any state modifications made by the call are not committed.
-    ///
-    /// This intended for fuzz calls, which try to minimize [Backend] clones by using a Cow of the
-    /// underlying [Backend] so it only gets cloned when cheatcodes that require mutable access are
-    /// used.
-    pub fn call_raw(
-        &self,
-        from: Address,
-        to: Address,
-        calldata: Bytes,
-        value: U256,
-    ) -> eyre::Result<RawCallResult> {
-        let mut inspector = self.inspector.clone();
-        // Build VM
-        let mut env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
-        let mut db = CowBackend::new(&self.backend);
-        let result = db.inspect(&mut env, &mut inspector)?;
-
-        // Persist the snapshot failure recorded on the fuzz backend wrapper.
-        let has_snapshot_failure = db.has_snapshot_failure();
-        convert_executed_result(env, inspector, result, has_snapshot_failure)
-    }
-
-    /// Execute the transaction configured in `env.tx` and commit the changes
-    pub fn commit_tx_with_env(&mut self, env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
-        let mut result = self.call_raw_with_env(env)?;
-        self.commit(&mut result);
-        Ok(result)
-    }
-
-    /// Execute the transaction configured in `env.tx`
-    pub fn call_raw_with_env(&mut self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
-        // execute the call
-        let mut inspector = self.inspector.clone();
-        let result = self.backend.inspect(&mut env, &mut inspector)?;
-        convert_executed_result(env, inspector, result, self.backend.has_snapshot_failure())
-    }
-
-    /// Commit the changeset to the database and adjust `self.inspector_config`
-    /// values according to the executed call result
-    fn commit(&mut self, result: &mut RawCallResult) {
-        // Persist changes to db.
-        if let Some(changes) = &result.state_changeset {
-            self.backend.commit(changes.clone());
-        }
-
-        // Persist cheatcode state.
-        let mut cheatcodes = result.cheatcodes.take();
-        if let Some(cheats) = cheatcodes.as_mut() {
-            // Clear broadcastable transactions
-            cheats.broadcastable_transactions.clear();
-            debug!(target: "evm::executors", "cleared broadcastable transactions");
-
-            // corrected_nonce value is needed outside of this context (setUp), so we don't
-            // reset it.
-        }
-        self.inspector.cheatcodes = cheatcodes;
-
-        // Persist the changed environment.
-        self.inspector.set_env(&result.env);
+    ) -> Result<DeployResult, EvmError> {
+        let env = self.build_test_env(from, TransactTo::Create, code, value);
+        self.deploy_with_env(env, rd)
     }
 
     /// Deploys a contract using the given `env` and commits the new state to the underlying
@@ -396,8 +228,7 @@ impl Executor {
         );
         trace!(sender=%env.tx.caller, "deploying contract");
 
-        let mut result = self.call_raw_with_env(env)?;
-        self.commit(&mut result);
+        let mut result = self.transact_with_env(env)?;
         result = result.into_result(rd)?;
         let Some(Output::Create(_, Some(address))) = result.out else {
             panic!("Deployment succeeded, but no address was returned: {result:#?}");
@@ -412,19 +243,200 @@ impl Executor {
         Ok(DeployResult { raw: result, address })
     }
 
-    /// Deploys a contract and commits the new state to the underlying database.
+    /// Calls the `setUp()` function on a contract.
     ///
-    /// Executes a CREATE transaction with the contract `code` and persistent database state
-    /// modifications.
-    pub fn deploy(
+    /// This will commit any state changes to the underlying database.
+    ///
+    /// Ayn changes made during the setup call to env's block environment are persistent, for
+    /// example `vm.chainId()` will change the `block.chainId` for all subsequent test calls.
+    pub fn setup(
         &mut self,
+        from: Option<Address>,
+        to: Address,
+        rd: Option<&RevertDecoder>,
+    ) -> Result<RawCallResult, EvmError> {
+        trace!(?from, ?to, "setting up contract");
+
+        let from = from.unwrap_or(CALLER);
+        self.backend.set_test_contract(to).set_caller(from);
+        let calldata = Bytes::from_static(&ITest::setUpCall::SELECTOR);
+        let mut res = self.transact_raw(from, to, calldata, U256::ZERO)?;
+        res = res.into_result(rd)?;
+
+        // record any changes made to the block's environment during setup
+        self.env.block = res.env.block.clone();
+        // and also the chainid, which can be set manually
+        self.env.cfg.chain_id = res.env.cfg.chain_id;
+
+        if let Some(changeset) = &res.state_changeset {
+            let success = self.is_raw_call_success(to, Cow::Borrowed(changeset), &res, false);
+            if !success {
+                return Err(res.into_execution_error("execution error".to_string()).into());
+            }
+        }
+
+        Ok(res)
+    }
+
+    /// Performs a call to an account on the current state of the VM.
+    pub fn call(
+        &self,
         from: Address,
-        code: Bytes,
+        to: Address,
+        func: &Function,
+        args: &[DynSolValue],
         value: U256,
         rd: Option<&RevertDecoder>,
-    ) -> Result<DeployResult, EvmError> {
-        let env = self.build_test_env(from, TransactTo::Create, code, value);
-        self.deploy_with_env(env, rd)
+    ) -> Result<CallResult, EvmError> {
+        let calldata = Bytes::from(func.abi_encode_input(args)?);
+        let result = self.call_raw(from, to, calldata, value)?;
+        result.into_decoded_result(func, rd)
+    }
+
+    /// Performs a call to an account on the current state of the VM.
+    pub fn call_sol<C: SolCall>(
+        &self,
+        from: Address,
+        to: Address,
+        args: &C,
+        value: U256,
+        rd: Option<&RevertDecoder>,
+    ) -> Result<CallResult<C::Return>, EvmError> {
+        let calldata = Bytes::from(args.abi_encode());
+        let mut raw = self.call_raw(from, to, calldata, value)?;
+        raw = raw.into_result(rd)?;
+        Ok(CallResult { decoded_result: C::abi_decode_returns(&raw.result, false)?, raw })
+    }
+
+    /// Performs a call to an account on the current state of the VM.
+    pub fn transact(
+        &mut self,
+        from: Address,
+        to: Address,
+        func: &Function,
+        args: &[DynSolValue],
+        value: U256,
+        rd: Option<&RevertDecoder>,
+    ) -> Result<CallResult, EvmError> {
+        let calldata = Bytes::from(func.abi_encode_input(args)?);
+        let result = self.transact_raw(from, to, calldata, value)?;
+        result.into_decoded_result(func, rd)
+    }
+
+    /// Performs a raw call to an account on the current state of the VM.
+    pub fn call_raw(
+        &self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+    ) -> eyre::Result<RawCallResult> {
+        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        self.call_with_env(env)
+    }
+
+    /// Performs a raw call to an account on the current state of the VM.
+    pub fn transact_raw(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+    ) -> eyre::Result<RawCallResult> {
+        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        self.transact_with_env(env)
+    }
+
+    /// Execute the transaction configured in `env.tx`.
+    ///
+    /// The state after the call is **not** persisted.
+    pub fn call_with_env(&self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
+        let mut inspector = self.inspector.clone();
+        let mut backend = CowBackend::new(&self.backend);
+        let result = backend.inspect(&mut env, &mut inspector)?;
+        convert_executed_result(env, inspector, result, backend.has_snapshot_failure())
+    }
+
+    /// Execute the transaction configured in `env.tx`.
+    pub fn transact_with_env(&mut self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
+        let mut inspector = self.inspector.clone();
+        let backend = &mut self.backend;
+        let result = backend.inspect(&mut env, &mut inspector)?;
+        let mut result =
+            convert_executed_result(env, inspector, result, backend.has_snapshot_failure())?;
+        self.commit(&mut result);
+        Ok(result)
+    }
+
+    /// Commit the changeset to the database and adjust `self.inspector_config` values according to
+    /// the executed call result.
+    ///
+    /// This should not be exposed to the user, as it should be called only by `transact*`.
+    fn commit(&mut self, result: &mut RawCallResult) {
+        // Persist changes to db.
+        if let Some(changes) = &result.state_changeset {
+            self.backend.commit(changes.clone());
+        }
+
+        // Persist cheatcode state.
+        self.inspector.cheatcodes = result.cheatcodes.take();
+        if let Some(cheats) = self.inspector.cheatcodes.as_mut() {
+            // Clear broadcastable transactions
+            cheats.broadcastable_transactions.clear();
+            debug!(target: "evm::executors", "cleared broadcastable transactions");
+
+            // corrected_nonce value is needed outside of this context (setUp), so we don't
+            // reset it.
+        }
+
+        // Persist the changed environment.
+        self.inspector.set_env(&result.env);
+    }
+
+    /// Checks if a call to a test contract was successful.
+    ///
+    /// This is the same as [`Self::is_success`], but will consume the `state_changeset` map to use
+    /// internally when calling `failed()`.
+    pub fn is_raw_call_mut_success(
+        &self,
+        address: Address,
+        call_result: &mut RawCallResult,
+        should_fail: bool,
+    ) -> bool {
+        self.is_raw_call_success(
+            address,
+            Cow::Owned(call_result.state_changeset.take().unwrap_or_default()),
+            call_result,
+            should_fail,
+        )
+    }
+
+    /// Checks if a call to a test contract was successful.
+    ///
+    /// This is the same as [`Self::is_success`] but intended for outcomes of [`Self::call_raw`].
+    ///
+    /// ## Background
+    ///
+    /// Executing and failure checking `Executor::is_success` are two steps, for ds-test
+    /// legacy reasons failures can be stored in a global variables and needs to be called via a
+    /// solidity call `failed()(bool)`.
+    ///
+    /// Snapshots make this task more complicated because now we also need to keep track of that
+    /// global variable when we revert to a snapshot (because it is stored in state). Now, the
+    /// problem is that the `CowBackend` is dropped after every call, so we need to keep track
+    /// of the snapshot failure in the [`RawCallResult`] instead.
+    pub fn is_raw_call_success(
+        &self,
+        address: Address,
+        state_changeset: Cow<'_, StateChangeset>,
+        call_result: &RawCallResult,
+        should_fail: bool,
+    ) -> bool {
+        if call_result.has_snapshot_failure {
+            // a failure occurred in a reverted snapshot, which is considered a failed test
+            return should_fail;
+        }
+        self.is_success(address, call_result.reverted, state_changeset, should_fail)
     }
 
     /// Check if a call to a test contract was successful.
@@ -449,48 +461,19 @@ impl Executor {
         state_changeset: Cow<'_, StateChangeset>,
         should_fail: bool,
     ) -> bool {
-        self.ensure_success(address, reverted, state_changeset, should_fail).unwrap_or_default()
+        let success = self.is_success_raw(address, reverted, state_changeset);
+        should_fail ^ success
     }
 
-    /// This is the same as [`Self::is_success`] but intended for outcomes of [`Self::call_raw`]
-    /// used in fuzzing and invariant testing.
-    ///
-    /// ## Background
-    ///
-    /// Executing and failure checking `Executor::ensure_success` are two steps, for ds-test
-    /// legacy reasons failures can be stored in a global variables and needs to be called via a
-    /// solidity call `failed()(bool)`.
-    ///
-    /// For fuzz tests we’re using the `CowBackend` which lazily clones the backend when it’s
-    /// mutated via cheatcodes like `snapshot`. Snapshots make it even more complicated because
-    /// now we also need to keep track of that global variable when we revert to a snapshot
-    /// (because it is stored in state). Now, the problem is that the `CowBackend` is dropped
-    /// after every call, so we need to keep track of the snapshot failure in the
-    /// [`RawCallResult`] instead.
-    pub fn is_raw_call_success(
-        &self,
-        address: Address,
-        state_changeset: Cow<'_, StateChangeset>,
-        call_result: &RawCallResult,
-        should_fail: bool,
-    ) -> bool {
-        if call_result.has_snapshot_failure {
-            // a failure occurred in a reverted snapshot, which is considered a failed test
-            return should_fail
-        }
-        self.is_success(address, call_result.reverted, state_changeset, should_fail)
-    }
-
-    fn ensure_success(
+    fn is_success_raw(
         &self,
         address: Address,
         reverted: bool,
         state_changeset: Cow<'_, StateChangeset>,
-        should_fail: bool,
-    ) -> Result<bool, DatabaseError> {
+    ) -> bool {
         if self.backend.has_snapshot_failure() {
             // a failure occurred in a reverted snapshot, which is considered a failed test
-            return Ok(should_fail)
+            return false;
         }
 
         let mut success = !reverted;
@@ -500,9 +483,9 @@ impl Executor {
 
             // We only clone the test contract and cheatcode accounts,
             // that's all we need to evaluate success.
-            for addr in [address, CHEATCODE_ADDRESS] {
-                let acc = self.backend.basic_ref(addr)?.unwrap_or_default();
-                backend.insert_account_info(addr, acc);
+            for address in [address, CHEATCODE_ADDRESS] {
+                let Ok(acc) = self.backend.basic_ref(address) else { return false };
+                backend.insert_account_info(address, acc.unwrap_or_default());
             }
 
             // If this test failed any asserts, then this changeset will contain changes
@@ -515,16 +498,17 @@ impl Executor {
             let executor =
                 Self::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
             let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
-            if let Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { failed } }) = call
-            {
-                debug!(failed, "DSTest::failed()");
-                success = !failed;
+            match call {
+                Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { failed } }) => {
+                    debug!(failed, "DSTest::failed()");
+                    success = !failed;
+                }
+                Err(err) => {
+                    debug!(%err, "failed to call DSTest::failed()");
+                }
             }
         }
-
-        let result = should_fail ^ success;
-        debug!(should_fail, success, result);
-        Ok(result)
+        success
     }
 
     /// Creates the environment to use when executing a transaction in a test context

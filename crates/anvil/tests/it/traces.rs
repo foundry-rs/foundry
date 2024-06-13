@@ -353,7 +353,7 @@ async fn test_trace_address_fork2() {
     api.anvil_impersonate_account(from).await.unwrap();
 
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-    let status = tx.inner.inner.inner.receipt.status;
+    let status = tx.inner.inner.inner.receipt.status.coerce_status();
     assert!(status);
 
     let traces = provider.trace_transaction(tx.transaction_hash).await.unwrap();

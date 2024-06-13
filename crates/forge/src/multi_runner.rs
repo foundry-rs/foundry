@@ -184,7 +184,7 @@ impl MultiContractRunner {
                     let _guard = handle.enter();
                     tests_progress.inner.lock().start_suite_progress(&id.identifier());
 
-                    let result = self.run_tests(
+                    let result = self.run_test_suite(
                         id,
                         contract,
                         db.clone(),
@@ -210,13 +210,13 @@ impl MultiContractRunner {
         } else {
             contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = handle.enter();
-                let result = self.run_tests(id, contract, db.clone(), filter, &handle, None);
+                let result = self.run_test_suite(id, contract, db.clone(), filter, &handle, None);
                 let _ = tx.send((id.identifier(), result));
             })
         }
     }
 
-    fn run_tests(
+    fn run_test_suite(
         &self,
         artifact_id: &ArtifactId,
         contract: &TestContract,
@@ -252,7 +252,7 @@ impl MultiContractRunner {
         if !enabled!(tracing::Level::TRACE) {
             span_name = get_contract_name(&identifier);
         }
-        let _guard = debug_span!("run_suite", name = span_name).entered();
+        let _guard = debug_span!("suite", name = span_name).entered();
 
         debug!("start executing all tests in contract");
 

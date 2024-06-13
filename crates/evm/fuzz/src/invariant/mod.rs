@@ -72,7 +72,7 @@ pub struct InvariantContract<'a> {
     /// Invariant function present in the test contract.
     pub invariant_function: &'a Function,
     /// If true, `afterInvariant` function is called after each invariant run.
-    pub needs_after_invariant: bool,
+    pub call_after_invariant: bool,
     /// ABI of the test contract.
     pub abi: &'a JsonAbi,
 }

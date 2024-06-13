@@ -1,5 +1,7 @@
 use crate::executors::{
-    invariant::{call_after_invariant, call_invariant, error::FailedInvariantCaseData},
+    invariant::{
+        call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
+    },
     Executor,
 };
 use alloy_primitives::{Address, Bytes, U256};
@@ -86,7 +88,7 @@ pub(crate) fn shrink_sequence(
     failed_case: &FailedInvariantCaseData,
     calls: &[BasicTxDetails],
     executor: &Executor,
-    needs_after_invariant: bool,
+    call_after_invariant: bool,
     progress: Option<&ProgressBar>,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
@@ -100,7 +102,8 @@ pub(crate) fn shrink_sequence(
 
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
-    let (_, success) = call_invariant(executor, failed_case.addr, failed_case.calldata.clone())?;
+    let (_, success) =
+        call_invariant_function(executor, failed_case.addr, failed_case.calldata.clone())?;
     if !success {
         return Ok(vec![]);
     }
@@ -115,7 +118,7 @@ pub(crate) fn shrink_sequence(
             failed_case.addr,
             failed_case.calldata.clone(),
             failed_case.fail_on_revert,
-            needs_after_invariant,
+            call_after_invariant,
         ) {
             // If candidate sequence still fails then shrink more if possible.
             Ok((false, _)) if !shrinker.simplify() => break,
@@ -145,12 +148,12 @@ pub fn check_sequence(
     test_address: Address,
     calldata: Bytes,
     fail_on_revert: bool,
-    needs_after_invariant: bool,
+    call_after_invariant: bool,
 ) -> eyre::Result<(bool, bool)> {
     // Apply the call sequence.
     for call_index in sequence {
         let tx = &calls[call_index];
-        let call_result = executor.call_raw_committing(
+        let call_result = executor.transact_raw(
             tx.sender,
             tx.call_details.target,
             tx.call_details.calldata.clone(),
@@ -164,11 +167,12 @@ pub fn check_sequence(
     }
 
     // Check the invariant for call sequence.
-    let (_, mut success) = call_invariant(&executor, test_address, calldata)?;
+    let (_, mut success) = call_invariant_function(&executor, test_address, calldata)?;
     // Check after invariant result if invariant is success and `afterInvariant` function is
     // declared.
-    if success && needs_after_invariant {
-        (_, success) = call_after_invariant(&executor, test_address)?;
+    if success && call_after_invariant {
+        (_, success) = call_after_invariant_function(&executor, test_address)?;
     }
+
     Ok((success, true))
 }

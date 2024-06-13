@@ -74,7 +74,7 @@ impl TaskManager {
             let provider = provider.clone();
             let api = api.clone();
             async move {
-                if let Ok(Some(block)) = provider.get_block(hash.into(), false).await {
+                if let Ok(Some(block)) = provider.get_block(hash.into(), false.into()).await {
                     let _ = api
                         .anvil_reset(Some(Forking {
                             json_rpc_url: None,

@@ -482,8 +482,11 @@ async fn test_fork_timestamp() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
-    let block =
-        provider.get_block(BlockId::Number(BLOCK_NUMBER.into()), false).await.unwrap().unwrap();
+    let block = provider
+        .get_block(BlockId::Number(BLOCK_NUMBER.into()), false.into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(block.header.timestamp, BLOCK_TIMESTAMP);
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
@@ -493,10 +496,10 @@ async fn test_fork_timestamp() {
         TransactionRequest::default().to(Address::random()).value(U256::from(1337u64)).from(from);
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-    let status = tx.inner.inner.inner.receipt.status;
+    let status = tx.inner.inner.inner.receipt.status.coerce_status();
     assert!(status);
 
-    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
 
     let elapsed = start.elapsed().as_secs() + 1;
 
@@ -509,8 +512,11 @@ async fn test_fork_timestamp() {
     api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(BLOCK_NUMBER) }))
         .await
         .unwrap();
-    let block =
-        provider.get_block(BlockId::Number(BLOCK_NUMBER.into()), false).await.unwrap().unwrap();
+    let block = provider
+        .get_block(BlockId::Number(BLOCK_NUMBER.into()), false.into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(block.header.timestamp, BLOCK_TIMESTAMP);
 
     let tx =
@@ -518,7 +524,7 @@ async fn test_fork_timestamp() {
     let tx = WithOtherFields::new(tx);
     let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap(); // FIXME: Awaits endlessly here.
 
-    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
     let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.header.timestamp - BLOCK_TIMESTAMP;
     assert!(diff <= elapsed);
@@ -534,7 +540,7 @@ async fn test_fork_timestamp() {
     let tx = WithOtherFields::new(tx);
     let _tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
     assert_eq!(block.header.timestamp, BLOCK_TIMESTAMP + 1);
 
     let tx =
@@ -542,7 +548,7 @@ async fn test_fork_timestamp() {
     let tx = WithOtherFields::new(tx);
     let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
     let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.header.timestamp - (BLOCK_TIMESTAMP + 1);
     assert!(diff <= elapsed);
@@ -621,7 +627,7 @@ async fn test_fork_nft_set_approve_all() {
     let tx = WithOtherFields::new(tx);
     api.anvil_impersonate_account(owner).await.unwrap();
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-    let status = tx.inner.inner.inner.receipt.status;
+    let status = tx.inner.inner.inner.receipt.status.coerce_status();
     assert!(status);
 
     // transfer: impersonate real owner and transfer nft
@@ -636,7 +642,7 @@ async fn test_fork_nft_set_approve_all() {
         .with_input(call.calldata().to_owned());
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-    let status = tx.inner.inner.inner.receipt.status;
+    let status = tx.inner.inner.inner.receipt.status.coerce_status();
     assert!(status);
 
     let real_owner = nouns.ownerOf(token_id).call().await.unwrap();
@@ -697,7 +703,7 @@ async fn test_fork_can_send_opensea_tx() {
     let tx = WithOtherFields::new(tx);
 
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-    let status = tx.inner.inner.inner.receipt.status;
+    let status = tx.inner.inner.inner.receipt.status.coerce_status();
     assert!(status);
 }
 
@@ -725,7 +731,7 @@ async fn test_fork_init_base_fee() {
 
     let provider = handle.http_provider();
 
-    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
     // <https://etherscan.io/block/13184859>
     assert_eq!(block.header.number.unwrap(), 13184859u64);
     let init_base_fee = block.header.base_fee_per_gas.unwrap();
@@ -733,7 +739,7 @@ async fn test_fork_init_base_fee() {
 
     api.mine_one().await;
 
-    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
 
     let next_base_fee = block.header.base_fee_per_gas.unwrap();
     assert!(next_base_fee < init_base_fee);
@@ -944,7 +950,7 @@ async fn can_impersonate_in_fork() {
 
     let res = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
     assert_eq!(res.from, token_holder);
-    let status = res.inner.inner.inner.receipt.status;
+    let status = res.inner.inner.inner.receipt.status.coerce_status();
     assert!(status);
 
     let balance = provider.get_balance(to).await.unwrap();
@@ -964,7 +970,7 @@ async fn test_total_difficulty_fork() {
     let difficulty = U256::from(13_680_435_288_526_144u128);
 
     let provider = handle.http_provider();
-    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
     assert_eq!(block.header.total_difficulty, Some(total_difficulty));
     assert_eq!(block.header.difficulty, difficulty);
 
@@ -973,7 +979,7 @@ async fn test_total_difficulty_fork() {
 
     let next_total_difficulty = total_difficulty + difficulty;
 
-    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
     assert_eq!(block.header.total_difficulty, Some(next_total_difficulty));
     assert_eq!(block.header.difficulty, U256::ZERO);
 }
@@ -1065,7 +1071,7 @@ async fn test_fork_reset_moonbeam() {
     let tx = WithOtherFields::new(tx);
     api.anvil_impersonate_account(from).await.unwrap();
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-    let status = tx.inner.inner.inner.receipt.status;
+    let status = tx.inner.inner.inner.receipt.status.coerce_status();
     assert!(status);
 
     // reset to check timestamp works after resetting
@@ -1080,7 +1086,7 @@ async fn test_fork_reset_moonbeam() {
         TransactionRequest::default().to(Address::random()).value(U256::from(1337u64)).from(from);
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-    let status = tx.inner.inner.inner.receipt.status;
+    let status = tx.inner.inner.inner.receipt.status.coerce_status();
     assert!(status);
 }
 
