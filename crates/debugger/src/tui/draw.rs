@@ -210,7 +210,7 @@ impl DebuggerContext<'_> {
         f.render_widget(paragraph, area);
     }
 
-    fn src_text(&self, area: Rect) -> (Text<'_>, Option<String>) {
+    fn src_text(&self, area: Rect) -> (Text<'_>, Option<&str>) {
         let (source_element, source_code, source_file) = match self.src_map() {
             Ok(r) => r,
             Err(e) => return (Text::from(e), None),
@@ -339,7 +339,7 @@ impl DebuggerContext<'_> {
     }
 
     /// Returns source map, source code and source name of the current line.
-    fn src_map(&self) -> Result<(SourceElement, &str, String), String> {
+    fn src_map(&self) -> Result<(SourceElement, &str, &str), String> {
         let address = self.address();
         let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
@@ -381,13 +381,8 @@ impl DebuggerContext<'_> {
                     .index()
                     // if index matches current file_id, return current source code
                     .and_then(|index| {
-                        (index == artifact.file_id).then(|| {
-                            (
-                                source_element.clone(),
-                                source.source.as_str(),
-                                source.path.to_string_lossy().to_string(),
-                            )
-                        })
+                        (index == artifact.file_id)
+                            .then(|| (source_element.clone(), source.source.as_str(), &source.name))
                     })
                     .or_else(|| {
                         // otherwise find the source code for the element's index
@@ -397,11 +392,7 @@ impl DebuggerContext<'_> {
                             .get(&artifact.build_id)?
                             .get(&source_element.index()?)
                             .map(|source| {
-                                (
-                                    source_element.clone(),
-                                    source.source.as_str(),
-                                    source.path.to_string_lossy().to_string(),
-                                )
+                                (source_element.clone(), source.source.as_str(), &source.name)
                             })
                     });
 

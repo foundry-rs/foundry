@@ -275,7 +275,7 @@ impl ProjectCompiler {
 pub struct SourceData {
     pub source: Arc<String>,
     pub language: MultiCompilerLanguage,
-    pub path: PathBuf,
+    pub name: String,
 }
 
 #[derive(Clone, Debug)]
@@ -362,7 +362,7 @@ impl ContractSources {
                     SourceData {
                         source: source_code,
                         language: build.language.into(),
-                        path: path.strip_prefix(root).unwrap_or(path).to_path_buf(),
+                        name: path.strip_prefix(root).unwrap_or(path).to_string_lossy().to_string(),
                     },
                 );
             }
