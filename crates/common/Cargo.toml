@@ -47,7 +47,6 @@ reqwest.workspace = true
 semver = "1"
 serde_json.workspace = true
 serde.workspace = true
-tempfile.workspace = true
 thiserror = "1"
 tokio.workspace = true
 tracing.workspace = true

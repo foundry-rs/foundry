@@ -275,6 +275,7 @@ impl ProjectCompiler {
 pub struct SourceData {
     pub source: Arc<String>,
     pub language: MultiCompilerLanguage,
+    pub name: String,
 }
 
 #[derive(Clone, Debug)]
@@ -297,11 +298,12 @@ impl ContractSources {
     /// Collects the contract sources and artifacts from the project compile output.
     pub fn from_project_output(
         output: &ProjectCompileOutput,
-        link_data: Option<(&Path, &Libraries)>,
+        root: impl AsRef<Path>,
+        libraries: Option<&Libraries>,
     ) -> Result<Self> {
         let mut sources = Self::default();
 
-        sources.insert(output, link_data)?;
+        sources.insert(output, root, libraries)?;
 
         Ok(sources)
     }
@@ -309,12 +311,14 @@ impl ContractSources {
     pub fn insert<C: Compiler>(
         &mut self,
         output: &ProjectCompileOutput<C>,
-        link_data: Option<(&Path, &Libraries)>,
+        root: impl AsRef<Path>,
+        libraries: Option<&Libraries>,
     ) -> Result<()>
     where
         C::Language: Into<MultiCompilerLanguage>,
     {
-        let link_data = link_data.map(|(root, libraries)| {
+        let root = root.as_ref();
+        let link_data = libraries.map(|libraries| {
             let linker = Linker::new(root, output.artifact_ids().collect());
             (linker, libraries)
         });
@@ -355,7 +359,11 @@ impl ContractSources {
 
                 self.sources_by_id.entry(build_id.clone()).or_default().insert(
                     *source_id,
-                    SourceData { source: source_code, language: build.language.into() },
+                    SourceData {
+                        source: source_code,
+                        language: build.language.into(),
+                        name: path.strip_prefix(root).unwrap_or(path).to_string_lossy().to_string(),
+                    },
                 );
             }
         }
@@ -494,26 +502,6 @@ pub fn compile_target<C: Compiler>(
     quiet: bool,
 ) -> Result<ProjectCompileOutput<C>> {
     ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
-}
-
-/// Compiles an Etherscan source from metadata by creating a project.
-/// Returns the artifact_id, the file_id, and the bytecode
-pub async fn compile_from_source(
-    metadata: &Metadata,
-) -> Result<ProjectCompileOutput<SolcCompiler>> {
-    let root = tempfile::tempdir()?;
-    let root_path = root.path();
-    let project = etherscan_project(metadata, root_path)?;
-
-    let project_output = project.compile()?;
-
-    if project_output.has_compiler_errors() {
-        eyre::bail!("{project_output}")
-    }
-
-    root.close()?;
-
-    Ok(project_output)
 }
 
 /// Creates a [Project] from an Etherscan source.
