@@ -10,6 +10,7 @@ use crate::{
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
 use revm::{
     db::DatabaseRef,
@@ -186,6 +187,16 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         inspector: &mut I,
     ) -> eyre::Result<()> {
         self.backend_mut(env).transact(id, transaction, env, journaled_state, inspector)
+    }
+
+    fn transact_from_tx<I: InspectorExt<Backend>>(
+        &mut self,
+        transaction: TransactionRequest,
+        env: &Env,
+        journaled_state: &mut JournaledState,
+        inspector: &mut I,
+    ) -> eyre::Result<()> {
+        self.backend_mut(env).transact_from_tx(transaction, env, journaled_state, inspector)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {

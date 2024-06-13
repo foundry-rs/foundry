@@ -28,12 +28,14 @@ alloy-primitives.workspace = true
 alloy-genesis.workspace = true
 alloy-sol-types.workspace = true
 alloy-provider.workspace = true
-alloy-rpc-types.workspace = true
+alloy-rpc-types = { workspace = true, features = ["k256"] }
 alloy-signer.workspace = true
 alloy-signer-wallet = { workspace = true, features = [
     "mnemonic-all-languages",
     "keystore",
 ] }
+alloy-consensus = { workspace = true, features = ["k256"] }
+alloy-rlp.workspace = true
 parking_lot = "0.12"
 
 eyre.workspace = true

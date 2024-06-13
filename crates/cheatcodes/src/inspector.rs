@@ -18,7 +18,7 @@ use crate::{
 use alloy_primitives::{Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolInterface, SolValue};
-use foundry_common::{evm::Breakpoints, SELECTOR_LEN};
+use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_config::Config;
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
@@ -83,7 +83,7 @@ pub struct BroadcastableTransaction {
     /// The optional RPC URL.
     pub rpc: Option<String>,
     /// The transaction to broadcast.
-    pub transaction: TransactionRequest,
+    pub transaction: TransactionMaybeSigned,
 }
 
 /// List of transactions that can be broadcasted.
@@ -978,7 +978,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 None
                             },
                             ..Default::default()
-                        },
+                        }
+                        .into(),
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
@@ -1396,7 +1397,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                                 None
                             },
                             ..Default::default()
-                        },
+                        }
+                        .into(),
                     });
 
                     let kind = match call.scheme {
