@@ -9,13 +9,11 @@
 //! It contains methods to read the json abi, generate rust bindings from the abi and ultimately
 //! write the bindings to a crate or modules.
 
-use alloy_json_abi::JsonAbi;
 use alloy_sol_macro_expander::expand::expand;
-use alloy_sol_macro_input::{tokens_for_sol, SolInput, SolInputKind};
+use alloy_sol_macro_input::{SolInput, SolInputKind};
 use eyre::{Context, Ok, OptionExt, Result};
 use foundry_common::fs;
-use proc_macro2::{Ident, Span, TokenStream};
-use serde_json::Value;
+use proc_macro2::{Span, TokenStream};
 use std::{
     fmt::Write,
     path::{Path, PathBuf},
@@ -33,18 +31,18 @@ impl SolMacroGen {
         Self { path, name, expansion: None }
     }
 
-    pub fn get_json_abi(&self) -> Result<(JsonAbi, Option<String>)> {
-        let json = std::fs::read(&self.path)?;
+    pub fn get_sol_input(&self) -> Result<SolInput> {
+        let path = self.path.to_string_lossy().into_owned();
+        let name = proc_macro2::Ident::new(&self.name, Span::call_site());
 
-        // Need to do this to get the abi in the next step.
-        let json: Value = serde_json::from_slice(&json)?;
+        let tokens = quote::quote! {
+            #name,
+            #path
+        };
 
-        let abi_val = json.get("abi").ok_or_eyre("No ABI found in JSON file")?;
-        let json_abi = serde_json::from_str(&abi_val.clone().to_string())?;
+        let sol_input: SolInput = syn::parse2(tokens).wrap_err("Failed to parse SolInput {e}")?;
 
-        let bytecode = json.get("bytecode").and_then(|b| b.get("object")).map(|o| o.to_string());
-
-        Ok((json_abi, bytecode))
+        Ok(sol_input)
     }
 }
 
@@ -72,34 +70,7 @@ impl MultiSolMacroGen {
 
     pub fn generate_bindings(&mut self) -> Result<()> {
         for instance in &mut self.instances {
-            let (mut json_abi, maybe_bytecode) = instance.get_json_abi()?;
-
-            json_abi.dedup();
-            let sol_str = json_abi.to_sol(&instance.name, None);
-
-            let ident_name: Ident = Ident::new(&instance.name, Span::call_site());
-
-            let tokens =
-                tokens_for_sol(&ident_name, &sol_str).wrap_err("Failed to get sol tokens")?;
-
-            let tokens = if let Some(bytecode) = maybe_bytecode {
-                let bytecode = proc_macro2::TokenStream::from_str(&bytecode).map_err(|e| {
-                    eyre::eyre!("Failed to convert bytecode String to TokenStream {e}")
-                })?;
-                quote::quote! {
-                    #[derive(Debug)]
-                    #[sol(rpc, bytecode = #bytecode)]
-                    #tokens
-                }
-            } else {
-                quote::quote! {
-                    #[derive(Debug)]
-                    #[sol(rpc)]
-                    #tokens
-                }
-            };
-
-            let input: SolInput = syn::parse2(tokens).wrap_err("Failed to parse SolInput")?;
+            let input = instance.get_sol_input()?.normalize_json()?;
 
             let SolInput { attrs: _attrs, path: _path, kind } = input;
 
