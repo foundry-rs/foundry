@@ -13,7 +13,7 @@ use alloy_json_abi::JsonAbi;
 use alloy_sol_macro_expander::expand::expand;
 use alloy_sol_macro_input::{tokens_for_sol, SolInput, SolInputKind};
 use eyre::{Context, Ok, OptionExt, Result};
-use foundry_common::{contracts, fs};
+use foundry_common::fs;
 use proc_macro2::{Ident, Span, TokenStream};
 use serde_json::Value;
 use std::{
@@ -173,7 +173,7 @@ alloy-contract = {{ git = "https://github.com/alloy-rs/alloy" }}"#,
                 let contents = prettyplease::unparse(&file);
 
                 fs::write(path, contents).wrap_err("Failed to write file")?;
-                write!(&mut lib_contents, "pub mod {};\n", name)?;
+                writeln!(&mut lib_contents, "pub mod {};", name)?;
             } else {
                 write!(&mut lib_contents, "{}", contents)?;
             }
@@ -224,7 +224,7 @@ alloy-contract = {{ git = "https://github.com/alloy-rs/alloy" }}"#,
                     //! More information can be found here <https://docs.rs/alloy-sol-macro/latest/alloy_sol_macro/macro.sol.html>.
                     "#.to_string();
 
-                write!(contents, "{}", instance.expansion.as_ref().unwrap().to_string())?;
+                write!(contents, "{}", instance.expansion.as_ref().unwrap())?;
                 let file = syn::parse_file(&contents)?;
 
                 let contents = prettyplease::unparse(&file);
@@ -238,7 +238,7 @@ alloy-contract = {{ git = "https://github.com/alloy-rs/alloy" }}"#,
                     "#,
                     name
                 );
-                write!(contents, "{}\n\n", instance.expansion.as_ref().unwrap().to_string())?;
+                write!(contents, "{}\n\n", instance.expansion.as_ref().unwrap())?;
                 write!(mod_contents, "{}", contents)?;
             }
         }
