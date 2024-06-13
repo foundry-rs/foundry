@@ -1667,7 +1667,7 @@ function test_run() external {}
     );
 });
 
-forgetest_init!(can_build_specific_dir, |prj, cmd| {
+forgetest_init!(can_build_specific_paths, |prj, cmd| {
     prj.wipe();
     prj.add_source(
         "Counter.sol",
@@ -1694,28 +1694,39 @@ function test_bar() external {}
     )
     .unwrap();
 
-    // Build only files within test dir
+    // Build 2 files within test dir
     prj.clear();
-    cmd.args(["build", "--dirs", "test", "--force"]);
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_test_dir.stdout"),
-    );
-
-    // Build only files within src dir
-    prj.clear();
-    cmd.forge_fuse();
-    cmd.args(["build", "--dirs", "src", "--force"]);
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_src_dir.stdout"),
-    );
-
-    // Build multiple dirs
-    prj.clear();
-    cmd.forge_fuse();
-    cmd.args(["build", "--dirs", "src", "--dirs", "test", "--force"]);
+    cmd.args(["build", "--paths", "test", "--force"]);
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_build_multiple_dirs.stdout"),
+            .join("tests/fixtures/can_build_path_with_two_files.stdout"),
+    );
+
+    // Build one file within src dir
+    prj.clear();
+    cmd.forge_fuse();
+    cmd.args(["build", "--paths", "src", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_path_with_one_file.stdout"),
+    );
+
+    // Build 3 files from test and src dirs
+    prj.clear();
+    cmd.forge_fuse();
+    cmd.args(["build", "--paths", "src", "test", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_path_with_three_files.stdout"),
+    );
+
+    // Build single test file
+    prj.clear();
+    cmd.forge_fuse();
+    cmd.args(["build", "--paths", "test/Bar.sol", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_path_with_one_file.stdout"),
     );
 });
 

@@ -126,12 +126,10 @@ pub struct CoreBuildArgs {
     #[serde(skip)]
     pub skip: Option<Vec<SkipBuildFilter>>,
 
-    /// Build files within specific directories.
-    ///
-    /// Child directories are not accounted and should be explicitly added.
-    #[arg(long, num_args(1..))]
+    /// Build source files from specified paths.
+    #[arg(long, short, num_args(0..))]
     #[serde(skip)]
-    pub dirs: Option<Vec<PathBuf>>,
+    pub paths: Option<Vec<PathBuf>>,
 
     #[command(flatten)]
     #[serde(flatten)]

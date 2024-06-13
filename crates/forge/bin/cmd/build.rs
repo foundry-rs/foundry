@@ -3,7 +3,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::compile::ProjectCompiler;
-use foundry_compilers::{Project, ProjectCompileOutput};
+use foundry_compilers::{utils::source_files_iter, Project, ProjectCompileOutput};
 use foundry_config::{
     figment::{
         self,
@@ -14,10 +14,12 @@ use foundry_config::{
     Config,
 };
 use serde::Serialize;
-use std::fs;
 use watchexec::config::{InitConfig, RuntimeConfig};
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
+
+// Extensions accepted by `forge build`
+const BUILD_EXTENSIONS: &[&str] = &["sol", "yul", "vy", "vyi"];
 
 /// CLI arguments for `forge build`.
 ///
@@ -83,15 +85,9 @@ impl BuildArgs {
 
         // Collect sources to compile if build subdirectories specified.
         let mut files = vec![];
-        if let Some(dirs) = self.args.dirs {
+        if let Some(dirs) = self.args.paths {
             for dir in dirs {
-                for entry in fs::read_dir(dir)? {
-                    let entry = entry?;
-                    let path = entry.path();
-                    if path.is_file() {
-                        files.push(entry.path());
-                    }
-                }
+                files.extend(source_files_iter(dir, BUILD_EXTENSIONS));
             }
         }
 
