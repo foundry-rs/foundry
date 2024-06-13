@@ -200,7 +200,11 @@ impl DebuggerContext<'_> {
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
         };
-        let title = format!("{} {} ", call_kind_text, source_name.map(|s| format!("| {}", s)).unwrap_or_default());
+        let title = format!(
+            "{} {} ",
+            call_kind_text,
+            source_name.map(|s| format!("| {}", s)).unwrap_or_default()
+        );
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text_output).block(block).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
