@@ -174,6 +174,7 @@ where
     call_gas_limit: u64,
     call_value: U256,
     call_init_code: Bytes,
+    call_scheme: Option<CreateScheme>,
     return_memory_range: Option<Range<usize>>,
     created_address: Option<Address>,
 }
@@ -463,7 +464,7 @@ impl Cheatcodes {
     where
         DB: DatabaseExt,
         F: FnMut(InterpreterResult, Option<Address>, Option<Range<usize>>) -> CommonCreateOutcome,
-        G: FnMut(&Self, &CallType),
+        G: FnMut(&Self, &CreateScheme),
         H: FnMut(&mut Self, &mut InnerEvmContext<DB>, &mut CallType, Address) -> Address,
     {
         let gas = Gas::new(params.call_gas_limit);
@@ -532,7 +533,7 @@ impl Cheatcodes {
                         },
                     });
 
-                    log_debug_fn(self, params.call);
+                    log_debug_fn(self, &params.call_scheme.unwrap_or(CreateScheme::Create));
                 }
             }
         }
@@ -1284,6 +1285,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let call_gas_limit = call.gas_limit;
         let call_value = call.value;
         let call_init_code = call.init_code.clone();
+        let call_scheme = Some(call.scheme);
 
         let mut params = CreateParams {
             ecx,
@@ -1294,13 +1296,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             call_init_code,
             return_memory_range: None,
             created_address: None,
+            call_scheme,
         };
 
         let mut create_outcome_fn =
             |result, address, _| CommonCreateOutcome::Create(CreateOutcome { result, address });
 
-        let mut log_debug_fn = |this: &Self, call: &CreateInputs| {
-            let kind = match call.scheme {
+        let mut log_debug_fn = |this: &Self, scheme: &CreateScheme| {
+            let kind = match scheme {
                 CreateScheme::Create => "create",
                 CreateScheme::Create2 { .. } => "create2",
             };
@@ -1375,6 +1378,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         let call_gas_limit = call.gas_limit;
         let call_value = call.value;
         let call_init_code = call.eof_init_code.raw.clone();
+        let call_scheme = None;
         let return_memory_range = call.return_memory_range.clone();
         let created_address = call.created_address;
 
@@ -1385,6 +1389,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             call_gas_limit,
             call_value,
             call_init_code,
+            call_scheme,
             return_memory_range: Some(return_memory_range.clone()),
             created_address: Some(created_address),
         };
@@ -1398,7 +1403,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 })
             };
 
-        let mut log_debug_fn = |this: &Self, _: &EOFCreateInput| {
+        let mut log_debug_fn = |this: &Self, _: &CreateScheme| {
             debug!(target: "cheatcodes", tx=?this.broadcastable_transactions.back().unwrap(), "broadcastable eofcreate");
         };
 
