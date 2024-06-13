@@ -141,7 +141,7 @@ edition = "2021"
 
 [dependencies]
 alloy-sol-types = "{}"
-alloy-contract = {{ git = "https://github.com/alloy-rs/alloy", rev = "64feb9b" }}"#,
+alloy-contract = {{ git = "https://github.com/alloy-rs/alloy" }}"#,
             name, version, alloy_version
         );
 
