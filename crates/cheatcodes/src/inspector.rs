@@ -626,6 +626,7 @@ impl Cheatcodes {
         }
     }
 
+    // common create functionality for both legacy and EOF.
     fn create_common<DB, Input>(
         &mut self,
         ecx: &mut EvmContext<DB>,
@@ -729,7 +730,12 @@ impl Cheatcodes {
         None
     }
 
-    fn end_common<DB, Input>(&mut self, ecx: &mut EvmContext<DB>, input: Input) -> CommonEndOutcome
+    // common create_end functionality for both legacy and EOF.
+    fn create_end_common<DB, Input>(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        input: Input,
+    ) -> CommonEndOutcome
     where
         DB: DatabaseExt,
         Input: CommonEndInput,
@@ -1457,7 +1463,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         _call: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
-        match self.end_common(ecx, outcome.clone()) {
+        match self.create_end_common(ecx, outcome.clone()) {
             CommonEndOutcome::Create(outcome) => outcome,
             _ => outcome, // This case should never happen
         }
@@ -1480,7 +1486,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         _call: &EOFCreateInput,
         outcome: EOFCreateOutcome,
     ) -> EOFCreateOutcome {
-        match self.end_common(ecx, outcome.clone()) {
+        match self.create_end_common(ecx, outcome.clone()) {
             CommonEndOutcome::EOFCreate(outcome) => outcome,
             _ => outcome, // This case should never happen
         }
