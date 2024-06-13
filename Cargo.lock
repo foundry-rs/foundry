@@ -3594,7 +3594,6 @@ dependencies = [
  "serde",
  "serde_json",
  "similar-asserts",
- "tempfile",
  "thiserror",
  "tokio",
  "tower",

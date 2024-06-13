@@ -191,8 +191,8 @@ impl DebuggerContext<'_> {
     }
 
     fn draw_src(&self, f: &mut Frame<'_>, area: Rect) {
-        let text_output = self.src_text(area);
-        let title = match self.call_kind() {
+        let (text_output, source_name) = self.src_text(area);
+        let call_kind_text = match self.call_kind() {
             CallKind::Create | CallKind::Create2 => "Contract creation",
             CallKind::Call => "Contract call",
             CallKind::StaticCall => "Contract staticcall",
@@ -200,15 +200,16 @@ impl DebuggerContext<'_> {
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
         };
+        let title = format!("{} {} ", call_kind_text, source_name.map(|s| format!("| {}", s)).unwrap_or_default());
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text_output).block(block).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
     }
 
-    fn src_text(&self, area: Rect) -> Text<'_> {
-        let (source_element, source_code) = match self.src_map() {
+    fn src_text(&self, area: Rect) -> (Text<'_>, Option<String>) {
+        let (source_element, source_code, source_file) = match self.src_map() {
             Ok(r) => r,
-            Err(e) => return Text::from(e),
+            Err(e) => return (Text::from(e), None),
         };
 
         // We are handed a vector of SourceElements that give us a span of sourcecode that is
@@ -330,10 +331,11 @@ impl DebuggerContext<'_> {
             }
         }
 
-        Text::from(lines.lines)
+        (Text::from(lines.lines), Some(source_file))
     }
 
-    fn src_map(&self) -> Result<(SourceElement, &str), String> {
+    /// Returns source map, source code and source name of the current line.
+    fn src_map(&self) -> Result<(SourceElement, &str, String), String> {
         let address = self.address();
         let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
@@ -351,7 +353,7 @@ impl DebuggerContext<'_> {
 
         let is_create = matches!(self.call_kind(), CallKind::Create | CallKind::Create2);
         let pc = self.current_step().pc;
-        let Some((source_element, source_code)) =
+        let Some((source_element, source_code, source_file)) =
             files_source_code.find_map(|(artifact, source)| {
                 let bytecode = if is_create {
                     &artifact.bytecode.bytecode
@@ -375,8 +377,13 @@ impl DebuggerContext<'_> {
                     .index()
                     // if index matches current file_id, return current source code
                     .and_then(|index| {
-                        (index == artifact.file_id)
-                            .then(|| (source_element.clone(), source.source.as_str()))
+                        (index == artifact.file_id).then(|| {
+                            (
+                                source_element.clone(),
+                                source.source.as_str(),
+                                source.path.to_string_lossy().to_string(),
+                            )
+                        })
                     })
                     .or_else(|| {
                         // otherwise find the source code for the element's index
@@ -385,7 +392,13 @@ impl DebuggerContext<'_> {
                             .sources_by_id
                             .get(&artifact.build_id)?
                             .get(&source_element.index()?)
-                            .map(|source| (source_element.clone(), source.source.as_str()))
+                            .map(|source| {
+                                (
+                                    source_element.clone(),
+                                    source.source.as_str(),
+                                    source.path.to_string_lossy().to_string(),
+                                )
+                            })
                     });
 
                 res
@@ -394,7 +407,7 @@ impl DebuggerContext<'_> {
             return Err(format!("No source map for contract {contract_name}"));
         };
 
-        Ok((source_element, source_code))
+        Ok((source_element, source_code, source_file))
     }
 
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {

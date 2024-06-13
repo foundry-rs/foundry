@@ -4,13 +4,12 @@ use foundry_block_explorers::{
     contract::{ContractMetadata, Metadata},
     errors::EtherscanError,
 };
-use foundry_common::compile::{self, ContractSources};
+use foundry_common::compile::{etherscan_project, ContractSources};
 use foundry_config::{Chain, Config};
 use futures::{
     future::{join_all, Future},
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
-    TryFutureExt,
 };
 use std::{
     borrow::Cow,
@@ -64,11 +63,18 @@ impl EtherscanIdentifier {
             .iter()
             // filter out vyper files
             .filter(|(_, metadata)| !metadata.is_vyper())
-            .map(|(address, metadata)| {
+            .map(|(address, metadata)| async move {
                 println!("Compiling: {} {address}", metadata.contract_name);
-                let err_msg =
-                    format!("Failed to compile contract {} from {address}", metadata.contract_name);
-                compile::compile_from_source(metadata).map_err(move |err| err.wrap_err(err_msg))
+                let root = tempfile::tempdir()?;
+                let root_path = root.path();
+                let project = etherscan_project(metadata, root_path)?;
+                let output = project.compile()?;
+
+                if output.has_compiler_errors() {
+                    eyre::bail!("{output}")
+                }
+
+                Ok((project, output, root))
             })
             .collect::<Vec<_>>();
 
@@ -78,8 +84,9 @@ impl EtherscanIdentifier {
         let mut sources: ContractSources = Default::default();
 
         // construct the map
-        for output in outputs {
-            sources.insert(&output?, None)?;
+        for res in outputs {
+            let (project, output, _) = res?;
+            sources.insert(&output, project.root(), None)?;
         }
 
         Ok(sources)
