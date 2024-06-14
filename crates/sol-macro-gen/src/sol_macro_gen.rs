@@ -123,7 +123,7 @@ edition = "2021"
                 alloy_version
             )
         } else {
-            r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }}"#.to_string()
+            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
         };
         write!(toml_contents, "{}", alloy_dep)?;
 
@@ -306,8 +306,16 @@ edition = "2021"
             file_path.display()
         );
         let file_contents = &fs::read_to_string(file_path).wrap_err("Failed to read file")?;
+
+        // Format both
+        let file_contents = syn::parse_file(file_contents)?;
+        let formatted_file = prettyplease::unparse(&file_contents);
+
+        let expected_contents = syn::parse_file(expected_contents)?;
+        let formatted_exp = prettyplease::unparse(&expected_contents);
+
         eyre::ensure!(
-            file_contents == expected_contents,
+            formatted_file == formatted_exp,
             "File contents do not match expected contents for {file_path:?}"
         );
         Ok(())
@@ -328,19 +336,18 @@ edition = "2021"
         let cargo_toml_contents =
             fs::read_to_string(cargo_toml_path).wrap_err("Failed to read Cargo.toml")?;
 
-        let name_check = &format!("name = \"{}\"", name);
-        let version_check = &format!("version = \"{}\"", version);
+        let name_check = format!("name = \"{name}\"");
+        let version_check = format!("version = \"{version}\"");
         let alloy_dep_check = if let Some(version) = alloy_version {
-            &format!(
-                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{}", features = ["sol-types", "contract"] }}"#,
-                version
+            format!(
+                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{version}", features = ["sol-types", "contract"] }}"#,
             )
         } else {
-            &r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }}"#.to_string()
+            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
         };
-        let toml_consistent = cargo_toml_contents.contains(name_check) &&
-            cargo_toml_contents.contains(version_check) &&
-            cargo_toml_contents.contains(alloy_dep_check);
+        let toml_consistent = cargo_toml_contents.contains(&name_check) &&
+            cargo_toml_contents.contains(&version_check) &&
+            cargo_toml_contents.contains(&alloy_dep_check);
         eyre::ensure!(
             toml_consistent,
             r#"The contents of Cargo.toml do not match the expected output of the latest `sol!` version.
