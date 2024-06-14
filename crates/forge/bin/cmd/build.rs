@@ -3,7 +3,11 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::compile::ProjectCompiler;
-use foundry_compilers::{Project, ProjectCompileOutput};
+use foundry_compilers::{
+    compilers::{multi::MultiCompilerLanguage, Language},
+    utils::source_files_iter,
+    Project, ProjectCompileOutput,
+};
 use foundry_config::{
     figment::{
         self,
@@ -80,7 +84,16 @@ impl BuildArgs {
 
         let project = config.project()?;
 
+        // Collect sources to compile if build subdirectories specified.
+        let mut files = vec![];
+        if let Some(dirs) = self.args.paths {
+            for dir in dirs {
+                files.extend(source_files_iter(dir, MultiCompilerLanguage::FILE_EXTENSIONS));
+            }
+        }
+
         let compiler = ProjectCompiler::new()
+            .files(files)
             .print_names(self.names)
             .print_sizes(self.sizes)
             .quiet(self.format_json)
