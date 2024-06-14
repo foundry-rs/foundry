@@ -34,7 +34,7 @@ use crate::{
 use alloy_consensus::transaction::eip4844::TxEip4844Variant;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::eip2718::Decodable2718;
+use alloy_network::{eip2718::Decodable2718, TransactionResponse};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, B64, U256, U64};
 use alloy_rpc_types::{
     request::TransactionRequest,
@@ -234,6 +234,15 @@ impl EthApi {
             EthRequest::EthEstimateGas(call, block, overrides) => {
                 self.estimate_gas(call, block, overrides).await.to_rpc_result()
             }
+            EthRequest::EthGetRawTransactionByHash(hash) => {
+                self.raw_transaction(hash).await.to_rpc_result()
+            }
+            EthRequest::EthGetRawTransactionByBlockHashAndIndex(hash, index) => {
+                self.raw_transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
+            }
+            EthRequest::EthGetRawTransactionByBlockNumberAndIndex(num, index) => {
+                self.raw_transaction_by_block_number_and_index(num, index).await.to_rpc_result()
+            }
             EthRequest::EthGetTransactionByBlockHashAndIndex(hash, index) => {
                 self.transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
             }
@@ -264,7 +273,10 @@ impl EthApi {
             EthRequest::EthFeeHistory(count, newest, reward_percentiles) => {
                 self.fee_history(count, newest, reward_percentiles).await.to_rpc_result()
             }
-
+            // non eth-standard rpc calls
+            EthRequest::DebugGetRawTransaction(hash) => {
+                self.raw_transaction(hash).await.to_rpc_result()
+            }
             // non eth-standard rpc calls
             EthRequest::DebugTraceTransaction(tx, opts) => {
                 self.debug_trace_transaction(tx, opts).await.to_rpc_result()
@@ -1434,6 +1446,58 @@ impl EthApi {
     pub async fn uninstall_filter(&self, id: &str) -> Result<bool> {
         node_info!("eth_uninstallFilter");
         Ok(self.filters.uninstall_filter(id).await.is_some())
+    }
+
+    /// Returns EIP-2718 encoded raw transaction
+    ///
+    /// Handler for RPC call: `debug_getRawTransaction`
+    pub async fn raw_transaction(&self, hash: B256) -> Result<Option<Bytes>> {
+        node_info!("debug_getRawTransaction");
+
+        let mut out = vec![];
+
+        match self.pool.get_transaction(hash) {
+            Some(tx) => {
+                tx.transaction.encode_2718(&mut out);
+            }
+            None => return Ok(None),
+        }
+
+        if !out.is_empty() {
+            Ok(Some(out.into()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Returns EIP-2718 encoded raw transaction by block hash and index
+    ///
+    /// Handler for RPC call: `eth_getRawTransactionByBlockHashAndIndex`
+    pub async fn raw_transaction_by_block_hash_and_index(
+        &self,
+        block_hash: B256,
+        index: Index,
+    ) -> Result<Option<Bytes>> {
+        node_info!("eth_getRawTransactionByBlockHashAndIndex");
+        match self.backend.transaction_by_block_hash_and_index(block_hash, index).await? {
+            Some(tx) => self.raw_transaction(tx.hash).await,
+            None => Ok(None),
+        }
+    }
+
+    /// Returns EIP-2718 encoded raw transaction by block number and index
+    ///
+    /// Handler for RPC call: `eth_getRawTransactionByBlockNumberAndIndex`
+    pub async fn raw_transaction_by_block_number_and_index(
+        &self,
+        block_number: BlockNumber,
+        index: Index,
+    ) -> Result<Option<Bytes>> {
+        node_info!("eth_getRawTransactionByBlockNumberAndIndex");
+        match self.backend.transaction_by_block_number_and_index(block_number, index).await? {
+            Some(tx) => self.raw_transaction(tx.hash).await,
+            None => Ok(None),
+        }
     }
 
     /// Returns traces for the transaction hash for geth's tracing endpoint
