@@ -336,7 +336,7 @@ edition = "2021"
                 version
             )
         } else {
-            &r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
+            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
         };
         let toml_consistent = cargo_toml_contents.contains(name_check) &&
             cargo_toml_contents.contains(version_check) &&
