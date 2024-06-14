@@ -2818,7 +2818,7 @@ mod tests {
     };
     use figment::error::Kind::InvalidType;
     use foundry_compilers::artifacts::{
-        vyper::settings::VyperOptimizationMode, ModelCheckerEngine, YulDetails,
+        vyper::VyperOptimizationMode, ModelCheckerEngine, YulDetails,
     };
     use similar_asserts::assert_eq;
     use std::{collections::BTreeMap, fs::File, io::Write};

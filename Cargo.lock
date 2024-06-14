@@ -3454,7 +3454,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.4.0"
-source = "git+https://github.com/foundry-rs/block-explorers.git?rev=9a64182#9a641823e5506861984548108ec0c859d189402c"
+source = "git+https://github.com/foundry-rs/block-explorers.git?rev=364812e#364812e01b517ff181c8bb06d2fa67078063b91f"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -3606,7 +3606,16 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.7.0"
-source = "git+https://github.com/foundry-rs/compilers?rev=12d3173#12d31739fef0c9b84d57050e433904f6a8e33b66"
+source = "git+https://github.com/foundry-rs/compilers?rev=a13211c#a13211cf6ef145a2491d118be4edd65953c57c66"
+dependencies = [
+ "foundry-compilers-artifacts-solc",
+ "foundry-compilers-artifacts-vyper",
+]
+
+[[package]]
+name = "foundry-compilers-artifacts-solc"
+version = "0.7.0"
+source = "git+https://github.com/foundry-rs/compilers?rev=a13211c#a13211cf6ef145a2491d118be4edd65953c57c66"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3626,9 +3635,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-compilers-artifacts-vyper"
+version = "0.7.0"
+source = "git+https://github.com/foundry-rs/compilers?rev=a13211c#a13211cf6ef145a2491d118be4edd65953c57c66"
+dependencies = [
+ "alloy-json-abi",
+ "alloy-primitives",
+ "foundry-compilers-artifacts-solc",
+ "path-slash",
+ "serde",
+]
+
+[[package]]
 name = "foundry-compilers-core"
 version = "0.7.0"
-source = "git+https://github.com/foundry-rs/compilers?rev=12d3173#12d31739fef0c9b84d57050e433904f6a8e33b66"
+source = "git+https://github.com/foundry-rs/compilers?rev=a13211c#a13211cf6ef145a2491d118be4edd65953c57c66"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -3651,7 +3672,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-project"
 version = "0.7.0"
-source = "git+https://github.com/foundry-rs/compilers?rev=12d3173#12d31739fef0c9b84d57050e433904f6a8e33b66"
+source = "git+https://github.com/foundry-rs/compilers?rev=a13211c#a13211cf6ef145a2491d118be4edd65953c57c66"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
