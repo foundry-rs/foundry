@@ -808,8 +808,12 @@ pub enum CastSubcommand {
         /// The contract's address.
         address: String,
 
-        /// The output directory to expand source tree into.
-        #[arg(short, value_hint = ValueHint::DirPath)]
+        /// Whether to flatten the source code.
+        #[arg(long, short)]
+        flatten: bool,
+
+        /// The output directory/file to expand source tree into.
+        #[arg(short, value_hint = ValueHint::DirPath, alias = "path")]
         directory: Option<PathBuf>,
 
         #[command(flatten)]

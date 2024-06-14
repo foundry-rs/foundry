@@ -165,18 +165,8 @@ impl ProjectCompiler {
     {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
-        #[allow(clippy::collapsible_else_if)]
-        let reporter = if quiet {
-            Report::new(NoReporter::default())
-        } else {
-            if std::io::stdout().is_terminal() {
-                Report::new(SpinnerReporter::spawn())
-            } else {
-                Report::new(BasicStdoutReporter::default())
-            }
-        };
 
-        let output = foundry_compilers::report::with_scoped(&reporter, || {
+        let output = with_compilation_reporter(self.quiet.unwrap_or(false), || {
             tracing::debug!("compiling project");
 
             let timer = Instant::now();
@@ -186,9 +176,6 @@ impl ProjectCompiler {
             tracing::debug!("finished compiling in {:.3}s", elapsed.as_secs_f64());
             r
         })?;
-
-        // need to drop the reporter here, so that the spinner terminates
-        drop(reporter);
 
         if bail && output.has_compiler_errors() {
             eyre::bail!("{output}")
@@ -553,4 +540,20 @@ pub fn etherscan_project(
         .ephemeral()
         .no_artifacts()
         .build(compiler)?)
+}
+
+/// Configures the reporter and runs the given closure.
+pub fn with_compilation_reporter<O>(quiet: bool, f: impl FnOnce() -> O) -> O {
+    #[allow(clippy::collapsible_else_if)]
+    let reporter = if quiet {
+        Report::new(NoReporter::default())
+    } else {
+        if std::io::stdout().is_terminal() {
+            Report::new(SpinnerReporter::spawn())
+        } else {
+            Report::new(BasicStdoutReporter::default())
+        }
+    };
+
+    foundry_compilers::report::with_scoped(&reporter, f)
 }

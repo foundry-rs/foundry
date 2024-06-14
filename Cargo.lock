@@ -642,7 +642,7 @@ dependencies = [
  "rustls 0.23.10",
  "serde_json",
  "tokio",
- "tokio-tungstenite 0.23.0",
+ "tokio-tungstenite 0.23.1",
  "tracing",
  "ws_stream_wasm",
 ]
@@ -8505,9 +8505,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-tungstenite"
-version = "0.23.0"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "becd34a233e7e31a3dbf7c7241b38320f57393dcae8e7324b0167d21b8e320b0"
+checksum = "c6989540ced10490aaf14e6bad2e3d33728a2813310a0c71d1574304c49631cd"
 dependencies = [
  "futures-util",
  "log",
