@@ -737,7 +737,9 @@ impl Backend {
     pub async fn serialized_state(&self) -> Result<SerializableState, BlockchainError> {
         let at = self.env.read().block.clone();
         let best_number = self.blockchain.storage.read().best_number;
-        let state = self.db.read().await.dump_state(at, best_number)?;
+        let latest_block = self.get_block(BlockId::latest());
+        let state =
+            self.db.read().await.dump_state(at, best_number, latest_block.map(Into::into))?;
         state.ok_or_else(|| {
             RpcError::invalid_params("Dumping state not supported with the current configuration")
                 .into()
@@ -766,14 +768,22 @@ impl Backend {
                 state.best_block_number.unwrap_or(block.number.to::<U64>());
         }
 
-        if !self.db.write().await.load_state(state)? {
-            Err(RpcError::invalid_params(
+        if !self.db.write().await.load_state(state.clone())? {
+            return Err(RpcError::invalid_params(
                 "Loading state not supported with the current configuration",
             )
-            .into())
-        } else {
-            Ok(true)
+            .into());
         }
+
+        if let Some(block) = state.latest_block {
+            let block: Block = block.into();
+            let block_hash = block.header.hash_slow();
+            let block_number = block.header.number;
+            self.blockchain.storage.write().blocks.insert(block_hash, block);
+            self.blockchain.storage.write().hashes.insert(U64::from(block_number), block_hash);
+        }
+
+        Ok(true)
     }
 
     /// Deserialize and add all chain data to the backend storage
