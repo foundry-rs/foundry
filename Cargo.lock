@@ -3255,6 +3255,8 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-signer",
  "alloy-signer-wallet",
+ "alloy-sol-macro-expander",
+ "alloy-sol-macro-input",
  "alloy-transport",
  "anvil",
  "async-trait",
@@ -3273,6 +3275,7 @@ dependencies = [
  "forge-doc",
  "forge-fmt",
  "forge-script",
+ "forge-sol-macro-gen",
  "forge-verify",
  "foundry-block-explorers",
  "foundry-cli",
@@ -3406,6 +3409,22 @@ dependencies = [
  "tempfile",
  "tracing",
  "yansi",
+]
+
+[[package]]
+name = "forge-sol-macro-gen"
+version = "0.2.0"
+dependencies = [
+ "alloy-json-abi",
+ "alloy-sol-macro-expander",
+ "alloy-sol-macro-input",
+ "eyre",
+ "foundry-common",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn 2.0.66",
 ]
 
 [[package]]

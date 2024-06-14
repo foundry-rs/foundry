@@ -135,6 +135,7 @@ forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
 forge-verify = { path = "crates/verify" }
 forge-script = { path = "crates/script" }
+forge-sol-macro-gen = { path = "crates/sol-macro-gen" }
 foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
@@ -195,6 +196,8 @@ alloy-primitives = { version = "0.7.1", features = ["getrandom", "rand"] }
 alloy-dyn-abi = "0.7.1"
 alloy-json-abi = "0.7.1"
 alloy-sol-types = "0.7.1"
+alloy-sol-macro-input = "0.7.3"
+alloy-sol-macro-expander = "0.7.3"
 syn-solidity = "0.7.1"
 alloy-chains = "0.1"
 alloy-trie = "0.4.1"
@@ -202,6 +205,10 @@ alloy-rlp = "0.3.3"
 solang-parser = "=0.3.3"
 
 ## misc
+proc-macro2 = "1.0.82"
+quote = "1.0"
+syn = "2.0"
+prettyplease = "0.2.20"
 ahash = "0.8"
 arrayvec = "0.7"
 base64 = "0.22"
