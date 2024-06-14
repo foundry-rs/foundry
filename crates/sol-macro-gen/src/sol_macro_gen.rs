@@ -123,9 +123,7 @@ edition = "2021"
                 alloy_version
             )
         } else {
-            format!(
-                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }}"#
-            )
+            r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }}"#.to_string()
         };
         write!(toml_contents, "{}", alloy_dep)?;
 
@@ -338,9 +336,7 @@ edition = "2021"
                 version
             )
         } else {
-            &format!(
-                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }}"#
-            )
+            &r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }}"#.to_string()
         };
         let toml_consistent = cargo_toml_contents.contains(name_check) &&
             cargo_toml_contents.contains(version_check) &&
