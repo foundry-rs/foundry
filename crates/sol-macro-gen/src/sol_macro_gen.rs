@@ -34,7 +34,6 @@ impl SolMacroGen {
     pub fn get_sol_input(&self) -> Result<SolInput> {
         let path = self.path.to_string_lossy().into_owned();
         let name = proc_macro2::Ident::new(&self.name, Span::call_site());
-
         let tokens = quote::quote! {
             #name,
             #path
@@ -75,7 +74,13 @@ impl MultiSolMacroGen {
             let SolInput { attrs: _attrs, path: _path, kind } = input;
 
             let tokens = match kind {
-                SolInputKind::Sol(file) => expand(file).wrap_err("Failed to expand SolInput")?,
+                SolInputKind::Sol(mut file) => {
+                    let sol_attr: syn::Attribute = syn::parse_quote! {
+                        #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract = alloy::contract)]
+                    };
+                    file.attrs.push(sol_attr);
+                    expand(file).wrap_err("Failed to expand SolInput")?
+                }
                 _ => unreachable!(),
             };
 

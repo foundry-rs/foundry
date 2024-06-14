@@ -11,7 +11,6 @@ use regex::Regex;
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::Instant,
 };
 
 impl_figment_convert!(BindArgs, build_args);
