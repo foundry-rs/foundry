@@ -359,7 +359,7 @@ pub struct SerializableBlock {
 
 impl From<Block> for SerializableBlock {
     fn from(block: Block) -> Self {
-        SerializableBlock {
+        Self {
             header: block.header.into(),
             transactions: block.transactions.into_iter().map(Into::into).collect(),
             ommers: block.ommers.into_iter().map(Into::into).collect(),
@@ -369,7 +369,7 @@ impl From<Block> for SerializableBlock {
 
 impl From<SerializableBlock> for Block {
     fn from(block: SerializableBlock) -> Self {
-        Block {
+        Self {
             header: block.header.into(),
             transactions: block.transactions.into_iter().map(Into::into).collect(),
             ommers: block.ommers.into_iter().map(Into::into).collect(),
@@ -408,7 +408,7 @@ pub struct SerializableHeader {
 // Implementing conversions
 impl From<Header> for SerializableHeader {
     fn from(header: Header) -> Self {
-        SerializableHeader {
+        Self {
             parent_hash: header.parent_hash,
             ommers_hash: header.ommers_hash,
             beneficiary: header.beneficiary,
@@ -436,7 +436,7 @@ impl From<Header> for SerializableHeader {
 
 impl From<SerializableHeader> for Header {
     fn from(header: SerializableHeader) -> Self {
-        Header {
+        Self {
             parent_hash: header.parent_hash,
             ommers_hash: header.ommers_hash,
             beneficiary: header.beneficiary,
