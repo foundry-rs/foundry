@@ -88,7 +88,7 @@ impl FailedInvariantCaseData {
         debug_assert!(func.inputs.is_empty());
         let origin = func.name.as_str();
         Self {
-            test_error: proptest::test_runner::TestError::Fail(
+            test_error: TestError::Fail(
                 format!("{origin}, reason: {revert_reason}").into(),
                 calldata.to_vec(),
             ),

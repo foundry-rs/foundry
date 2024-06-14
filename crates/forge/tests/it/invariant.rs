@@ -27,6 +27,7 @@ macro_rules! get_counterexample {
 async fn test_invariant() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/(target|targetAbi|common)");
     let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options = TEST_DATA_DEFAULT.test_opts.clone();
     runner.test_options.invariant.failure_persist_dir =
         Some(tempfile::tempdir().unwrap().into_path());
     let results = runner.test_collect(&filter);
@@ -243,6 +244,26 @@ async fn test_invariant() {
             (
                 "default/fuzz/invariant/common/InvariantExcludedSenders.t.sol:InvariantExcludedSendersTest",
                 vec![("invariant_check_sender()", true, None, None, None)],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantAfterInvariant.t.sol:InvariantAfterInvariantTest",
+                vec![
+                    (
+                        "invariant_after_invariant_failure()",
+                        false,
+                        Some("revert: afterInvariant failure".into()),
+                        None,
+                        None,
+                    ),
+                    (
+                        "invariant_failure()",
+                        false,
+                        Some("revert: invariant failure".into()),
+                        None,
+                        None,
+                    ),
+                    ("invariant_success()", true, None, None, None),
+                ],
             )
         ]),
     );
@@ -707,6 +728,40 @@ async fn test_invariant_excluded_senders() {
         BTreeMap::from([(
             "default/fuzz/invariant/common/InvariantExcludedSenders.t.sol:InvariantExcludedSendersTest",
             vec![("invariant_check_sender()", true, None, None, None)],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_after_invariant() {
+    // Check failure on passing invariant and failed `afterInvariant` condition
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantAfterInvariant.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.failure_persist_dir =
+        Some(tempfile::tempdir().unwrap().into_path());
+
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/fuzz/invariant/common/InvariantAfterInvariant.t.sol:InvariantAfterInvariantTest",
+            vec![
+                (
+                    "invariant_after_invariant_failure()",
+                    false,
+                    Some("revert: afterInvariant failure".into()),
+                    None,
+                    None,
+                ),
+                (
+                    "invariant_failure()",
+                    false,
+                    Some("revert: invariant failure".into()),
+                    None,
+                    None,
+                ),
+                ("invariant_success()", true, None, None, None),
+            ],
         )]),
     );
 }
