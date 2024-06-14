@@ -306,8 +306,16 @@ edition = "2021"
             file_path.display()
         );
         let file_contents = &fs::read_to_string(file_path).wrap_err("Failed to read file")?;
+
+        // Format both
+        let file_contents = syn::parse_file(file_contents)?;
+        let formatted_file = prettyplease::unparse(&file_contents);
+
+        let expected_contents = syn::parse_file(expected_contents)?;
+        let formatted_exp = prettyplease::unparse(&expected_contents);
+
         eyre::ensure!(
-            file_contents == expected_contents,
+            formatted_file == formatted_exp,
             "File contents do not match expected contents for {file_path:?}"
         );
         Ok(())
@@ -336,7 +344,7 @@ edition = "2021"
                 version
             )
         } else {
-            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
+            &r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
         };
         let toml_consistent = cargo_toml_contents.contains(name_check) &&
             cargo_toml_contents.contains(version_check) &&
