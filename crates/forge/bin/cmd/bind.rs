@@ -11,6 +11,7 @@ use regex::Regex;
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 impl_figment_convert!(BindArgs, build_args);
@@ -85,7 +86,7 @@ pub struct BindArgs {
     #[arg(long, conflicts_with = "ethers")]
     alloy: bool,
 
-    /// Specify the alloy version to use for `alloy_sol_types`
+    /// Specify the alloy version.
     #[arg(long, default_value = "0.7.4", value_name = "ALLOY_VERSION")]
     alloy_version: String,
 
@@ -244,18 +245,18 @@ impl BindArgs {
     }
 
     fn get_solmacrogen(&self, artifacts: &Path) -> Result<MultiSolMacroGen> {
-        let mut instances = self
+        let mut dup = std::collections::HashSet::<String>::new();
+        let instances = self
             .get_json_files(artifacts)?
-            .map(|(name, path)| {
+            .filter_map(|(name, path)| {
                 trace!(?path, "parsing SolMacroGen from file");
-                SolMacroGen::new(path, name)
+                if dup.insert(name.clone()) {
+                    Some(SolMacroGen::new(path, name))
+                } else {
+                    None
+                }
             })
             .collect::<Vec<_>>();
-
-        // Dedup instances, duplication occurs due to the artifact of the same contract being in
-        // multiple out/<contract.sol> directories.
-        instances.sort_by(|a, b| a.name.cmp(&b.name));
-        instances.dedup_by_key(|key| key.name.clone());
 
         let multi = MultiSolMacroGen::new(artifacts, instances);
         eyre::ensure!(!multi.instances.is_empty(), "No contract artifacts found");
