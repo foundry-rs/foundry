@@ -135,6 +135,10 @@ pub struct TestArgs {
     /// Print detailed test summary table.
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
+
+    /// Show test execution progress.
+    #[arg(long)]
+    pub show_progress: bool,
 }
 
 impl TestArgs {
@@ -334,7 +338,7 @@ impl TestArgs {
             let sources = ContractSources::from_project_output(
                 output_clone.as_ref().unwrap(),
                 project.root(),
-                &libraries,
+                Some(&libraries),
             )?;
 
             // Run the debugger.
@@ -387,9 +391,10 @@ impl TestArgs {
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
+        let show_progress = self.show_progress;
         let handle = tokio::task::spawn_blocking({
             let filter = filter.clone();
-            move || runner.test(&filter, tx)
+            move || runner.test(&filter, tx, show_progress)
         });
 
         // Set up trace identifiers.

@@ -287,14 +287,14 @@ async fn test_set_next_timestamp() {
 
     api.evm_mine(None).await.unwrap();
 
-    let block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
     assert_eq!(block.header.number.unwrap(), 1);
     assert_eq!(block.header.timestamp, next_timestamp.as_secs());
 
     api.evm_mine(None).await.unwrap();
 
-    let next = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+    let next = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
     assert_eq!(next.header.number.unwrap(), 2);
 
     assert!(next.header.timestamp > block.header.timestamp);
@@ -314,12 +314,12 @@ async fn test_evm_set_time() {
 
     // mine a block
     api.evm_mine(None).await.unwrap();
-    let block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
     assert!(block.header.timestamp >= timestamp.as_secs());
 
     api.evm_mine(None).await.unwrap();
-    let next = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+    let next = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
     assert!(next.header.timestamp > block.header.timestamp);
 }
@@ -338,7 +338,7 @@ async fn test_evm_set_time_in_past() {
 
     // mine a block
     api.evm_mine(None).await.unwrap();
-    let block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
     assert!(block.header.timestamp >= timestamp.as_secs());
     assert!(block.header.timestamp < now.as_secs());
@@ -353,42 +353,44 @@ async fn test_timestamp_interval() {
     let interval = 10;
 
     for _ in 0..5 {
-        let block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+        let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
         // mock timestamp
         api.evm_set_block_timestamp_interval(interval).unwrap();
         api.evm_mine(None).await.unwrap();
 
-        let new_block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+        let new_block =
+            provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
         assert_eq!(new_block.header.timestamp, block.header.timestamp + interval);
     }
 
-    let block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
     let next_timestamp = block.header.timestamp + 50;
     api.evm_set_next_block_timestamp(next_timestamp).unwrap();
 
     api.evm_mine(None).await.unwrap();
-    let block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
     assert_eq!(block.header.timestamp, next_timestamp);
 
     api.evm_mine(None).await.unwrap();
 
-    let block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
     // interval also works after setting the next timestamp manually
     assert_eq!(block.header.timestamp, next_timestamp + interval);
 
     assert!(api.evm_remove_block_timestamp_interval().unwrap());
 
     api.evm_mine(None).await.unwrap();
-    let new_block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+    let new_block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
     // offset is applied correctly after resetting the interval
     assert!(new_block.header.timestamp > block.header.timestamp);
 
     api.evm_mine(None).await.unwrap();
-    let another_block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+    let another_block =
+        provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
     // check interval is disabled
     assert!(another_block.header.timestamp - new_block.header.timestamp < interval);
 }
@@ -429,7 +431,8 @@ async fn can_get_node_info() {
     let provider = handle.http_provider();
 
     let block_number = provider.get_block_number().await.unwrap();
-    let block = provider.get_block(BlockId::from(block_number), false).await.unwrap().unwrap();
+    let block =
+        provider.get_block(BlockId::from(block_number), false.into()).await.unwrap().unwrap();
 
     let expected_node_info = NodeInfo {
         current_block_number: U64::from(0),
@@ -463,7 +466,8 @@ async fn can_get_metadata() {
 
     let block_number = provider.get_block_number().await.unwrap();
     let chain_id = provider.get_chain_id().await.unwrap();
-    let block = provider.get_block(BlockId::from(block_number), false).await.unwrap().unwrap();
+    let block =
+        provider.get_block(BlockId::from(block_number), false.into()).await.unwrap().unwrap();
 
     let expected_metadata = AnvilMetadata {
         latest_block_hash: block.header.hash.unwrap(),
@@ -488,7 +492,8 @@ async fn can_get_metadata_on_fork() {
 
     let block_number = provider.get_block_number().await.unwrap();
     let chain_id = provider.get_chain_id().await.unwrap();
-    let block = provider.get_block(BlockId::from(block_number), false).await.unwrap().unwrap();
+    let block =
+        provider.get_block(BlockId::from(block_number), false.into()).await.unwrap().unwrap();
 
     let expected_metadata = AnvilMetadata {
         latest_block_hash: block.header.hash.unwrap(),
@@ -541,7 +546,7 @@ async fn test_get_transaction_receipt() {
     let receipt = provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
     // the block should have the new base fee
-    let block = provider.get_block(BlockId::default(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
     assert_eq!(block.header.base_fee_per_gas.unwrap(), new_base_fee.to::<u128>());
 
     // mine blocks

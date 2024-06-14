@@ -1197,7 +1197,7 @@ impl EthApi {
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.uncle_by_block_number_and_index(number, idx.into()).await?);
+                return Ok(fork.uncle_by_block_number_and_index(number, idx.into()).await?)
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -1923,7 +1923,14 @@ impl EthApi {
                     if let Some(receipt) = self.backend.mined_transaction_receipt(tx.hash) {
                         if let Some(output) = receipt.out {
                             // insert revert reason if failure
-                            if !receipt.inner.inner.as_receipt_with_bloom().receipt.status {
+                            if !receipt
+                                .inner
+                                .inner
+                                .as_receipt_with_bloom()
+                                .receipt
+                                .status
+                                .coerce_status()
+                            {
                                 if let Some(reason) =
                                     RevertDecoder::new().maybe_decode(&output, None)
                                 {
@@ -2514,7 +2521,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number) {
-                    return Ok(fork.get_nonce(address, number).await?);
+                    return Ok(fork.get_nonce(address, number).await?)
                 }
             }
         }

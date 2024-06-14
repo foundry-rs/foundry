@@ -214,7 +214,7 @@ impl FromStr for SnapshotEntry {
                             Some(Self {
                                 contract_name: file.as_str().to_string(),
                                 signature: sig.as_str().to_string(),
-                                gas_used: TestKindReport::Standard {
+                                gas_used: TestKindReport::Unit {
                                     gas: gas.as_str().parse().unwrap(),
                                 },
                             })
@@ -455,7 +455,7 @@ mod tests {
             SnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindReport::Standard { gas: 7222 }
+                gas_used: TestKindReport::Unit { gas: 7222 }
             }
         );
     }

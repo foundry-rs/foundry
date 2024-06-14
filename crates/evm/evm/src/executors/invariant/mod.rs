@@ -8,7 +8,9 @@ use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
-    constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
+    constants::{
+        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
+    },
     utils::get_function,
 };
 use foundry_evm_fuzz::{
@@ -20,9 +22,10 @@ use foundry_evm_fuzz::{
     FuzzCase, FuzzFixtures, FuzzedCases,
 };
 use foundry_evm_traces::CallTraceArena;
+use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{
-    strategy::{BoxedStrategy, Strategy},
+    strategy::{Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
 use result::{assert_invariants, can_continue};
@@ -91,10 +94,6 @@ sol! {
     }
 }
 
-/// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
-type InvariantPreparation =
-    (EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<BasicTxDetails>);
-
 /// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`].
 ///
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contracts with
@@ -139,6 +138,7 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
+        progress: Option<&ProgressBar>,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.invariant_function.inputs.is_empty() {
@@ -155,7 +155,7 @@ impl<'a> InvariantExecutor<'a> {
         let failures = RefCell::new(InvariantFailures::new());
 
         // Stores the calldata in the last run.
-        let last_run_calldata: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
+        let last_run_inputs: RefCell<Vec<BasicTxDetails>> = RefCell::new(vec![]);
 
         // Stores additional traces for gas report.
         let gas_report_traces: RefCell<Vec<Vec<CallTraceArena>>> = RefCell::default();
@@ -212,7 +212,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Execute call from the randomly generated sequence and commit state changes.
                 let call_result = executor
-                    .call_raw_committing(
+                    .transact_raw(
                         tx.sender,
                         tx.call_details.target,
                         tx.call_details.calldata.clone(),
@@ -233,7 +233,7 @@ impl<'a> InvariantExecutor<'a> {
                     }
                 } else {
                     // Collect data for fuzzing from the state changeset.
-                    let mut state_changeset = call_result.state_changeset.to_owned().unwrap();
+                    let mut state_changeset = call_result.state_changeset.clone().unwrap();
 
                     if !call_result.reverted {
                         collect_data(
@@ -281,7 +281,7 @@ impl<'a> InvariantExecutor<'a> {
                     .map_err(|e| TestCaseError::fail(e.to_string()))?;
 
                     if !result.can_continue || current_run == self.config.depth - 1 {
-                        last_run_calldata.borrow_mut().clone_from(&inputs);
+                        last_run_inputs.borrow_mut().clone_from(&inputs);
                     }
 
                     if !result.can_continue {
@@ -318,6 +318,11 @@ impl<'a> InvariantExecutor<'a> {
             // Revert state to not persist values between runs.
             fuzz_state.revert();
 
+            // If running with progress then increment completed runs.
+            if let Some(progress) = progress {
+                progress.inc(1);
+            }
+
             Ok(())
         });
 
@@ -330,7 +335,7 @@ impl<'a> InvariantExecutor<'a> {
             error,
             cases: fuzz_cases.into_inner(),
             reverts,
-            last_run_inputs: last_run_calldata.take(),
+            last_run_inputs: last_run_inputs.into_inner(),
             gas_report_traces: gas_report_traces.into_inner(),
         })
     }
@@ -343,7 +348,8 @@ impl<'a> InvariantExecutor<'a> {
         &mut self,
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
-    ) -> Result<InvariantPreparation> {
+    ) -> Result<(EvmFuzzState, FuzzRunIdentifiedContracts, impl Strategy<Value = BasicTxDetails>)>
+    {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -360,8 +366,7 @@ impl<'a> InvariantExecutor<'a> {
             self.config.dictionary.dictionary_weight,
             fuzz_fixtures.clone(),
         )
-        .no_shrink()
-        .boxed();
+        .no_shrink();
 
         // Allows `override_call_strat` to use the address given by the Fuzzer inspector during
         // EVM execution.
@@ -489,8 +494,14 @@ impl<'a> InvariantExecutor<'a> {
     ) -> Result<(SenderFilters, FuzzRunIdentifiedContracts)> {
         let targeted_senders =
             self.call_sol_default(to, &IInvariantTest::targetSendersCall {}).targetedSenders;
-        let excluded_senders =
+        let mut excluded_senders =
             self.call_sol_default(to, &IInvariantTest::excludeSendersCall {}).excludedSenders;
+        // Extend with default excluded addresses - https://github.com/foundry-rs/foundry/issues/4163
+        excluded_senders.extend([
+            CHEATCODE_ADDRESS,
+            HARDHAT_CONSOLE_ADDRESS,
+            DEFAULT_CREATE2_DEPLOYER,
+        ]);
         let sender_filters = SenderFilters::new(targeted_senders, excluded_senders);
 
         let selected =

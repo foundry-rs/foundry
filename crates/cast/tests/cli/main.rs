@@ -163,6 +163,53 @@ casttest!(wallet_list_local_accounts, |prj, cmd| {
     assert_eq!(list_output.matches('\n').count(), 10);
 });
 
+// tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic
+casttest!(wallet_mnemonic_from_entropy, |_prj, cmd| {
+    cmd.args(["wallet", "new-mnemonic", "--entropy", "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c"]);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("test test test test test test test test test test test junk"));
+});
+
+// tests that `cast wallet private-key` with arguments outputs the private key
+casttest!(wallet_private_key_from_mnemonic_arg, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "private-key",
+        "test test test test test test test test test test test junk",
+        "1",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+});
+
+// tests that `cast wallet private-key` with options outputs the private key
+casttest!(wallet_private_key_from_mnemonic_option, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "private-key",
+        "--mnemonic",
+        "test test test test test test test test test test test junk",
+        "--mnemonic-index",
+        "1",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+});
+
+// tests that `cast wallet private-key` with derivation path outputs the private key
+casttest!(wallet_private_key_with_derivation_path, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "private-key",
+        "--mnemonic",
+        "test test test test test test test test test test test junk",
+        "--mnemonic-derivation-path",
+        "m/44'/60'/0'/0/1",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+});
+
 // tests that `cast wallet import` creates a keystore for a private key and that `cast wallet
 // decrypt-keystore` can access it
 casttest!(wallet_import_and_decrypt, |prj, cmd| {
@@ -898,6 +945,31 @@ casttest!(index7201, |_prj, cmd| {
     }
 });
 
-casttest!(index_unknown_formula_id, |_prj, cmd| {
+casttest!(index7201_unknown_formula_id, |_prj, cmd| {
     cmd.args(["index-7201", "test", "--formula-id", "unknown"]).assert_err();
+});
+
+casttest!(block_number, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    let s = cmd.args(["block-number", "--rpc-url", eth_rpc_url.as_str()]).stdout_lossy();
+    assert!(s.trim().parse::<u64>().unwrap() > 0, "{s}")
+});
+
+casttest!(block_number_latest, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    let s = cmd.args(["block-number", "--rpc-url", eth_rpc_url.as_str(), "latest"]).stdout_lossy();
+    assert!(s.trim().parse::<u64>().unwrap() > 0, "{s}")
+});
+
+casttest!(block_number_hash, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    let s = cmd
+        .args([
+            "block-number",
+            "--rpc-url",
+            eth_rpc_url.as_str(),
+            "0x88e96d4537bea4d9c05d12549907b32561d3bf31f45aae734cdc119f13406cb6",
+        ])
+        .stdout_lossy();
+    assert_eq!(s.trim().parse::<u64>().unwrap(), 1, "{s}")
 });

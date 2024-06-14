@@ -75,8 +75,10 @@ impl ClientFork {
         }
 
         let provider = self.provider();
-        let block =
-            provider.get_block(block_number, false).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let block = provider
+            .get_block(block_number, false.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
         let block_hash = block.header.hash.ok_or(BlockchainError::BlockNotFound)?;
         let timestamp = block.header.timestamp;
         let base_fee = block.header.base_fee_per_gas;
@@ -482,7 +484,7 @@ impl ClientFork {
         &self,
         block_id: impl Into<BlockId>,
     ) -> Result<Option<Block>, TransportError> {
-        if let Some(block) = self.provider().get_block(block_id.into(), true).await? {
+        if let Some(block) = self.provider().get_block(block_id.into(), true.into()).await? {
             let hash = block.header.hash.unwrap();
             let block_number = block.header.number.unwrap();
             let mut storage = self.storage_write();

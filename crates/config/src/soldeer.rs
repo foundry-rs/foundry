@@ -11,7 +11,8 @@ pub struct SoldeerDependency {
     pub version: String,
 
     /// The url from where the dependency was retrieved
-    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 /// Type for Soldeer configs, under dependencies tag in the foundry.toml

@@ -332,3 +332,13 @@ test_repro!(5739);
 
 // https://github.com/foundry-rs/foundry/issues/8004
 test_repro!(8004);
+
+// https://github.com/foundry-rs/foundry/issues/2851
+test_repro!(2851, false, None, |res| {
+    let mut res = res.remove("default/repros/Issue2851.t.sol:Issue2851Test").unwrap();
+    let test = res.test_results.remove("invariantNotZero()").unwrap();
+    assert_eq!(test.status, TestStatus::Failure);
+});
+
+// https://github.com/foundry-rs/foundry/issues/8006
+test_repro!(8006);

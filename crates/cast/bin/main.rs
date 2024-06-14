@@ -253,10 +253,20 @@ async fn main() -> Result<()> {
                     .await?
             );
         }
-        CastSubcommand::BlockNumber { rpc } => {
+        CastSubcommand::BlockNumber { rpc, block } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).block_number().await?);
+            let number = match block {
+                Some(id) => provider
+                    .get_block(id, false.into())
+                    .await?
+                    .ok_or_else(|| eyre::eyre!("block {id:?} not found"))?
+                    .header
+                    .number
+                    .ok_or_else(|| eyre::eyre!("block {id:?} has no block number"))?,
+                None => Cast::new(provider).block_number().await?,
+            };
+            println!("{number}");
         }
         CastSubcommand::Chain { rpc } => {
             let config = Config::from(&rpc);

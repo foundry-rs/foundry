@@ -54,9 +54,12 @@ impl ExecutedTransaction {
 
         // successful return see [Return]
         let status_code = u8::from(self.exit_reason as u8 <= InstructionResult::SelfDestruct as u8);
-        let receipt_with_bloom: ReceiptWithBloom =
-            Receipt { status: status_code == 1, cumulative_gas_used: *cumulative_gas_used, logs }
-                .into();
+        let receipt_with_bloom: ReceiptWithBloom = Receipt {
+            status: (status_code == 1).into(),
+            cumulative_gas_used: *cumulative_gas_used,
+            logs,
+        }
+        .into();
 
         match &self.transaction.pending_transaction.transaction.transaction {
             TypedTransaction::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
@@ -270,9 +273,9 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         };
         let env = self.env_for(&transaction.pending_transaction);
 
-        // check that we comply with the block's gas limit
+        // check that we comply with the block's gas limit, if not disabled
         let max_gas = self.gas_used.saturating_add(env.tx.gas_limit as u128);
-        if max_gas > env.block.gas_limit.to::<u128>() {
+        if !env.cfg.disable_block_gas_limit && max_gas > env.block.gas_limit.to::<u128>() {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
         }
 

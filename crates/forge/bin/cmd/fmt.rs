@@ -1,6 +1,6 @@
 use clap::{Parser, ValueHint};
-use eyre::Result;
-use forge_fmt::{format_to, parse, print_diagnostics_report};
+use eyre::{Context, Result};
+use forge_fmt::{format_to, parse};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
 use foundry_common::{fs, term::cli_warn};
 use foundry_compilers::{compilers::solc::SolcLanguage, SOLC_EXTENSIONS};
@@ -102,9 +102,8 @@ impl FmtArgs {
                 None => "stdin".to_string(),
             };
 
-            let parsed = parse(&source).map_err(|diagnostics| {
-                let _ = print_diagnostics_report(&source, path, diagnostics);
-                eyre::eyre!("Failed to parse Solidity code for {name}. Leaving source unchanged.")
+            let parsed = parse(&source).wrap_err_with(|| {
+                format!("Failed to parse Solidity code for {name}. Leaving source unchanged.")
             })?;
 
             if !parsed.invalid_inline_config_items.is_empty() {

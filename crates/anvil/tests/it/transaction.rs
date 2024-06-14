@@ -90,7 +90,7 @@ async fn can_order_transactions() {
     let lower_price = tx_lower.get_receipt().await.unwrap().transaction_hash;
 
     // get the block, await receipts
-    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
 
     assert_eq!(block.transactions, BlockTransactions::Hashes(vec![higher_price, lower_price]))
 }
@@ -129,7 +129,7 @@ async fn can_respect_nonces() {
     // this will unblock the currently pending tx
     let higher_tx = higher_pending_tx.get_receipt().await.unwrap(); // Awaits endlessly here due to alloy/#389
 
-    let block = provider.get_block(1.into(), false).await.unwrap().unwrap();
+    let block = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
     assert_eq!(2, block.transactions.len());
     assert_eq!(
         BlockTransactions::Hashes(vec![tx.transaction_hash, higher_tx.transaction_hash]),
@@ -170,7 +170,7 @@ async fn can_replace_transaction() {
     // mine exactly one block
     api.mine_one().await;
 
-    let block = provider.get_block(1.into(), false).await.unwrap().unwrap();
+    let block = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
 
     assert_eq!(block.transactions.len(), 1);
     assert_eq!(BlockTransactions::Hashes(vec![higher_tx_hash]), block.transactions);
@@ -227,6 +227,28 @@ async fn can_reject_too_high_gas_limits() {
     let _ = pending.unwrap();
 }
 
+// <https://github.com/foundry-rs/foundry/issues/8094>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_mine_large_gas_limit() {
+    let (api, handle) = spawn(NodeConfig::test().disable_block_gas_limit(true)).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let gas_limit = api.gas_limit().to::<u128>();
+    let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
+
+    let tx =
+        TransactionRequest::default().to(to).value(amount).from(from).with_gas_limit(gas_limit * 3);
+
+    // send transaction with higher gas limit
+    let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+
+    let _resp = pending.get_receipt().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reject_underpriced_replacement() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -264,7 +286,7 @@ async fn can_reject_underpriced_replacement() {
     let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap();
 
     // ensure that only the higher priced tx was mined
-    let block = provider.get_block(1.into(), false).await.unwrap().unwrap();
+    let block = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
     assert_eq!(1, block.transactions.len());
     assert_eq!(
         BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
@@ -530,7 +552,7 @@ async fn call_past_state() {
     assert_eq!(value._0, "initial value");
 
     let hash = provider
-        .get_block(BlockId::Number(1.into()), false)
+        .get_block(BlockId::Number(1.into()), false.into())
         .await
         .unwrap()
         .unwrap()

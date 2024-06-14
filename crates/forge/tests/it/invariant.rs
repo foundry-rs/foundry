@@ -221,7 +221,7 @@ async fn test_invariant() {
                 )],
             ),
             (
-                "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkTest",
+                "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkBlockTest",
                 vec![(
                     "invariant_fork_handler_block()",
                     false,
@@ -229,6 +229,20 @@ async fn test_invariant() {
                     None,
                     None,
                 )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkStateTest",
+                vec![(
+                    "invariant_fork_handler_state()",
+                    false,
+                    Some("revert: wrong supply".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantExcludedSenders.t.sol:InvariantExcludedSendersTest",
+                vec![("invariant_check_sender()", true, None, None, None)],
             )
         ]),
     );
@@ -654,17 +668,45 @@ async fn test_invariant_roll_fork_handler() {
         Some(tempfile::tempdir().unwrap().into_path());
 
     let results = runner.test_collect(&filter);
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([
+            (
+                "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkBlockTest",
+                vec![(
+                    "invariant_fork_handler_block()",
+                    false,
+                    Some("revert: too many blocks mined".into()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkStateTest",
+                vec![(
+                    "invariant_fork_handler_state()",
+                    false,
+                    Some("revert: wrong supply".into()),
+                    None,
+                    None,
+                )],
+            ),
+        ]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_excluded_senders() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantExcludedSenders.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.fail_on_revert = true;
+    let results = runner.test_collect(&filter);
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "default/fuzz/invariant/common/InvariantRollFork.t.sol:InvariantRollForkTest",
-            vec![(
-                "invariant_fork_handler_block()",
-                false,
-                Some("revert: too many blocks mined".into()),
-                None,
-                None,
-            )],
+            "default/fuzz/invariant/common/InvariantExcludedSenders.t.sol:InvariantExcludedSendersTest",
+            vec![("invariant_check_sender()", true, None, None, None)],
         )]),
     );
 }

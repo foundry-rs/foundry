@@ -1,13 +1,16 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner, TestFilter, TestOptions,
+    progress::TestsProgress, result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner,
+    TestFilter, TestOptions,
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
-use foundry_compilers::{artifacts::Libraries, Artifact, ArtifactId, ProjectCompileOutput};
+use foundry_compilers::{
+    artifacts::Libraries, compilers::Compiler, Artifact, ArtifactId, ProjectCompileOutput,
+};
 use foundry_config::Config;
 use foundry_evm::{
     backend::Backend, decode::RevertDecoder, executors::ExecutorBuilder, fork::CreateFork,
@@ -140,7 +143,7 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
     ) -> impl Iterator<Item = (String, SuiteResult)> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx);
+        self.test(filter, tx, false);
         rx.into_iter()
     }
 
@@ -150,7 +153,12 @@ impl MultiContractRunner {
     /// before executing all contracts and their tests in _parallel_.
     ///
     /// Each Executor gets its own instance of the `Backend`.
-    pub fn test(&mut self, filter: &dyn TestFilter, tx: mpsc::Sender<(String, SuiteResult)>) {
+    pub fn test(
+        &mut self,
+        filter: &dyn TestFilter,
+        tx: mpsc::Sender<(String, SuiteResult)>,
+        show_progress: bool,
+    ) {
         let handle = tokio::runtime::Handle::current();
         trace!("running all tests");
 
@@ -167,20 +175,55 @@ impl MultiContractRunner {
             find_time,
         );
 
-        contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
-            let _guard = handle.enter();
-            let result = self.run_tests(id, contract, db.clone(), filter, &handle);
-            let _ = tx.send((id.identifier(), result));
-        })
+        if show_progress {
+            let tests_progress = TestsProgress::new(contracts.len(), rayon::current_num_threads());
+            // Collect test suite results to stream at the end of test run.
+            let results: Vec<(String, SuiteResult)> = contracts
+                .par_iter()
+                .map(|&(id, contract)| {
+                    let _guard = handle.enter();
+                    tests_progress.inner.lock().start_suite_progress(&id.identifier());
+
+                    let result = self.run_test_suite(
+                        id,
+                        contract,
+                        db.clone(),
+                        filter,
+                        &handle,
+                        Some(&tests_progress),
+                    );
+
+                    tests_progress
+                        .inner
+                        .lock()
+                        .end_suite_progress(&id.identifier(), result.summary());
+
+                    (id.identifier(), result)
+                })
+                .collect();
+
+            tests_progress.inner.lock().clear();
+
+            results.iter().for_each(|result| {
+                let _ = tx.send(result.to_owned());
+            });
+        } else {
+            contracts.par_iter().for_each(|&(id, contract)| {
+                let _guard = handle.enter();
+                let result = self.run_test_suite(id, contract, db.clone(), filter, &handle, None);
+                let _ = tx.send((id.identifier(), result));
+            })
+        }
     }
 
-    fn run_tests(
+    fn run_test_suite(
         &self,
         artifact_id: &ArtifactId,
         contract: &TestContract,
         db: Backend,
         filter: &dyn TestFilter,
         handle: &tokio::runtime::Handle,
+        progress: Option<&TestsProgress>,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let mut span_name = identifier.as_str();
@@ -209,7 +252,7 @@ impl MultiContractRunner {
         if !enabled!(tracing::Level::TRACE) {
             span_name = get_contract_name(&identifier);
         }
-        let _guard = debug_span!("run_suite", name = span_name).entered();
+        let _guard = debug_span!("suite", name = span_name).entered();
 
         debug!("start executing all tests in contract");
 
@@ -222,7 +265,9 @@ impl MultiContractRunner {
             self.sender,
             &self.revert_decoder,
             self.debug,
+            progress,
         );
+
         let r = runner.run_tests(filter, &self.test_options, self.known_contracts.clone(), handle);
 
         debug!(duration=?r.duration, "executed all tests in contract");
@@ -313,10 +358,10 @@ impl MultiContractRunnerBuilder {
 
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
-    pub fn build<E>(
+    pub fn build<C: Compiler>(
         self,
         root: &Path,
-        output: ProjectCompileOutput<E>,
+        output: ProjectCompileOutput<C>,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {

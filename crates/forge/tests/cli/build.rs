@@ -1,7 +1,8 @@
+use foundry_common::fs::read_json_file;
 use foundry_config::Config;
-use foundry_test_utils::{forgetest, util::OutputExt};
+use foundry_test_utils::forgetest;
 use globset::Glob;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 // tests that json is printed when --json is passed
 forgetest!(compile_json, |prj, cmd| {
@@ -21,10 +22,17 @@ contract Dummy {
     // set up command
     cmd.args(["compile", "--format-json"]);
 
-    // run command and assert
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/compile_json.stdout"),
-    );
+    // Exclude build_infos from output as IDs depend on root dir and are not deterministic.
+    let mut output: BTreeMap<String, serde_json::Value> =
+        serde_json::from_str(&cmd.stdout_lossy()).unwrap();
+    output.remove("build_infos");
+
+    let expected: BTreeMap<String, serde_json::Value> = read_json_file(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/compile_json.stdout"),
+    )
+    .unwrap();
+
+    similar_asserts::assert_eq!(output, expected);
 });
 
 // tests build output is as expected

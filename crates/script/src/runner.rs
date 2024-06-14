@@ -92,7 +92,7 @@ impl ScriptRunner {
                     let calldata = [salt.as_ref(), library.as_ref()].concat();
                     let result = self
                         .executor
-                        .call_raw_committing(
+                        .transact_raw(
                             self.evm_opts.sender,
                             DEFAULT_CREATE2_DEPLOYER,
                             calldata.clone().into(),
@@ -301,7 +301,7 @@ impl ScriptRunner {
         // Otherwise don't re-execute, or some usecases might be broken: https://github.com/foundry-rs/foundry/issues/3921
         if commit {
             gas_used = self.search_optimal_gas_usage(&res, from, to, &calldata, value)?;
-            res = self.executor.call_raw_committing(from, to, calldata, value)?;
+            res = self.executor.transact_raw(from, to, calldata, value)?;
         }
 
         let RawCallResult { result, reverted, logs, traces, labels, debug, transactions, .. } = res;

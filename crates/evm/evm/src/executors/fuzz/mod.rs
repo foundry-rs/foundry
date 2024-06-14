@@ -14,8 +14,9 @@ use foundry_evm_fuzz::{
     BaseCounterExample, CounterExample, FuzzCase, FuzzError, FuzzFixtures, FuzzTestResult,
 };
 use foundry_evm_traces::CallTraceArena;
+use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::{borrow::Cow, cell::RefCell};
+use std::cell::RefCell;
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -59,6 +60,7 @@ impl FuzzedExecutor {
         address: Address,
         should_fail: bool,
         rd: &RevertDecoder,
+        progress: Option<&ProgressBar>,
     ) -> FuzzTestResult {
         // Stores the first Fuzzcase
         let first_case: RefCell<Option<FuzzCase>> = RefCell::default();
@@ -90,6 +92,11 @@ impl FuzzedExecutor {
         debug!(func=?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
+
+            // If running with progress then increment current run.
+            if let Some(progress) = progress {
+                progress.inc(1);
+            };
 
             match fuzz_res {
                 FuzzOutcome::Case(case) => {
@@ -195,7 +202,6 @@ impl FuzzedExecutor {
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
-        let state_changeset = call.state_changeset.take().unwrap();
 
         // When the `assume` cheatcode is called it returns a special string
         if call.result.as_ref() == MAGIC_ASSUME {
@@ -207,13 +213,7 @@ impl FuzzedExecutor {
             .as_ref()
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
-        let success = self.executor.is_raw_call_success(
-            address,
-            Cow::Owned(state_changeset),
-            &call,
-            should_fail,
-        );
-
+        let success = self.executor.is_raw_call_mut_success(address, &mut call, should_fail);
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },

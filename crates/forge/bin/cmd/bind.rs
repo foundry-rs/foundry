@@ -195,7 +195,7 @@ impl BindArgs {
         Ok(json_files(artifacts)
             .filter_map(|path| {
                 // Ignore the build info JSON.
-                if path.to_str()?.contains("/build-info/") {
+                if path.to_str()?.contains("build-info") {
                     return None;
                 }
 

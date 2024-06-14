@@ -137,7 +137,7 @@ impl LinkedBuildData {
         let sources = ContractSources::from_project_output(
             &build_data.output,
             &build_data.project_root,
-            &libraries,
+            Some(&libraries),
         )?;
 
         let known_contracts =

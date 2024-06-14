@@ -1083,7 +1083,7 @@ static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
     Regex::new(&format!("({})", re.join("|"))).unwrap()
 });
 
-fn normalize_output(s: &str) -> String {
+pub fn normalize_output(s: &str) -> String {
     let s = s.replace("\r\n", "\n").replace('\\', "/");
     IGNORE_IN_FIXTURES.replace_all(&s, "").into_owned()
 }

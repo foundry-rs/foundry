@@ -68,12 +68,8 @@ pub(crate) fn assert_invariants(
         U256::ZERO,
     )?;
 
-    let success = executor.is_raw_call_success(
-        invariant_contract.address,
-        Cow::Owned(call_result.state_changeset.take().unwrap()),
-        &call_result,
-        false,
-    );
+    let success =
+        executor.is_raw_call_mut_success(invariant_contract.address, &mut call_result, false);
     if !success {
         // We only care about invariants which we haven't broken yet.
         if invariant_failures.error.is_none() {
@@ -111,7 +107,7 @@ pub(crate) fn can_continue(
     let mut call_results = None;
 
     let handlers_succeeded = || {
-        targeted_contracts.targets.lock().iter().all(|(address, ..)| {
+        targeted_contracts.targets.lock().keys().all(|address| {
             executor.is_success(*address, false, Cow::Borrowed(state_changeset), false)
         })
     };

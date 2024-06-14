@@ -11,6 +11,7 @@ use foundry_evm_fuzz::{
     BaseCounterExample,
 };
 use foundry_evm_traces::{load_contracts, TraceKind, Traces};
+use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::test_runner::TestError;
 use revm::primitives::U256;
@@ -36,7 +37,7 @@ pub fn replay_run(
 
     // Replay each call from the sequence, collect logs, traces and coverage.
     for tx in inputs.iter() {
-        let call_result = executor.call_raw_committing(
+        let call_result = executor.transact_raw(
             tx.sender,
             tx.call_details.target,
             tx.call_details.calldata.clone(),
@@ -97,13 +98,14 @@ pub fn replay_error(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     coverage: &mut Option<HitMaps>,
+    progress: Option<&ProgressBar>,
 ) -> Result<Vec<BaseCounterExample>> {
     match failed_case.test_error {
         // Don't use at the moment.
         TestError::Abort(_) => Ok(vec![]),
         TestError::Fail(_, ref calls) => {
             // Shrink sequence of failed calls.
-            let calls = shrink_sequence(failed_case, calls, &executor)?;
+            let calls = shrink_sequence(failed_case, calls, &executor, progress)?;
 
             set_up_inner_replay(&mut executor, &failed_case.inner_sequence);
 

@@ -30,24 +30,7 @@ impl RetryPolicy for RateLimitRetryPolicy {
             // The transport could not serialize the error itself. The request was malformed from
             // the start.
             TransportError::SerError(_) => false,
-            TransportError::DeserError { text, .. } => {
-                if let Ok(resp) = serde_json::from_str::<ErrorPayload>(text) {
-                    return should_retry_json_rpc_error(&resp)
-                }
-
-                // some providers send invalid JSON RPC in the error case (no `id:u64`), but the
-                // text should be a `JsonRpcError`
-                #[derive(Deserialize)]
-                struct Resp {
-                    error: ErrorPayload,
-                }
-
-                if let Ok(resp) = serde_json::from_str::<Resp>(text) {
-                    return should_retry_json_rpc_error(&resp.error)
-                }
-
-                false
-            }
+            TransportError::DeserError { text, .. } => should_retry_body(text),
             TransportError::ErrorResp(err) => should_retry_json_rpc_error(err),
             TransportError::NullResp => true,
             TransportError::UnsupportedFeature(_) => false,
@@ -76,6 +59,26 @@ impl RetryPolicy for RateLimitRetryPolicy {
     }
 }
 
+/// Tries to decode the error body as payload and check if it should be retried
+fn should_retry_body(body: &str) -> bool {
+    if let Ok(resp) = serde_json::from_str::<ErrorPayload>(body) {
+        return should_retry_json_rpc_error(&resp)
+    }
+
+    // some providers send invalid JSON RPC in the error case (no `id:u64`), but the
+    // text should be a `JsonRpcError`
+    #[derive(Deserialize)]
+    struct Resp {
+        error: ErrorPayload,
+    }
+
+    if let Ok(resp) = serde_json::from_str::<Resp>(body) {
+        return should_retry_json_rpc_error(&resp.error)
+    }
+
+    false
+}
+
 /// Analyzes the [TransportErrorKind] and decides if the request should be retried based on the
 /// variant.
 fn should_retry_transport_level_error(error: &TransportErrorKind) -> bool {
@@ -88,8 +91,16 @@ fn should_retry_transport_level_error(error: &TransportErrorKind) -> bool {
             msg.contains("429 Too Many Requests")
         }
 
+        TransportErrorKind::HttpError(err) => {
+            if err.status == 429 {
+                return true
+            }
+            should_retry_body(&err.body)
+        }
         // If the backend is gone, or there's a completely custom error, we should assume it's not
         // retryable.
+        TransportErrorKind::PubsubUnavailable => false,
+        TransportErrorKind::BackendGone => false,
         _ => false,
     }
 }
