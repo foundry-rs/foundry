@@ -737,15 +737,7 @@ impl Backend {
     pub async fn serialized_state(&self) -> Result<SerializableState, BlockchainError> {
         let at = self.env.read().block.clone();
         let best_number = self.blockchain.storage.read().best_number;
-        // let latest_block = self.get_block(BlockId::latest());
-        let blocks = self
-            .blockchain
-            .storage
-            .read()
-            .blocks
-            .iter()
-            .map(|(_, block)| block.clone().into())
-            .collect();
+        let blocks = self.blockchain.storage.read().serialized_blocks();
         let state = self.db.read().await.dump_state(at, best_number, blocks)?;
         state.ok_or_else(|| {
             RpcError::invalid_params("Dumping state not supported with the current configuration")
@@ -782,13 +774,7 @@ impl Backend {
             .into());
         }
 
-        for serializable_block in state.blocks.iter() {
-            let block: Block = serializable_block.clone().into();
-            let block_hash = block.header.hash_slow();
-            let block_number = block.header.number;
-            self.blockchain.storage.write().blocks.insert(block_hash, block);
-            self.blockchain.storage.write().hashes.insert(U64::from(block_number), block_hash);
-        }
+        self.blockchain.storage.write().load_blocks(state.blocks.clone());
 
         Ok(true)
     }
