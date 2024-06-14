@@ -91,9 +91,9 @@ impl BuildArgs {
 
         // Collect sources to compile if build subdirectories specified.
         let mut files = vec![];
-        if let Some(dirs) = self.paths {
-            for dir in dirs {
-                files.extend(source_files_iter(dir, MultiCompilerLanguage::FILE_EXTENSIONS));
+        if let Some(paths) = self.paths {
+            for path in paths {
+                files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
             }
         }
 
