@@ -244,13 +244,19 @@ impl BindArgs {
     }
 
     fn get_solmacrogen(&self, artifacts: &Path) -> Result<MultiSolMacroGen> {
-        let instances = self
+        let mut instances = self
             .get_json_files(artifacts)?
             .map(|(name, path)| {
                 trace!(?path, "parsing SolMacroGen from file");
                 SolMacroGen::new(path, name)
             })
             .collect::<Vec<_>>();
+
+        // Dedup instances, duplication occurs due to the artifact of the same contract being in
+        // multiple out/<contract.sol> directories.
+        instances.sort_by(|a, b| a.name.cmp(&b.name));
+        instances.dedup_by_key(|key| key.name.clone());
+
         let multi = MultiSolMacroGen::new(artifacts, instances);
         eyre::ensure!(!multi.instances.is_empty(), "No contract artifacts found");
         Ok(multi)
