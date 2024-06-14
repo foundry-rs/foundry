@@ -77,7 +77,10 @@ pub enum SendTxSubcommands {
 }
 
 impl SendTxArgs {
+<<<<<<< HEAD
     #[allow(dependency_on_unit_never_type_fallback)]
+=======
+>>>>>>> 38be5776e (clippy happy)
     pub async fn run(self) -> Result<(), eyre::Report> {
         let Self {
             eth,

@@ -34,7 +34,7 @@ use crate::{
 use alloy_consensus::transaction::eip4844::TxEip4844Variant;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{eip2718::Decodable2718, TransactionResponse};
+use alloy_network::eip2718::Decodable2718;
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, B64, U256, U64};
 use alloy_rpc_types::{
     request::TransactionRequest,
