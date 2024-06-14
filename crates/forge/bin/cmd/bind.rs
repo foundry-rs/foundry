@@ -86,8 +86,8 @@ pub struct BindArgs {
     alloy: bool,
 
     /// Specify the alloy version.
-    #[arg(long, default_value = "0.7.4", value_name = "ALLOY_VERSION")]
-    alloy_version: String,
+    #[arg(long, value_name = "ALLOY_VERSION")]
+    alloy_version: Option<String>,
 
     /// Generate bindings for the `ethers` library, instead of `alloy` (default, deprecated).
     #[arg(long)]
@@ -308,7 +308,7 @@ impl BindArgs {
             self.single_file,
             !self.skip_cargo_toml,
             self.module,
-            self.alloy_version.to_owned(),
+            self.alloy_version.clone(),
         )?;
         println!("OK.");
         Ok(())
@@ -354,7 +354,7 @@ impl BindArgs {
                 &self.crate_version,
                 bindings_root,
                 self.single_file,
-                self.alloy_version.to_owned(),
+                self.alloy_version.clone(),
             )?;
         } else {
             trace!(single_file = self.single_file, "generating module");

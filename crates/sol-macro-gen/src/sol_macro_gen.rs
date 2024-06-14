@@ -96,7 +96,7 @@ impl MultiSolMacroGen {
         version: &str,
         bindings_path: &Path,
         single_file: bool,
-        alloy_version: String,
+        alloy_version: Option<String>,
     ) -> Result<()> {
         self.generate_bindings()?;
 
@@ -106,17 +106,28 @@ impl MultiSolMacroGen {
 
         // Write Cargo.toml
         let cargo_toml_path = bindings_path.join("Cargo.toml");
-        let toml_contents = format!(
+        let mut toml_contents = format!(
             r#"[package]
 name = "{}"
 version = "{}"
 edition = "2021"
 
 [dependencies]
-alloy-sol-types = "{}"
-alloy-contract = {{ git = "https://github.com/alloy-rs/alloy" }}"#,
-            name, version, alloy_version
+"#,
+            name, version
         );
+
+        let alloy_dep = if let Some(alloy_version) = alloy_version {
+            format!(
+                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{}", features = ["sol-types", "contract"] }}"#,
+                alloy_version
+            )
+        } else {
+            format!(
+                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }}"#
+            )
+        };
+        write!(toml_contents, "{}", alloy_dep)?;
 
         fs::write(cargo_toml_path, toml_contents).wrap_err("Failed to write Cargo.toml")?;
 
@@ -234,7 +245,7 @@ alloy-contract = {{ git = "https://github.com/alloy-rs/alloy" }}"#,
         single_file: bool,
         check_cargo_toml: bool,
         is_mod: bool,
-        alloy_version: String,
+        alloy_version: Option<String>,
     ) -> Result<()> {
         if check_cargo_toml {
             self.check_cargo_toml(name, version, crate_path, alloy_version)?;
@@ -309,7 +320,7 @@ alloy-contract = {{ git = "https://github.com/alloy-rs/alloy" }}"#,
         name: &str,
         version: &str,
         crate_path: &Path,
-        alloy_version: String,
+        alloy_version: Option<String>,
     ) -> Result<()> {
         eyre::ensure!(crate_path.is_dir(), "Crate path must be a directory");
 
@@ -321,13 +332,19 @@ alloy-contract = {{ git = "https://github.com/alloy-rs/alloy" }}"#,
 
         let name_check = &format!("name = \"{}\"", name);
         let version_check = &format!("version = \"{}\"", version);
-        let sol_types_check = &format!("alloy-sol-types = \"{}\"", alloy_version);
-        let alloy_contract_check =
-            "alloy-contract = {{ git = \"https://github.com/alloy-rs/alloy\" }}";
+        let alloy_dep_check = if let Some(version) = alloy_version {
+            &format!(
+                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{}", features = ["sol-types", "contract"] }}"#,
+                version
+            )
+        } else {
+            &format!(
+                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }}"#
+            )
+        };
         let toml_consistent = cargo_toml_contents.contains(name_check) &&
             cargo_toml_contents.contains(version_check) &&
-            cargo_toml_contents.contains(sol_types_check) &&
-            cargo_toml_contents.contains(alloy_contract_check);
+            cargo_toml_contents.contains(alloy_dep_check);
         eyre::ensure!(
             toml_consistent,
             r#"The contents of Cargo.toml do not match the expected output of the latest `sol!` version.
