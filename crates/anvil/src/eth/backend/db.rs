@@ -118,7 +118,7 @@ pub trait Db:
         &self,
         at: BlockEnv,
         best_number: U64,
-        latest_block: Option<SerializableBlock>,
+        blocks: Vec<SerializableBlock>,
     ) -> DatabaseResult<Option<SerializableState>>;
 
     /// Deserialize and add all chain data to the backend storage
@@ -191,7 +191,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         &self,
         _at: BlockEnv,
         _best_number: U64,
-        _latest_block: Option<SerializableBlock>,
+        _blocks: Vec<SerializableBlock>,
     ) -> DatabaseResult<Option<SerializableState>> {
         Ok(None)
     }
@@ -322,7 +322,7 @@ pub struct SerializableState {
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
     /// The best block number of the state, can be different from block number (Arbitrum chain).
     pub best_block_number: Option<U64>,
-    pub latest_block: Option<SerializableBlock>,
+    pub blocks: Vec<SerializableBlock>,
 }
 
 impl SerializableState {

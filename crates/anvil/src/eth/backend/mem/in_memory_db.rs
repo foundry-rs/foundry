@@ -37,7 +37,7 @@ impl Db for MemDb {
         &self,
         at: BlockEnv,
         best_number: U64,
-        latest_block: Option<SerializableBlock>,
+        blocks: Vec<SerializableBlock>,
     ) -> DatabaseResult<Option<SerializableState>> {
         let accounts = self
             .inner
@@ -66,7 +66,7 @@ impl Db for MemDb {
             block: Some(at),
             accounts,
             best_block_number: Some(best_number),
-            latest_block,
+            blocks,
         }))
     }
 
@@ -163,8 +163,7 @@ mod tests {
         dump_db.set_storage_at(test_addr, U256::from(1234567), U256::from(1)).unwrap();
 
         // TODO: test real latest_block
-        let state =
-            dump_db.dump_state(Default::default(), U64::ZERO, Option::None).unwrap().unwrap();
+        let state = dump_db.dump_state(Default::default(), U64::ZERO, Vec::new()).unwrap().unwrap();
 
         let mut load_db = MemDb::default();
 

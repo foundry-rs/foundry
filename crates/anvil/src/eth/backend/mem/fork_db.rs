@@ -36,7 +36,7 @@ impl Db for ForkedDatabase {
         &self,
         at: BlockEnv,
         best_number: U64,
-        latest_block: Option<SerializableBlock>,
+        blocks: Vec<SerializableBlock>,
     ) -> DatabaseResult<Option<SerializableState>> {
         let mut db = self.database().clone();
         let accounts = self
@@ -65,7 +65,7 @@ impl Db for ForkedDatabase {
             block: Some(at),
             accounts,
             best_block_number: Some(best_number),
-            latest_block,
+            blocks,
         }))
     }
 
