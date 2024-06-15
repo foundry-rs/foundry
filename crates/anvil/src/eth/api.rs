@@ -78,6 +78,25 @@ use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
 use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
+macro_rules! prepare_typed_tx {
+    ($self: expr, $request:expr, $typed_tx:ident, $from:ident, $nonce:ident, $on_chain_nonce:ident) => {
+        let $from = $request.from.map(Ok).unwrap_or_else(|| {
+            $self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
+        })?;
+
+        let ($nonce, $on_chain_nonce) = $self.request_nonce(&$request, $from).await?;
+
+        if $request.gas.is_none() {
+            // estimate if not provided
+            if let Ok(gas) = $self.estimate_gas($request.clone(), None, None).await {
+                $request.gas = Some(gas.to());
+            }
+        }
+
+        let $typed_tx = $self.build_typed_tx_request($request, $nonce)?;
+    };
+}
+
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
 
@@ -473,6 +492,26 @@ impl EthApi {
             }
         };
         Ok(block_request)
+    }
+
+    async fn inner_raw_transaction(&self, hash: B256) -> Result<Option<Bytes>> {
+        match self.pool.get_transaction(hash) {
+            Some(tx) => Ok(Some(tx.transaction.encoded_2718().into())),
+            None => match self.backend.transaction_by_hash(hash).await? {
+                Some(tx) => {
+                    prepare_typed_tx!(
+                        self,
+                        tx.clone().into_transaction_request(),
+                        tx,
+                        from,
+                        _nonce,
+                        _on_chain_nonce
+                    );
+                    Ok(Some(self.sign_request(&from, tx)?.encoded_2718().into()))
+                }
+                None => Ok(None),
+            },
+        }
     }
 
     /// Returns the current client version.
@@ -876,22 +915,10 @@ impl EthApi {
     ) -> Result<String> {
         node_info!("eth_signTransaction");
 
-        let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
-        })?;
+        prepare_typed_tx!(self, request, typed_tx, from, _nonce, _on_chain_nonce);
 
-        let (nonce, _) = self.request_nonce(&request, from).await?;
-
-        if request.gas.is_none() {
-            // estimate if not provided
-            if let Ok(gas) = self.estimate_gas(request.clone(), None, None).await {
-                request.gas = Some(gas.to());
-            }
-        }
-
-        let request = self.build_typed_tx_request(request, nonce)?;
-
-        let signed_transaction = self.sign_request(&from, request)?.encoded_2718();
+        // safety for request.from: if the address is none, then `prepare_typed_request` fails.
+        let signed_transaction = self.sign_request(&from, typed_tx)?.encoded_2718();
         Ok(alloy_primitives::hex::encode_prefixed(signed_transaction))
     }
 
@@ -904,19 +931,8 @@ impl EthApi {
     ) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
-        let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
-        })?;
-        let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
+        prepare_typed_tx!(self, request, request, from, nonce, on_chain_nonce);
 
-        if request.gas.is_none() {
-            // estimate if not provided
-            if let Ok(gas) = self.estimate_gas(request.clone(), None, None).await {
-                request.gas = Some(gas.to());
-            }
-        }
-
-        let request = self.build_typed_tx_request(request, nonce)?;
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
@@ -1453,21 +1469,7 @@ impl EthApi {
     /// Handler for RPC call: `debug_getRawTransaction`
     pub async fn raw_transaction(&self, hash: B256) -> Result<Option<Bytes>> {
         node_info!("debug_getRawTransaction");
-
-        let mut out = vec![];
-
-        match self.pool.get_transaction(hash) {
-            Some(tx) => {
-                tx.transaction.encode_2718(&mut out);
-            }
-            None => return Ok(None),
-        }
-
-        if !out.is_empty() {
-            Ok(Some(out.into()))
-        } else {
-            Ok(None)
-        }
+        self.inner_raw_transaction(hash).await
     }
 
     /// Returns EIP-2718 encoded raw transaction by block hash and index
@@ -1480,7 +1482,7 @@ impl EthApi {
     ) -> Result<Option<Bytes>> {
         node_info!("eth_getRawTransactionByBlockHashAndIndex");
         match self.backend.transaction_by_block_hash_and_index(block_hash, index).await? {
-            Some(tx) => self.raw_transaction(tx.hash).await,
+            Some(tx) => self.inner_raw_transaction(tx.hash).await,
             None => Ok(None),
         }
     }
@@ -1495,7 +1497,7 @@ impl EthApi {
     ) -> Result<Option<Bytes>> {
         node_info!("eth_getRawTransactionByBlockNumberAndIndex");
         match self.backend.transaction_by_block_number_and_index(block_number, index).await? {
-            Some(tx) => self.raw_transaction(tx.hash).await,
+            Some(tx) => self.inner_raw_transaction(tx.hash).await,
             None => Ok(None),
         }
     }
