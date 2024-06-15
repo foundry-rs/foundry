@@ -77,7 +77,7 @@ pub enum SendTxSubcommands {
 }
 
 impl SendTxArgs {
-    #[allow(dependency_on_unit_never_type_fallback)]
+    #[allow(unknown_lints, dependency_on_unit_never_type_fallback)]
     pub async fn run(self) -> Result<(), eyre::Report> {
         let Self {
             eth,
