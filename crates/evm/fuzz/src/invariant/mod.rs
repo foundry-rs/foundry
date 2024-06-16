@@ -8,6 +8,8 @@ pub use call_override::RandomCallGenerator;
 
 mod filters;
 pub use filters::{ArtifactFilters, SenderFilters};
+use foundry_common::{ContractsByAddress, ContractsByArtifact};
+use foundry_evm_core::utils::StateChangeset;
 
 pub type TargetedContracts = BTreeMap<Address, (String, JsonAbi, Vec<Function>)>;
 
@@ -43,6 +45,93 @@ impl FuzzRunIdentifiedContracts {
             None => (None, None),
         };
         f(abi, abi_f);
+    }
+
+    /// Returns flatten target contract address and functions to be fuzzed.
+    /// Includes contract targeted functions if specified, else all mutable contract functions.
+    pub fn fuzzed_functions(&self) -> Vec<(Address, Function)> {
+        let mut fuzzed_functions = vec![];
+        for (contract, (_, abi, functions)) in self.targets.lock().iter() {
+            if !abi.functions.is_empty() {
+                for function in abi_fuzzed_functions(abi, functions) {
+                    fuzzed_functions.push((*contract, function.clone()));
+                }
+            }
+        }
+        fuzzed_functions
+    }
+
+    /// If targets are updatable, collect all contracts created during an invariant run (which
+    /// haven't been discovered yet).
+    pub fn collect_created_contracts(
+        &self,
+        state_changeset: &StateChangeset,
+        project_contracts: &ContractsByArtifact,
+        setup_contracts: &ContractsByAddress,
+        artifact_filters: &ArtifactFilters,
+        created_contracts: &mut Vec<Address>,
+    ) -> eyre::Result<()> {
+        if self.is_updatable {
+            let mut targets = self.targets.lock();
+            for (address, account) in state_changeset {
+                if setup_contracts.contains_key(address) {
+                    continue;
+                }
+                if !account.is_touched() {
+                    continue;
+                }
+                let Some(code) = &account.info.code else {
+                    continue;
+                };
+                if code.is_empty() {
+                    continue;
+                }
+                let Some((artifact, contract)) =
+                    project_contracts.find_by_deployed_code(code.original_byte_slice())
+                else {
+                    continue;
+                };
+                let Some(functions) =
+                    artifact_filters.get_targeted_functions(artifact, &contract.abi)?
+                else {
+                    continue;
+                };
+                created_contracts.push(*address);
+                targets.insert(*address, (artifact.name.clone(), contract.abi.clone(), functions));
+            }
+        }
+        Ok(())
+    }
+
+    /// Clears targeted contracts created during an invariant run.
+    pub fn clear_created_contracts(&self, created_contracts: Vec<Address>) {
+        if !created_contracts.is_empty() {
+            let mut targets = self.targets.lock();
+            for addr in created_contracts.iter() {
+                targets.remove(addr);
+            }
+        }
+    }
+}
+
+/// Helper to retrieve functions to fuzz for specified abi.
+/// Returns specified targeted functions if any, else mutable abi functions.
+pub(crate) fn abi_fuzzed_functions(
+    abi: &JsonAbi,
+    targeted_functions: &[Function],
+) -> Vec<Function> {
+    if !targeted_functions.is_empty() {
+        targeted_functions.to_vec()
+    } else {
+        abi.functions()
+            .filter(|&func| {
+                !matches!(
+                    func.state_mutability,
+                    alloy_json_abi::StateMutability::Pure | alloy_json_abi::StateMutability::View
+                )
+            })
+            .cloned()
+            .collect()
     }
 }
 

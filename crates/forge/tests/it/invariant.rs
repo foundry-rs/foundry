@@ -264,6 +264,10 @@ async fn test_invariant() {
                     ),
                     ("invariant_success()", true, None, None, None),
                 ],
+            ),
+            (
+                "default/fuzz/invariant/common/InvariantSelectorsWeight.t.sol:InvariantSelectorsWeightTest",
+                vec![("invariant_selectors_weight()", true, None, None, None)],
             )
         ]),
     );
@@ -764,4 +768,27 @@ async fn test_invariant_after_invariant() {
             ],
         )]),
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_invariant_selectors_weight() {
+    let mut opts = TEST_DATA_DEFAULT.test_opts.clone();
+    opts.fuzz.seed = Some(U256::from(119u32));
+
+    let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantSelectorsWeight.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options = opts.clone();
+    runner.test_options.invariant.runs = 1;
+    runner.test_options.invariant.depth = 30;
+    runner.test_options.invariant.failure_persist_dir =
+        Some(tempfile::tempdir().unwrap().into_path());
+
+    let results = runner.test_collect(&filter);
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/fuzz/invariant/common/InvariantSelectorsWeight.t.sol:InvariantSelectorsWeightTest",
+            vec![("invariant_selectors_weight()", true, None, None, None)],
+        )]),
+    )
 }
