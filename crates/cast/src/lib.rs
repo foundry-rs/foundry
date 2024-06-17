@@ -95,7 +95,8 @@ where
     ///
     /// ```
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+    /// use alloy_rpc_types::{TransactionRequest};
+    /// use alloy_serde::WithOtherFields;
     /// use cast::Cast;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::str::FromStr;
@@ -176,7 +177,8 @@ where
     /// ```
     /// use cast::{Cast};
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+    /// use alloy_rpc_types::{TransactionRequest};
+    /// use alloy_serde::WithOtherFields;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::str::FromStr;
     /// use alloy_sol_types::{sol, SolCall};
@@ -237,7 +239,8 @@ where
     /// ```
     /// use cast::{Cast};
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+    /// use alloy_serde::WithOtherFields;
+    /// use alloy_rpc_types::{TransactionRequest};
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::str::FromStr;
     /// use alloy_sol_types::{sol, SolCall};
