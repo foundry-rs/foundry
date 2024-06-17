@@ -69,8 +69,9 @@ pub fn invariant_strat(
 ) -> impl Strategy<Value = BasicTxDetails> {
     let senders = Rc::new(senders);
     any::<prop::sample::Index>()
-        .prop_map(move |index| index.get(&contracts.fuzzed_functions()).clone())
-        .prop_flat_map(move |(target_address, target_function)| {
+        .prop_flat_map(move |index| {
+            let (target_address, target_function) =
+                index.get(&contracts.fuzzed_functions()).clone();
             let sender = select_random_sender(&fuzz_state, senders.clone(), dictionary_weight);
             let call_details = fuzz_contract_with_calldata(
                 &fuzz_state,
