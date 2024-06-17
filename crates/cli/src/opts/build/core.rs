@@ -128,11 +128,6 @@ pub struct CoreBuildArgs {
     #[serde(skip)]
     pub skip: Option<Vec<SkipBuildFilter>>,
 
-    /// Build source files from specified paths.
-    #[arg(long, short, num_args(0..))]
-    #[serde(skip)]
-    pub paths: Option<Vec<PathBuf>>,
-
     #[command(flatten)]
     #[serde(flatten)]
     pub compiler: CompilerArgs,
