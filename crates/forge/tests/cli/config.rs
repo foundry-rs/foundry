@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, U256};
 use foundry_cli::utils as forge_utils;
 use foundry_compilers::{
     artifacts::{BytecodeHash, OptimizerDetails, RevertStrings, YulDetails},
-    Solc,
+    solc::Solc,
 };
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
@@ -13,7 +13,7 @@ use foundry_config::{
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
-    foundry_compilers::{remappings::Remapping, EvmVersion},
+    foundry_compilers::artifacts::{remappings::Remapping, EvmVersion},
     util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
 };
 use path_slash::PathBufExt;

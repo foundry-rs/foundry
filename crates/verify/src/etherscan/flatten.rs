@@ -9,7 +9,8 @@ use foundry_compilers::{
         solc::{SolcCompiler, SolcLanguage, SolcVersionedInput},
         Compiler, CompilerInput,
     },
-    AggregatedCompilerOutput, Solc,
+    solc::Solc,
+    AggregatedCompilerOutput,
 };
 use semver::{BuildMetadata, Version};
 use std::{collections::BTreeMap, path::Path};

@@ -6,8 +6,8 @@ use forge::{
     TestOptionsBuilder,
 };
 use foundry_compilers::{
-    artifacts::{Libraries, Settings},
-    EvmVersion, Project, ProjectCompileOutput, SolcConfig,
+    artifacts::{EvmVersion, Libraries, Settings},
+    Project, ProjectCompileOutput, SolcConfig,
 };
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,

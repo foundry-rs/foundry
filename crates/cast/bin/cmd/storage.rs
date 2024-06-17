@@ -19,9 +19,12 @@ use foundry_common::{
     ens::NameOrAddress,
 };
 use foundry_compilers::{
-    artifacts::StorageLayout,
-    compilers::{solc::SolcCompiler, Compiler, CompilerSettings},
-    Artifact, ConfigurableContractArtifact, Project, Solc,
+    artifacts::{ConfigurableContractArtifact, StorageLayout},
+    compilers::{
+        solc::{Solc, SolcCompiler},
+        Compiler, CompilerSettings,
+    },
+    Artifact, Project,
 };
 use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},

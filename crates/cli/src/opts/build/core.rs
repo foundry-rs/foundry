@@ -3,8 +3,10 @@ use crate::{opts::CompilerArgs, utils::LoadConfig};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::{
-    artifacts::RevertStrings, compilers::multi::MultiCompiler, remappings::Remapping,
-    utils::canonicalized, Project,
+    artifacts::{remappings::Remapping, RevertStrings},
+    compilers::multi::MultiCompiler,
+    utils::canonicalized,
+    Project,
 };
 use foundry_config::{
     figment,

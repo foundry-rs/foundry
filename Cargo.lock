@@ -3489,9 +3489,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-block-explorers"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35344cf275788b0450c4b36d452b812d1122d622bafb29887ce244b8099a86ad"
+checksum = "328cd3498bd9a7615d3a2f2e0e94a5d2ffc1db54cb6b4e933d01f77272ff43e5"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -3642,29 +3642,27 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81f9b10619d07d765a0336b1990ffcb1bb7b806a59b4d2e65cb78f5d77f373c5"
+checksum = "e2ea36984de5126fe2b05efb22d04148c39f244de1cc285493e3c2a4cfcc843a"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "auto_impl",
- "cfg-if",
  "derivative",
  "dirs 5.0.1",
- "dunce",
  "dyn-clone",
+ "foundry-compilers-artifacts",
+ "foundry-compilers-core",
  "fs_extra",
  "futures-util",
  "home",
  "itertools 0.13.0",
  "md-5",
- "memmap2 0.9.4",
  "once_cell",
  "path-slash",
  "rand",
  "rayon",
- "regex",
  "semver 1.0.23",
  "serde",
  "serde_json",
@@ -3676,9 +3674,78 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "walkdir",
  "winnow 0.6.13",
  "yansi",
+]
+
+[[package]]
+name = "foundry-compilers-artifacts"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5795278ec3d726eb4ec932ea452a05c880780fbb677aef06f5eeab3d0e2ae075"
+dependencies = [
+ "foundry-compilers-artifacts-solc",
+ "foundry-compilers-artifacts-vyper",
+]
+
+[[package]]
+name = "foundry-compilers-artifacts-solc"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93f19355ab89cd2b782c6d791d7cb16b7733074a7945443668183e7c258d007a"
+dependencies = [
+ "alloy-json-abi",
+ "alloy-primitives",
+ "foundry-compilers-core",
+ "futures-util",
+ "md-5",
+ "path-slash",
+ "rayon",
+ "semver 1.0.23",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "walkdir",
+ "yansi",
+]
+
+[[package]]
+name = "foundry-compilers-artifacts-vyper"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05564ba0e04eb361e264e68d5e7d5b69e272d7d378f22c5c6a2edbe6d1cc3b58"
+dependencies = [
+ "alloy-json-abi",
+ "alloy-primitives",
+ "foundry-compilers-artifacts-solc",
+ "path-slash",
+ "serde",
+]
+
+[[package]]
+name = "foundry-compilers-core"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "208e1a34268fbfccea0a8d4c974db01bfa44dac370724907ad404ccb79455b64"
+dependencies = [
+ "alloy-primitives",
+ "cfg-if",
+ "dunce",
+ "fs_extra",
+ "memmap2 0.9.4",
+ "once_cell",
+ "path-slash",
+ "regex",
+ "semver 1.0.23",
+ "serde",
+ "serde_json",
+ "svm-rs",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "walkdir",
 ]
 
 [[package]]

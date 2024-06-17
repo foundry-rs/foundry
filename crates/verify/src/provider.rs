@@ -9,7 +9,8 @@ use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     artifacts::{output_selection::OutputSelection, Metadata, Source},
     compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler, CompilerSettings},
-    Graph, Project, Solc,
+    solc::Solc,
+    Graph, Project,
 };
 use foundry_config::Config;
 use semver::Version;

@@ -10,9 +10,9 @@ use foundry_cli::{
 };
 use foundry_common::{compile::ProjectCompiler, provider::ProviderBuilder};
 use foundry_compilers::{
-    artifacts::{BytecodeHash, BytecodeObject, CompactContractBytecode},
+    artifacts::{BytecodeHash, BytecodeObject, CompactContractBytecode, EvmVersion},
     info::ContractInfo,
-    Artifact, EvmVersion,
+    Artifact,
 };
 use foundry_config::{figment, filter::SkipBuildFilter, impl_figment_convert, Chain, Config};
 use foundry_evm::{

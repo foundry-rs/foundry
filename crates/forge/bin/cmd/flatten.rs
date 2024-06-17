@@ -4,8 +4,12 @@ use foundry_cli::{
     opts::{CoreBuildArgs, ProjectPathsArgs},
     utils::LoadConfig,
 };
-use foundry_common::{compile::compile_target, fs};
-use foundry_compilers::{compilers::solc::SolcLanguage, error::SolcError, flatten::Flattener};
+use foundry_common::fs;
+use foundry_compilers::{
+    compilers::solc::SolcLanguage,
+    error::SolcError,
+    flatten::{Flattener, FlattenerError},
+};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge flatten`.
@@ -42,18 +46,17 @@ impl FlattenArgs {
         let project = config.create_project(false, true)?;
 
         let target_path = dunce::canonicalize(target_path)?;
-        let compiler_output = compile_target(&target_path, &project, false);
+        let flattener = Flattener::new(project.clone(), &target_path);
 
-        let flattened = match compiler_output {
-            Ok(compiler_output) => {
-                Flattener::new(&project, &compiler_output, &target_path).map(|f| f.flatten())
-            }
-            Err(_) => {
+        let flattened = match flattener {
+            Ok(flattener) => Ok(flattener.flatten()),
+            Err(FlattenerError::Compilation(_)) => {
                 // Fallback to the old flattening implementation if we couldn't compile the target
                 // successfully. This would be the case if the target has invalid
                 // syntax. (e.g. Solang)
                 project.paths.clone().with_language::<SolcLanguage>().flatten(&target_path)
             }
+            Err(FlattenerError::Other(err)) => Err(err),
         }
         .map_err(|err: SolcError| eyre::eyre!("Failed to flatten: {err}"))?;
 
