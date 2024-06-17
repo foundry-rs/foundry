@@ -1,5 +1,5 @@
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, Selector};
 use itertools::Either;
 use parking_lot::Mutex;
 use std::{collections::BTreeMap, sync::Arc};
@@ -10,9 +10,7 @@ pub use call_override::RandomCallGenerator;
 mod filters;
 pub use filters::{ArtifactFilters, SenderFilters};
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::utils::StateChangeset;
-
-pub type TargetedContracts = BTreeMap<Address, (String, JsonAbi, Vec<Function>)>;
+use foundry_evm_core::utils::{get_function, StateChangeset};
 
 /// Contracts identified as targets during a fuzz run.
 /// During execution, any newly created contract is added as target and used through the rest of
@@ -26,40 +24,9 @@ pub struct FuzzRunIdentifiedContracts {
 }
 
 impl FuzzRunIdentifiedContracts {
+    /// Creates a new `FuzzRunIdentifiedContracts` instance.
     pub fn new(targets: TargetedContracts, is_updatable: bool) -> Self {
         Self { targets: Arc::new(Mutex::new(targets)), is_updatable }
-    }
-
-    /// Returns fuzzed contract abi and fuzzed function from address and provided calldata.
-    ///
-    /// Used to decode return values and logs in order to add values into fuzz dictionary.
-    pub fn with_fuzzed_artifacts(
-        &self,
-        tx: &BasicTxDetails,
-        f: impl FnOnce(Option<&JsonAbi>, Option<&Function>),
-    ) {
-        let targets = self.targets.lock();
-        let (abi, abi_f) = match targets.get(&tx.call_details.target) {
-            Some((_, abi, _)) => {
-                (Some(abi), abi.functions().find(|f| f.selector() == tx.call_details.calldata[..4]))
-            }
-            None => (None, None),
-        };
-        f(abi, abi_f);
-    }
-
-    /// Returns flatten target contract address and functions to be fuzzed.
-    /// Includes contract targeted functions if specified, else all mutable contract functions.
-    pub fn fuzzed_functions(&self) -> Vec<(Address, Function)> {
-        let mut fuzzed_functions = vec![];
-        for (contract, (_, abi, functions)) in self.targets.lock().iter() {
-            if !abi.functions.is_empty() {
-                for function in abi_fuzzed_functions(abi, functions) {
-                    fuzzed_functions.push((*contract, function.clone()));
-                }
-            }
-        }
-        fuzzed_functions
     }
 
     /// If targets are updatable, collect all contracts created during an invariant run (which
@@ -72,34 +39,41 @@ impl FuzzRunIdentifiedContracts {
         artifact_filters: &ArtifactFilters,
         created_contracts: &mut Vec<Address>,
     ) -> eyre::Result<()> {
-        if self.is_updatable {
-            let mut targets = self.targets.lock();
-            for (address, account) in state_changeset {
-                if setup_contracts.contains_key(address) {
-                    continue;
-                }
-                if !account.is_touched() {
-                    continue;
-                }
-                let Some(code) = &account.info.code else {
-                    continue;
-                };
-                if code.is_empty() {
-                    continue;
-                }
-                let Some((artifact, contract)) =
-                    project_contracts.find_by_deployed_code(code.original_byte_slice())
-                else {
-                    continue;
-                };
-                let Some(functions) =
-                    artifact_filters.get_targeted_functions(artifact, &contract.abi)?
-                else {
-                    continue;
-                };
-                created_contracts.push(*address);
-                targets.insert(*address, (artifact.name.clone(), contract.abi.clone(), functions));
+        if !self.is_updatable {
+            return Ok(());
+        }
+
+        let mut targets = self.targets.lock();
+        for (address, account) in state_changeset {
+            if setup_contracts.contains_key(address) {
+                continue;
             }
+            if !account.is_touched() {
+                continue;
+            }
+            let Some(code) = &account.info.code else {
+                continue;
+            };
+            if code.is_empty() {
+                continue;
+            }
+            let Some((artifact, contract)) =
+                project_contracts.find_by_deployed_code(code.original_byte_slice())
+            else {
+                continue;
+            };
+            let Some(functions) =
+                artifact_filters.get_targeted_functions(artifact, &contract.abi)?
+            else {
+                continue;
+            };
+            created_contracts.push(*address);
+            let contract = TargetedContract {
+                identifier: artifact.name.clone(),
+                abi: contract.abi.clone(),
+                targeted_functions: functions,
+            };
+            targets.inner.insert(*address, contract);
         }
         Ok(())
     }
@@ -109,27 +83,105 @@ impl FuzzRunIdentifiedContracts {
         if !created_contracts.is_empty() {
             let mut targets = self.targets.lock();
             for addr in created_contracts.iter() {
-                targets.remove(addr);
+                targets.inner.remove(addr);
             }
         }
     }
 }
 
-/// Helper to retrieve functions to fuzz for specified abi.
-/// Returns specified targeted functions if any, else mutable abi functions.
-pub(crate) fn abi_fuzzed_functions<'a>(
-    abi: &'a JsonAbi,
-    targeted_functions: &'a [Function],
-) -> impl Iterator<Item = &'a Function> {
-    if !targeted_functions.is_empty() {
-        Either::Left(targeted_functions.iter())
-    } else {
-        Either::Right(abi.functions().filter(|&func| {
-            !matches!(
-                func.state_mutability,
-                alloy_json_abi::StateMutability::Pure | alloy_json_abi::StateMutability::View
-            )
-        }))
+#[derive(Debug)]
+pub struct TargetedContracts {
+    pub inner: BTreeMap<Address, TargetedContract>,
+}
+
+impl TargetedContracts {
+    /// Returns a new `TargetedContracts` instance.
+    pub fn new() -> Self {
+        Self { inner: BTreeMap::new() }
+    }
+
+    /// Returns fuzzed contract abi and fuzzed function from address and provided calldata.
+    ///
+    /// Used to decode return values and logs in order to add values into fuzz dictionary.
+    pub fn fuzzed_artifacts(&self, tx: &BasicTxDetails) -> (Option<&JsonAbi>, Option<&Function>) {
+        match self.inner.get(&tx.call_details.target) {
+            Some(c) => (
+                Some(&c.abi),
+                c.abi.functions().find(|f| f.selector() == tx.call_details.calldata[..4]),
+            ),
+            None => (None, None),
+        }
+    }
+
+    /// Returns flatten target contract address and functions to be fuzzed.
+    /// Includes contract targeted functions if specified, else all mutable contract functions.
+    pub fn fuzzed_functions<'a>(&'a self) -> impl Iterator<Item = (&'a Address, &'a Function)> {
+        self.inner
+            .iter()
+            .filter(|(_, c)| !c.abi.functions.is_empty())
+            .flat_map(|(contract, c)| c.abi_fuzzed_functions().map(move |f| (contract, f)))
+    }
+}
+
+impl std::ops::Deref for TargetedContracts {
+    type Target = BTreeMap<Address, TargetedContract>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for TargetedContracts {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+#[derive(Debug)]
+pub struct TargetedContract {
+    /// The contract identifier. This is only used in error messages.
+    pub identifier: String,
+    /// The contract's ABI.
+    pub abi: JsonAbi,
+    /// The targeted functions of the contract.
+    pub targeted_functions: Vec<Function>,
+}
+
+impl TargetedContract {
+    /// Returns a new `TargetedContract` instance.
+    pub fn new(identifier: String, abi: JsonAbi) -> Self {
+        Self { identifier, abi, targeted_functions: Vec::new() }
+    }
+
+    /// Helper to retrieve functions to fuzz for specified abi.
+    /// Returns specified targeted functions if any, else mutable abi functions.
+    pub fn abi_fuzzed_functions(&self) -> impl Iterator<Item = &Function> {
+        if !self.targeted_functions.is_empty() {
+            Either::Left(self.targeted_functions.iter())
+        } else {
+            Either::Right(self.abi.functions().filter(|&func| {
+                !matches!(
+                    func.state_mutability,
+                    alloy_json_abi::StateMutability::Pure | alloy_json_abi::StateMutability::View
+                )
+            }))
+        }
+    }
+
+    /// Returns the function for the given selector.
+    pub fn get_function(&self, selector: Selector) -> eyre::Result<&Function> {
+        get_function(&self.identifier, selector, &self.abi)
+    }
+
+    /// Adds the specified selectors to the targeted functions.
+    pub fn add_selectors(
+        &mut self,
+        selectors: impl IntoIterator<Item = Selector>,
+    ) -> eyre::Result<()> {
+        for selector in selectors {
+            self.targeted_functions.push(self.get_function(selector)?.clone());
+        }
+        Ok(())
     }
 }
 

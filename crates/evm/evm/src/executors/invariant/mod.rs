@@ -7,16 +7,13 @@ use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
-use foundry_evm_core::{
-    constants::{
-        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
-    },
-    utils::get_function,
+use foundry_evm_core::constants::{
+    CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
 };
 use foundry_evm_fuzz::{
     invariant::{
         ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract,
-        RandomCallGenerator, SenderFilters, TargetedContracts,
+        RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
     strategies::{invariant_strat, override_call_strat, EvmFuzzState},
     FuzzCase, FuzzFixtures, FuzzedCases,
@@ -31,7 +28,7 @@ use proptest::{
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::primitives::HashMap;
 use shrink::shrink_sequence;
-use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
+use std::{cell::RefCell, collections::btree_map::Entry, sync::Arc};
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError};
@@ -517,7 +514,7 @@ impl<'a> InvariantExecutor<'a> {
         let excluded =
             self.call_sol_default(to, &IInvariantTest::excludeContractsCall {}).excludedContracts;
 
-        let mut contracts: TargetedContracts = self
+        let contracts = self
             .setup_contracts
             .iter()
             .filter(|&(addr, (identifier, _))| {
@@ -528,8 +525,11 @@ impl<'a> InvariantExecutor<'a> {
                     (excluded.is_empty() || !excluded.contains(addr)) &&
                     self.artifact_filters.matches(identifier)
             })
-            .map(|(addr, (identifier, abi))| (*addr, (identifier.clone(), abi.clone(), vec![])))
+            .map(|(addr, (identifier, abi))| {
+                (*addr, TargetedContract::new(identifier.clone(), abi.clone()))
+            })
             .collect();
+        let mut contracts = TargetedContracts { inner: contracts };
 
         self.target_interfaces(to, &mut contracts)?;
 
@@ -561,7 +561,7 @@ impl<'a> InvariantExecutor<'a> {
         // the specified interfaces for the same address. For example:
         // `[(addr1, ["IERC20", "IOwnable"])]` and `[(addr1, ["IERC20"]), (addr1, ("IOwnable"))]`
         // should be equivalent.
-        let mut combined: TargetedContracts = BTreeMap::new();
+        let mut combined = TargetedContracts::new();
 
         // Loop through each address and its associated artifact identifiers.
         // We're borrowing here to avoid taking full ownership.
@@ -577,18 +577,18 @@ impl<'a> InvariantExecutor<'a> {
                         .entry(*addr)
                         // If the entry exists, extends its ABI with the function list.
                         .and_modify(|entry| {
-                            let (_, contract_abi, _) = entry;
-
                             // Extend the ABI's function list with the new functions.
-                            contract_abi.functions.extend(contract.abi.functions.clone());
+                            entry.abi.functions.extend(contract.abi.functions.clone());
                         })
                         // Otherwise insert it into the map.
-                        .or_insert_with(|| (identifier.to_string(), contract.abi.clone(), vec![]));
+                        .or_insert_with(|| {
+                            TargetedContract::new(identifier.to_string(), contract.abi.clone())
+                        });
                 }
             }
         }
 
-        targeted_contracts.extend(combined);
+        targeted_contracts.extend(combined.inner);
 
         Ok(())
     }
@@ -623,26 +623,18 @@ impl<'a> InvariantExecutor<'a> {
         selectors: &[Selector],
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
-        if let Some((name, abi, address_selectors)) = targeted_contracts.get_mut(&address) {
-            // The contract is already part of our filter, and all we do is specify that we're
-            // only looking at specific functions coming from `bytes4_array`.
-            for &selector in selectors {
-                address_selectors.push(get_function(name, selector, abi).cloned()?);
+        let contract = match targeted_contracts.entry(address) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let (identifier, abi) = self.setup_contracts.get(&address).ok_or_else(|| {
+                    eyre::eyre!(
+                        "[targetSelectors] address does not have an associated contract: {address}"
+                    )
+                })?;
+                entry.insert(TargetedContract::new(identifier.clone(), abi.clone()))
             }
-        } else {
-            let (name, abi) = self.setup_contracts.get(&address).ok_or_else(|| {
-                eyre::eyre!(
-                    "[targetSelectors] address does not have an associated contract: {address}"
-                )
-            })?;
-
-            let functions = selectors
-                .iter()
-                .map(|&selector| get_function(name, selector, abi).cloned())
-                .collect::<Result<Vec<_>, _>>()?;
-
-            targeted_contracts.insert(address, (name.to_string(), abi.clone(), functions));
-        }
+        };
+        contract.add_selectors(selectors.iter().copied())?;
         Ok(())
     }
 

@@ -1,9 +1,6 @@
 use super::{fuzz_calldata, fuzz_param_from_state};
 use crate::{
-    invariant::{
-        abi_fuzzed_functions, BasicTxDetails, CallDetails, FuzzRunIdentifiedContracts,
-        SenderFilters,
-    },
+    invariant::{BasicTxDetails, CallDetails, FuzzRunIdentifiedContracts, SenderFilters},
     strategies::{fuzz_calldata_from_state, fuzz_param, EvmFuzzState},
     FuzzFixtures,
 };
@@ -11,6 +8,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::Address;
 use parking_lot::RwLock;
 use proptest::prelude::*;
+use rand::seq::IteratorRandom;
 use std::{rc::Rc, sync::Arc};
 
 /// Given a target address, we generate random calldata.
@@ -32,15 +30,13 @@ pub fn override_call_strat(
 
         let func = {
             let contracts = contracts.targets.lock();
-            let (_, abi, functions) = contracts.get(&target_address).unwrap_or_else(|| {
+            let contract = contracts.get(&target_address).unwrap_or_else(|| {
                 // Choose a random contract if target selected by lazy strategy is not in fuzz run
                 // identified contracts. This can happen when contract is created in `setUp` call
                 // but is not included in targetContracts.
-                let rand_index = rand::thread_rng().gen_range(0..contracts.len());
-                let (_, contract_specs) = contracts.iter().nth(rand_index).unwrap();
-                contract_specs
+                contracts.values().choose(&mut rand::thread_rng()).unwrap()
             });
-            let fuzzed_functions: Vec<_> = abi_fuzzed_functions(abi, functions).cloned().collect();
+            let fuzzed_functions: Vec<_> = contract.abi_fuzzed_functions().cloned().collect();
             any::<prop::sample::Index>().prop_map(move |index| index.get(&fuzzed_functions).clone())
         };
 
@@ -68,16 +64,17 @@ pub fn invariant_strat(
     fuzz_fixtures: FuzzFixtures,
 ) -> impl Strategy<Value = BasicTxDetails> {
     let senders = Rc::new(senders);
-    any::<prop::sample::Index>()
-        .prop_flat_map(move |index| {
-            let (target_address, target_function) =
-                index.get(&contracts.fuzzed_functions()).clone();
+    any::<prop::sample::Selector>()
+        .prop_flat_map(move |selector| {
+            let contracts = contracts.targets.lock();
+            let functions = contracts.fuzzed_functions();
+            let (target_address, target_function) = selector.select(functions);
             let sender = select_random_sender(&fuzz_state, senders.clone(), dictionary_weight);
             let call_details = fuzz_contract_with_calldata(
                 &fuzz_state,
                 &fuzz_fixtures,
-                target_address,
-                target_function,
+                *target_address,
+                target_function.clone(),
             );
             (sender, call_details)
         })
