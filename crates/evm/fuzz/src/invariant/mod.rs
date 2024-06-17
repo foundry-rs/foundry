@@ -13,6 +13,7 @@ use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::utils::{get_function, StateChangeset};
 
 /// Contracts identified as targets during a fuzz run.
+///
 /// During execution, any newly created contract is added as target and used through the rest of
 /// the fuzz run if the collection is updatable (no `targetContract` specified in `setUp`).
 #[derive(Clone, Debug)]
@@ -73,7 +74,7 @@ impl FuzzRunIdentifiedContracts {
                 abi: contract.abi.clone(),
                 targeted_functions: functions,
             };
-            targets.inner.insert(*address, contract);
+            targets.insert(*address, contract);
         }
         Ok(())
     }
@@ -83,21 +84,23 @@ impl FuzzRunIdentifiedContracts {
         if !created_contracts.is_empty() {
             let mut targets = self.targets.lock();
             for addr in created_contracts.iter() {
-                targets.inner.remove(addr);
+                targets.remove(addr);
             }
         }
     }
 }
 
-#[derive(Debug)]
+/// A collection of contracts identified as targets for invariant testing.
+#[derive(Clone, Debug, Default)]
 pub struct TargetedContracts {
+    /// The inner map of targeted contracts.
     pub inner: BTreeMap<Address, TargetedContract>,
 }
 
 impl TargetedContracts {
     /// Returns a new `TargetedContracts` instance.
     pub fn new() -> Self {
-        Self { inner: BTreeMap::new() }
+        Self::default()
     }
 
     /// Returns fuzzed contract abi and fuzzed function from address and provided calldata.
@@ -115,7 +118,7 @@ impl TargetedContracts {
 
     /// Returns flatten target contract address and functions to be fuzzed.
     /// Includes contract targeted functions if specified, else all mutable contract functions.
-    pub fn fuzzed_functions<'a>(&'a self) -> impl Iterator<Item = (&'a Address, &'a Function)> {
+    pub fn fuzzed_functions(&self) -> impl Iterator<Item = (&Address, &Function)> {
         self.inner
             .iter()
             .filter(|(_, c)| !c.abi.functions.is_empty())
@@ -137,7 +140,8 @@ impl std::ops::DerefMut for TargetedContracts {
     }
 }
 
-#[derive(Debug)]
+/// A contract identified as targets for invariant testing.
+#[derive(Clone, Debug)]
 pub struct TargetedContract {
     /// The contract identifier. This is only used in error messages.
     pub identifier: String,
