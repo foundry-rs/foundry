@@ -1,7 +1,7 @@
 use alloy_signer::k256::ecdsa;
 use alloy_signer_ledger::LedgerError;
+use alloy_signer_local::LocalSignerError;
 use alloy_signer_trezor::TrezorError;
-use alloy_signer_wallet::WalletError;
 use hex::FromHexError;
 
 #[cfg(feature = "aws-kms")]
@@ -21,7 +21,7 @@ pub enum PrivateKeyError {
 #[derive(Debug, thiserror::Error)]
 pub enum WalletSignerError {
     #[error(transparent)]
-    Local(#[from] WalletError),
+    Local(#[from] LocalSignerError),
     #[error(transparent)]
     Ledger(#[from] LedgerError),
     #[error(transparent)]

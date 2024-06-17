@@ -4,9 +4,9 @@ use crate::TransactionReceiptWithRevertReason;
 use alloy_consensus::{AnyReceiptEnvelope, Receipt, ReceiptWithBloom, TxType};
 use alloy_primitives::*;
 use alloy_rpc_types::{
-    other::OtherFields, AnyTransactionReceipt, Block, BlockTransactions, Log, Transaction,
-    TransactionReceipt,
+    AnyTransactionReceipt, Block, BlockTransactions, Log, Transaction, TransactionReceipt,
 };
+use alloy_serde::OtherFields;
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`

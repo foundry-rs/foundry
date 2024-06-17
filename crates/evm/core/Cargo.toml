@@ -20,13 +20,19 @@ foundry-config.workspace = true
 foundry-macros.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
-alloy-json-abi.workspace = true
-alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-genesis.workspace = true
+alloy-json-abi.workspace = true
+alloy-primitives = { workspace = true, features = [
+    "serde",
+    "getrandom",
+    "arbitrary",
+    "rlp",
+] }
 alloy-provider.workspace = true
-alloy-transport.workspace = true
 alloy-rpc-types.workspace = true
+alloy-serde.workspace = true
 alloy-sol-types.workspace = true
+alloy-transport.workspace = true
 
 revm = { workspace = true, features = [
     "std",

@@ -1,11 +1,12 @@
 //! tests for subscriptions
 
-use crate::utils::{connect_pubsub, connect_pubsub_with_signer};
-use alloy_network::{EthereumSigner, TransactionBuilder};
+use crate::utils::{connect_pubsub, connect_pubsub_with_wallet};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use alloy_pubsub::Subscription;
-use alloy_rpc_types::{Block as AlloyBlock, Filter, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{Block as AlloyBlock, Filter, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use anvil::{spawn, NodeConfig};
 use futures::StreamExt;
@@ -117,7 +118,7 @@ async fn test_sub_logs_impersonated() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
     let provider =
-        connect_pubsub_with_signer(&handle.ws_endpoint(), EthereumSigner::from(wallet.clone()))
+        connect_pubsub_with_wallet(&handle.ws_endpoint(), EthereumWallet::from(wallet.clone()))
             .await;
 
     // impersonate account
@@ -160,7 +161,7 @@ async fn test_filters_legacy() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
     let provider =
-        connect_pubsub_with_signer(&handle.ws_endpoint(), EthereumSigner::from(wallet.clone()))
+        connect_pubsub_with_wallet(&handle.ws_endpoint(), EthereumWallet::from(wallet.clone()))
             .await;
 
     let from = wallet.address();
@@ -197,7 +198,7 @@ async fn test_filters() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
     let provider =
-        connect_pubsub_with_signer(&handle.ws_endpoint(), EthereumSigner::from(wallet.clone()))
+        connect_pubsub_with_wallet(&handle.ws_endpoint(), EthereumWallet::from(wallet.clone()))
             .await;
 
     let from = wallet.address();

@@ -5,7 +5,8 @@ use crate::{
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_rpc_types::{Block, BlockId, Transaction, WithOtherFields};
+use alloy_rpc_types::{Block, BlockId, Transaction};
+use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;

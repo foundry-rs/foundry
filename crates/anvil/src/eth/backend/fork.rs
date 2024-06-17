@@ -9,12 +9,13 @@ use alloy_provider::{
 use alloy_rpc_types::{
     request::TransactionRequest, AccessListWithGasUsed, Block, BlockId,
     BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse, FeeHistory,
-    Filter, Log, Transaction, WithOtherFields,
+    Filter, Log, Transaction,
 };
 use alloy_rpc_types_trace::{
     geth::{GethDebugTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace as Trace,
 };
+use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use anvil_core::eth::transaction::{convert_to_anvil_receipt, ReceiptResponse};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};

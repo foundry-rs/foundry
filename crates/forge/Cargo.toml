@@ -56,18 +56,19 @@ forge-sol-macro-gen.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
 
+alloy-chains.workspace = true
+alloy-consensus.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
-alloy-primitives = { workspace = true, features = ["serde"] }
-alloy-rpc-types.workspace = true
-alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
 alloy-network.workspace = true
-alloy-transport.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
+alloy-rpc-types.workspace = true
+alloy-serde.workspace = true
 alloy-signer.workspace = true
-alloy-sol-macro-input.workspace = true
 alloy-sol-macro-expander = { workspace = true, features = ["json"] }
-alloy-consensus.workspace = true
-alloy-chains.workspace = true
+alloy-sol-macro-input.workspace = true
+alloy-transport.workspace = true
 
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
@@ -108,7 +109,6 @@ soldeer.workspace = true
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }
 
-
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
@@ -125,7 +125,7 @@ svm = { package = "svm-rs", version = "0.5", default-features = false, features 
 tempfile.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
-alloy-signer-wallet.workspace = true
+alloy-signer-local.workspace = true
 
 [features]
 default = ["rustls", "jemalloc"]

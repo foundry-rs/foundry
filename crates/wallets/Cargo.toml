@@ -17,7 +17,7 @@ foundry-config.workspace = true
 
 alloy-primitives.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
-alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
+alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-signer-ledger = { workspace = true, features = ["eip712"] }
 alloy-signer-trezor.workspace = true
 alloy-network.workspace = true

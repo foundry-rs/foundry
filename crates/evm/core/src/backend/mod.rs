@@ -9,7 +9,8 @@ use crate::{
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{b256, keccak256, Address, B256, U256};
-use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction, WithOtherFields};
+use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
+use alloy_serde::WithOtherFields;
 use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
