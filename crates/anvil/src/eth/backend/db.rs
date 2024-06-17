@@ -2,7 +2,7 @@
 
 use crate::revm::primitives::AccountInfo;
 use alloy_consensus::Header;
-use alloy_primitives::{keccak256, Address, BlockNumber, Bloom, Bytes, B256, B64, U256, U64};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{block::Block, transaction::TypedTransaction};
 use foundry_common::errors::FsPathError;
@@ -352,9 +352,9 @@ pub struct SerializableAccountRecord {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SerializableBlock {
-    pub header: SerializableHeader,
+    pub header: Header,
     pub transactions: Vec<TypedTransaction>,
-    pub ommers: Vec<SerializableHeader>,
+    pub ommers: Vec<Header>,
 }
 
 impl From<Block> for SerializableBlock {
@@ -373,91 +373,6 @@ impl From<SerializableBlock> for Block {
             header: block.header.into(),
             transactions: block.transactions.into_iter().map(Into::into).collect(),
             ommers: block.ommers.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-// TODO: only implementing here for now, need to upstream this
-//       can we make alloy_consensus::header Serializable/Deserializable?
-///      this is the same struct, literally, with derive(Serialize, Deserialize)
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SerializableHeader {
-    pub parent_hash: B256,
-    pub ommers_hash: B256,
-    pub beneficiary: Address,
-    pub state_root: B256,
-    pub transactions_root: B256,
-    pub receipts_root: B256,
-    pub withdrawals_root: Option<B256>,
-    pub logs_bloom: Bloom,
-    pub difficulty: U256,
-    pub number: BlockNumber,
-    pub gas_limit: u128,
-    pub gas_used: u128,
-    pub timestamp: u64,
-    pub mix_hash: B256,
-    pub nonce: B64,
-    pub base_fee_per_gas: Option<u128>,
-    pub blob_gas_used: Option<u128>,
-    pub excess_blob_gas: Option<u128>,
-    pub parent_beacon_block_root: Option<B256>,
-    pub requests_root: Option<B256>,
-    pub extra_data: Bytes,
-}
-
-// Implementing conversions
-impl From<Header> for SerializableHeader {
-    fn from(header: Header) -> Self {
-        Self {
-            parent_hash: header.parent_hash,
-            ommers_hash: header.ommers_hash,
-            beneficiary: header.beneficiary,
-            state_root: header.state_root,
-            transactions_root: header.transactions_root,
-            receipts_root: header.receipts_root,
-            withdrawals_root: header.withdrawals_root,
-            logs_bloom: header.logs_bloom,
-            difficulty: header.difficulty,
-            number: header.number,
-            gas_limit: header.gas_limit,
-            gas_used: header.gas_used,
-            timestamp: header.timestamp,
-            mix_hash: header.mix_hash,
-            nonce: header.nonce,
-            base_fee_per_gas: header.base_fee_per_gas,
-            blob_gas_used: header.blob_gas_used,
-            excess_blob_gas: header.excess_blob_gas,
-            parent_beacon_block_root: header.parent_beacon_block_root,
-            requests_root: header.requests_root,
-            extra_data: header.extra_data,
-        }
-    }
-}
-
-impl From<SerializableHeader> for Header {
-    fn from(header: SerializableHeader) -> Self {
-        Self {
-            parent_hash: header.parent_hash,
-            ommers_hash: header.ommers_hash,
-            beneficiary: header.beneficiary,
-            state_root: header.state_root,
-            transactions_root: header.transactions_root,
-            receipts_root: header.receipts_root,
-            withdrawals_root: header.withdrawals_root,
-            logs_bloom: header.logs_bloom,
-            difficulty: header.difficulty,
-            number: header.number,
-            gas_limit: header.gas_limit,
-            gas_used: header.gas_used,
-            timestamp: header.timestamp,
-            mix_hash: header.mix_hash,
-            nonce: header.nonce,
-            base_fee_per_gas: header.base_fee_per_gas,
-            blob_gas_used: header.blob_gas_used,
-            excess_blob_gas: header.excess_blob_gas,
-            parent_beacon_block_root: header.parent_beacon_block_root,
-            requests_root: header.requests_root,
-            extra_data: header.extra_data,
         }
     }
 }
