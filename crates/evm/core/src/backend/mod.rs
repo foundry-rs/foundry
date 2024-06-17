@@ -65,7 +65,7 @@ const GLOBAL_FAILURE_SLOT: B256 =
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut)]
-pub trait DatabaseExt: Database<Error = DatabaseError> {
+pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     /// Creates a new snapshot at the current point of execution.
     ///
     /// A snapshot is associated with a new unique id that's created for the snapshot.

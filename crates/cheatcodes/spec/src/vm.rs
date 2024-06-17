@@ -1474,6 +1474,10 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
 
+    /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath) external returns (address deployedAddress);
+
     /// Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     #[cheatcode(group = Filesystem)]

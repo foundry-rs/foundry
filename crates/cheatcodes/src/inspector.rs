@@ -32,8 +32,8 @@ use revm::{
         opcode, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
-    primitives::{BlockEnv, CreateScheme, TransactTo},
-    EvmContext, InnerEvmContext, Inspector,
+    primitives::{BlockEnv, CreateScheme, EVMError, TransactTo},
+    ContextPrecompiles, EvmContext, InnerEvmContext, Inspector,
 };
 use rustc_hash::FxHashMap;
 use serde_json::Value;
@@ -45,6 +45,15 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+
+pub trait CheatcodesExecutor {
+    fn exec_create<DB: DatabaseExt>(
+        &mut self,
+        inputs: CreateInputs,
+        cheats: &mut Cheatcodes,
+        ecx: &mut InnerEvmContext<&mut DB>,
+    ) -> Result<CreateOutcome, EVMError<DB::Error>>;
+}
 
 macro_rules! try_or_continue {
     ($e:expr) => {
@@ -254,10 +263,11 @@ impl Cheatcodes {
         self.config.script_wallets.as_ref()
     }
 
-    fn apply_cheatcode<DB: DatabaseExt>(
+    fn apply_cheatcode<DB: DatabaseExt, E: CheatcodesExecutor>(
         &mut self,
-        ecx: &mut EvmContext<DB>,
+        ecx: &mut EvmContext<&mut DB>,
         call: &CallInputs,
+        executor: &mut E,
     ) -> Result {
         // decode the cheatcode call
         let decoded = Vm::VmCalls::abi_decode(&call.input, false).map_err(|e| {
@@ -283,8 +293,10 @@ impl Cheatcodes {
                 state: self,
                 ecx: &mut ecx.inner,
                 precompiles: &mut ecx.precompiles,
+                gas_limit: call.gas_limit,
                 caller,
             },
+            executor,
         )
     }
 
@@ -321,7 +333,7 @@ impl Cheatcodes {
     ///
     /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
     /// revert would run into issues.
-    pub fn on_revert<DB: DatabaseExt>(&mut self, ecx: &mut EvmContext<DB>) {
+    pub fn on_revert<DB: DatabaseExt>(&mut self, ecx: &mut EvmContext<&mut DB>) {
         trace!(deals=?self.eth_deals.len(), "rolling back deals");
 
         // Delay revert clean up until expected revert is handled, if set.
@@ -345,9 +357,13 @@ impl Cheatcodes {
     }
 }
 
-impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
+impl Cheatcodes {
     #[inline]
-    fn initialize_interp(&mut self, _: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+    pub fn initialize_interp<DB: DatabaseExt>(
+        &mut self,
+        _: &mut Interpreter,
+        ecx: &mut EvmContext<&mut DB>,
+    ) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
@@ -358,7 +374,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+    pub fn step<DB: DatabaseExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<&mut DB>,
+    ) {
         let ecx = &mut ecx.inner;
         self.pc = interpreter.program_counter();
 
@@ -781,7 +801,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
+    pub fn step_end<DB: DatabaseExt>(
+        &mut self,
+        _interpreter: &mut Interpreter,
+        _context: &mut EvmContext<DB>,
+    ) {
+    }
+
+    pub fn log<DB: DatabaseExt>(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, log);
         }
@@ -796,7 +823,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    fn call(&mut self, ecx: &mut EvmContext<DB>, call: &mut CallInputs) -> Option<CallOutcome> {
+    pub fn call<DB: DatabaseExt>(
+        &mut self,
+        ecx: &mut EvmContext<&mut DB>,
+        call: &mut CallInputs,
+        executor: &mut impl CheatcodesExecutor,
+    ) -> Option<CallOutcome> {
         let gas = Gas::new(call.gas_limit);
 
         // At the root call to test function or script `run()`/`setUp()` functions, we are
@@ -826,7 +858,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         if call.target_address == CHEATCODE_ADDRESS {
-            return match self.apply_cheatcode(ecx, call) {
+            return match self.apply_cheatcode(ecx, call, executor) {
                 Ok(retdata) => Some(CallOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Return,
@@ -1051,9 +1083,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         None
     }
 
-    fn call_end(
+    pub fn call_end<DB: DatabaseExt>(
         &mut self,
-        ecx: &mut EvmContext<DB>,
+        ecx: &mut EvmContext<&mut DB>,
         call: &CallInputs,
         mut outcome: CallOutcome,
     ) -> CallOutcome {
@@ -1333,9 +1365,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         outcome
     }
 
-    fn create(
+    pub fn create<DB: DatabaseExt>(
         &mut self,
-        ecx: &mut EvmContext<DB>,
+        ecx: &mut EvmContext<&mut DB>,
         call: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         let ecx = &mut ecx.inner;
@@ -1439,9 +1471,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         None
     }
 
-    fn create_end(
+    pub fn create_end<DB: DatabaseExt>(
         &mut self,
-        ecx: &mut EvmContext<DB>,
+        ecx: &mut EvmContext<&mut DB>,
         _call: &CreateInputs,
         mut outcome: CreateOutcome,
     ) -> CreateOutcome {
@@ -1549,12 +1581,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         outcome
     }
-}
 
-impl<DB: DatabaseExt> InspectorExt<DB> for Cheatcodes {
-    fn should_use_create2_factory(
+    pub fn should_use_create2_factory<DB: DatabaseExt>(
         &mut self,
-        ecx: &mut EvmContext<DB>,
+        ecx: &mut EvmContext<&mut DB>,
         inputs: &mut CreateInputs,
     ) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme {
@@ -1620,11 +1650,15 @@ fn check_if_fixed_gas_limit<DB: DatabaseExt>(
 }
 
 /// Dispatches the cheatcode call to the appropriate function.
-fn apply_dispatch<DB: DatabaseExt>(calls: &Vm::VmCalls, ccx: &mut CheatsCtxt<DB>) -> Result {
+fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
+    calls: &Vm::VmCalls,
+    ccx: &mut CheatsCtxt<DB>,
+    executor: &mut E,
+) -> Result {
     macro_rules! match_ {
         ($($variant:ident),*) => {
             match calls {
-                $(Vm::VmCalls::$variant(cheat) => crate::Cheatcode::apply_traced(cheat, ccx),)*
+                $(Vm::VmCalls::$variant(cheat) => crate::Cheatcode::apply_traced(cheat, ccx, executor),)*
             }
         };
     }

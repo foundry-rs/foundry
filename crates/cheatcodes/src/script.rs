@@ -1,6 +1,6 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
-use crate::{Cheatcode, CheatsCtxt, DatabaseExt, Result, Vm::*};
+use crate::{Cheatcode, CheatcodesExecutor, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{Address, B256, U256};
 use alloy_signer_wallet::LocalWallet;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};

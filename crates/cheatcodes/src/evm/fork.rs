@@ -129,6 +129,7 @@ impl Cheatcode for selectForkCall {
 impl Cheatcode for transact_0Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { txHash } = *self;
+        #[cfg(ignore)]
         ccx.ecx.db.transact(
             None,
             txHash,
@@ -143,6 +144,7 @@ impl Cheatcode for transact_0Call {
 impl Cheatcode for transact_1Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { forkId, txHash } = *self;
+        #[cfg(ignore)]
         ccx.ecx.db.transact(
             Some(forkId),
             txHash,

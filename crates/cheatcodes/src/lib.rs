@@ -11,13 +11,15 @@ pub extern crate foundry_cheatcodes_spec as spec;
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use foundry_evm_core::backend::DatabaseExt;
 use revm::{ContextPrecompiles, InnerEvmContext};
 
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
-pub use inspector::{BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, Context};
+pub use inspector::{
+    BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor, Context,
+};
 pub use spec::{CheatcodeDef, Vm};
 pub use Vm::ForgeContext;
 
@@ -69,10 +71,25 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
         self.apply(ccx.state)
     }
 
+    /// Applies this cheatcode to the given context and executor.
+    ///
+    /// Implement this function if you need access to the executor.
+    fn apply_full_with_executor<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        _executor: &mut E,
+    ) -> Result {
+        self.apply_full(ccx)
+    }
+
     #[inline]
-    fn apply_traced<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_traced<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let _span = trace_span_and_call(self);
-        let result = self.apply_full(ccx);
+        let result = self.apply_full_with_executor(ccx, executor);
         trace_return(&result);
         return result;
 
@@ -121,19 +138,21 @@ impl<T: Cheatcode> DynCheatcode for T {
 }
 
 /// The cheatcode context, used in [`Cheatcode`].
-pub(crate) struct CheatsCtxt<'cheats, 'evm, DB: DatabaseExt> {
+pub(crate) struct CheatsCtxt<'cheats, 'evm, 'db, DB: DatabaseExt> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'cheats mut Cheatcodes,
     /// The EVM data.
-    pub(crate) ecx: &'evm mut InnerEvmContext<DB>,
+    pub(crate) ecx: &'evm mut InnerEvmContext<&'db mut DB>,
     /// The precompiles context.
-    pub(crate) precompiles: &'evm mut ContextPrecompiles<DB>,
+    pub(crate) precompiles: &'evm mut ContextPrecompiles<&'db mut DB>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
+    /// Gas limit of the current cheatcode call.
+    pub(crate) gas_limit: u64,
 }
 
-impl<'cheats, 'evm, DB: DatabaseExt> std::ops::Deref for CheatsCtxt<'cheats, 'evm, DB> {
-    type Target = InnerEvmContext<DB>;
+impl<'cheats, 'evm, 'db, DB: DatabaseExt> std::ops::Deref for CheatsCtxt<'cheats, 'evm, 'db, DB> {
+    type Target = InnerEvmContext<&'db mut DB>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -141,14 +160,16 @@ impl<'cheats, 'evm, DB: DatabaseExt> std::ops::Deref for CheatsCtxt<'cheats, 'ev
     }
 }
 
-impl<'cheats, 'evm, DB: DatabaseExt> std::ops::DerefMut for CheatsCtxt<'cheats, 'evm, DB> {
+impl<'cheats, 'evm, 'db, DB: DatabaseExt> std::ops::DerefMut
+    for CheatsCtxt<'cheats, 'evm, 'db, DB>
+{
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut *self.ecx
     }
 }
 
-impl<'cheats, 'evm, DB: DatabaseExt> CheatsCtxt<'cheats, 'evm, DB> {
+impl<'cheats, 'evm, 'db, DB: DatabaseExt> CheatsCtxt<'cheats, 'evm, 'db, DB> {
     #[inline]
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
         self.precompiles.contains_key(address)
