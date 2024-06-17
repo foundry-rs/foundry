@@ -18,7 +18,7 @@ use foundry_evm_fuzz::{
         ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract,
         RandomCallGenerator, SenderFilters, TargetedContracts,
     },
-    strategies::{collect_created_contracts, invariant_strat, override_call_strat, EvmFuzzState},
+    strategies::{invariant_strat, override_call_strat, EvmFuzzState},
     FuzzCase, FuzzFixtures, FuzzedCases,
 };
 use foundry_evm_traces::CallTraceArena;
@@ -251,17 +251,14 @@ impl<'a> InvariantExecutor<'a> {
 
                     // Collect created contracts and add to fuzz targets only if targeted contracts
                     // are updatable.
-                    if targeted_contracts.is_updatable {
-                        if let Err(error) = collect_created_contracts(
-                            &state_changeset,
-                            self.project_contracts,
-                            self.setup_contracts,
-                            &self.artifact_filters,
-                            &targeted_contracts,
-                            &mut created_contracts,
-                        ) {
-                            warn!(target: "forge::test", "{error}");
-                        }
+                    if let Err(error) = &targeted_contracts.collect_created_contracts(
+                        &state_changeset,
+                        self.project_contracts,
+                        self.setup_contracts,
+                        &self.artifact_filters,
+                        &mut created_contracts,
+                    ) {
+                        warn!(target: "forge::test", "{error}");
                     }
 
                     fuzz_runs.push(FuzzCase {
@@ -319,12 +316,7 @@ impl<'a> InvariantExecutor<'a> {
             }
 
             // We clear all the targeted contracts created during this run.
-            if !created_contracts.is_empty() {
-                let mut writable_targeted = targeted_contracts.targets.lock();
-                for addr in created_contracts.iter() {
-                    writable_targeted.remove(addr);
-                }
-            }
+            let _ = &targeted_contracts.clear_created_contracts(created_contracts);
 
             if gas_report_traces.borrow().len() < self.config.gas_report_samples as usize {
                 gas_report_traces.borrow_mut().push(run_traces);
