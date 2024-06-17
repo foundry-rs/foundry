@@ -196,6 +196,18 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionByBlockNumberAndIndex"))]
     EthGetTransactionByBlockNumberAndIndex(BlockNumber, Index),
 
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "eth_getRawTransactionByHash", with = "sequence")
+    )]
+    EthGetRawTransactionByHash(TxHash),
+
+    #[cfg_attr(feature = "serde", serde(rename = "eth_getRawTransactionByBlockHashAndIndex"))]
+    EthGetRawTransactionByBlockHashAndIndex(TxHash, Index),
+
+    #[cfg_attr(feature = "serde", serde(rename = "eth_getRawTransactionByBlockNumberAndIndex"))]
+    EthGetRawTransactionByBlockNumberAndIndex(BlockNumber, Index),
+
     #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionReceipt", with = "sequence"))]
     EthGetTransactionReceipt(B256),
 
@@ -265,6 +277,10 @@ pub enum EthRequest {
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_syncing", with = "empty_params"))]
     EthSyncing(()),
+
+    /// geth's `debug_getRawTransaction`  endpoint
+    #[cfg_attr(feature = "serde", serde(rename = "debug_getRawTransaction", with = "sequence"))]
+    DebugGetRawTransaction(TxHash),
 
     /// geth's `debug_traceTransaction`  endpoint
     #[cfg_attr(feature = "serde", serde(rename = "debug_traceTransaction"))]
@@ -1419,6 +1435,25 @@ mod tests {
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["syncing"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_raw_transaction() {
+        let s = r#"{"jsonrpc":"2.0","method":"debug_getRawTransaction","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getRawTransactionByHash","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getRawTransactionByBlockHashAndIndex","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c",1],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getRawTransactionByBlockNumberAndIndex","params":["0x3ed3a89b",0],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]

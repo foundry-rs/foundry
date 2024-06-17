@@ -723,7 +723,30 @@ async fn can_get_pending_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_first_noce_is_zero() {
+async fn can_get_raw_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    // first test the pending tx, disable auto mine
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::default().from(from).value(U256::from(1488)).to(Address::random());
+    let tx = WithOtherFields::new(tx);
+    let tx = provider.send_transaction(tx).await.unwrap();
+
+    let res1 = api.raw_transaction(*tx.tx_hash()).await;
+    assert!(res1.is_ok());
+
+    api.mine_one().await;
+    let res2 = api.raw_transaction(*tx.tx_hash()).await;
+
+    assert_eq!(res1.unwrap(), res2.unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_first_nonce_is_zero() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
