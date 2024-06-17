@@ -1,5 +1,6 @@
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes};
+use itertools::Either;
 use parking_lot::Mutex;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -116,22 +117,19 @@ impl FuzzRunIdentifiedContracts {
 
 /// Helper to retrieve functions to fuzz for specified abi.
 /// Returns specified targeted functions if any, else mutable abi functions.
-pub(crate) fn abi_fuzzed_functions(
-    abi: &JsonAbi,
-    targeted_functions: &[Function],
-) -> Vec<Function> {
+pub(crate) fn abi_fuzzed_functions<'a>(
+    abi: &'a JsonAbi,
+    targeted_functions: &'a [Function],
+) -> impl Iterator<Item = &'a Function> {
     if !targeted_functions.is_empty() {
-        targeted_functions.to_vec()
+        Either::Left(targeted_functions.iter())
     } else {
-        abi.functions()
-            .filter(|&func| {
-                !matches!(
-                    func.state_mutability,
-                    alloy_json_abi::StateMutability::Pure | alloy_json_abi::StateMutability::View
-                )
-            })
-            .cloned()
-            .collect()
+        Either::Right(abi.functions().filter(|&func| {
+            !matches!(
+                func.state_mutability,
+                alloy_json_abi::StateMutability::Pure | alloy_json_abi::StateMutability::View
+            )
+        }))
     }
 }
 

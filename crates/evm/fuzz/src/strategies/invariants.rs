@@ -40,7 +40,7 @@ pub fn override_call_strat(
                 let (_, contract_specs) = contracts.iter().nth(rand_index).unwrap();
                 contract_specs
             });
-            let fuzzed_functions = abi_fuzzed_functions(abi, functions);
+            let fuzzed_functions: Vec<_> = abi_fuzzed_functions(abi, functions).cloned().collect();
             any::<prop::sample::Index>().prop_map(move |index| index.get(&fuzzed_functions).clone())
         };
 
