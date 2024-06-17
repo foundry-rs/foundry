@@ -3,11 +3,12 @@ use crate::eth::{
     error::{BlockchainError, Result},
 };
 use alloy_primitives::{Address, Bytes, FixedBytes, B256, U256 as rU256, U256};
-use alloy_rpc_types::{Block, BlockTransactions, Transaction, WithOtherFields};
+use alloy_rpc_types::{Block, BlockTransactions, Transaction};
 use alloy_rpc_types_trace::parity::{
     Action, CallAction, CallType, CreateAction, CreateOutput, LocalizedTransactionTrace,
     RewardAction, TraceOutput,
 };
+use alloy_serde::WithOtherFields;
 use anvil_core::eth::transaction::ReceiptResponse;
 use foundry_evm::traces::CallKind;
 use futures::future::join_all;

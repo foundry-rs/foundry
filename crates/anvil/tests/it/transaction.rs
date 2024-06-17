@@ -2,14 +2,14 @@ use crate::{
     abi::{Greeter, MulticallContract, SimpleStorage},
     utils::{connect_pubsub, http_provider_with_signer},
 };
-use alloy_network::{EthereumSigner, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     state::{AccountOverride, StateOverride},
     AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockTransactions, TransactionRequest,
-    WithOtherFields,
 };
+use alloy_serde::WithOtherFields;
 use anvil::{spawn, Hardfork, NodeConfig};
 use eyre::Ok;
 use futures::{future::join_all, FutureExt, StreamExt};
@@ -299,7 +299,7 @@ async fn can_deploy_greeter_http() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
 
-    let signer: EthereumSigner = wallet.clone().into();
+    let signer: EthereumWallet = wallet.clone().into();
 
     let alloy_provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 

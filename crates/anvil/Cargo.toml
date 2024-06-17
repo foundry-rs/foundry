@@ -51,12 +51,19 @@ alloy-network.workspace = true
 alloy-eips.workspace = true
 alloy-rlp.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
-alloy-signer-wallet = { workspace = true, features = ["mnemonic"] }
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
-alloy-rpc-types.workspace = true
+alloy-rpc-types = { workspace = true, features = ["txpool"] }
 alloy-rpc-types-trace.workspace = true
-alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
+alloy-serde.workspace = true
+alloy-provider = { workspace = true, features = [
+    "reqwest",
+    "ws",
+    "ipc",
+    "debug-api",
+    "trace-api",
+] }
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
@@ -109,6 +116,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 alloy-json-abi.workspace = true
 alloy-rpc-client = { workspace = true, features = ["pubsub"] }
 alloy-transport-ipc = { workspace = true, features = ["mock"] }
+alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-transport-ws.workspace = true
 alloy-json-rpc.workspace = true
 alloy-pubsub.workspace = true

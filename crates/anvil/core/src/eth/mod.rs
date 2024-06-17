@@ -7,9 +7,10 @@ use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
     state::StateOverride,
-    BlockId, BlockNumberOrTag as BlockNumber, Filter, WithOtherFields,
+    BlockId, BlockNumberOrTag as BlockNumber, Filter,
 };
 use alloy_rpc_types_trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
+use alloy_serde::WithOtherFields;
 
 pub mod block;
 pub mod proof;

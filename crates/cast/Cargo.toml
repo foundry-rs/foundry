@@ -33,21 +33,22 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
 
+alloy-chains.workspace = true
+alloy-consensus = { workspace = true, features = ["serde", "kzg"] }
+alloy-contract.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
-alloy-primitives.workspace = true
-alloy-rlp.workspace = true
-alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
-alloy-transport.workspace = true
-alloy-rpc-types = { workspace = true, features = ["eth"] }
 alloy-json-rpc.workspace = true
-alloy-signer.workspace = true
-alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
-alloy-contract.workspace = true
-alloy-consensus = { workspace = true, features = ["serde", "kzg"] }
 alloy-network.workspace = true
+alloy-primitives.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
+alloy-rlp.workspace = true
+alloy-rpc-types = { workspace = true, features = ["eth"] }
+alloy-serde.workspace = true
+alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
+alloy-signer.workspace = true
 alloy-sol-types.workspace = true
-alloy-chains.workspace = true
+alloy-transport.workspace = true
 
 chrono.workspace = true
 evm-disassembler.workspace = true

@@ -30,7 +30,7 @@ alloy-sol-types.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
 alloy-signer.workspace = true
-alloy-signer-wallet = { workspace = true, features = [
+alloy-signer-local = { workspace = true, features = [
     "mnemonic-all-languages",
     "keystore",
 ] }

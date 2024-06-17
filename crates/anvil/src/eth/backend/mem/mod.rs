@@ -39,12 +39,13 @@ use alloy_rpc_types::{
     request::TransactionRequest, serde_helpers::JsonStorageKey, state::StateOverride, AccessList,
     Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
-    FilteredParams, Header as AlloyHeader, Log, Transaction, TransactionReceipt, WithOtherFields,
+    FilteredParams, Header as AlloyHeader, Log, Transaction, TransactionReceipt,
 };
 use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
 };
+use alloy_serde::WithOtherFields;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::{
     eth::{

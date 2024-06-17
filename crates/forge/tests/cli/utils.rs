@@ -2,7 +2,7 @@
 
 use alloy_chains::NamedChain;
 use alloy_primitives::Address;
-use alloy_signer_wallet::LocalWallet;
+use alloy_signer_local::PrivateKeySigner;
 
 /// Returns the current millis since unix epoch.
 ///
@@ -45,7 +45,7 @@ pub struct EnvExternalities {
 
 impl EnvExternalities {
     pub fn address(&self) -> Option<Address> {
-        let pk: LocalWallet = self.pk.parse().ok()?;
+        let pk: PrivateKeySigner = self.pk.parse().ok()?;
         Some(pk.address())
     }
 

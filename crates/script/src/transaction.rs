@@ -1,7 +1,8 @@
 use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::{Address, Bytes, TxKind, B256};
-use alloy_rpc_types::{request::TransactionRequest, WithOtherFields};
+use alloy_rpc_types::request::TransactionRequest;
+use alloy_serde::WithOtherFields;
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, ContractData, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};

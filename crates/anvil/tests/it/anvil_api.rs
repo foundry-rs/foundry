@@ -5,10 +5,11 @@ use crate::{
     fork::fork_config,
     utils::http_provider_with_signer,
 };
-use alloy_network::{EthereumSigner, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{address, fixed_bytes, Address, U256, U64};
 use alloy_provider::{ext::TxPoolApi, Provider};
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::{
     eth::EthRequest,
@@ -632,7 +633,7 @@ async fn can_remove_pool_transactions() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
     let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = wallet.clone().into();
+    let signer: EthereumWallet = wallet.clone().into();
     let from = wallet.address();
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);

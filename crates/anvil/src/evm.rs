@@ -33,12 +33,14 @@ mod tests {
     use crate::{evm::inject_precompiles, PrecompileFactory};
     use alloy_primitives::Address;
     use foundry_evm::revm::primitives::{address, Bytes, Precompile, PrecompileResult, SpecId};
+    use revm::primitives::PrecompileOutput;
 
     #[test]
     fn build_evm_with_extra_precompiles() {
         const PRECOMPILE_ADDR: Address = address!("0000000000000000000000000000000000000071");
+
         fn my_precompile(_bytes: &Bytes, _gas_limit: u64) -> PrecompileResult {
-            Ok((0, Bytes::new()))
+            Ok(PrecompileOutput { bytes: Bytes::new(), gas_used: 0 })
         }
 
         #[derive(Debug)]

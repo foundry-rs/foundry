@@ -1,10 +1,11 @@
 use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
-use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
+use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
@@ -143,7 +144,7 @@ impl CreateArgs {
             let signer = self.eth.wallet.signer().await?;
             let deployer = signer.address();
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
-                .signer(EthereumSigner::new(signer))
+                .wallet(EthereumWallet::new(signer))
                 .on_provider(provider);
             self.deploy(abi, bin, params, provider, chain_id, deployer).await
         }

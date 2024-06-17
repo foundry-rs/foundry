@@ -42,12 +42,13 @@ use alloy_rpc_types::{
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
     AccessList, AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber,
     BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Log,
-    Transaction, WithOtherFields,
+    Transaction,
 };
 use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
 };
+use alloy_serde::WithOtherFields;
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
