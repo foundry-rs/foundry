@@ -277,10 +277,8 @@ where
     I: InspectorExt<DB>,
 {
     let handler_cfg = HandlerCfg::new(inner.spec_id());
-    let context = revm::Context::new(
-        revm::EvmContext { inner, precompiles: Default::default() },
-        inspector,
-    );
+    let context =
+        revm::Context::new(revm::EvmContext { inner, precompiles: Default::default() }, inspector);
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);
     handler.append_handler_register_plain(create2_handler_register);

@@ -17,14 +17,15 @@ use revm::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
         Interpreter, InterpreterResult,
     },
-    primitives::{
-        BlockEnv, EVMError, Env, EnvWithHandlerCfg, ExecutionResult, HandlerCfg, Output,
-        TransactTo, TxEnv,
-    },
-    ContextPrecompiles, DatabaseCommit, EvmContext, FrameOrResult, FrameResult, InnerEvmContext,
-    Inspector, JournaledState,
+    primitives::{BlockEnv, EVMError, Env, EnvWithHandlerCfg, ExecutionResult, Output, TransactTo},
+    DatabaseCommit, EvmContext, FrameOrResult, FrameResult, InnerEvmContext, Inspector,
+    JournaledState,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 
 #[derive(Clone, Debug, Default)]
 #[must_use = "builders do nothing unless you call `build` on them"]
@@ -283,6 +284,11 @@ pub struct InnerContextData {
 #[derive(Clone, Debug, Default)]
 pub struct InspectorStack {
     pub cheatcodes: Option<Cheatcodes>,
+    pub inner: InspectorStackInner,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct InspectorStackInner {
     pub chisel_state: Option<ChiselState>,
     pub coverage: Option<CoverageCollector>,
     pub debugger: Option<Debugger>,
@@ -299,84 +305,20 @@ pub struct InspectorStack {
 
 struct InspectorStackRefMut<'a> {
     pub cheatcodes: Option<&'a mut Cheatcodes>,
-    pub chisel_state: Option<&'a mut ChiselState>,
-    pub coverage: Option<&'a mut CoverageCollector>,
-    pub debugger: Option<&'a mut Debugger>,
-    pub fuzzer: Option<&'a mut Fuzzer>,
-    pub log_collector: Option<&'a mut LogCollector>,
-    pub printer: Option<&'a mut CustomPrintTracer>,
-    pub tracer: Option<&'a mut TracingInspector>,
-
-    pub enable_isolation: bool,
-    pub in_inner_context: bool,
-    pub inner_context_data: &'a mut Option<InnerContextData>,
+    pub inner: &'a mut InspectorStackInner,
 }
 
-impl<'a> From<&'a mut InspectorStack> for InspectorStackRefMut<'a> {
-    fn from(stack: &'a mut InspectorStack) -> Self {
-        Self {
-            cheatcodes: stack.cheatcodes.as_mut(),
-            chisel_state: stack.chisel_state.as_mut(),
-            coverage: stack.coverage.as_mut(),
-            debugger: stack.debugger.as_mut(),
-            fuzzer: stack.fuzzer.as_mut(),
-            log_collector: stack.log_collector.as_mut(),
-            printer: stack.printer.as_mut(),
-            tracer: stack.tracer.as_mut(),
-
-            enable_isolation: stack.enable_isolation,
-            in_inner_context: stack.in_inner_context,
-            inner_context_data: &mut stack.inner_context_data,
-        }
+impl InspectorStackInner {
+    fn with_inspector_ref<O>(
+        &mut self,
+        cheatcodes: &mut Cheatcodes,
+        f: impl FnOnce(&mut InspectorStackRefMut<'_>) -> O,
+    ) -> O {
+        f(&mut InspectorStackRefMut { cheatcodes: Some(cheatcodes), inner: self })
     }
 }
 
-struct CheatsInspectors<'a> {
-    pub chisel_state: Option<&'a mut ChiselState>,
-    pub coverage: Option<&'a mut CoverageCollector>,
-    pub debugger: Option<&'a mut Debugger>,
-    pub fuzzer: Option<&'a mut Fuzzer>,
-    pub log_collector: Option<&'a mut LogCollector>,
-    pub printer: Option<&'a mut CustomPrintTracer>,
-    pub tracer: Option<&'a mut TracingInspector>,
-
-    pub enable_isolation: bool,
-    pub in_inner_context: bool,
-    pub inner_context_data: &'a mut Option<InnerContextData>,
-}
-
-impl<'a> CheatsInspectors<'a> {
-    fn with_inspector_ref<'life1, 'life2, O>(
-        &'life2 mut self,
-        cheatcodes: &'life1 mut Cheatcodes,
-        f: impl FnOnce(&mut InspectorStackRefMut<'life1>) -> O,
-    ) -> O
-    where
-        'a: 'life1,
-        'life2: 'life1,
-    {
-        let mut stack = InspectorStackRefMut {
-            cheatcodes: Some(cheatcodes),
-            chisel_state: self.chisel_state.as_mut().map(|t| &mut **t),
-            coverage: self.coverage.as_mut().map(|t| &mut **t),
-            debugger: self.debugger.as_mut().map(|t| &mut **t),
-            fuzzer: self.fuzzer.as_mut().map(|t| &mut **t),
-            log_collector: self.log_collector.as_mut().map(|t| &mut **t),
-            printer: self.printer.as_mut().map(|t| &mut **t),
-            tracer: self.tracer.as_mut().map(|t| &mut **t),
-
-            enable_isolation: self.enable_isolation,
-            in_inner_context: self.in_inner_context,
-            inner_context_data: &mut *self.inner_context_data,
-        };
-
-        let output = f(&mut stack);
-
-        output
-    }
-}
-
-impl CheatcodesExecutor for CheatsInspectors<'_> {
+impl CheatcodesExecutor for InspectorStackInner {
     fn exec_create<DB: DatabaseExt>(
         &mut self,
         inputs: CreateInputs,
@@ -398,10 +340,7 @@ impl CheatcodesExecutor for CheatsInspectors<'_> {
                 l1_block_info,
             };
 
-            let mut evm = crate::utils::new_evm_with_existing_context(
-                inner,
-                stack,
-            );
+            let mut evm = crate::utils::new_evm_with_existing_context(inner, stack);
 
             evm.context.evm.inner.journaled_state.depth += 1;
 
@@ -532,23 +471,28 @@ impl InspectorStack {
     /// Collects all the data gathered during inspection into a single struct.
     #[inline]
     pub fn collect(self) -> InspectorData {
+        let Self {
+            cheatcodes,
+            inner:
+                InspectorStackInner { chisel_state, coverage, debugger, log_collector, tracer, .. },
+        } = self;
+
         InspectorData {
-            logs: self.log_collector.map(|logs| logs.logs).unwrap_or_default(),
-            labels: self
-                .cheatcodes
+            logs: log_collector.map(|logs| logs.logs).unwrap_or_default(),
+            labels: cheatcodes
                 .as_ref()
                 .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
-            traces: self.tracer.map(|tracer| tracer.get_traces().clone()),
-            debug: self.debugger.map(|debugger| debugger.arena),
-            coverage: self.coverage.map(|coverage| coverage.maps),
-            cheatcodes: self.cheatcodes,
-            chisel_state: self.chisel_state.and_then(|state| state.state),
+            traces: tracer.map(|tracer| tracer.get_traces().clone()),
+            debug: debugger.map(|debugger| debugger.arena),
+            coverage: coverage.map(|coverage| coverage.maps),
+            cheatcodes,
+            chisel_state: chisel_state.and_then(|state| state.state),
         }
     }
 
     fn as_stack_ref<'a>(&'a mut self) -> InspectorStackRefMut<'a> {
-        self.into()
+        InspectorStackRefMut { cheatcodes: self.cheatcodes.as_mut(), inner: &mut self.inner }
     }
 }
 
@@ -645,7 +589,7 @@ impl<'a> InspectorStackRefMut<'a> {
         }
         ecx.env.tx.gas_price = U256::ZERO;
 
-        *self.inner_context_data = Some(InnerContextData {
+        self.inner_context_data = Some(InnerContextData {
             sender: ecx.env.tx.caller,
             original_origin: cached_env.tx.caller,
             original_sender_nonce: nonce,
@@ -664,7 +608,7 @@ impl<'a> InspectorStackRefMut<'a> {
         };
 
         self.in_inner_context = false;
-        *self.inner_context_data = None;
+        self.inner_context_data = None;
 
         ecx.env.tx = cached_env.tx;
         ecx.env.block.basefee = cached_env.block.basefee;
@@ -731,24 +675,6 @@ impl<'a> InspectorStackRefMut<'a> {
             }
         };
         (InterpreterResult { result, output, gas }, address)
-    }
-
-    fn as_cheats_stack(&mut self) -> (CheatsInspectors<'_>, Option<&mut Cheatcodes>) {
-        let cheats_stack = CheatsInspectors {
-            chisel_state: self.chisel_state.as_deref_mut(),
-            coverage: self.coverage.as_deref_mut(),
-            debugger: self.debugger.as_deref_mut(),
-            fuzzer: self.fuzzer.as_deref_mut(),
-            log_collector: self.log_collector.as_deref_mut(),
-            printer: self.printer.as_deref_mut(),
-            tracer: self.tracer.as_deref_mut(),
-
-            enable_isolation: self.enable_isolation,
-            in_inner_context: self.in_inner_context,
-            inner_context_data: &mut self.inner_context_data,
-        };
-
-        (cheats_stack, self.cheatcodes.as_deref_mut())
     }
 }
 
@@ -841,9 +767,8 @@ impl<'a, DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack
             ecx
         );
 
-        let (mut cheats_stack, cheatcodes) = self.as_cheats_stack();
-        if let Some(cheatcodes) = cheatcodes {
-            if let Some(output) = cheatcodes.call(ecx, call, &mut cheats_stack) {
+        if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
+            if let Some(output) = cheatcodes.call(ecx, call, self.inner) {
                 if output.result.result != InstructionResult::Continue {
                     return Some(output)
                 }
@@ -1059,5 +984,33 @@ impl<'a, DB: DatabaseExt + DatabaseCommit> InspectorExt<&'a mut DB> for Inspecto
         inputs: &mut CreateInputs,
     ) -> bool {
         self.as_stack_ref().should_use_create2_factory(ecx, inputs)
+    }
+}
+
+impl<'a> Deref for InspectorStackRefMut<'a> {
+    type Target = &'a mut InspectorStackInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for InspectorStackRefMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl Deref for InspectorStack {
+    type Target = InspectorStackInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for InspectorStack {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
 }
