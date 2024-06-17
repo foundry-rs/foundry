@@ -4,7 +4,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm_core::fork::CreateFork;
+use foundry_evm_core::{fork::CreateFork, InspectorExt};
 
 impl Cheatcode for activeForkCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
@@ -127,28 +127,36 @@ impl Cheatcode for selectForkCall {
 }
 
 impl Cheatcode for transact_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full_with_executor<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let Self { txHash } = *self;
         ccx.ecx.db.transact(
             None,
             txHash,
             &mut ccx.ecx.env,
             &mut ccx.ecx.journaled_state,
-            ccx.state,
+            &mut executor.get_inspector(ccx.state) as &mut dyn InspectorExt<_>,
         )?;
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for transact_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full_with_executor<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let Self { forkId, txHash } = *self;
         ccx.ecx.db.transact(
             Some(forkId),
             txHash,
             &mut ccx.ecx.env,
             &mut ccx.ecx.journaled_state,
-            ccx.state,
+            &mut executor.get_inspector(ccx.state) as &mut dyn InspectorExt<_>,
         )?;
         Ok(Default::default())
     }
@@ -192,7 +200,9 @@ impl Cheatcode for makePersistent_2Call {
 impl Cheatcode for makePersistent_3Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { accounts } = self;
-        ccx.ecx.db.extend_persistent_accounts(accounts.iter().copied());
+        for account in accounts {
+            ccx.ecx.db.add_persistent_account(*account);
+        }
         Ok(Default::default())
     }
 }
@@ -208,7 +218,9 @@ impl Cheatcode for revokePersistent_0Call {
 impl Cheatcode for revokePersistent_1Call {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { accounts } = self;
-        ccx.ecx.db.remove_persistent_accounts(accounts.iter().copied());
+        for account in accounts {
+            ccx.ecx.db.remove_persistent_account(account);
+        }
         Ok(Default::default())
     }
 }

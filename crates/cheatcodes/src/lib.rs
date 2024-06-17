@@ -11,7 +11,7 @@ pub extern crate foundry_cheatcodes_spec as spec;
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
 use revm::{ContextPrecompiles, InnerEvmContext};
 
@@ -138,21 +138,21 @@ impl<T: Cheatcode> DynCheatcode for T {
 }
 
 /// The cheatcode context, used in [`Cheatcode`].
-pub(crate) struct CheatsCtxt<'cheats, 'evm, 'db, DB: DatabaseExt> {
+pub(crate) struct CheatsCtxt<'cheats, 'evm, DB: DatabaseExt> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'cheats mut Cheatcodes,
     /// The EVM data.
-    pub(crate) ecx: &'evm mut InnerEvmContext<&'db mut DB>,
+    pub(crate) ecx: &'evm mut InnerEvmContext<DB>,
     /// The precompiles context.
-    pub(crate) precompiles: &'evm mut ContextPrecompiles<&'db mut DB>,
+    pub(crate) precompiles: &'evm mut ContextPrecompiles<DB>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
     /// Gas limit of the current cheatcode call.
     pub(crate) gas_limit: u64,
 }
 
-impl<'cheats, 'evm, 'db, DB: DatabaseExt> std::ops::Deref for CheatsCtxt<'cheats, 'evm, 'db, DB> {
-    type Target = InnerEvmContext<&'db mut DB>;
+impl<'cheats, 'evm, 'db, DB: DatabaseExt> std::ops::Deref for CheatsCtxt<'cheats, 'evm, DB> {
+    type Target = InnerEvmContext<DB>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -160,16 +160,14 @@ impl<'cheats, 'evm, 'db, DB: DatabaseExt> std::ops::Deref for CheatsCtxt<'cheats
     }
 }
 
-impl<'cheats, 'evm, 'db, DB: DatabaseExt> std::ops::DerefMut
-    for CheatsCtxt<'cheats, 'evm, 'db, DB>
-{
+impl<'cheats, 'evm, 'db, DB: DatabaseExt> std::ops::DerefMut for CheatsCtxt<'cheats, 'evm, DB> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut *self.ecx
     }
 }
 
-impl<'cheats, 'evm, 'db, DB: DatabaseExt> CheatsCtxt<'cheats, 'evm, 'db, DB> {
+impl<'cheats, 'evm, 'db, DB: DatabaseExt> CheatsCtxt<'cheats, 'evm, DB> {
     #[inline]
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
         self.precompiles.contains_key(address)

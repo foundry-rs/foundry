@@ -24,6 +24,7 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    utils::new_evm_with_existing_context,
     InspectorExt,
 };
 use itertools::Itertools;
@@ -33,7 +34,7 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
     primitives::{BlockEnv, CreateScheme, EVMError, TransactTo},
-    ContextPrecompiles, EvmContext, InnerEvmContext, Inspector,
+    EvmContext, InnerEvmContext,
 };
 use rustc_hash::FxHashMap;
 use serde_json::Value;
@@ -47,12 +48,60 @@ use std::{
 };
 
 pub trait CheatcodesExecutor {
+    fn get_inspector<'a, DB: DatabaseExt>(
+        &'a mut self,
+        cheats: &'a mut Cheatcodes,
+    ) -> impl InspectorExt<DB> + 'a;
+
     fn exec_create<DB: DatabaseExt>(
         &mut self,
         inputs: CreateInputs,
         cheats: &mut Cheatcodes,
-        ecx: &mut InnerEvmContext<&mut DB>,
-    ) -> Result<CreateOutcome, EVMError<DB::Error>>;
+        ecx: &mut InnerEvmContext<DB>,
+    ) -> Result<CreateOutcome, EVMError<DB::Error>> {
+        let inspector = self.get_inspector(cheats);
+        let error = std::mem::replace(&mut ecx.error, Ok(()));
+        let l1_block_info = std::mem::take(&mut ecx.l1_block_info);
+
+        let inner = revm::InnerEvmContext {
+            env: ecx.env.clone(),
+            journaled_state: std::mem::replace(
+                &mut ecx.journaled_state,
+                revm::JournaledState::new(Default::default(), Default::default()),
+            ),
+            db: &mut ecx.db as &mut dyn DatabaseExt,
+            error,
+            l1_block_info,
+        };
+
+        let mut evm = new_evm_with_existing_context(inner, inspector);
+
+        evm.context.evm.inner.journaled_state.depth += 1;
+
+        let first_frame_or_result =
+            evm.handler.execution().create(&mut evm.context, Box::new(inputs))?;
+
+        let mut result = match first_frame_or_result {
+            revm::FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
+            revm::FrameOrResult::Result(result) => result,
+        };
+
+        evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
+
+        let outcome = match result {
+            revm::FrameResult::Call(_) | revm::FrameResult::EOFCreate(_) => unreachable!(),
+            revm::FrameResult::Create(create) => create,
+        };
+
+        evm.context.evm.inner.journaled_state.depth -= 1;
+
+        ecx.journaled_state = evm.context.evm.inner.journaled_state;
+        ecx.env = evm.context.evm.inner.env;
+        ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
+        ecx.error = evm.context.evm.inner.error;
+
+        Ok(outcome)
+    }
 }
 
 macro_rules! try_or_continue {
@@ -265,7 +314,7 @@ impl Cheatcodes {
 
     fn apply_cheatcode<DB: DatabaseExt, E: CheatcodesExecutor>(
         &mut self,
-        ecx: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<DB>,
         call: &CallInputs,
         executor: &mut E,
     ) -> Result {
@@ -333,7 +382,7 @@ impl Cheatcodes {
     ///
     /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
     /// revert would run into issues.
-    pub fn on_revert<DB: DatabaseExt>(&mut self, ecx: &mut EvmContext<&mut DB>) {
+    pub fn on_revert<DB: DatabaseExt>(&mut self, ecx: &mut EvmContext<DB>) {
         trace!(deals=?self.eth_deals.len(), "rolling back deals");
 
         // Delay revert clean up until expected revert is handled, if set.
@@ -362,7 +411,7 @@ impl Cheatcodes {
     pub fn initialize_interp<DB: DatabaseExt>(
         &mut self,
         _: &mut Interpreter,
-        ecx: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<DB>,
     ) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
@@ -377,7 +426,7 @@ impl Cheatcodes {
     pub fn step<DB: DatabaseExt>(
         &mut self,
         interpreter: &mut Interpreter,
-        ecx: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<DB>,
     ) {
         let ecx = &mut ecx.inner;
         self.pc = interpreter.program_counter();
@@ -825,7 +874,7 @@ impl Cheatcodes {
 
     pub fn call<DB: DatabaseExt>(
         &mut self,
-        ecx: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<DB>,
         call: &mut CallInputs,
         executor: &mut impl CheatcodesExecutor,
     ) -> Option<CallOutcome> {
@@ -1085,7 +1134,7 @@ impl Cheatcodes {
 
     pub fn call_end<DB: DatabaseExt>(
         &mut self,
-        ecx: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<DB>,
         call: &CallInputs,
         mut outcome: CallOutcome,
     ) -> CallOutcome {
@@ -1367,7 +1416,7 @@ impl Cheatcodes {
 
     pub fn create<DB: DatabaseExt>(
         &mut self,
-        ecx: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<DB>,
         call: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         let ecx = &mut ecx.inner;
@@ -1473,7 +1522,7 @@ impl Cheatcodes {
 
     pub fn create_end<DB: DatabaseExt>(
         &mut self,
-        ecx: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<DB>,
         _call: &CreateInputs,
         mut outcome: CreateOutcome,
     ) -> CreateOutcome {
@@ -1584,7 +1633,7 @@ impl Cheatcodes {
 
     pub fn should_use_create2_factory<DB: DatabaseExt>(
         &mut self,
-        ecx: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<DB>,
         inputs: &mut CreateInputs,
     ) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme {
