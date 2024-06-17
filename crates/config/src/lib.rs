@@ -851,7 +851,7 @@ impl Config {
         if let Some(ref solc) = self.solc {
             let solc = match solc {
                 SolcReq::Version(version) => {
-                    if let Some(solc) = Solc::find_svm_installed_version(version.to_string())? {
+                    if let Some(solc) = Solc::find_svm_installed_version(version)? {
                         solc
                     } else {
                         if self.offline {

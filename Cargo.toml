@@ -59,7 +59,7 @@ debug = 1
 # Speed up tests and dev build.
 [profile.dev.package]
 # Solc and artifacts
-foundry-compilers-project.opt-level = 3
+foundry-compilers.opt-level = 3
 solang-parser.opt-level = 3
 lalrpop-util.opt-level = 3
 serde_json.opt-level = 3
@@ -152,8 +152,8 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.4.0", default-features = false }
-foundry-compilers = { package = "foundry-compilers-project", version = "0.7.0", default-features = false }
+foundry-block-explorers = { version = "0.4.1", default-features = false }
+foundry-compilers = { version = "0.8.0", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
@@ -248,5 +248,3 @@ revm = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
 revm-precompile = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
 revm-primitives = { git = "https://github.com/bluealloy/revm.git", rev = "a28a543" }
-foundry-compilers-project = { git = "https://github.com/foundry-rs/compilers", rev = "a13211c" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "364812e" }

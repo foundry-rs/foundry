@@ -115,16 +115,15 @@ impl SessionSourceConfig {
                     }
                 }
 
-                let solc =
-                    if let Some(solc) = Solc::find_svm_installed_version(version.to_string())? {
-                        solc
-                    } else {
-                        if self.foundry_config.offline {
-                            eyre::bail!("can't install missing solc {version} in offline mode")
-                        }
-                        println!("{}", format!("Installing solidity version {version}...").green());
-                        Solc::blocking_install(&version)?
-                    };
+                let solc = if let Some(solc) = Solc::find_svm_installed_version(&version)? {
+                    solc
+                } else {
+                    if self.foundry_config.offline {
+                        eyre::bail!("can't install missing solc {version} in offline mode")
+                    }
+                    println!("{}", format!("Installing solidity version {version}...").green());
+                    Solc::blocking_install(&version)?
+                };
                 Ok(solc)
             }
             SolcReq::Local(solc) => {
