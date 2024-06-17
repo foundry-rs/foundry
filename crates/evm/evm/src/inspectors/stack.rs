@@ -683,11 +683,6 @@ impl<'a, DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStackRefMu
             return None;
         }
 
-        println!(
-            "CALL {:?} {:?} depth {:?}",
-            call.target_address, call.input, ecx.journaled_state.depth
-        );
-
         call_inspectors_adjust_depth!(
             [
                 &mut self.fuzzer,
@@ -748,11 +743,6 @@ impl<'a, DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStackRefMu
             return outcome
         }
 
-        println!(
-            "CALL END {:?} {:?} depth {:?}",
-            inputs.target_address, inputs.input, ecx.journaled_state.depth
-        );
-
         let outcome = self.do_call_end(ecx, inputs, outcome);
         if outcome.result.is_revert() {
             // Encountered a revert, since cheatcodes may have altered the evm state in such a way
@@ -775,8 +765,6 @@ impl<'a, DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStackRefMu
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
         }
-
-        println!("CREATE depth {:?}", ecx.journaled_state.depth);
 
         call_inspectors_adjust_depth!(
             [&mut self.debugger, &mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
@@ -811,8 +799,6 @@ impl<'a, DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStackRefMu
         if self.in_inner_context && ecx.journaled_state.depth == 0 {
             return outcome
         }
-
-        println!("CREATE END depth {:?}", ecx.journaled_state.depth);
 
         let result = outcome.result.result;
 
