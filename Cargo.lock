@@ -825,7 +825,7 @@ dependencies = [
  "k256",
  "parking_lot",
  "rand",
- "revm 9.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm",
  "serde",
  "serde_json",
  "serde_repr",
@@ -858,7 +858,7 @@ dependencies = [
  "foundry-common",
  "foundry-evm",
  "rand",
- "revm 9.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm",
  "serde",
  "serde_json",
 ]
@@ -2004,7 +2004,7 @@ dependencies = [
  "once_cell",
  "regex",
  "reqwest 0.12.5",
- "revm 9.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm",
  "rustyline",
  "semver 1.0.23",
  "serde",
@@ -3493,7 +3493,7 @@ dependencies = [
  "once_cell",
  "regex",
  "reqwest 0.12.5",
- "revm-primitives 4.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm-primitives",
  "semver 1.0.23",
  "serde",
  "serde_json",
@@ -3559,7 +3559,7 @@ dependencies = [
  "p256",
  "parking_lot",
  "rand",
- "revm 9.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm",
  "rustc-hash",
  "semver 1.0.23",
  "serde_json",
@@ -3793,7 +3793,7 @@ dependencies = [
  "path-slash",
  "regex",
  "reqwest 0.12.5",
- "revm-primitives 4.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm-primitives",
  "semver 1.0.23",
  "serde",
  "serde_json",
@@ -3820,7 +3820,7 @@ dependencies = [
  "foundry-evm-core",
  "foundry-evm-traces",
  "ratatui",
- "revm 9.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm",
  "revm-inspectors",
  "tracing",
 ]
@@ -3846,7 +3846,7 @@ dependencies = [
  "indicatif",
  "parking_lot",
  "proptest",
- "revm 9.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm",
  "revm-inspectors",
  "thiserror",
  "tracing",
@@ -3879,7 +3879,7 @@ dependencies = [
  "itertools 0.13.0",
  "once_cell",
  "parking_lot",
- "revm 9.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm",
  "revm-inspectors",
  "rustc-hash",
  "serde",
@@ -3900,7 +3900,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-evm-core",
  "rayon",
- "revm 9.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm",
  "rustc-hash",
  "semver 1.0.23",
  "tracing",
@@ -3926,7 +3926,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rand",
- "revm 9.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm",
  "serde",
  "thiserror",
  "tracing",
@@ -7051,22 +7051,8 @@ dependencies = [
  "auto_impl",
  "cfg-if",
  "dyn-clone",
- "revm-interpreter 5.0.0 (git+https://github.com/bluealloy/revm.git?rev=41e2f7f)",
- "revm-precompile 7.0.0 (git+https://github.com/bluealloy/revm.git?rev=41e2f7f)",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "revm"
-version = "9.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d23966e0a2f40d97678d931573"
-dependencies = [
- "auto_impl",
- "cfg-if",
- "dyn-clone",
- "revm-interpreter 5.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
- "revm-precompile 7.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm-interpreter",
+ "revm-precompile",
  "serde",
  "serde_json",
 ]
@@ -7081,7 +7067,7 @@ dependencies = [
  "alloy-sol-types",
  "anstyle",
  "colorchoice",
- "revm 9.0.0 (git+https://github.com/bluealloy/revm.git?rev=41e2f7f)",
+ "revm",
  "serde",
  "serde_json",
  "thiserror",
@@ -7092,16 +7078,7 @@ name = "revm-interpreter"
 version = "5.0.0"
 source = "git+https://github.com/bluealloy/revm.git?rev=41e2f7f#41e2f7f9740c0fb70c5ba888a36453712b6de39c"
 dependencies = [
- "revm-primitives 4.0.0 (git+https://github.com/bluealloy/revm.git?rev=41e2f7f)",
- "serde",
-]
-
-[[package]]
-name = "revm-interpreter"
-version = "5.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d23966e0a2f40d97678d931573"
-dependencies = [
- "revm-primitives 4.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm-primitives",
  "serde",
 ]
 
@@ -7109,29 +7086,13 @@ dependencies = [
 name = "revm-precompile"
 version = "7.0.0"
 source = "git+https://github.com/bluealloy/revm.git?rev=41e2f7f#41e2f7f9740c0fb70c5ba888a36453712b6de39c"
-dependencies = [
- "aurora-engine-modexp",
- "c-kzg",
- "k256",
- "once_cell",
- "revm-primitives 4.0.0 (git+https://github.com/bluealloy/revm.git?rev=41e2f7f)",
- "ripemd",
- "secp256k1",
- "sha2",
- "substrate-bn",
-]
-
-[[package]]
-name = "revm-precompile"
-version = "7.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d23966e0a2f40d97678d931573"
 dependencies = [
  "aurora-engine-modexp",
  "c-kzg",
  "k256",
  "once_cell",
  "p256",
- "revm-primitives 4.0.0 (git+https://github.com/bluealloy/revm.git?rev=dd98b3b)",
+ "revm-primitives",
  "ripemd",
  "secp256k1",
  "sha2",
@@ -7142,24 +7103,6 @@ dependencies = [
 name = "revm-primitives"
 version = "4.0.0"
 source = "git+https://github.com/bluealloy/revm.git?rev=41e2f7f#41e2f7f9740c0fb70c5ba888a36453712b6de39c"
-dependencies = [
- "alloy-primitives",
- "auto_impl",
- "bitflags 2.5.0",
- "bitvec",
- "c-kzg",
- "cfg-if",
- "dyn-clone",
- "enumn",
- "hashbrown 0.14.5",
- "hex",
- "serde",
-]
-
-[[package]]
-name = "revm-primitives"
-version = "4.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d23966e0a2f40d97678d931573"
 dependencies = [
  "alloy-primitives",
  "auto_impl",
@@ -9898,3 +9841,23 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "revm"
+version = "9.0.0"
+source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d23966e0a2f40d97678d931573"
+
+[[patch.unused]]
+name = "revm-interpreter"
+version = "5.0.0"
+source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d23966e0a2f40d97678d931573"
+
+[[patch.unused]]
+name = "revm-precompile"
+version = "7.0.0"
+source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d23966e0a2f40d97678d931573"
+
+[[patch.unused]]
+name = "revm-primitives"
+version = "4.0.0"
+source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d23966e0a2f40d97678d931573"
