@@ -80,7 +80,7 @@ impl FailedInvariantCaseData {
     ) -> Self {
         // Collect abis of fuzzed and invariant contracts to decode custom error.
         let revert_reason = RevertDecoder::new()
-            .with_abis(targeted_contracts.targets.lock().iter().map(|(_, (_, abi, _))| abi))
+            .with_abis(targeted_contracts.targets.lock().iter().map(|(_, c)| &c.abi))
             .with_abi(invariant_contract.abi)
             .decode(call_result.result.as_ref(), Some(call_result.exit_reason));
 
