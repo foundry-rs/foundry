@@ -522,8 +522,7 @@ mod tests {
     fn test_storage_dump_reload_cycle() {
         let mut dump_storage = BlockchainStorage::empty();
 
-        let mut partial_header = PartialHeader::default();
-        partial_header.gas_limit = 123456;
+        let partial_header = PartialHeader { gas_limit: 123456, ..Default::default() };
         let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
         let tx: MaybeImpersonatedTransaction =
             TypedTransaction::decode(&mut &bytes_first[..]).unwrap().into();

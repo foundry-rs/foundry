@@ -322,6 +322,7 @@ pub struct SerializableState {
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
     /// The best block number of the state, can be different from block number (Arbitrum chain).
     pub best_block_number: Option<U64>,
+    #[serde(default)]
     pub blocks: Vec<SerializableBlock>,
 }
 
@@ -360,7 +361,7 @@ pub struct SerializableBlock {
 impl From<Block> for SerializableBlock {
     fn from(block: Block) -> Self {
         Self {
-            header: block.header.into(),
+            header: block.header,
             transactions: block.transactions.into_iter().map(Into::into).collect(),
             ommers: block.ommers.into_iter().map(Into::into).collect(),
         }
@@ -370,7 +371,7 @@ impl From<Block> for SerializableBlock {
 impl From<SerializableBlock> for Block {
     fn from(block: SerializableBlock) -> Self {
         Self {
-            header: block.header.into(),
+            header: block.header,
             transactions: block.transactions.into_iter().map(Into::into).collect(),
             ommers: block.ommers.into_iter().map(Into::into).collect(),
         }
