@@ -53,7 +53,7 @@ alloy-transport.workspace = true
 chrono.workspace = true
 evm-disassembler.workspace = true
 eyre.workspace = true
-futures = "0.3"
+futures.workspace = true
 hex.workspace = true
 rand.workspace = true
 rayon.workspace = true
@@ -70,12 +70,12 @@ clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
 clap_complete_fig = "4"
 comfy-table = "7"
-dunce = "1"
+dunce.workspace = true
 indicatif = "0.17"
 itertools.workspace = true
 regex = { version = "1", default-features = false }
 rpassword = "7"
-semver = "1"
+semver.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "signal"] }
 tracing.workspace = true
@@ -87,7 +87,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
 foundry-test-utils.workspace = true
-async-trait = "0.1"
+async-trait.workspace = true
 criterion = "0.5"
 
 [features]

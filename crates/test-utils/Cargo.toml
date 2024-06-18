@@ -24,14 +24,14 @@ alloy-provider.workspace = true
 
 eyre.workspace = true
 fd-lock = "4.0.0"
-once_cell = "1"
-parking_lot = "0.12"
+once_cell.workspace = true
+parking_lot.workspace = true
 similar-asserts.workspace = true
 regex = "1"
 serde_json.workspace = true
-tracing = "0.1"
+tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
-walkdir = "2"
+walkdir.workspace = true
 rand.workspace = true
 
 [features]

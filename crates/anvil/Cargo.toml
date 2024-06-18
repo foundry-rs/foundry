@@ -80,16 +80,16 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 # async
 tokio = { workspace = true, features = ["time"] }
-parking_lot = "0.12"
-futures = "0.3"
-async-trait = "0.1"
+parking_lot.workspace = true
+futures.workspace = true
+async-trait.workspace = true
 
 # misc
 flate2 = "1.0"
 serde_repr = "0.1"
 serde_json.workspace = true
 serde.workspace = true
-thiserror = "1"
+thiserror .workspace = true
 yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true
@@ -104,7 +104,7 @@ clap = { version = "4", features = [
 ], optional = true }
 clap_complete = { version = "4", optional = true }
 chrono.workspace = true
-auto_impl = "1"
+auto_impl.workspace = true
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
 clap_complete_fig = "4"
