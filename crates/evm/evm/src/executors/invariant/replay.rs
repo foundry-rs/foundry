@@ -30,7 +30,7 @@ pub fn replay_run(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     coverage: &mut Option<HitMaps>,
-    inputs: Vec<BasicTxDetails>,
+    inputs: &[BasicTxDetails],
 ) -> Result<Vec<BaseCounterExample>> {
     // We want traces for a failed case.
     executor.set_tracing(true);
@@ -38,7 +38,7 @@ pub fn replay_run(
     let mut counterexample_sequence = vec![];
 
     // Replay each call from the sequence, collect logs, traces and coverage.
-    for tx in inputs.iter() {
+    for tx in inputs {
         let call_result = executor.transact_raw(
             tx.sender,
             tx.call_details.target,
@@ -57,10 +57,7 @@ pub fn replay_run(
         }
 
         // Identify newly generated contracts, if they exist.
-        ided_contracts.extend(load_contracts(
-            vec![(TraceKind::Execution, call_result.traces.clone().unwrap())],
-            known_contracts,
-        ));
+        ided_contracts.extend(load_contracts(call_result.traces.as_slice(), known_contracts));
 
         // Create counter example to be used in failed case.
         counterexample_sequence.push(BaseCounterExample::from_invariant_call(
@@ -133,7 +130,7 @@ pub fn replay_error(
                 logs,
                 traces,
                 coverage,
-                calls,
+                &calls,
             )
         }
     }

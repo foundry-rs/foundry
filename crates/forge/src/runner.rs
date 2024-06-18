@@ -384,8 +384,8 @@ impl<'a> ContractRunner<'a> {
             find_time,
         );
 
-        let identified_contracts =
-            has_invariants.then(|| load_contracts(setup.traces.clone(), &known_contracts));
+        let identified_contracts = has_invariants
+            .then(|| load_contracts(setup.traces.iter().map(|(_, t)| t), &known_contracts));
         let test_results = functions
             .par_iter()
             .map(|&func| {
@@ -596,13 +596,12 @@ impl<'a> ContractRunner<'a> {
         {
             // Create calls from failed sequence and check if invariant still broken.
             let txes = call_sequence
-                .clone()
-                .into_iter()
+                .iter()
                 .map(|seq| BasicTxDetails {
                     sender: seq.sender.unwrap_or_default(),
                     call_details: CallDetails {
                         target: seq.addr.unwrap_or_default(),
-                        calldata: seq.calldata,
+                        calldata: seq.calldata.clone(),
                     },
                 })
                 .collect::<Vec<BasicTxDetails>>();
@@ -626,7 +625,7 @@ impl<'a> ContractRunner<'a> {
                         &mut logs,
                         &mut traces,
                         &mut coverage,
-                        txes,
+                        &txes,
                     );
                     return TestResult {
                         status: TestStatus::Failure,
@@ -728,7 +727,7 @@ impl<'a> ContractRunner<'a> {
                     &mut logs,
                     &mut traces,
                     &mut coverage,
-                    last_run_inputs.clone(),
+                    &last_run_inputs,
                 ) {
                     error!(%err, "Failed to replay last invariant run");
                 }
