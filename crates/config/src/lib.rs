@@ -2024,7 +2024,10 @@ impl Default for Config {
             profile: Self::DEFAULT_PROFILE,
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             prague: false,
+            #[cfg(not(feature = "isolate-by-default"))]
             isolate: false,
+            #[cfg(feature = "isolate-by-default")]
+            isolate: true,
             root: Default::default(),
             src: "src".into(),
             test: "test".into(),
