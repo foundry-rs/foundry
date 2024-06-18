@@ -178,7 +178,7 @@ alloy-node-bindings = { version = "0.1.1", default-features = false }
 alloy-provider = { version = "0.1.1", default-features = false }
 alloy-pubsub = { version = "0.1.1", default-features = false }
 alloy-rpc-client = { version = "0.1.1", default-features = false }
-alloy-rpc-types-anvil = { git = "https://github.com/alloy-rs/alloy", rev = "0f8b8e526d89332735c78db7ea1038831d2f39c7", default-features = false }
+alloy-rpc-types-anvil = { git = "https://github.com/alloy-rs/alloy", rev = "1aae90987f3af9c12429b4adee1530adc45cc858", default-features = false }
 alloy-rpc-types-engine = { version = "0.1.1", default-features = false }
 alloy-rpc-types-trace = { version = "0.1.1", default-features = false }
 alloy-rpc-types = { version = "0.1.1", default-features = false }

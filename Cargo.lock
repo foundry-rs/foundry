@@ -350,10 +350,10 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-types-anvil"
 version = "0.1.1"
-source = "git+https://github.com/alloy-rs/alloy?rev=0f8b8e526d89332735c78db7ea1038831d2f39c7#0f8b8e526d89332735c78db7ea1038831d2f39c7"
+source = "git+https://github.com/alloy-rs/alloy?rev=1aae90987f3af9c12429b4adee1530adc45cc858#1aae90987f3af9c12429b4adee1530adc45cc858"
 dependencies = [
  "alloy-primitives",
- "alloy-serde 0.1.1 (git+https://github.com/alloy-rs/alloy?rev=0f8b8e526d89332735c78db7ea1038831d2f39c7)",
+ "alloy-serde 0.1.1 (git+https://github.com/alloy-rs/alloy?rev=1aae90987f3af9c12429b4adee1530adc45cc858)",
  "serde",
 ]
 
@@ -432,7 +432,7 @@ dependencies = [
 [[package]]
 name = "alloy-serde"
 version = "0.1.1"
-source = "git+https://github.com/alloy-rs/alloy?rev=0f8b8e526d89332735c78db7ea1038831d2f39c7#0f8b8e526d89332735c78db7ea1038831d2f39c7"
+source = "git+https://github.com/alloy-rs/alloy?rev=1aae90987f3af9c12429b4adee1530adc45cc858#1aae90987f3af9c12429b4adee1530adc45cc858"
 dependencies = [
  "alloy-primitives",
  "serde",
