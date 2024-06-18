@@ -31,14 +31,14 @@ alloy-primitives = { workspace = true, features = [
 alloy-sol-types.workspace = true
 revm-inspectors.workspace = true
 
-eyre = "0.6"
-futures = "0.3"
+eyre .workspace = true
+futures.workspace = true
 hex.workspace = true
 itertools.workspace = true
-once_cell = "1"
-serde = "1"
+once_cell.workspace = true
+serde.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
-tracing = "0.1"
+tracing.workspace = true
 yansi.workspace = true
 rustc-hash.workspace = true
 tempfile.workspace = true
