@@ -449,7 +449,7 @@ mod tests {
         backend::MemDb,
         revm::{
             db::DatabaseRef,
-            primitives::{AccountInfo, U256 as rU256},
+            primitives::{AccountInfo, U256},
         },
     };
 
@@ -468,7 +468,7 @@ mod tests {
 
         let mut state = MemDb::default();
         let addr = Address::random();
-        let info = AccountInfo::from_balance(rU256::from(1337));
+        let info = AccountInfo::from_balance(U256::from(1337));
         state.insert_account(addr, info);
         storage.insert(one, StateDb::new(state));
         storage.insert(two, StateDb::new(MemDb::default()));
@@ -482,7 +482,7 @@ mod tests {
         let loaded = storage.get(&one).unwrap();
 
         let acc = loaded.basic_ref(addr).unwrap().unwrap();
-        assert_eq!(acc.balance, rU256::from(1337u64));
+        assert_eq!(acc.balance, U256::from(1337u64));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -496,7 +496,7 @@ mod tests {
             let hash = B256::from(U256::from(idx));
             let addr = Address::from_word(hash);
             let balance = (idx * 2) as u64;
-            let info = AccountInfo::from_balance(rU256::from(balance));
+            let info = AccountInfo::from_balance(U256::from(balance));
             state.insert_account(addr, info);
             storage.insert(hash, StateDb::new(state));
         }
@@ -513,7 +513,7 @@ mod tests {
             let loaded = storage.get(&hash).unwrap();
             let acc = loaded.basic_ref(addr).unwrap().unwrap();
             let balance = (idx * 2) as u64;
-            assert_eq!(acc.balance, rU256::from(balance));
+            assert_eq!(acc.balance, U256::from(balance));
         }
     }
 
