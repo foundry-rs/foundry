@@ -639,15 +639,11 @@ impl<'a> InvariantExecutor<'a> {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let (identifier, abi) = self.setup_contracts.get(&address).ok_or_else(|| {
-                    if should_exclude {
-                        eyre::eyre!(
-                            "[excludeSelectors] address does not have an associated contract: {address}"
-                        )
-                    } else {
-                        eyre::eyre!(
-                            "[targetSelectors] address does not have an associated contract: {address}"
-                        )
-                    }
+                    eyre::eyre!(
+                        "[{}] address does not have an associated contract: {}",
+                        if should_exclude { "excludeSelectors" } else { "targetSelectors" },
+                        address
+                    )
                 })?;
                 entry.insert(TargetedContract::new(identifier.clone(), abi.clone()))
             }
