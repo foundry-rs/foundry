@@ -6,15 +6,15 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{address, fixed_bytes, Address, U256, U64};
+use alloy_primitives::{address, fixed_bytes, Address, U256};
 use alloy_provider::{ext::TxPoolApi, Provider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
+use alloy_rpc_types_anvil::{
+    ForkedNetwork, Forking, Metadata, NodeEnvironment, NodeForkConfig, NodeInfo,
+};
 use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
-use anvil_core::{
-    eth::EthRequest,
-    types::{AnvilMetadata, ForkedNetwork, Forking, NodeEnvironment, NodeForkConfig, NodeInfo},
-};
+use anvil_core::eth::EthRequest;
 use foundry_evm::revm::primitives::SpecId;
 use std::{
     str::FromStr,
@@ -434,12 +434,13 @@ async fn can_get_node_info() {
     let block_number = provider.get_block_number().await.unwrap();
     let block =
         provider.get_block(BlockId::from(block_number), false.into()).await.unwrap().unwrap();
+    let hard_fork: &str = SpecId::CANCUN.into();
 
     let expected_node_info = NodeInfo {
-        current_block_number: U64::from(0),
+        current_block_number: 0_u64,
         current_block_timestamp: 1,
         current_block_hash: block.header.hash.unwrap(),
-        hard_fork: SpecId::CANCUN,
+        hard_fork: hard_fork.to_string(),
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
             base_fee: U256::from_str("0x3b9aca00").unwrap().to(),
@@ -470,11 +471,11 @@ async fn can_get_metadata() {
     let block =
         provider.get_block(BlockId::from(block_number), false.into()).await.unwrap().unwrap();
 
-    let expected_metadata = AnvilMetadata {
+    let expected_metadata = Metadata {
         latest_block_hash: block.header.hash.unwrap(),
         latest_block_number: block_number,
         chain_id,
-        client_version: CLIENT_VERSION,
+        client_version: CLIENT_VERSION.to_string(),
         instance_id: api.instance_id(),
         forked_network: None,
         snapshots: Default::default(),
@@ -496,11 +497,11 @@ async fn can_get_metadata_on_fork() {
     let block =
         provider.get_block(BlockId::from(block_number), false.into()).await.unwrap().unwrap();
 
-    let expected_metadata = AnvilMetadata {
+    let expected_metadata = Metadata {
         latest_block_hash: block.header.hash.unwrap(),
         latest_block_number: block_number,
         chain_id,
-        client_version: CLIENT_VERSION,
+        client_version: CLIENT_VERSION.to_string(),
         instance_id: api.instance_id(),
         forked_network: Some(ForkedNetwork {
             chain_id,

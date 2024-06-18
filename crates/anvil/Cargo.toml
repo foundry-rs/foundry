@@ -54,6 +54,7 @@ alloy-signer = { workspace = true, features = ["eip712"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
+alloy-rpc-types-anvil.workspace = true
 alloy-rpc-types = { workspace = true, features = ["txpool"] }
 alloy-rpc-types-trace.workspace = true
 alloy-serde.workspace = true

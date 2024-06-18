@@ -1,7 +1,4 @@
-use crate::{
-    eth::subscription::SubscriptionId,
-    types::{EvmMineOptions, Forking, Index},
-};
+use crate::{eth::subscription::SubscriptionId, types::Index};
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
@@ -9,6 +6,7 @@ use alloy_rpc_types::{
     state::StateOverride,
     BlockId, BlockNumberOrTag as BlockNumber, Filter,
 };
+use alloy_rpc_types_anvil::{Forking, MineOptions};
 use alloy_rpc_types_trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
 use alloy_serde::WithOtherFields;
 
@@ -609,7 +607,7 @@ pub enum EthRequest {
 
     /// Mine a single block
     #[cfg_attr(feature = "serde", serde(rename = "evm_mine"))]
-    EvmMine(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<EvmMineOptions>>>),
+    EvmMine(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<MineOptions>>>),
 
     /// Mine a single block and return detailed data
     ///
@@ -620,7 +618,7 @@ pub enum EthRequest {
         serde(rename = "anvil_mine_detailed", alias = "evm_mine_detailed",)
     )]
     EvmMineDetailed(
-        #[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<EvmMineOptions>>>,
+        #[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<MineOptions>>>,
     ),
 
     /// Execute a transaction regardless of signature status
@@ -1292,7 +1290,7 @@ mod tests {
             EthRequest::EvmMine(params) => {
                 assert_eq!(
                     params.unwrap().params.unwrap_or_default(),
-                    EvmMineOptions::Options { timestamp: Some(100), blocks: Some(100) }
+                    MineOptions::Options { timestamp: Some(100), blocks: Some(100) }
                 )
             }
             _ => unreachable!(),
@@ -1329,7 +1327,7 @@ mod tests {
             EthRequest::EvmMineDetailed(params) => {
                 assert_eq!(
                     params.unwrap().params.unwrap_or_default(),
-                    EvmMineOptions::Options { timestamp: Some(100), blocks: Some(100) }
+                    MineOptions::Options { timestamp: Some(100), blocks: Some(100) }
                 )
             }
             _ => unreachable!(),
@@ -1360,7 +1358,7 @@ mod tests {
             EthRequest::EvmMine(params) => {
                 assert_eq!(
                     params.unwrap().params.unwrap_or_default(),
-                    EvmMineOptions::Timestamp(Some(1672937224))
+                    MineOptions::Timestamp(Some(1672937224))
                 )
             }
             _ => unreachable!(),
@@ -1373,7 +1371,7 @@ mod tests {
             EthRequest::EvmMine(params) => {
                 assert_eq!(
                     params.unwrap().params.unwrap_or_default(),
-                    EvmMineOptions::Options { timestamp: Some(1672937224), blocks: None }
+                    MineOptions::Options { timestamp: Some(1672937224), blocks: None }
                 )
             }
             _ => unreachable!(),

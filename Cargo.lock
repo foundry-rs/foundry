@@ -348,6 +348,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-rpc-types-anvil"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a21cdf2617cfb0ae95ef462a0144abfef5ff56d25b56915d7a08f8a5a7b92926"
+dependencies = [
+ "alloy-primitives",
+ "alloy-serde",
+ "serde",
+]
+
+[[package]]
 name = "alloy-rpc-types-engine"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -790,6 +801,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-client",
  "alloy-rpc-types",
+ "alloy-rpc-types-anvil",
  "alloy-rpc-types-trace",
  "alloy-serde",
  "alloy-signer",
@@ -851,6 +863,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types",
+ "alloy-rpc-types-anvil",
  "alloy-rpc-types-trace",
  "alloy-serde",
  "alloy-trie",
