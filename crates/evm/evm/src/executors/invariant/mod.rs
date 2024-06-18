@@ -617,11 +617,13 @@ impl<'a> InvariantExecutor<'a> {
         for IInvariantTest::FuzzSelector { addr, selectors } in selectors.targetedSelectors {
             self.add_address_with_functions(addr, &selectors, false, targeted_contracts)?;
         }
+
         // Collect contract functions excluded from fuzzing campaign.
         let selectors = self.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
         for IInvariantTest::FuzzSelector { addr, selectors } in selectors.excludedSelectors {
             self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
         }
+
         Ok(())
     }
 
@@ -646,7 +648,6 @@ impl<'a> InvariantExecutor<'a> {
                             "[targetSelectors] address does not have an associated contract: {address}"
                         )
                     }
-
                 })?;
                 entry.insert(TargetedContract::new(identifier.clone(), abi.clone()))
             }
