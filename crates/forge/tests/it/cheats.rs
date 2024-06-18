@@ -21,6 +21,10 @@ async fn test_cheats_local(test_data: &ForgeTestData) {
         filter = filter.exclude_tests("(Ffi|File|Line|Root)");
     }
 
+    if cfg!(feature = "isolate-by-default") {
+        filter = filter.exclude_contracts("LastCallGasDefaultTest");
+    }
+
     let mut config = test_data.config.clone();
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
     let runner = test_data.runner_with_config(config);
