@@ -103,6 +103,10 @@ async fn test_invariant() {
                 vec![("invariantTrueWorld()", true, None, None, None)],
             ),
             (
+                "default/fuzz/invariant/target/ExcludeSelectors.t.sol:ExcludeSelectors",
+                vec![("invariantFalseWorld()", true, None, None, None)],
+            ),
+            (
                 "default/fuzz/invariant/targetAbi/ExcludeArtifacts.t.sol:ExcludeArtifacts",
                 vec![("invariantShouldPass()", true, None, None, None)],
             ),

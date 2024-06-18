@@ -73,6 +73,7 @@ impl FuzzRunIdentifiedContracts {
                 identifier: artifact.name.clone(),
                 abi: contract.abi.clone(),
                 targeted_functions: functions,
+                excluded_functions: Vec::new(),
             };
             targets.insert(*address, contract);
         }
@@ -140,7 +141,7 @@ impl std::ops::DerefMut for TargetedContracts {
     }
 }
 
-/// A contract identified as targets for invariant testing.
+/// A contract identified as target for invariant testing.
 #[derive(Clone, Debug)]
 pub struct TargetedContract {
     /// The contract identifier. This is only used in error messages.
@@ -149,16 +150,19 @@ pub struct TargetedContract {
     pub abi: JsonAbi,
     /// The targeted functions of the contract.
     pub targeted_functions: Vec<Function>,
+    /// The excluded functions of the contract.
+    pub excluded_functions: Vec<Function>,
 }
 
 impl TargetedContract {
     /// Returns a new `TargetedContract` instance.
     pub fn new(identifier: String, abi: JsonAbi) -> Self {
-        Self { identifier, abi, targeted_functions: Vec::new() }
+        Self { identifier, abi, targeted_functions: Vec::new(), excluded_functions: Vec::new() }
     }
 
     /// Helper to retrieve functions to fuzz for specified abi.
-    /// Returns specified targeted functions if any, else mutable abi functions.
+    /// Returns specified targeted functions if any, else mutable abi functions that are not
+    /// marked as excluded.
     pub fn abi_fuzzed_functions(&self) -> impl Iterator<Item = &Function> {
         if !self.targeted_functions.is_empty() {
             Either::Left(self.targeted_functions.iter())
@@ -167,7 +171,7 @@ impl TargetedContract {
                 !matches!(
                     func.state_mutability,
                     alloy_json_abi::StateMutability::Pure | alloy_json_abi::StateMutability::View
-                )
+                ) && !self.excluded_functions.contains(func)
             }))
         }
     }
@@ -181,9 +185,14 @@ impl TargetedContract {
     pub fn add_selectors(
         &mut self,
         selectors: impl IntoIterator<Item = Selector>,
+        should_exclude: bool,
     ) -> eyre::Result<()> {
         for selector in selectors {
-            self.targeted_functions.push(self.get_function(selector)?.clone());
+            if should_exclude {
+                self.excluded_functions.push(self.get_function(selector)?.clone());
+            } else {
+                self.targeted_functions.push(self.get_function(selector)?.clone());
+            }
         }
         Ok(())
     }

@@ -72,6 +72,9 @@ sol! {
         function excludeContracts() public view returns (address[] memory excludedContracts);
 
         #[derive(Default)]
+        function excludeSelectors() public view returns (FuzzSelector[] memory excludedSelectors);
+
+        #[derive(Default)]
         function excludeSenders() public view returns (address[] memory excludedSenders);
 
         #[derive(Default)]
@@ -605,22 +608,31 @@ impl<'a> InvariantExecutor<'a> {
                 if selectors.is_empty() {
                     continue;
                 }
-                self.add_address_with_functions(*address, selectors, targeted_contracts)?;
+                self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
             }
         }
 
+        // Collect contract functions marked as target for fuzzing campaign.
         let selectors = self.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
         for IInvariantTest::FuzzSelector { addr, selectors } in selectors.targetedSelectors {
-            self.add_address_with_functions(addr, &selectors, targeted_contracts)?;
+            self.add_address_with_functions(addr, &selectors, false, targeted_contracts)?;
         }
+
+        // Collect contract functions excluded from fuzzing campaign.
+        let selectors = self.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
+        for IInvariantTest::FuzzSelector { addr, selectors } in selectors.excludedSelectors {
+            self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
+        }
+
         Ok(())
     }
 
-    /// Adds the address and fuzzable functions to `TargetedContracts`.
+    /// Adds the address and fuzzed or excluded functions to `TargetedContracts`.
     fn add_address_with_functions(
         &self,
         address: Address,
         selectors: &[Selector],
+        should_exclude: bool,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
         let contract = match targeted_contracts.entry(address) {
@@ -628,13 +640,15 @@ impl<'a> InvariantExecutor<'a> {
             Entry::Vacant(entry) => {
                 let (identifier, abi) = self.setup_contracts.get(&address).ok_or_else(|| {
                     eyre::eyre!(
-                        "[targetSelectors] address does not have an associated contract: {address}"
+                        "[{}] address does not have an associated contract: {}",
+                        if should_exclude { "excludeSelectors" } else { "targetSelectors" },
+                        address
                     )
                 })?;
                 entry.insert(TargetedContract::new(identifier.clone(), abi.clone()))
             }
         };
-        contract.add_selectors(selectors.iter().copied())?;
+        contract.add_selectors(selectors.iter().copied(), should_exclude)?;
         Ok(())
     }
 
