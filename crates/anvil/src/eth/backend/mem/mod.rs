@@ -888,6 +888,9 @@ impl Backend {
             env.block.basefee = current_base_fee;
             env.block.timestamp = rU256::from(self.time.next_timestamp());
 
+            // pick a random value for prevrandao
+            env.block.prevrandao = Some(B256::random());
+
             let best_hash = self.blockchain.storage.read().best_hash;
 
             if self.prune_state_history_config.is_state_history_supported() {
