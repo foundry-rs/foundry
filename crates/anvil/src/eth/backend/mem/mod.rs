@@ -941,6 +941,9 @@ impl Backend {
             env.block.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
             env.block.timestamp = U256::from(self.time.next_timestamp());
 
+            // pick a random value for prevrandao
+            env.block.prevrandao = Some(B256::random());
+
             let best_hash = self.blockchain.storage.read().best_hash;
 
             if self.prune_state_history_config.is_state_history_supported() {
