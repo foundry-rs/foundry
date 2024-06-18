@@ -42,6 +42,24 @@ contract NestedMock {
     }
 }
 
+contract NestedMockDelegateCall {
+    Mock private inner;
+
+    constructor(Mock _inner) {
+        inner = _inner;
+    }
+
+    function sum() public returns (uint256) {
+        (, bytes memory dataA) = address(inner).delegatecall(
+            abi.encodeWithSelector(Mock.numberA.selector)
+        );
+        (, bytes memory dataB) = address(inner).delegatecall(
+            abi.encodeWithSelector(Mock.numberB.selector)
+        );
+        return abi.decode(dataA, (uint256)) + abi.decode(dataB, (uint256));
+    }
+}
+
 contract MockCallTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
@@ -52,7 +70,11 @@ contract MockCallTest is DSTest {
         assertEq(target.numberA(), 1);
         assertEq(target.numberB(), 2);
 
-        vm.mockCall(address(target), abi.encodeWithSelector(target.numberB.selector), abi.encode(10));
+        vm.mockCall(
+            address(target),
+            abi.encodeWithSelector(target.numberB.selector),
+            abi.encode(10)
+        );
 
         // post-mock
         assertEq(target.numberA(), 1);
@@ -66,9 +88,29 @@ contract MockCallTest is DSTest {
         // pre-mock
         assertEq(target.sum(), 3);
 
-        vm.mockCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), abi.encode(9));
+        vm.mockCall(
+            address(inner),
+            abi.encodeWithSelector(inner.numberB.selector),
+            abi.encode(9)
+        );
 
         // post-mock
+        assertEq(target.sum(), 10);
+    }
+
+    // Ref: https://github.com/foundry-rs/foundry/issues/8066
+    function testMockNestedDelegate() public {
+        Mock inner = new Mock();
+        NestedMockDelegateCall target = new NestedMockDelegateCall(inner);
+
+        assertEq(target.sum(), 3);
+
+        vm.mockCall(
+            address(inner),
+            abi.encodeWithSelector(inner.numberB.selector),
+            abi.encode(9)
+        );
+
         assertEq(target.sum(), 10);
     }
 
@@ -76,7 +118,11 @@ contract MockCallTest is DSTest {
         Mock target = new Mock();
         assertEq(target.add(5, 5), 10);
 
-        vm.mockCall(address(target), abi.encodeWithSelector(target.add.selector), abi.encode(11));
+        vm.mockCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector),
+            abi.encode(11)
+        );
 
         assertEq(target.add(5, 5), 11);
     }
@@ -86,7 +132,11 @@ contract MockCallTest is DSTest {
         assertEq(target.add(5, 5), 10);
         assertEq(target.add(6, 4), 10);
 
-        vm.mockCall(address(target), abi.encodeWithSelector(target.add.selector, 5, 5), abi.encode(11));
+        vm.mockCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector, 5, 5),
+            abi.encode(11)
+        );
 
         assertEq(target.add(5, 5), 11);
         assertEq(target.add(6, 4), 10);
@@ -95,7 +145,11 @@ contract MockCallTest is DSTest {
     function testClearMockedCalls() public {
         Mock target = new Mock();
 
-        vm.mockCall(address(target), abi.encodeWithSelector(target.numberB.selector), abi.encode(10));
+        vm.mockCall(
+            address(target),
+            abi.encodeWithSelector(target.numberB.selector),
+            abi.encode(10)
+        );
 
         assertEq(target.numberA(), 1);
         assertEq(target.numberB(), 10);
@@ -109,9 +163,21 @@ contract MockCallTest is DSTest {
     function testMockCallMultiplePartialMatch() public {
         Mock mock = new Mock();
 
-        vm.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(10));
-        vm.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector, 2), abi.encode(20));
-        vm.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector, 2, 3), abi.encode(30));
+        vm.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector),
+            abi.encode(10)
+        );
+        vm.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector, 2),
+            abi.encode(20)
+        );
+        vm.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector, 2, 3),
+            abi.encode(30)
+        );
 
         assertEq(mock.add(1, 2), 10);
         assertEq(mock.add(2, 2), 20);
@@ -121,13 +187,23 @@ contract MockCallTest is DSTest {
     function testMockCallWithValue() public {
         Mock mock = new Mock();
 
-        vm.mockCall(address(mock), 10, abi.encodeWithSelector(mock.pay.selector), abi.encode(10));
+        vm.mockCall(
+            address(mock),
+            10,
+            abi.encodeWithSelector(mock.pay.selector),
+            abi.encode(10)
+        );
 
         assertEq(mock.pay{value: 10}(1), 10);
         assertEq(mock.pay(1), 1);
 
         for (uint256 i = 0; i < 100; i++) {
-            vm.mockCall(address(mock), i, abi.encodeWithSelector(mock.pay.selector), abi.encode(i * 2));
+            vm.mockCall(
+                address(mock),
+                i,
+                abi.encodeWithSelector(mock.pay.selector),
+                abi.encode(i * 2)
+            );
         }
 
         assertEq(mock.pay(1), 0);
@@ -138,8 +214,17 @@ contract MockCallTest is DSTest {
     function testMockCallWithValueCalldataPrecedence() public {
         Mock mock = new Mock();
 
-        vm.mockCall(address(mock), 10, abi.encodeWithSelector(mock.pay.selector), abi.encode(10));
-        vm.mockCall(address(mock), abi.encodeWithSelector(mock.pay.selector, 2), abi.encode(2));
+        vm.mockCall(
+            address(mock),
+            10,
+            abi.encodeWithSelector(mock.pay.selector),
+            abi.encode(10)
+        );
+        vm.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.pay.selector, 2),
+            abi.encode(2)
+        );
 
         assertEq(mock.pay{value: 10}(1), 10);
         assertEq(mock.pay{value: 10}(2), 2);
@@ -149,8 +234,16 @@ contract MockCallTest is DSTest {
     function testMockCallEmptyAccount() public {
         Mock mock = Mock(address(100));
 
-        vm.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(10));
-        vm.mockCall(address(mock), abi.encodeWithSelector(mock.noReturnValue.selector), abi.encode());
+        vm.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector),
+            abi.encode(10)
+        );
+        vm.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.noReturnValue.selector),
+            abi.encode()
+        );
 
         assertEq(mock.add(1, 2), 10);
         mock.noReturnValue();
@@ -171,7 +264,11 @@ contract MockCallRevertTest is DSTest {
         assertEq(target.numberA(), 1);
         assertEq(target.numberB(), 2);
 
-        vm.mockCallRevert(address(target), abi.encodeWithSelector(target.numberB.selector), ERROR_MESSAGE);
+        vm.mockCallRevert(
+            address(target),
+            abi.encodeWithSelector(target.numberB.selector),
+            ERROR_MESSAGE
+        );
 
         // post-mock
         assertEq(target.numberA(), 1);
@@ -185,9 +282,16 @@ contract MockCallRevertTest is DSTest {
         assertEq(target.numberA(), 1);
         assertEq(target.numberB(), 2);
 
-        bytes memory customError = abi.encodeWithSelector(TestError.selector, ERROR_MESSAGE);
+        bytes memory customError = abi.encodeWithSelector(
+            TestError.selector,
+            ERROR_MESSAGE
+        );
 
-        vm.mockCallRevert(address(target), abi.encodeWithSelector(target.numberB.selector), customError);
+        vm.mockCallRevert(
+            address(target),
+            abi.encodeWithSelector(target.numberB.selector),
+            customError
+        );
 
         assertEq(target.numberA(), 1);
         vm.expectRevert(customError);
@@ -200,7 +304,11 @@ contract MockCallRevertTest is DSTest {
 
         assertEq(target.sum(), 3);
 
-        vm.mockCallRevert(address(inner), abi.encodeWithSelector(inner.numberB.selector), ERROR_MESSAGE);
+        vm.mockCallRevert(
+            address(inner),
+            abi.encodeWithSelector(inner.numberB.selector),
+            ERROR_MESSAGE
+        );
 
         vm.expectRevert(ERROR_MESSAGE);
         target.sum();
@@ -211,7 +319,11 @@ contract MockCallRevertTest is DSTest {
         assertEq(target.add(5, 5), 10);
         assertEq(target.add(6, 4), 10);
 
-        vm.mockCallRevert(address(target), abi.encodeWithSelector(target.add.selector, 5, 5), ERROR_MESSAGE);
+        vm.mockCallRevert(
+            address(target),
+            abi.encodeWithSelector(target.add.selector, 5, 5),
+            ERROR_MESSAGE
+        );
 
         assertEq(target.add(6, 4), 10);
 
@@ -222,7 +334,11 @@ contract MockCallRevertTest is DSTest {
     function testClearMockRevertedCalls() public {
         Mock target = new Mock();
 
-        vm.mockCallRevert(address(target), abi.encodeWithSelector(target.numberB.selector), ERROR_MESSAGE);
+        vm.mockCallRevert(
+            address(target),
+            abi.encodeWithSelector(target.numberB.selector),
+            ERROR_MESSAGE
+        );
 
         vm.clearMockedCalls();
 
@@ -233,7 +349,11 @@ contract MockCallRevertTest is DSTest {
     function testMockCallRevertPartialMatch() public {
         Mock mock = new Mock();
 
-        vm.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector, 2), ERROR_MESSAGE);
+        vm.mockCallRevert(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector, 2),
+            ERROR_MESSAGE
+        );
 
         assertEq(mock.add(1, 2), 3);
 
@@ -244,7 +364,12 @@ contract MockCallRevertTest is DSTest {
     function testMockCallRevertWithValue() public {
         Mock mock = new Mock();
 
-        vm.mockCallRevert(address(mock), 10, abi.encodeWithSelector(mock.pay.selector), ERROR_MESSAGE);
+        vm.mockCallRevert(
+            address(mock),
+            10,
+            abi.encodeWithSelector(mock.pay.selector),
+            ERROR_MESSAGE
+        );
 
         assertEq(mock.pay(1), 1);
         assertEq(mock.pay(2), 2);
@@ -256,19 +381,35 @@ contract MockCallRevertTest is DSTest {
     function testMockCallResetsMockCallRevert() public {
         Mock mock = new Mock();
 
-        vm.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector), ERROR_MESSAGE);
+        vm.mockCallRevert(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector),
+            ERROR_MESSAGE
+        );
 
-        vm.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(5));
+        vm.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector),
+            abi.encode(5)
+        );
         assertEq(mock.add(2, 3), 5);
     }
 
     function testMockCallRevertResetsMockCall() public {
         Mock mock = new Mock();
 
-        vm.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(5));
+        vm.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector),
+            abi.encode(5)
+        );
         assertEq(mock.add(2, 3), 5);
 
-        vm.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector), ERROR_MESSAGE);
+        vm.mockCallRevert(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector),
+            ERROR_MESSAGE
+        );
 
         vm.expectRevert(ERROR_MESSAGE);
         mock.add(2, 3);
@@ -277,11 +418,20 @@ contract MockCallRevertTest is DSTest {
     function testMockCallRevertWithCall() public {
         Mock mock = new Mock();
 
-        bytes memory customError = abi.encodeWithSelector(TestError.selector, ERROR_MESSAGE);
+        bytes memory customError = abi.encodeWithSelector(
+            TestError.selector,
+            ERROR_MESSAGE
+        );
 
-        vm.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector), customError);
+        vm.mockCallRevert(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector),
+            customError
+        );
 
-        (bool success, bytes memory data) = address(mock).call(abi.encodeWithSelector(Mock.add.selector, 2, 3));
+        (bool success, bytes memory data) = address(mock).call(
+            abi.encodeWithSelector(Mock.add.selector, 2, 3)
+        );
         assertEq(success, false);
         assertEq(data, customError);
     }
@@ -289,7 +439,11 @@ contract MockCallRevertTest is DSTest {
     function testMockCallEmptyAccount() public {
         Mock mock = Mock(address(100));
 
-        vm.mockCallRevert(address(mock), abi.encodeWithSelector(mock.add.selector), ERROR_MESSAGE);
+        vm.mockCallRevert(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector),
+            ERROR_MESSAGE
+        );
 
         vm.expectRevert(ERROR_MESSAGE);
         mock.add(1, 2);
