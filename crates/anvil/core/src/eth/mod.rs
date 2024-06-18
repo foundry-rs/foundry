@@ -1,4 +1,4 @@
-use crate::{eth::subscription::SubscriptionId, types::Index};
+use crate::eth::subscription::SubscriptionId;
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
@@ -6,7 +6,7 @@ use alloy_rpc_types::{
     state::StateOverride,
     BlockId, BlockNumberOrTag as BlockNumber, Filter,
 };
-use alloy_rpc_types_anvil::{Forking, MineOptions};
+use alloy_rpc_types_anvil::{Forking, Index, MineOptions};
 use alloy_rpc_types_trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
 use alloy_serde::WithOtherFields;
 

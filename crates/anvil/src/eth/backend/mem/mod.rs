@@ -41,23 +41,20 @@ use alloy_rpc_types::{
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
     FilteredParams, Header as AlloyHeader, Log, Transaction, TransactionReceipt,
 };
-use alloy_rpc_types_anvil::Forking;
+use alloy_rpc_types_anvil::{Forking, Index};
 use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
 };
 use alloy_serde::WithOtherFields;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
-use anvil_core::{
-    eth::{
-        block::{Block, BlockInfo},
-        transaction::{
-            DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
-            TransactionInfo, TypedReceipt, TypedTransaction,
-        },
-        utils::meets_eip155,
+use anvil_core::eth::{
+    block::{Block, BlockInfo},
+    transaction::{
+        DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
+        TransactionInfo, TypedReceipt, TypedTransaction,
     },
-    types::Index,
+    utils::meets_eip155,
 };
 use anvil_rpc::error::RpcError;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};

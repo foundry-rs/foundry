@@ -45,7 +45,7 @@ use alloy_rpc_types::{
     Transaction,
 };
 use alloy_rpc_types_anvil::{
-    ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
+    ForkedNetwork, Forking, Index, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
 };
 use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
@@ -62,7 +62,7 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::{Index, Work},
+    types::Work,
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
