@@ -1877,10 +1877,13 @@ fn commit_transaction<I: InspectorExt<Backend>>(
     let res = {
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
+        let depth = journaled_state.depth;
         let db = Backend::new_with_fork(fork_id, fork, journaled_state);
-        crate::utils::new_evm_with_inspector(db, env, inspector)
-            .transact()
-            .wrap_err("backend: failed committing transaction")?
+
+        let mut evm = crate::utils::new_evm_with_inspector(db, env, inspector);
+        // Adjust inner EVM depth to ensure that inspectors receive accurate data.
+        evm.context.evm.inner.journaled_state.depth = depth + 1;
+        evm.transact().wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
