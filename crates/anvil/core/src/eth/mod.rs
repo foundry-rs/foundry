@@ -6,7 +6,8 @@ use alloy_rpc_types::{
     state::StateOverride,
     BlockId, BlockNumberOrTag as BlockNumber, Filter,
 };
-use alloy_rpc_types_anvil::{Forking, Index, MineOptions};
+use alloy_rpc_types_anvil::{Forking, MineOptions};
+use alloy_rpc_types_eth::Index;
 use alloy_rpc_types_trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
 use alloy_serde::WithOtherFields;
 

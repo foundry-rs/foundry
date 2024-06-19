@@ -41,7 +41,8 @@ use alloy_rpc_types::{
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
     FilteredParams, Header as AlloyHeader, Log, Transaction, TransactionReceipt,
 };
-use alloy_rpc_types_anvil::{Forking, Index};
+use alloy_rpc_types_anvil::Forking;
+use alloy_rpc_types_eth::Index;
 use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,

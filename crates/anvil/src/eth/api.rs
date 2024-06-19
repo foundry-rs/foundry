@@ -45,8 +45,9 @@ use alloy_rpc_types::{
     Transaction,
 };
 use alloy_rpc_types_anvil::{
-    ForkedNetwork, Forking, Index, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
+    ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
 };
+use alloy_rpc_types_eth::Index;
 use alloy_rpc_types_trace::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,

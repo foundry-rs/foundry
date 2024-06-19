@@ -180,6 +180,7 @@ alloy-pubsub = { version = "0.1.1", default-features = false }
 alloy-rpc-client = { version = "0.1.1", default-features = false }
 alloy-rpc-types = { version = "0.1.1", default-features = false }
 alloy-rpc-types-anvil = { version = "0.1.1", default-features = false }
+alloy-rpc-types-eth = { version = "0.1.1", default-features = false }
 alloy-rpc-types-engine = { version = "0.1.1", default-features = false }
 alloy-rpc-types-trace = { version = "0.1.1", default-features = false }
 alloy-serde = { version = "0.1.1", default-features = false }

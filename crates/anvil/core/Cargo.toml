@@ -25,6 +25,7 @@ revm = { workspace = true, default-features = false, features = [
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types.workspace = true
 alloy-rpc-types-anvil.workspace = true
+alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-trace.workspace = true
 alloy-serde.workspace = true
 alloy-rlp.workspace = true
