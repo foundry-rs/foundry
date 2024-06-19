@@ -1,3 +1,5 @@
+# Daily CI job to run tests with isolation mode enabled by default
+
 name: test-isolate
 
 on:
