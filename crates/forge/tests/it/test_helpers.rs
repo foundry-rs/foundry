@@ -29,7 +29,7 @@ use std::{
 
 pub const RE_PATH_SEPARATOR: &str = "/";
 const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
-const VYPER: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("vyper"));
+static VYPER: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("vyper"));
 
 /// Profile for the tests group. Used to configure separate configurations for test runs.
 pub enum ForgeTestProfile {
