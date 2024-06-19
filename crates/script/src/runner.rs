@@ -90,14 +90,6 @@ impl ScriptRunner {
                         continue;
                     }
                     let calldata = [salt.as_ref(), library.as_ref()].concat();
-                    // Disable isolation to avoid [InspectorStack] trying to braodcast CREATE2 call
-                    // as a separate tx (this is not possible).
-                    //
-                    // TODO; isolation should only be enabled for the test/script contract calls on
-                    // Executor level. Keeping this workaround here for now as isolation mode is not
-                    // yet integrated that deep.
-                    let isolation_enabled = self.executor.inspector.enable_isolation;
-                    self.executor.inspector.enable_isolation = false;
                     let result = self
                         .executor
                         .transact_raw(
@@ -107,7 +99,6 @@ impl ScriptRunner {
                             U256::from(0),
                         )
                         .expect("couldn't deploy library");
-                    self.executor.inspector.enable_isolation = isolation_enabled;
 
                     if let Some(deploy_traces) = result.traces {
                         traces.push((TraceKind::Deployment, deploy_traces));
