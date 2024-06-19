@@ -879,7 +879,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // Handle mocked calls
-        if let Some(mocks) = self.mocked_calls.get(&call.target_address) {
+        if let Some(mocks) = self.mocked_calls.get(&call.bytecode_address) {
             let ctx =
                 MockCallDataContext { calldata: call.input.clone(), value: call.transfer_value() };
             if let Some(return_data) = mocks.get(&ctx).or_else(|| {

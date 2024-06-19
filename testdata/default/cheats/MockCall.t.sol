@@ -42,6 +42,20 @@ contract NestedMock {
     }
 }
 
+contract NestedMockDelegateCall {
+    Mock private inner;
+
+    constructor(Mock _inner) {
+        inner = _inner;
+    }
+
+    function sum() public returns (uint256) {
+        (, bytes memory dataA) = address(inner).delegatecall(abi.encodeWithSelector(Mock.numberA.selector));
+        (, bytes memory dataB) = address(inner).delegatecall(abi.encodeWithSelector(Mock.numberB.selector));
+        return abi.decode(dataA, (uint256)) + abi.decode(dataB, (uint256));
+    }
+}
+
 contract MockCallTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
@@ -69,6 +83,18 @@ contract MockCallTest is DSTest {
         vm.mockCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), abi.encode(9));
 
         // post-mock
+        assertEq(target.sum(), 10);
+    }
+
+    // Ref: https://github.com/foundry-rs/foundry/issues/8066
+    function testMockNestedDelegate() public {
+        Mock inner = new Mock();
+        NestedMockDelegateCall target = new NestedMockDelegateCall(inner);
+
+        assertEq(target.sum(), 3);
+
+        vm.mockCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), abi.encode(9));
+
         assertEq(target.sum(), 10);
     }
 

@@ -9863,23 +9863,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "revm"
-version = "9.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d23966e0a2f40d97678d931573"
-
-[[patch.unused]]
-name = "revm-interpreter"
-version = "5.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d23966e0a2f40d97678d931573"
-
-[[patch.unused]]
-name = "revm-precompile"
-version = "7.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d23966e0a2f40d97678d931573"
-
-[[patch.unused]]
-name = "revm-primitives"
-version = "4.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=dd98b3b#dd98b3bb977396d23966e0a2f40d97678d931573"

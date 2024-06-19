@@ -200,7 +200,7 @@ impl CallTraceDecoder {
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
     pub fn identify(&mut self, trace: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
-        self.collect_identities(identifier.identify_addresses(self.addresses(trace)));
+        self.collect_identities(identifier.identify_addresses(self.trace_addresses(trace)));
     }
 
     /// Adds a single event to the decoder.
@@ -230,7 +230,8 @@ impl CallTraceDecoder {
         self.revert_decoder.push_error(error);
     }
 
-    fn addresses<'a>(
+    /// Returns an iterator over the trace addresses.
+    pub fn trace_addresses<'a>(
         &'a self,
         arena: &'a CallTraceArena,
     ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>)> + Clone + 'a {
@@ -243,8 +244,8 @@ impl CallTraceDecoder {
                     node.trace.kind.is_any_create().then_some(&node.trace.output[..]),
                 )
             })
-            .filter(|(address, _)| {
-                !self.labels.contains_key(*address) || !self.contracts.contains_key(*address)
+            .filter(|&(address, _)| {
+                !self.labels.contains_key(address) || !self.contracts.contains_key(address)
             })
     }
 
