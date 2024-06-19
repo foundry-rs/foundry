@@ -1,13 +1,13 @@
 use crate::eth::subscription::SubscriptionId;
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_types::{
+    anvil::{Forking, MineOptions},
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
     state::StateOverride,
+    trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions},
     BlockId, BlockNumberOrTag as BlockNumber, Filter, Index,
 };
-use alloy_rpc_types_anvil::{Forking, MineOptions};
-use alloy_rpc_types_trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
 use alloy_serde::WithOtherFields;
 
 pub mod block;

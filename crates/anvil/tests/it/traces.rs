@@ -5,10 +5,12 @@ use alloy_provider::{
     ext::{DebugApi, TraceApi},
     Provider,
 };
-use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
-use alloy_rpc_types_trace::{
-    geth::{GethDebugTracingCallOptions, GethTrace},
-    parity::{Action, LocalizedTransactionTrace},
+use alloy_rpc_types::{
+    trace::{
+        geth::{GethDebugTracingCallOptions, GethTrace},
+        parity::{Action, LocalizedTransactionTrace},
+    },
+    BlockNumberOrTag, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;

@@ -8,10 +8,10 @@ use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{address, Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
+    anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     BlockId, BlockNumberOrTag,
 };
-use alloy_rpc_types_anvil::Forking;
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};

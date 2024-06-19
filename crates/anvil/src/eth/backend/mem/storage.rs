@@ -7,10 +7,12 @@ use crate::eth::{
     pool::transactions::PoolTransaction,
 };
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo};
-use alloy_rpc_types_trace::{
-    geth::{DefaultFrame, GethDefaultTracingOptions},
-    parity::LocalizedTransactionTrace,
+use alloy_rpc_types::{
+    trace::{
+        geth::{DefaultFrame, GethDefaultTracingOptions},
+        parity::LocalizedTransactionTrace,
+    },
+    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
 };
 use anvil_core::eth::{
     block::{Block, PartialHeader},

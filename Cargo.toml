@@ -179,9 +179,6 @@ alloy-provider = { version = "0.1.1", default-features = false }
 alloy-pubsub = { version = "0.1.1", default-features = false }
 alloy-rpc-client = { version = "0.1.1", default-features = false }
 alloy-rpc-types = { version = "0.1.1", default-features = false }
-alloy-rpc-types-anvil = { version = "0.1.1", default-features = false }
-alloy-rpc-types-engine = { version = "0.1.1", default-features = false }
-alloy-rpc-types-trace = { version = "0.1.1", default-features = false }
 alloy-serde = { version = "0.1.1", default-features = false }
 alloy-signer = { version = "0.1.1", default-features = false }
 alloy-signer-local = { version = "0.1.1", default-features = false }
@@ -263,7 +260,6 @@ tower-http = "0.5"
 soldeer = "0.2.15"
 
 [patch.crates-io]
-alloy-rpc-types-anvil = { git = "https://github.com/alloy-rs/alloy", rev = "8dc637e" }
 revm = { git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f" }
 revm-precompile = { git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f" }

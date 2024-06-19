@@ -8,9 +8,9 @@ use crate::{
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{address, fixed_bytes, Address, U256};
 use alloy_provider::{ext::TxPoolApi, Provider};
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
-use alloy_rpc_types_anvil::{
-    ForkedNetwork, Forking, Metadata, NodeEnvironment, NodeForkConfig, NodeInfo,
+use alloy_rpc_types::{
+    anvil::{ForkedNetwork, Forking, Metadata, NodeEnvironment, NodeForkConfig, NodeInfo},
+    BlockId, BlockNumberOrTag, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
