@@ -108,7 +108,6 @@ impl DepositTransactionRequest {
     }
 
     /// Calculates a heuristic for the in-memory size of the [DepositTransaction] transaction.
-    #[inline]
     pub fn size(&self) -> usize {
         mem::size_of::<B256>() + // source_hash
         mem::size_of::<Address>() + // from
