@@ -112,7 +112,7 @@ fn slot_child<'a>(
     mapping_slot(state, target)?.children.get(slot)
 }
 
-#[inline]
+#[cold]
 pub(crate) fn step(mapping_slots: &mut HashMap<Address, MappingSlots>, interpreter: &Interpreter) {
     match interpreter.current_opcode() {
         opcode::KECCAK256 => {
