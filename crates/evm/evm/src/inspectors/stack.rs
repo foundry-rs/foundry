@@ -927,7 +927,7 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
     }
 }
 
-impl<'a, DB: DatabaseExt> InspectorExt<DB> for InspectorStack {
+impl<DB: DatabaseExt> InspectorExt<DB> for InspectorStack {
     fn should_use_create2_factory(
         &mut self,
         ecx: &mut EvmContext<DB>,
