@@ -298,7 +298,7 @@ impl Cheatcode for deployCode_1Call {
     ) -> Result {
         let Self { artifactPath: path, constructorArgs } = self;
         let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
-        bytecode.extend_from_slice(&constructorArgs);
+        bytecode.extend_from_slice(constructorArgs);
         let output = executor
             .exec_create(
                 CreateInputs {

@@ -324,7 +324,7 @@ pub fn get_compiled(project: &mut Project) -> ProjectCompileOutput {
     if let Some(ref mut write) = write {
         write.write_all(b"1").unwrap();
     }
-    
+
     out
 }
 
