@@ -873,7 +873,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types",
  "alloy-rpc-types-anvil",
- "alloy-rpc-types-eth",
  "alloy-rpc-types-trace",
  "alloy-serde 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "alloy-trie",
