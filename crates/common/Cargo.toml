@@ -64,6 +64,7 @@ walkdir.workspace = true
 yansi.workspace = true
 rustc-hash.workspace = true
 num-format.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 foundry-macros.workspace = true
