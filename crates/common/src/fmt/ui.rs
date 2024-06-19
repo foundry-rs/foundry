@@ -488,8 +488,7 @@ receiptsRoot         {}
 sha3Uncles           {}
 size                 {}
 stateRoot            {}
-timestamp            {}
-time                 {}
+timestamp            {}\t{}
 withdrawalsRoot      {}
 totalDifficulty      {}{}",
         block.header.base_fee_per_gas.pretty(),
