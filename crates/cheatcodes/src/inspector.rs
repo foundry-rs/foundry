@@ -46,7 +46,7 @@ use std::{
     sync::Arc,
 };
 
-macro_rules! try_or_continue {
+macro_rules! try_or_return {
     ($e:expr) => {
         match $e {
             Ok(v) => v,
@@ -254,6 +254,7 @@ impl Cheatcodes {
         self.config.script_wallets.as_ref()
     }
 
+    /// Decodes the input data and applies the cheatcode.
     fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
         ecx: &mut EvmContext<DB>,
@@ -271,6 +272,7 @@ impl Cheatcodes {
             }
             e
         })?;
+
         let caller = call.caller;
 
         // ensure the caller is allowed to execute cheatcodes,
@@ -288,11 +290,12 @@ impl Cheatcodes {
         )
     }
 
-    /// Determines the address of the contract and marks it as allowed
-    /// Returns the address of the contract created
+    /// Determines the address of the contract and marks it as allowed.
+    ///
+    /// Returns the address of the contract created.
     ///
     /// There may be cheatcodes in the constructor of the new contract, in order to allow them
-    /// automatically we need to determine the new address
+    /// automatically we need to determine the new address.
     fn allow_cheatcodes_on_create<DB: DatabaseExt>(
         &self,
         ecx: &mut InnerEvmContext<DB>,
@@ -347,7 +350,7 @@ impl Cheatcodes {
 
 impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     #[inline]
-    fn initialize_interp(&mut self, _: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+    fn initialize_interp(&mut self, _interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
@@ -358,424 +361,31 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
+    #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
-        let ecx = &mut ecx.inner;
         self.pc = interpreter.program_counter();
 
-        // reset gas if gas metering is turned off
-        match self.gas_metering {
-            Some(None) => {
-                // need to store gas metering
-                self.gas_metering = Some(Some(interpreter.gas));
-            }
-            Some(Some(gas)) => {
-                match interpreter.current_opcode() {
-                    opcode::CREATE | opcode::CREATE2 => {
-                        // set we're about to enter CREATE frame to meter its gas on first opcode
-                        // inside it
-                        self.gas_metering_create = Some(None)
-                    }
-                    opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT | opcode::REVERT => {
-                        // If we are ending current execution frame, we want to just fully reset gas
-                        // otherwise weird things with returning gas from a call happen
-                        // ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/evm_impl.rs#L190
-                        //
-                        // It would be nice if we had access to the interpreter in `call_end`, as we
-                        // could just do this there instead.
-                        match self.gas_metering_create {
-                            None | Some(None) => {
-                                interpreter.gas = Gas::new(0);
-                            }
-                            Some(Some(gas)) => {
-                                // If this was CREATE frame, set correct gas limit. This is needed
-                                // because CREATE opcodes deduct additional gas for code storage,
-                                // and deducted amount is compared to gas limit. If we set this to
-                                // 0, the CREATE would fail with out of gas.
-                                //
-                                // If we however set gas limit to the limit of outer frame, it would
-                                // cause a panic after erasing gas cost post-create. Reason for this
-                                // is pre-create REVM records `gas_limit - (gas_limit / 64)` as gas
-                                // used, and erases costs by `remaining` gas post-create.
-                                // gas used ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L254-L258
-                                // post-create erase ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L279
-                                interpreter.gas = Gas::new(gas.limit());
-
-                                // reset CREATE gas metering because we're about to exit its frame
-                                self.gas_metering_create = None
-                            }
-                        }
-                    }
-                    _ => {
-                        // if just starting with CREATE opcodes, record its inner frame gas
-                        if let Some(None) = self.gas_metering_create {
-                            self.gas_metering_create = Some(Some(interpreter.gas))
-                        }
-
-                        // dont monitor gas changes, keep it constant
-                        interpreter.gas = gas;
-                    }
-                }
-            }
-            _ => {}
+        // `pauseGasMetering`: reset interpreter gas.
+        if self.gas_metering.is_some() {
+            self.meter_gas(interpreter);
         }
 
-        // Record writes and reads if `record` has been called
-        if let Some(storage_accesses) = &mut self.accesses {
-            match interpreter.current_opcode() {
-                opcode::SLOAD => {
-                    let key = try_or_continue!(interpreter.stack().peek(0));
-                    storage_accesses
-                        .reads
-                        .entry(interpreter.contract().target_address)
-                        .or_default()
-                        .push(key);
-                }
-                opcode::SSTORE => {
-                    let key = try_or_continue!(interpreter.stack().peek(0));
-
-                    // An SSTORE does an SLOAD internally
-                    storage_accesses
-                        .reads
-                        .entry(interpreter.contract().target_address)
-                        .or_default()
-                        .push(key);
-                    storage_accesses
-                        .writes
-                        .entry(interpreter.contract().target_address)
-                        .or_default()
-                        .push(key);
-                }
-                _ => (),
-            }
+        // `record`: record storage reads and writes.
+        if self.accesses.is_some() {
+            self.record_accesses(interpreter);
         }
 
-        // Record account access via SELFDESTRUCT if `recordAccountAccesses` has been called
-        if let Some(account_accesses) = &mut self.recorded_account_diffs_stack {
-            if interpreter.current_opcode() == opcode::SELFDESTRUCT {
-                let target = try_or_continue!(interpreter.stack().peek(0));
-                // load balance of this account
-                let value = ecx
-                    .balance(interpreter.contract().target_address)
-                    .map(|(b, _)| b)
-                    .unwrap_or(U256::ZERO);
-                let account = Address::from_word(B256::from(target));
-                // get previous balance and initialized status of the target account
-                // TODO: use load_account_exists
-                let (initialized, old_balance) = if let Ok((account, _)) =
-                    ecx.journaled_state.load_account(account, &mut ecx.db)
-                {
-                    (account.info.exists(), account.info.balance)
-                } else {
-                    (false, U256::ZERO)
-                };
-                // register access for the target account
-                let access = crate::Vm::AccountAccess {
-                    chainInfo: crate::Vm::ChainInfo {
-                        forkId: ecx.db.active_fork_id().unwrap_or_default(),
-                        chainId: U256::from(ecx.env.cfg.chain_id),
-                    },
-                    accessor: interpreter.contract().target_address,
-                    account,
-                    kind: crate::Vm::AccountAccessKind::SelfDestruct,
-                    initialized,
-                    oldBalance: old_balance,
-                    newBalance: old_balance + value,
-                    value,
-                    data: Bytes::new(),
-                    reverted: false,
-                    deployedCode: Bytes::new(),
-                    storageAccesses: vec![],
-                    depth: ecx.journaled_state.depth(),
-                };
-                // Ensure that we're not selfdestructing a context recording was initiated on
-                if let Some(last) = account_accesses.last_mut() {
-                    last.push(access);
-                }
-            }
+        // `startStateDiffRecording`: record granular ordered storage accesses.
+        if self.recorded_account_diffs_stack.is_some() {
+            self.record_state_diffs(interpreter, ecx);
         }
 
-        // Record granular ordered storage accesses if `startStateDiffRecording` has been called
-        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
-            match interpreter.current_opcode() {
-                opcode::SLOAD => {
-                    let key = try_or_continue!(interpreter.stack().peek(0));
-                    let address = interpreter.contract().target_address;
-
-                    // Try to include present value for informational purposes, otherwise assume
-                    // it's not set (zero value)
-                    let mut present_value = U256::ZERO;
-                    // Try to load the account and the slot's present value
-                    if ecx.load_account(address).is_ok() {
-                        if let Ok((previous, _)) = ecx.sload(address, key) {
-                            present_value = previous;
-                        }
-                    }
-                    let access = crate::Vm::StorageAccess {
-                        account: interpreter.contract().target_address,
-                        slot: key.into(),
-                        isWrite: false,
-                        previousValue: present_value.into(),
-                        newValue: present_value.into(),
-                        reverted: false,
-                    };
-                    append_storage_access(
-                        recorded_account_diffs_stack,
-                        access,
-                        ecx.journaled_state.depth(),
-                    );
-                }
-                opcode::SSTORE => {
-                    let key = try_or_continue!(interpreter.stack().peek(0));
-                    let value = try_or_continue!(interpreter.stack().peek(1));
-                    let address = interpreter.contract().target_address;
-                    // Try to load the account and the slot's previous value, otherwise, assume it's
-                    // not set (zero value)
-                    let mut previous_value = U256::ZERO;
-                    if ecx.load_account(address).is_ok() {
-                        if let Ok((previous, _)) = ecx.sload(address, key) {
-                            previous_value = previous;
-                        }
-                    }
-
-                    let access = crate::Vm::StorageAccess {
-                        account: address,
-                        slot: key.into(),
-                        isWrite: true,
-                        previousValue: previous_value.into(),
-                        newValue: value.into(),
-                        reverted: false,
-                    };
-                    append_storage_access(
-                        recorded_account_diffs_stack,
-                        access,
-                        ecx.journaled_state.depth(),
-                    );
-                }
-                // Record account accesses via the EXT family of opcodes
-                opcode::EXTCODECOPY |
-                opcode::EXTCODESIZE |
-                opcode::EXTCODEHASH |
-                opcode::BALANCE => {
-                    let kind = match interpreter.current_opcode() {
-                        opcode::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
-                        opcode::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,
-                        opcode::EXTCODEHASH => crate::Vm::AccountAccessKind::Extcodehash,
-                        opcode::BALANCE => crate::Vm::AccountAccessKind::Balance,
-                        _ => unreachable!(),
-                    };
-                    let address = Address::from_word(B256::from(try_or_continue!(interpreter
-                        .stack()
-                        .peek(0))));
-                    let balance;
-                    let initialized;
-                    // TODO: use ecx.load_account
-                    if let Ok((acc, _)) = ecx.journaled_state.load_account(address, &mut ecx.db) {
-                        initialized = acc.info.exists();
-                        balance = acc.info.balance;
-                    } else {
-                        initialized = false;
-                        balance = U256::ZERO;
-                    }
-                    let account_access = crate::Vm::AccountAccess {
-                        chainInfo: crate::Vm::ChainInfo {
-                            forkId: ecx.db.active_fork_id().unwrap_or_default(),
-                            chainId: U256::from(ecx.env.cfg.chain_id),
-                        },
-                        accessor: interpreter.contract().target_address,
-                        account: address,
-                        kind,
-                        initialized,
-                        oldBalance: balance,
-                        newBalance: balance,
-                        value: U256::ZERO,
-                        data: Bytes::new(),
-                        reverted: false,
-                        deployedCode: Bytes::new(),
-                        storageAccesses: vec![],
-                        depth: ecx.journaled_state.depth(),
-                    };
-                    // Record the EXT* call as an account access at the current depth
-                    // (future storage accesses will be recorded in a new "Resume" context)
-                    if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                        last.push(account_access);
-                    } else {
-                        recorded_account_diffs_stack.push(vec![account_access]);
-                    }
-                }
-                _ => (),
-            }
+        // `expectSafeMemory`: check if the current opcode is allowed to interact with memory.
+        if !self.allowed_mem_writes.is_empty() {
+            self.check_mem_opcodes(interpreter, ecx.journaled_state.depth());
         }
 
-        // If the allowed memory writes cheatcode is active at this context depth, check to see
-        // if the current opcode can either mutate directly or expand memory. If the opcode at
-        // the current program counter is a match, check if the modified memory lies within the
-        // allowed ranges. If not, revert and fail the test.
-        if let Some(ranges) = self.allowed_mem_writes.get(&ecx.journaled_state.depth()) {
-            // The `mem_opcode_match` macro is used to match the current opcode against a list of
-            // opcodes that can mutate memory (either directly or expansion via reading). If the
-            // opcode is a match, the memory offsets that are being written to are checked to be
-            // within the allowed ranges. If not, the test is failed and the transaction is
-            // reverted. For all opcodes that can mutate memory aside from MSTORE,
-            // MSTORE8, and MLOAD, the size and destination offset are on the stack, and
-            // the macro expands all of these cases. For MSTORE, MSTORE8, and MLOAD, the
-            // size of the memory write is implicit, so these cases are hard-coded.
-            macro_rules! mem_opcode_match {
-                ($(($opcode:ident, $offset_depth:expr, $size_depth:expr, $writes:expr)),* $(,)?) => {
-                    match interpreter.current_opcode() {
-                        ////////////////////////////////////////////////////////////////
-                        //    OPERATIONS THAT CAN EXPAND/MUTATE MEMORY BY WRITING     //
-                        ////////////////////////////////////////////////////////////////
-
-                        opcode::MSTORE => {
-                            // The offset of the mstore operation is at the top of the stack.
-                            let offset = try_or_continue!(interpreter.stack().peek(0)).saturating_to::<u64>();
-
-                            // If none of the allowed ranges contain [offset, offset + 32), memory has been
-                            // unexpectedly mutated.
-                            if !ranges.iter().any(|range| {
-                                range.contains(&offset) && range.contains(&(offset + 31))
-                            }) {
-                                // SPECIAL CASE: When the compiler attempts to store the selector for
-                                // `stopExpectSafeMemory`, this is allowed. It will do so at the current free memory
-                                // pointer, which could have been updated to the exclusive upper bound during
-                                // execution.
-                                let value = try_or_continue!(interpreter.stack().peek(1)).to_be_bytes::<32>();
-                                let selector = stopExpectSafeMemoryCall {}.cheatcode().func.selector_bytes;
-                                if value[0..SELECTOR_LEN] == selector {
-                                    return
-                                }
-
-                                disallowed_mem_write(offset, 32, interpreter, ranges);
-                                return
-                            }
-                        }
-                        opcode::MSTORE8 => {
-                            // The offset of the mstore8 operation is at the top of the stack.
-                            let offset = try_or_continue!(interpreter.stack().peek(0)).saturating_to::<u64>();
-
-                            // If none of the allowed ranges contain the offset, memory has been
-                            // unexpectedly mutated.
-                            if !ranges.iter().any(|range| range.contains(&offset)) {
-                                disallowed_mem_write(offset, 1, interpreter, ranges);
-                                return
-                            }
-                        }
-
-                        ////////////////////////////////////////////////////////////////
-                        //        OPERATIONS THAT CAN EXPAND MEMORY BY READING        //
-                        ////////////////////////////////////////////////////////////////
-
-                        opcode::MLOAD => {
-                            // The offset of the mload operation is at the top of the stack
-                            let offset = try_or_continue!(interpreter.stack().peek(0)).saturating_to::<u64>();
-
-                            // If the offset being loaded is >= than the memory size, the
-                            // memory is being expanded. If none of the allowed ranges contain
-                            // [offset, offset + 32), memory has been unexpectedly mutated.
-                            if offset >= interpreter.shared_memory.len() as u64 && !ranges.iter().any(|range| {
-                                range.contains(&offset) && range.contains(&(offset + 31))
-                            }) {
-                                disallowed_mem_write(offset, 32, interpreter, ranges);
-                                return
-                            }
-                        }
-
-                        ////////////////////////////////////////////////////////////////
-                        //          OPERATIONS WITH OFFSET AND SIZE ON STACK          //
-                        ////////////////////////////////////////////////////////////////
-
-                        opcode::CALL => {
-                            // The destination offset of the operation is the fifth element on the stack.
-                            let dest_offset = try_or_continue!(interpreter.stack().peek(5)).saturating_to::<u64>();
-
-                            // The size of the data that will be copied is the sixth element on the stack.
-                            let size = try_or_continue!(interpreter.stack().peek(6)).saturating_to::<u64>();
-
-                            // If none of the allowed ranges contain [dest_offset, dest_offset + size),
-                            // memory outside of the expected ranges has been touched. If the opcode
-                            // only reads from memory, this is okay as long as the memory is not expanded.
-                            let fail_cond = !ranges.iter().any(|range| {
-                                range.contains(&dest_offset) &&
-                                    range.contains(&(dest_offset + size.saturating_sub(1)))
-                            });
-
-                            // If the failure condition is met, set the output buffer to a revert string
-                            // that gives information about the allowed ranges and revert.
-                            if fail_cond {
-                                // SPECIAL CASE: When a call to `stopExpectSafeMemory` is performed, this is allowed.
-                                // It allocated calldata at the current free memory pointer, and will attempt to read
-                                // from this memory region to perform the call.
-                                let to = Address::from_word(try_or_continue!(interpreter.stack().peek(1)).to_be_bytes::<32>().into());
-                                if to == CHEATCODE_ADDRESS {
-                                    let args_offset = try_or_continue!(interpreter.stack().peek(3)).saturating_to::<usize>();
-                                    let args_size = try_or_continue!(interpreter.stack().peek(4)).saturating_to::<usize>();
-                                    let selector = stopExpectSafeMemoryCall {}.cheatcode().func.selector_bytes;
-                                    let memory_word = interpreter.shared_memory.slice(args_offset, args_size);
-                                    if memory_word[0..SELECTOR_LEN] == selector {
-                                        return
-                                    }
-                                }
-
-                                disallowed_mem_write(dest_offset, size, interpreter, ranges);
-                                return
-                            }
-                        }
-
-                        $(opcode::$opcode => {
-                            // The destination offset of the operation.
-                            let dest_offset = try_or_continue!(interpreter.stack().peek($offset_depth)).saturating_to::<u64>();
-
-                            // The size of the data that will be copied.
-                            let size = try_or_continue!(interpreter.stack().peek($size_depth)).saturating_to::<u64>();
-
-                            // If none of the allowed ranges contain [dest_offset, dest_offset + size),
-                            // memory outside of the expected ranges has been touched. If the opcode
-                            // only reads from memory, this is okay as long as the memory is not expanded.
-                            let fail_cond = !ranges.iter().any(|range| {
-                                    range.contains(&dest_offset) &&
-                                        range.contains(&(dest_offset + size.saturating_sub(1)))
-                                }) && ($writes ||
-                                    [dest_offset, (dest_offset + size).saturating_sub(1)].into_iter().any(|offset| {
-                                        offset >= interpreter.shared_memory.len() as u64
-                                    })
-                                );
-
-                            // If the failure condition is met, set the output buffer to a revert string
-                            // that gives information about the allowed ranges and revert.
-                            if fail_cond {
-                                disallowed_mem_write(dest_offset, size, interpreter, ranges);
-                                return
-                            }
-                        })*
-                        _ => ()
-                    }
-                }
-            }
-
-            // Check if the current opcode can write to memory, and if so, check if the memory
-            // being written to is registered as safe to modify.
-            mem_opcode_match!(
-                (CALLDATACOPY, 0, 2, true),
-                (CODECOPY, 0, 2, true),
-                (RETURNDATACOPY, 0, 2, true),
-                (EXTCODECOPY, 1, 3, true),
-                (CALLCODE, 5, 6, true),
-                (STATICCALL, 4, 5, true),
-                (DELEGATECALL, 4, 5, true),
-                (KECCAK256, 0, 1, false),
-                (LOG0, 0, 1, false),
-                (LOG1, 0, 1, false),
-                (LOG2, 0, 1, false),
-                (LOG3, 0, 1, false),
-                (LOG4, 0, 1, false),
-                (CREATE, 1, 2, false),
-                (CREATE2, 1, 2, false),
-                (RETURN, 0, 1, false),
-                (REVERT, 0, 1, false),
-            )
-        }
-
-        // Record writes with sstore (and sha3) if `StartMappingRecording` has been called
+        // `startMappingRecording`: record SSTORE and KECCAK256.
         if let Some(mapping_slots) = &mut self.mapping_slots {
             mapping::step(mapping_slots, interpreter);
         }
@@ -786,7 +396,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             expect::handle_expect_emit(self, log);
         }
 
-        // Stores this log if `recordLogs` has been called
+        // `recordLogs`
         if let Some(storage_recorded_logs) = &mut self.recorded_logs {
             storage_recorded_logs.push(Vm::Log {
                 topics: log.data.topics().to_vec(),
@@ -1008,9 +618,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
             let initialized;
             let old_balance;
-            // TODO: use ecx.load_account
-            if let Ok((acc, _)) = ecx.journaled_state.load_account(call.target_address, &mut ecx.db)
-            {
+            if let Ok((acc, _)) = ecx.load_account(call.target_address) {
                 initialized = acc.info.exists();
                 old_balance = acc.info.balance;
             } else {
@@ -1176,10 +784,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // Depending on the depth the cheat was called at, there may not be any pending
                 // calls to update if execution has percolated up to a higher depth.
                 if call_access.depth == ecx.journaled_state.depth() {
-                    // TODO: use ecx.load_account
-                    if let Ok((acc, _)) =
-                        ecx.journaled_state.load_account(call.target_address, &mut ecx.db)
-                    {
+                    if let Ok((acc, _)) = ecx.load_account(call.target_address) {
                         debug_assert!(access_is_call(call_access.kind));
                         call_access.newBalance = acc.info.balance;
                     }
@@ -1574,6 +1179,405 @@ impl<DB: DatabaseExt> InspectorExt<DB> for Cheatcodes {
     }
 }
 
+impl Cheatcodes {
+    #[cold]
+    fn meter_gas(&mut self, interpreter: &mut Interpreter) {
+        match &self.gas_metering {
+            None => {}
+            // need to store gas metering
+            Some(None) => self.gas_metering = Some(Some(interpreter.gas)),
+            Some(Some(gas)) => {
+                match interpreter.current_opcode() {
+                    opcode::CREATE | opcode::CREATE2 => {
+                        // set we're about to enter CREATE frame to meter its gas on first opcode
+                        // inside it
+                        self.gas_metering_create = Some(None)
+                    }
+                    opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT | opcode::REVERT => {
+                        // If we are ending current execution frame, we want to just fully reset gas
+                        // otherwise weird things with returning gas from a call happen
+                        // ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/evm_impl.rs#L190
+                        //
+                        // It would be nice if we had access to the interpreter in `call_end`, as we
+                        // could just do this there instead.
+                        match &self.gas_metering_create {
+                            None | Some(None) => {
+                                interpreter.gas = Gas::new(0);
+                            }
+                            Some(Some(gas)) => {
+                                // If this was CREATE frame, set correct gas limit. This is needed
+                                // because CREATE opcodes deduct additional gas for code storage,
+                                // and deducted amount is compared to gas limit. If we set this to
+                                // 0, the CREATE would fail with out of gas.
+                                //
+                                // If we however set gas limit to the limit of outer frame, it would
+                                // cause a panic after erasing gas cost post-create. Reason for this
+                                // is pre-create REVM records `gas_limit - (gas_limit / 64)` as gas
+                                // used, and erases costs by `remaining` gas post-create.
+                                // gas used ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L254-L258
+                                // post-create erase ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L279
+                                interpreter.gas = Gas::new(gas.limit());
+
+                                // reset CREATE gas metering because we're about to exit its frame
+                                self.gas_metering_create = None
+                            }
+                        }
+                    }
+                    _ => {
+                        // if just starting with CREATE opcodes, record its inner frame gas
+                        if let Some(None) = self.gas_metering_create {
+                            self.gas_metering_create = Some(Some(interpreter.gas))
+                        }
+
+                        // dont monitor gas changes, keep it constant
+                        interpreter.gas = *gas;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Records storage slots reads and writes.
+    #[cold]
+    fn record_accesses(&mut self, interpreter: &mut Interpreter) {
+        let Some(access) = &mut self.accesses else { return };
+        match interpreter.current_opcode() {
+            opcode::SLOAD => {
+                let key = try_or_return!(interpreter.stack().peek(0));
+                access.record_read(interpreter.contract().target_address, key);
+            }
+            opcode::SSTORE => {
+                let key = try_or_return!(interpreter.stack().peek(0));
+                access.record_write(interpreter.contract().target_address, key);
+            }
+            _ => {}
+        }
+    }
+
+    #[cold]
+    fn record_state_diffs<DB: DatabaseExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<DB>,
+    ) {
+        let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
+        match interpreter.current_opcode() {
+            opcode::SELFDESTRUCT => {
+                // Ensure that we're not selfdestructing a context recording was initiated on
+                let Some(last) = account_accesses.last_mut() else { return };
+
+                // get previous balance and initialized status of the target account
+                let target = try_or_return!(interpreter.stack().peek(0));
+                let target = Address::from_word(B256::from(target));
+                let (initialized, old_balance) = ecx
+                    .load_account(target)
+                    .map(|(account, _)| (account.info.exists(), account.info.balance))
+                    .unwrap_or_default();
+
+                // load balance of this account
+                let value = ecx
+                    .balance(interpreter.contract().target_address)
+                    .map(|(b, _)| b)
+                    .unwrap_or(U256::ZERO);
+
+                // register access for the target account
+                last.push(crate::Vm::AccountAccess {
+                    chainInfo: crate::Vm::ChainInfo {
+                        forkId: ecx.db.active_fork_id().unwrap_or_default(),
+                        chainId: U256::from(ecx.env.cfg.chain_id),
+                    },
+                    accessor: interpreter.contract().target_address,
+                    account: target,
+                    kind: crate::Vm::AccountAccessKind::SelfDestruct,
+                    initialized,
+                    oldBalance: old_balance,
+                    newBalance: old_balance + value,
+                    value,
+                    data: Bytes::new(),
+                    reverted: false,
+                    deployedCode: Bytes::new(),
+                    storageAccesses: vec![],
+                    depth: ecx.journaled_state.depth(),
+                });
+            }
+
+            opcode::SLOAD => {
+                let Some(last) = account_accesses.last_mut() else { return };
+
+                let key = try_or_return!(interpreter.stack().peek(0));
+                let address = interpreter.contract().target_address;
+
+                // Try to include present value for informational purposes, otherwise assume
+                // it's not set (zero value)
+                let mut present_value = U256::ZERO;
+                // Try to load the account and the slot's present value
+                if ecx.load_account(address).is_ok() {
+                    if let Ok((previous, _)) = ecx.sload(address, key) {
+                        present_value = previous;
+                    }
+                }
+                let access = crate::Vm::StorageAccess {
+                    account: interpreter.contract().target_address,
+                    slot: key.into(),
+                    isWrite: false,
+                    previousValue: present_value.into(),
+                    newValue: present_value.into(),
+                    reverted: false,
+                };
+                append_storage_access(last, access, ecx.journaled_state.depth());
+            }
+            opcode::SSTORE => {
+                let Some(last) = account_accesses.last_mut() else { return };
+
+                let key = try_or_return!(interpreter.stack().peek(0));
+                let value = try_or_return!(interpreter.stack().peek(1));
+                let address = interpreter.contract().target_address;
+                // Try to load the account and the slot's previous value, otherwise, assume it's
+                // not set (zero value)
+                let mut previous_value = U256::ZERO;
+                if ecx.load_account(address).is_ok() {
+                    if let Ok((previous, _)) = ecx.sload(address, key) {
+                        previous_value = previous;
+                    }
+                }
+
+                let access = crate::Vm::StorageAccess {
+                    account: address,
+                    slot: key.into(),
+                    isWrite: true,
+                    previousValue: previous_value.into(),
+                    newValue: value.into(),
+                    reverted: false,
+                };
+                append_storage_access(last, access, ecx.journaled_state.depth());
+            }
+
+            // Record account accesses via the EXT family of opcodes
+            opcode::EXTCODECOPY | opcode::EXTCODESIZE | opcode::EXTCODEHASH | opcode::BALANCE => {
+                let kind = match interpreter.current_opcode() {
+                    opcode::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
+                    opcode::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,
+                    opcode::EXTCODEHASH => crate::Vm::AccountAccessKind::Extcodehash,
+                    opcode::BALANCE => crate::Vm::AccountAccessKind::Balance,
+                    _ => unreachable!(),
+                };
+                let address =
+                    Address::from_word(B256::from(try_or_return!(interpreter.stack().peek(0))));
+                let initialized;
+                let balance;
+                if let Ok((acc, _)) = ecx.load_account(address) {
+                    initialized = acc.info.exists();
+                    balance = acc.info.balance;
+                } else {
+                    initialized = false;
+                    balance = U256::ZERO;
+                }
+                let account_access = crate::Vm::AccountAccess {
+                    chainInfo: crate::Vm::ChainInfo {
+                        forkId: ecx.db.active_fork_id().unwrap_or_default(),
+                        chainId: U256::from(ecx.env.cfg.chain_id),
+                    },
+                    accessor: interpreter.contract().target_address,
+                    account: address,
+                    kind,
+                    initialized,
+                    oldBalance: balance,
+                    newBalance: balance,
+                    value: U256::ZERO,
+                    data: Bytes::new(),
+                    reverted: false,
+                    deployedCode: Bytes::new(),
+                    storageAccesses: vec![],
+                    depth: ecx.journaled_state.depth(),
+                };
+                // Record the EXT* call as an account access at the current depth
+                // (future storage accesses will be recorded in a new "Resume" context)
+                if let Some(last) = account_accesses.last_mut() {
+                    last.push(account_access);
+                } else {
+                    account_accesses.push(vec![account_access]);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Checks to see if the current opcode can either mutate directly or expand memory.
+    ///
+    /// If the opcode at the current program counter is a match, check if the modified memory lies
+    /// within the allowed ranges. If not, revert and fail the test.
+    #[cold]
+    fn check_mem_opcodes(&self, interpreter: &mut Interpreter, depth: u64) {
+        let Some(ranges) = self.allowed_mem_writes.get(&depth) else {
+            return;
+        };
+
+        // The `mem_opcode_match` macro is used to match the current opcode against a list of
+        // opcodes that can mutate memory (either directly or expansion via reading). If the
+        // opcode is a match, the memory offsets that are being written to are checked to be
+        // within the allowed ranges. If not, the test is failed and the transaction is
+        // reverted. For all opcodes that can mutate memory aside from MSTORE,
+        // MSTORE8, and MLOAD, the size and destination offset are on the stack, and
+        // the macro expands all of these cases. For MSTORE, MSTORE8, and MLOAD, the
+        // size of the memory write is implicit, so these cases are hard-coded.
+        macro_rules! mem_opcode_match {
+            ($(($opcode:ident, $offset_depth:expr, $size_depth:expr, $writes:expr)),* $(,)?) => {
+                match interpreter.current_opcode() {
+                    ////////////////////////////////////////////////////////////////
+                    //    OPERATIONS THAT CAN EXPAND/MUTATE MEMORY BY WRITING     //
+                    ////////////////////////////////////////////////////////////////
+
+                    opcode::MSTORE => {
+                        // The offset of the mstore operation is at the top of the stack.
+                        let offset = try_or_return!(interpreter.stack().peek(0)).saturating_to::<u64>();
+
+                        // If none of the allowed ranges contain [offset, offset + 32), memory has been
+                        // unexpectedly mutated.
+                        if !ranges.iter().any(|range| {
+                            range.contains(&offset) && range.contains(&(offset + 31))
+                        }) {
+                            // SPECIAL CASE: When the compiler attempts to store the selector for
+                            // `stopExpectSafeMemory`, this is allowed. It will do so at the current free memory
+                            // pointer, which could have been updated to the exclusive upper bound during
+                            // execution.
+                            let value = try_or_return!(interpreter.stack().peek(1)).to_be_bytes::<32>();
+                            let selector = stopExpectSafeMemoryCall {}.cheatcode().func.selector_bytes;
+                            if value[0..SELECTOR_LEN] == selector {
+                                return
+                            }
+
+                            disallowed_mem_write(offset, 32, interpreter, ranges);
+                            return
+                        }
+                    }
+                    opcode::MSTORE8 => {
+                        // The offset of the mstore8 operation is at the top of the stack.
+                        let offset = try_or_return!(interpreter.stack().peek(0)).saturating_to::<u64>();
+
+                        // If none of the allowed ranges contain the offset, memory has been
+                        // unexpectedly mutated.
+                        if !ranges.iter().any(|range| range.contains(&offset)) {
+                            disallowed_mem_write(offset, 1, interpreter, ranges);
+                            return
+                        }
+                    }
+
+                    ////////////////////////////////////////////////////////////////
+                    //        OPERATIONS THAT CAN EXPAND MEMORY BY READING        //
+                    ////////////////////////////////////////////////////////////////
+
+                    opcode::MLOAD => {
+                        // The offset of the mload operation is at the top of the stack
+                        let offset = try_or_return!(interpreter.stack().peek(0)).saturating_to::<u64>();
+
+                        // If the offset being loaded is >= than the memory size, the
+                        // memory is being expanded. If none of the allowed ranges contain
+                        // [offset, offset + 32), memory has been unexpectedly mutated.
+                        if offset >= interpreter.shared_memory.len() as u64 && !ranges.iter().any(|range| {
+                            range.contains(&offset) && range.contains(&(offset + 31))
+                        }) {
+                            disallowed_mem_write(offset, 32, interpreter, ranges);
+                            return
+                        }
+                    }
+
+                    ////////////////////////////////////////////////////////////////
+                    //          OPERATIONS WITH OFFSET AND SIZE ON STACK          //
+                    ////////////////////////////////////////////////////////////////
+
+                    opcode::CALL => {
+                        // The destination offset of the operation is the fifth element on the stack.
+                        let dest_offset = try_or_return!(interpreter.stack().peek(5)).saturating_to::<u64>();
+
+                        // The size of the data that will be copied is the sixth element on the stack.
+                        let size = try_or_return!(interpreter.stack().peek(6)).saturating_to::<u64>();
+
+                        // If none of the allowed ranges contain [dest_offset, dest_offset + size),
+                        // memory outside of the expected ranges has been touched. If the opcode
+                        // only reads from memory, this is okay as long as the memory is not expanded.
+                        let fail_cond = !ranges.iter().any(|range| {
+                            range.contains(&dest_offset) &&
+                                range.contains(&(dest_offset + size.saturating_sub(1)))
+                        });
+
+                        // If the failure condition is met, set the output buffer to a revert string
+                        // that gives information about the allowed ranges and revert.
+                        if fail_cond {
+                            // SPECIAL CASE: When a call to `stopExpectSafeMemory` is performed, this is allowed.
+                            // It allocated calldata at the current free memory pointer, and will attempt to read
+                            // from this memory region to perform the call.
+                            let to = Address::from_word(try_or_return!(interpreter.stack().peek(1)).to_be_bytes::<32>().into());
+                            if to == CHEATCODE_ADDRESS {
+                                let args_offset = try_or_return!(interpreter.stack().peek(3)).saturating_to::<usize>();
+                                let args_size = try_or_return!(interpreter.stack().peek(4)).saturating_to::<usize>();
+                                let selector = stopExpectSafeMemoryCall {}.cheatcode().func.selector_bytes;
+                                let memory_word = interpreter.shared_memory.slice(args_offset, args_size);
+                                if memory_word[0..SELECTOR_LEN] == selector {
+                                    return
+                                }
+                            }
+
+                            disallowed_mem_write(dest_offset, size, interpreter, ranges);
+                            return
+                        }
+                    }
+
+                    $(opcode::$opcode => {
+                        // The destination offset of the operation.
+                        let dest_offset = try_or_return!(interpreter.stack().peek($offset_depth)).saturating_to::<u64>();
+
+                        // The size of the data that will be copied.
+                        let size = try_or_return!(interpreter.stack().peek($size_depth)).saturating_to::<u64>();
+
+                        // If none of the allowed ranges contain [dest_offset, dest_offset + size),
+                        // memory outside of the expected ranges has been touched. If the opcode
+                        // only reads from memory, this is okay as long as the memory is not expanded.
+                        let fail_cond = !ranges.iter().any(|range| {
+                                range.contains(&dest_offset) &&
+                                    range.contains(&(dest_offset + size.saturating_sub(1)))
+                            }) && ($writes ||
+                                [dest_offset, (dest_offset + size).saturating_sub(1)].into_iter().any(|offset| {
+                                    offset >= interpreter.shared_memory.len() as u64
+                                })
+                            );
+
+                        // If the failure condition is met, set the output buffer to a revert string
+                        // that gives information about the allowed ranges and revert.
+                        if fail_cond {
+                            disallowed_mem_write(dest_offset, size, interpreter, ranges);
+                            return
+                        }
+                    })*
+
+                    _ => {}
+                }
+            }
+        }
+
+        // Check if the current opcode can write to memory, and if so, check if the memory
+        // being written to is registered as safe to modify.
+        mem_opcode_match!(
+            (CALLDATACOPY, 0, 2, true),
+            (CODECOPY, 0, 2, true),
+            (RETURNDATACOPY, 0, 2, true),
+            (EXTCODECOPY, 1, 3, true),
+            (CALLCODE, 5, 6, true),
+            (STATICCALL, 4, 5, true),
+            (DELEGATECALL, 4, 5, true),
+            (KECCAK256, 0, 1, false),
+            (LOG0, 0, 1, false),
+            (LOG1, 0, 1, false),
+            (LOG2, 0, 1, false),
+            (LOG3, 0, 1, false),
+            (LOG4, 0, 1, false),
+            (CREATE, 1, 2, false),
+            (CREATE2, 1, 2, false),
+            (RETURN, 0, 1, false),
+            (REVERT, 0, 1, false),
+        );
+    }
+}
+
 /// Helper that expands memory, stores a revert string pertaining to a disallowed memory write,
 /// and sets the return range to the revert string's location in memory.
 ///
@@ -1644,47 +1648,45 @@ fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
 
 /// Appends an AccountAccess that resumes the recording of the current context.
 fn append_storage_access(
-    accesses: &mut [Vec<AccountAccess>],
+    last: &mut Vec<AccountAccess>,
     storage_access: crate::Vm::StorageAccess,
     storage_depth: u64,
 ) {
-    if let Some(last) = accesses.last_mut() {
-        // Assert that there's an existing record for the current context.
-        if !last.is_empty() && last.first().unwrap().depth < storage_depth {
-            // Three cases to consider:
-            // 1. If there hasn't been a context switch since the start of this context, then add
-            //    the storage access to the current context record.
-            // 2. If there's an existing Resume record, then add the storage access to it.
-            // 3. Otherwise, create a new Resume record based on the current context.
-            if last.len() == 1 {
-                last.first_mut().unwrap().storageAccesses.push(storage_access);
+    // Assert that there's an existing record for the current context.
+    if !last.is_empty() && last.first().unwrap().depth < storage_depth {
+        // Three cases to consider:
+        // 1. If there hasn't been a context switch since the start of this context, then add the
+        //    storage access to the current context record.
+        // 2. If there's an existing Resume record, then add the storage access to it.
+        // 3. Otherwise, create a new Resume record based on the current context.
+        if last.len() == 1 {
+            last.first_mut().unwrap().storageAccesses.push(storage_access);
+        } else {
+            let last_record = last.last_mut().unwrap();
+            if last_record.kind as u8 == crate::Vm::AccountAccessKind::Resume as u8 {
+                last_record.storageAccesses.push(storage_access);
             } else {
-                let last_record = last.last_mut().unwrap();
-                if last_record.kind as u8 == crate::Vm::AccountAccessKind::Resume as u8 {
-                    last_record.storageAccesses.push(storage_access);
-                } else {
-                    let entry = last.first().unwrap();
-                    let resume_record = crate::Vm::AccountAccess {
-                        chainInfo: crate::Vm::ChainInfo {
-                            forkId: entry.chainInfo.forkId,
-                            chainId: entry.chainInfo.chainId,
-                        },
-                        accessor: entry.accessor,
-                        account: entry.account,
-                        kind: crate::Vm::AccountAccessKind::Resume,
-                        initialized: entry.initialized,
-                        storageAccesses: vec![storage_access],
-                        reverted: entry.reverted,
-                        // The remaining fields are defaults
-                        oldBalance: U256::ZERO,
-                        newBalance: U256::ZERO,
-                        value: U256::ZERO,
-                        data: Bytes::new(),
-                        deployedCode: Bytes::new(),
-                        depth: entry.depth,
-                    };
-                    last.push(resume_record);
-                }
+                let entry = last.first().unwrap();
+                let resume_record = crate::Vm::AccountAccess {
+                    chainInfo: crate::Vm::ChainInfo {
+                        forkId: entry.chainInfo.forkId,
+                        chainId: entry.chainInfo.chainId,
+                    },
+                    accessor: entry.accessor,
+                    account: entry.account,
+                    kind: crate::Vm::AccountAccessKind::Resume,
+                    initialized: entry.initialized,
+                    storageAccesses: vec![storage_access],
+                    reverted: entry.reverted,
+                    // The remaining fields are defaults
+                    oldBalance: U256::ZERO,
+                    newBalance: U256::ZERO,
+                    value: U256::ZERO,
+                    data: Bytes::new(),
+                    deployedCode: Bytes::new(),
+                    depth: entry.depth,
+                };
+                last.push(resume_record);
             }
         }
     }
