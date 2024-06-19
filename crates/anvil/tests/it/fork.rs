@@ -8,13 +8,13 @@ use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{address, Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
+    anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     BlockId, BlockNumberOrTag,
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
-use anvil_core::types::Forking;
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint};

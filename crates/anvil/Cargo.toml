@@ -54,8 +54,7 @@ alloy-signer = { workspace = true, features = ["eip712"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
-alloy-rpc-types = { workspace = true, features = ["txpool"] }
-alloy-rpc-types-trace.workspace = true
+alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }
 alloy-serde.workspace = true
 alloy-provider = { workspace = true, features = [
     "reqwest",
@@ -89,7 +88,7 @@ flate2 = "1.0"
 serde_repr = "0.1"
 serde_json.workspace = true
 serde.workspace = true
-thiserror .workspace = true
+thiserror.workspace = true
 yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true
