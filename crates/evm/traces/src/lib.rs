@@ -227,22 +227,22 @@ async fn render_trace_log(
             for (i, topic) in log.topics().iter().enumerate() {
                 writeln!(
                     s,
-                    "{:>13}: {}",
-                    if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
+                    "{}: {}",
+                    if i == 0 { "emit topic 0".to_string() } else { format!("      topic {i}") },
                     format!("{topic:?}").cyan()
                 )?;
             }
 
-            write!(s, "          data: {}", hex::encode_prefixed(&log.data).cyan())?;
+            write!(s, "         data: {}", hex::encode_prefixed(&log.data).cyan())?;
         }
         DecodedCallLog::Decoded(name, params) => {
             let params = params
                 .iter()
-                .map(|(name, value)| format!("{name}: {value}"))
+                .map(|(name, value)| format!("     {name}: {value}"))
                 .collect::<Vec<String>>()
-                .join(", ");
+                .join(", \n");
 
-            write!(s, "emit {}({params})", name.clone().cyan())?;
+            write!(s, "emit {}(\n{params}\n )", name.clone().cyan())?;
         }
     }
 
