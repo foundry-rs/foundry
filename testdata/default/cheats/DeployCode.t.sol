@@ -32,10 +32,8 @@ contract DeployCodeTest is DSTest {
 
     function testDeployCodeWithArgs() public {
         address withNew = address(new TestContractWithArgs(1, 2));
-        TestContractWithArgs withDeployCode = TestContractWithArgs(vm.deployCode(
-            "cheats/DeployCode.t.sol:TestContractWithArgs",
-            abi.encode(3, 4)
-        ));
+        TestContractWithArgs withDeployCode =
+            TestContractWithArgs(vm.deployCode("cheats/DeployCode.t.sol:TestContractWithArgs", abi.encode(3, 4)));
 
         assertEq(withNew.code, address(withDeployCode).code);
         assertEq(withDeployCode.a(), 3);
