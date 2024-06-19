@@ -631,7 +631,8 @@ async fn test_fork_revert_call_latest_block_timestamp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_remove_pool_transactions() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(5)))).await;
 
     let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumWallet = wallet.clone().into();

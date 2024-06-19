@@ -640,11 +640,13 @@ impl<'a> ContractRunner<'a> {
                                 invariant_contract.invariant_function.name
                             ))
                         },
-                        decoded_logs: decode_console_logs(&logs),
-                        traces,
-                        coverage,
                         counterexample: Some(CounterExample::Sequence(call_sequence)),
+                        decoded_logs: decode_console_logs(&logs),
+                        logs,
                         kind: TestKind::Invariant { runs: 1, calls: 1, reverts: 1 },
+                        coverage,
+                        traces,
+                        labeled_addresses,
                         ..Default::default()
                     }
                 }
@@ -750,7 +752,7 @@ impl<'a> ContractRunner<'a> {
             },
             coverage,
             traces,
-            labeled_addresses: labeled_addresses.clone(),
+            labeled_addresses,
             gas_report_traces,
             ..Default::default() // TODO collect debug traces on the last run or error
         }
