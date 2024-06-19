@@ -287,6 +287,8 @@ pub struct InspectorStack {
 }
 
 /// All used inpectors besides [Cheatcodes].
+///
+/// See [`InspectorStack`].
 #[derive(Default, Clone, Debug)]
 pub struct InspectorStackInner {
     pub chisel_state: Option<ChiselState>,
@@ -304,7 +306,7 @@ pub struct InspectorStackInner {
 }
 
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
-/// [revm::Inspector]. This struct can be obtained via [InspectorStack::as_stack_ref] or via
+/// [revm::Inspector]. This struct can be obtained via [InspectorStack::as_mut] or via
 /// [CheatcodesExecutor::get_inspector] method implemented for [InspectorStackInner].
 struct InspectorStackRefMut<'a> {
     pub cheatcodes: Option<&'a mut Cheatcodes>,
@@ -461,7 +463,7 @@ impl InspectorStack {
         }
     }
 
-    fn as_stack_ref(&mut self) -> InspectorStackRefMut<'_> {
+    fn as_mut(&mut self) -> InspectorStackRefMut<'_> {
         InspectorStackRefMut { cheatcodes: self.cheatcodes.as_mut(), inner: &mut self.inner }
     }
 }
@@ -649,11 +651,6 @@ impl<'a> InspectorStackRefMut<'a> {
     }
 }
 
-// NOTE: `&mut DB` is required because we recurse inside of `transact_inner` and we need to use the
-// same reference to the DB, otherwise there's infinite recursion and Rust fails to instatiate this
-// implementation. This currently works because internally we only use `&mut DB` anyways, but if
-// this ever needs to be changed, this can be reverted back to using just `DB`, and instead using
-// dynamic dispatch (`&mut dyn ...`) in `transact_inner`.
 impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         call_inspectors_adjust_depth!(
@@ -874,73 +871,69 @@ impl<'a, DB: DatabaseExt> InspectorExt<DB> for InspectorStackRefMut<'a> {
     }
 }
 
-impl<'a, DB: DatabaseExt> Inspector<&'a mut DB> for InspectorStack {
+impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
     fn call(
         &mut self,
-        context: &mut EvmContext<&'a mut DB>,
+        context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        self.as_stack_ref().call(context, inputs)
+        self.as_mut().call(context, inputs)
     }
 
     fn call_end(
         &mut self,
-        context: &mut EvmContext<&'a mut DB>,
+        context: &mut EvmContext<DB>,
         inputs: &CallInputs,
         outcome: CallOutcome,
     ) -> CallOutcome {
-        self.as_stack_ref().call_end(context, inputs, outcome)
+        self.as_mut().call_end(context, inputs, outcome)
     }
 
     fn create(
         &mut self,
-        context: &mut EvmContext<&'a mut DB>,
+        context: &mut EvmContext<DB>,
         create: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        self.as_stack_ref().create(context, create)
+        self.as_mut().create(context, create)
     }
 
     fn create_end(
         &mut self,
-        context: &mut EvmContext<&'a mut DB>,
+        context: &mut EvmContext<DB>,
         call: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
-        self.as_stack_ref().create_end(context, call, outcome)
+        self.as_mut().create_end(context, call, outcome)
     }
 
-    fn initialize_interp(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EvmContext<&'a mut DB>,
-    ) {
-        self.as_stack_ref().initialize_interp(interpreter, ecx)
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        self.as_mut().initialize_interp(interpreter, ecx)
     }
 
-    fn log(&mut self, ecx: &mut EvmContext<&'a mut DB>, log: &Log) {
-        self.as_stack_ref().log(ecx, log)
+    fn log(&mut self, ecx: &mut EvmContext<DB>, log: &Log) {
+        self.as_mut().log(ecx, log)
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
-        Inspector::<&mut DB>::selfdestruct(&mut self.as_stack_ref(), contract, target, value)
+        Inspector::<DB>::selfdestruct(&mut self.as_mut(), contract, target, value)
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&'a mut DB>) {
-        self.as_stack_ref().step(interpreter, ecx)
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        self.as_mut().step(interpreter, ecx)
     }
 
-    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&'a mut DB>) {
-        self.as_stack_ref().step_end(interpreter, ecx)
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        self.as_mut().step_end(interpreter, ecx)
     }
 }
 
-impl<'a, DB: DatabaseExt> InspectorExt<&'a mut DB> for InspectorStack {
+impl<'a, DB: DatabaseExt> InspectorExt<DB> for InspectorStack {
     fn should_use_create2_factory(
         &mut self,
-        ecx: &mut EvmContext<&'a mut DB>,
+        ecx: &mut EvmContext<DB>,
         inputs: &mut CreateInputs,
     ) -> bool {
-        self.as_stack_ref().should_use_create2_factory(ecx, inputs)
+        self.as_mut().should_use_create2_factory(ecx, inputs)
     }
 }
 

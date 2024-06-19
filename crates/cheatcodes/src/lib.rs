@@ -74,6 +74,7 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     /// Applies this cheatcode to the given context and executor.
     ///
     /// Implement this function if you need access to the executor.
+    #[inline(always)]
     fn apply_full_with_executor<DB: DatabaseExt, E: CheatcodesExecutor>(
         &self,
         ccx: &mut CheatsCtxt<DB>,

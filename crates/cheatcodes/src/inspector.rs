@@ -46,12 +46,20 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+/// Helper trait for obtaining complete [revm::Inspector] instance from mutable reference to
+/// [Cheatcodes].
+///
+/// This is needed for cases when inspector itself needs mutable access to [Cheatcodes] state and
+/// allows us to correctly execute arbitrary EVM frames from inside cheatcode implementations.
 pub trait CheatcodesExecutor {
+    /// Core trait method accepting mutable reference to [Cheatcodes] and returning
+    /// [revm::Inspector].
     fn get_inspector<'a, DB: DatabaseExt>(
         &'a mut self,
         cheats: &'a mut Cheatcodes,
     ) -> impl InspectorExt<DB> + 'a;
 
+    /// Obtains [revm::Inspector] instance and executes the given CREATE frame.
     fn exec_create<DB: DatabaseExt>(
         &mut self,
         inputs: CreateInputs,
@@ -457,13 +465,6 @@ impl Cheatcodes {
         if let Some(mapping_slots) = &mut self.mapping_slots {
             mapping::step(mapping_slots, interpreter);
         }
-    }
-
-    pub fn step_end<DB: DatabaseExt>(
-        &mut self,
-        _interpreter: &mut Interpreter,
-        _context: &mut EvmContext<DB>,
-    ) {
     }
 
     pub fn log<DB: DatabaseExt>(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
