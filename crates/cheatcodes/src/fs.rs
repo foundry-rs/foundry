@@ -264,7 +264,7 @@ impl Cheatcode for getDeployedCodeCall {
     }
 }
 
-impl Cheatcode for deployCodeCall {
+impl Cheatcode for deployCode_0Call {
     fn apply_full_with_executor<DB: DatabaseExt, E: CheatcodesExecutor>(
         &self,
         ccx: &mut CheatsCtxt<DB>,
@@ -279,6 +279,33 @@ impl Cheatcode for deployCodeCall {
                     scheme: revm::primitives::CreateScheme::Create,
                     value: U256::ZERO,
                     init_code: bytecode,
+                    gas_limit: ccx.gas_limit,
+                },
+                ccx.state,
+                ccx.ecx,
+            )
+            .unwrap();
+
+        Ok(output.address.unwrap().abi_encode())
+    }
+}
+
+impl Cheatcode for deployCode_1Call {
+    fn apply_full_with_executor<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
+        let Self { artifactPath: path, constructorArgs } = self;
+        let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+        bytecode.extend_from_slice(&constructorArgs);
+        let output = executor
+            .exec_create(
+                CreateInputs {
+                    caller: ccx.caller,
+                    scheme: revm::primitives::CreateScheme::Create,
+                    value: U256::ZERO,
+                    init_code: bytecode.into(),
                     gas_limit: ccx.gas_limit,
                 },
                 ccx.state,
