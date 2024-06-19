@@ -18,7 +18,7 @@ use revm::{
         Interpreter, InterpreterResult,
     },
     primitives::{BlockEnv, Env, EnvWithHandlerCfg, ExecutionResult, Output, TransactTo},
-    DatabaseCommit, EvmContext, Inspector,
+    EvmContext, Inspector,
 };
 use std::{
     collections::HashMap,
@@ -280,12 +280,17 @@ pub struct InnerContextData {
 ///
 /// If a call to an inspector returns a value other than [InstructionResult::Continue] (or
 /// equivalent) the remaining inspectors are not called.
+///
+/// Stack is divided into [Cheatcodes] and [InspectorStackInner]. This is done to allow passing
+/// mutable reference to [InspectorStackInner] into [Cheatcodes] functions to reassemble them into
+/// [InspectorStackRefMut] and allow usage of it as [revm::Inspector].
 #[derive(Clone, Debug, Default)]
 pub struct InspectorStack {
     pub cheatcodes: Option<Cheatcodes>,
     pub inner: InspectorStackInner,
 }
 
+/// All used inpectors besides [Cheatcodes].
 #[derive(Default, Clone, Debug)]
 pub struct InspectorStackInner {
     pub chisel_state: Option<ChiselState>,
@@ -302,6 +307,9 @@ pub struct InspectorStackInner {
     pub inner_context_data: Option<InnerContextData>,
 }
 
+/// Struct keeping mutable references to both parts of [InspectorStack] and implementing
+/// [revm::Inspector]. This struct can be obtained via [InspectorStack::as_stack_ref] or via
+/// [CheatcodesExecutor::get_inspector] method implemented for [InspectorStackInner].
 struct InspectorStackRefMut<'a> {
     pub cheatcodes: Option<&'a mut Cheatcodes>,
     pub inner: &'a mut InspectorStackInner,
@@ -492,7 +500,7 @@ impl<'a> InspectorStackRefMut<'a> {
         outcome
     }
 
-    fn transact_inner<DB: DatabaseExt + DatabaseCommit>(
+    fn transact_inner<DB: DatabaseExt>(
         &mut self,
         ecx: &mut EvmContext<DB>,
         transact_to: TransactTo,
@@ -542,7 +550,7 @@ impl<'a> InspectorStackRefMut<'a> {
         let env = EnvWithHandlerCfg::new_with_spec_id(ecx.env.clone(), ecx.spec_id());
         let res = {
             let mut evm = crate::utils::new_evm_with_inspector(
-                (&mut ecx.db) as &mut dyn DatabaseExt,
+                &mut ecx.db as &mut dyn DatabaseExt,
                 env,
                 &mut *self,
             );
@@ -629,7 +637,7 @@ impl<'a> InspectorStackRefMut<'a> {
 // implementation. This currently works because internally we only use `&mut DB` anyways, but if
 // this ever needs to be changed, this can be reverted back to using just `DB`, and instead using
 // dynamic dispatch (`&mut dyn ...`) in `transact_inner`.
-impl<'a, DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStackRefMut<'a> {
+impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         call_inspectors_adjust_depth!(
             #[no_ret]
@@ -828,7 +836,7 @@ impl<'a, DB: DatabaseExt + DatabaseCommit> Inspector<DB> for InspectorStackRefMu
     }
 }
 
-impl<'a, DB: DatabaseExt + DatabaseCommit> InspectorExt<DB> for InspectorStackRefMut<'a> {
+impl<'a, DB: DatabaseExt> InspectorExt<DB> for InspectorStackRefMut<'a> {
     fn should_use_create2_factory(
         &mut self,
         ecx: &mut EvmContext<DB>,
@@ -845,7 +853,7 @@ impl<'a, DB: DatabaseExt + DatabaseCommit> InspectorExt<DB> for InspectorStackRe
     }
 }
 
-impl<'a, DB: DatabaseExt + DatabaseCommit> Inspector<&'a mut DB> for InspectorStack {
+impl<'a, DB: DatabaseExt> Inspector<&'a mut DB> for InspectorStack {
     fn call(
         &mut self,
         context: &mut EvmContext<&'a mut DB>,
@@ -905,7 +913,7 @@ impl<'a, DB: DatabaseExt + DatabaseCommit> Inspector<&'a mut DB> for InspectorSt
     }
 }
 
-impl<'a, DB: DatabaseExt + DatabaseCommit> InspectorExt<&'a mut DB> for InspectorStack {
+impl<'a, DB: DatabaseExt> InspectorExt<&'a mut DB> for InspectorStack {
     fn should_use_create2_factory(
         &mut self,
         ecx: &mut EvmContext<&'a mut DB>,

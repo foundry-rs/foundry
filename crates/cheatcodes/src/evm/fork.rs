@@ -4,7 +4,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm_core::{fork::CreateFork, InspectorExt};
+use foundry_evm_core::fork::CreateFork;
 
 impl Cheatcode for activeForkCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
@@ -138,7 +138,7 @@ impl Cheatcode for transact_0Call {
             txHash,
             &mut ccx.ecx.env,
             &mut ccx.ecx.journaled_state,
-            &mut executor.get_inspector(ccx.state) as &mut dyn InspectorExt<_>,
+            &mut executor.get_inspector(ccx.state),
         )?;
         Ok(Default::default())
     }
@@ -156,7 +156,7 @@ impl Cheatcode for transact_1Call {
             txHash,
             &mut ccx.ecx.env,
             &mut ccx.ecx.journaled_state,
-            &mut executor.get_inspector(ccx.state) as &mut dyn InspectorExt<_>,
+            &mut executor.get_inspector(ccx.state),
         )?;
         Ok(Default::default())
     }
