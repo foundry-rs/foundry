@@ -567,7 +567,7 @@ fn try_match(
     has_metadata: bool,
 ) -> Result<(bool, Option<VerificationType>)> {
     // 1. Try full match
-    if *match_type == VerificationType::Full && local_bytecode.starts_with(bytecode) {
+    if *match_type == VerificationType::Full && local_bytecode == bytecode {
         Ok((true, Some(VerificationType::Full)))
     } else {
         try_partial_match(local_bytecode, bytecode, constructor_args, is_runtime, has_metadata)
@@ -591,7 +591,7 @@ fn try_partial_match(
         }
 
         // Now compare the creation code and bytecode
-        return Ok(local_bytecode.starts_with(bytecode));
+        return Ok(local_bytecode == bytecode);
     }
 
     if is_runtime {
@@ -601,7 +601,7 @@ fn try_partial_match(
         }
 
         // Now compare the local code and bytecode
-        return Ok(local_bytecode.starts_with(bytecode));
+        return Ok(local_bytecode == bytecode);
     }
 
     // If not runtime, extract constructor args from the end of the bytecode
@@ -613,7 +613,7 @@ fn try_partial_match(
         bytecode = extract_metadata_hash(bytecode)?;
     }
 
-    Ok(local_bytecode.starts_with(bytecode))
+    Ok(local_bytecode == bytecode)
 }
 
 /// @dev This assumes that the metadata is at the end of the bytecode
