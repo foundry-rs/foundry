@@ -489,6 +489,7 @@ sha3Uncles           {}
 size                 {}
 stateRoot            {}
 timestamp            {}
+time                 {}
 withdrawalsRoot      {}
 totalDifficulty      {}{}",
         block.header.base_fee_per_gas.pretty(),
@@ -509,6 +510,7 @@ totalDifficulty      {}{}",
         block.size.pretty(),
         block.header.state_root.pretty(),
         block.header.timestamp.pretty(),
+        chrono::DateTime::from_timestamp(block.header.timestamp as i64, 0).expect("block timestamp in range").to_rfc2822(),
         block.header.withdrawals_root.pretty(),
         block.header.total_difficulty.pretty(),
         block.other.pretty()

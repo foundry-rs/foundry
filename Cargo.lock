@@ -3614,6 +3614,7 @@ dependencies = [
  "alloy-transport-ipc",
  "alloy-transport-ws",
  "async-trait",
+ "chrono",
  "clap",
  "comfy-table",
  "dunce",
