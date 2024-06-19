@@ -737,7 +737,8 @@ impl Backend {
     pub async fn serialized_state(&self) -> Result<SerializableState, BlockchainError> {
         let at = self.env.read().block.clone();
         let best_number = self.blockchain.storage.read().best_number;
-        let state = self.db.read().await.dump_state(at, best_number)?;
+        let blocks = self.blockchain.storage.read().serialized_blocks();
+        let state = self.db.read().await.dump_state(at, best_number, blocks)?;
         state.ok_or_else(|| {
             RpcError::invalid_params("Dumping state not supported with the current configuration")
                 .into()
@@ -766,14 +767,16 @@ impl Backend {
                 state.best_block_number.unwrap_or(block.number.to::<U64>());
         }
 
-        if !self.db.write().await.load_state(state)? {
-            Err(RpcError::invalid_params(
+        if !self.db.write().await.load_state(state.clone())? {
+            return Err(RpcError::invalid_params(
                 "Loading state not supported with the current configuration",
             )
-            .into())
-        } else {
-            Ok(true)
+            .into());
         }
+
+        self.blockchain.storage.write().load_blocks(state.blocks.clone());
+
+        Ok(true)
     }
 
     /// Deserialize and add all chain data to the backend storage
@@ -937,6 +940,9 @@ impl Backend {
             env.block.basefee = U256::from(current_base_fee);
             env.block.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
             env.block.timestamp = U256::from(self.time.next_timestamp());
+
+            // pick a random value for prevrandao
+            env.block.prevrandao = Some(B256::random());
 
             let best_hash = self.blockchain.storage.read().best_hash;
 

@@ -34,7 +34,7 @@ alloy-signer-local = { workspace = true, features = [
     "mnemonic-all-languages",
     "keystore",
 ] }
-parking_lot = "0.12"
+parking_lot.workspace = true
 
 eyre.workspace = true
 hex.workspace = true
@@ -46,10 +46,10 @@ base64.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }
 tracing.workspace = true
 k256.workspace = true
-walkdir = "2"
+walkdir.workspace = true
 p256 = "0.13.2"
-thiserror = "1"
-semver = "1"
+thiserror.workspace = true
+semver.workspace = true
 rustc-hash.workspace = true
 dialoguer = "0.11.0"
 rand = "0.8"

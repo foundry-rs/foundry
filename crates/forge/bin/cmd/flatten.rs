@@ -4,7 +4,7 @@ use foundry_cli::{
     opts::{CoreBuildArgs, ProjectPathsArgs},
     utils::LoadConfig,
 };
-use foundry_common::fs;
+use foundry_common::{compile::with_compilation_reporter, fs};
 use foundry_compilers::{
     compilers::solc::SolcLanguage,
     error::SolcError,
@@ -40,13 +40,14 @@ impl FlattenArgs {
 
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
         let build_args = CoreBuildArgs { project_paths, ..Default::default() };
-        let mut config = build_args.try_load_config_emit_warnings()?;
-        // `Flattener` uses the typed AST for better flattening results.
-        config.ast = true;
+        let config = build_args.try_load_config_emit_warnings()?;
         let project = config.create_project(false, true)?;
 
         let target_path = dunce::canonicalize(target_path)?;
-        let flattener = Flattener::new(project.clone(), &target_path);
+
+        let flattener = with_compilation_reporter(build_args.silent, || {
+            Flattener::new(project.clone(), &target_path)
+        });
 
         let flattened = match flattener {
             Ok(flattener) => Ok(flattener.flatten()),

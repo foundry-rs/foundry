@@ -103,6 +103,10 @@ async fn test_invariant() {
                 vec![("invariantTrueWorld()", true, None, None, None)],
             ),
             (
+                "default/fuzz/invariant/target/ExcludeSelectors.t.sol:ExcludeSelectors",
+                vec![("invariantFalseWorld()", true, None, None, None)],
+            ),
+            (
                 "default/fuzz/invariant/targetAbi/ExcludeArtifacts.t.sol:ExcludeArtifacts",
                 vec![("invariantShouldPass()", true, None, None, None)],
             ),
@@ -773,7 +777,7 @@ async fn test_invariant_after_invariant() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_selectors_weight() {
     let mut opts = TEST_DATA_DEFAULT.test_opts.clone();
-    opts.fuzz.seed = Some(U256::from(119u32));
+    opts.fuzz.seed = Some(U256::from(100u32));
 
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantSelectorsWeight.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();

@@ -64,10 +64,12 @@ impl EvmFuzzState {
         run_depth: u32,
     ) {
         let mut dict = self.inner.write();
-        fuzzed_contracts.with_fuzzed_artifacts(tx, |target_abi, target_function| {
+        {
+            let targets = fuzzed_contracts.targets.lock();
+            let (target_abi, target_function) = targets.fuzzed_artifacts(tx);
             dict.insert_logs_values(target_abi, logs, run_depth);
             dict.insert_result_values(target_function, result, run_depth);
-        });
+        }
         dict.insert_new_state_values(state_changeset);
     }
 

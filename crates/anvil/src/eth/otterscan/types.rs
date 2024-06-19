@@ -2,7 +2,7 @@ use crate::eth::{
     backend::mem::{storage::MinedTransaction, Backend},
     error::{BlockchainError, Result},
 };
-use alloy_primitives::{Address, Bytes, FixedBytes, B256, U256 as rU256, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, B256, U256};
 use alloy_rpc_types::{Block, BlockTransactions, Transaction};
 use alloy_rpc_types_trace::parity::{
     Action, CallAction, CallType, CreateAction, CreateOutput, LocalizedTransactionTrace,
@@ -295,7 +295,7 @@ impl OtsInternalOperation {
             .filter_map(|node| {
                 let r#type = match node.trace.kind {
                     _ if node.is_selfdestruct() => OtsInternalOperationType::SelfDestruct,
-                    CallKind::Call if node.trace.value != rU256::ZERO => {
+                    CallKind::Call if node.trace.value != U256::ZERO => {
                         OtsInternalOperationType::Transfer
                     }
                     CallKind::Create => OtsInternalOperationType::Create,

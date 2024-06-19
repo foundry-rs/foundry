@@ -1,8 +1,10 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
 use crate::revm::primitives::AccountInfo;
+use alloy_consensus::Header;
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::BlockId;
+use anvil_core::eth::{block::Block, transaction::TypedTransaction};
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, MemDb, RevertSnapshotAction, StateSnapshot},
@@ -116,6 +118,7 @@ pub trait Db:
         &self,
         at: BlockEnv,
         best_number: U64,
+        blocks: Vec<SerializableBlock>,
     ) -> DatabaseResult<Option<SerializableState>>;
 
     /// Deserialize and add all chain data to the backend storage
@@ -188,6 +191,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         &self,
         _at: BlockEnv,
         _best_number: U64,
+        _blocks: Vec<SerializableBlock>,
     ) -> DatabaseResult<Option<SerializableState>> {
         Ok(None)
     }
@@ -318,6 +322,8 @@ pub struct SerializableState {
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
     /// The best block number of the state, can be different from block number (Arbitrum chain).
     pub best_block_number: Option<U64>,
+    #[serde(default)]
+    pub blocks: Vec<SerializableBlock>,
 }
 
 impl SerializableState {
@@ -343,4 +349,31 @@ pub struct SerializableAccountRecord {
     pub balance: U256,
     pub code: Bytes,
     pub storage: BTreeMap<U256, U256>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SerializableBlock {
+    pub header: Header,
+    pub transactions: Vec<TypedTransaction>,
+    pub ommers: Vec<Header>,
+}
+
+impl From<Block> for SerializableBlock {
+    fn from(block: Block) -> Self {
+        Self {
+            header: block.header,
+            transactions: block.transactions.into_iter().map(Into::into).collect(),
+            ommers: block.ommers.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<SerializableBlock> for Block {
+    fn from(block: SerializableBlock) -> Self {
+        Self {
+            header: block.header,
+            transactions: block.transactions.into_iter().map(Into::into).collect(),
+            ommers: block.ommers.into_iter().map(Into::into).collect(),
+        }
+    }
 }
