@@ -14,7 +14,8 @@ use alloy_provider::{
     PendingTransactionBuilder, Provider,
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
@@ -24,9 +25,11 @@ use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
+    compile::etherscan_project,
     fmt::*,
-    TransactionReceiptWithRevertReason,
+    fs, TransactionReceiptWithRevertReason,
 };
+use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
@@ -94,7 +97,8 @@ where
     ///
     /// ```
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+    /// use alloy_rpc_types::{TransactionRequest};
+    /// use alloy_serde::WithOtherFields;
     /// use cast::Cast;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::str::FromStr;
@@ -175,7 +179,8 @@ where
     /// ```
     /// use cast::{Cast};
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+    /// use alloy_rpc_types::{TransactionRequest};
+    /// use alloy_serde::WithOtherFields;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::str::FromStr;
     /// use alloy_sol_types::{sol, SolCall};
@@ -236,7 +241,8 @@ where
     /// ```
     /// use cast::{Cast};
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+    /// use alloy_serde::WithOtherFields;
+    /// use alloy_rpc_types::{TransactionRequest};
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::str::FromStr;
     /// use alloy_sol_types::{sol, SolCall};
@@ -1840,6 +1846,37 @@ impl SimpleCast {
         let meta = client.contract_source_code(contract_address.parse()?).await?;
         let source_tree = meta.source_tree();
         source_tree.write_to(&output_directory)?;
+        Ok(())
+    }
+
+    /// Fetches the source code of verified contracts from etherscan, flattens it and writes it to
+    /// the given path or stdout.
+    pub async fn etherscan_source_flatten(
+        chain: Chain,
+        contract_address: String,
+        etherscan_api_key: String,
+        output_path: Option<PathBuf>,
+    ) -> Result<()> {
+        let client = Client::new(chain, etherscan_api_key)?;
+        let metadata = client.contract_source_code(contract_address.parse()?).await?;
+        let Some(metadata) = metadata.items.first() else {
+            eyre::bail!("Empty contract source code")
+        };
+
+        let tmp = tempfile::tempdir()?;
+        let project = etherscan_project(metadata, tmp.path())?;
+        let target_path = project.find_contract_path(&metadata.contract_name)?;
+
+        let flattened = Flattener::new(project, &target_path)?.flatten();
+
+        if let Some(path) = output_path {
+            fs::create_dir_all(path.parent().unwrap())?;
+            fs::write(&path, flattened)?;
+            println!("Flattened file written at {}", path.display());
+        } else {
+            println!("{flattened}");
+        }
+
         Ok(())
     }
 

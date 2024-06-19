@@ -36,26 +36,27 @@ use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
 use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U256, U64};
 use alloy_rpc_types::{
-    request::TransactionRequest, serde_helpers::JsonStorageKey, state::StateOverride, AccessList,
-    Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
-    EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
-    FilteredParams, Header as AlloyHeader, Log, Transaction, TransactionReceipt, WithOtherFields,
-};
-use alloy_rpc_types_trace::{
-    geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
-    parity::LocalizedTransactionTrace,
-};
-use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
-use anvil_core::{
-    eth::{
-        block::{Block, BlockInfo},
-        transaction::{
-            DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
-            TransactionInfo, TypedReceipt, TypedTransaction,
-        },
-        utils::meets_eip155,
+    anvil::Forking,
+    request::TransactionRequest,
+    serde_helpers::JsonStorageKey,
+    state::StateOverride,
+    trace::{
+        geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
+        parity::LocalizedTransactionTrace,
     },
-    types::{Forking, Index},
+    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
+    EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
+    FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
+};
+use alloy_serde::WithOtherFields;
+use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
+use anvil_core::eth::{
+    block::{Block, BlockInfo},
+    transaction::{
+        DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
+        TransactionInfo, TypedReceipt, TypedTransaction,
+    },
+    utils::meets_eip155,
 };
 use anvil_rpc::error::RpcError;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
@@ -736,7 +737,8 @@ impl Backend {
     pub async fn serialized_state(&self) -> Result<SerializableState, BlockchainError> {
         let at = self.env.read().block.clone();
         let best_number = self.blockchain.storage.read().best_number;
-        let state = self.db.read().await.dump_state(at, best_number)?;
+        let blocks = self.blockchain.storage.read().serialized_blocks();
+        let state = self.db.read().await.dump_state(at, best_number, blocks)?;
         state.ok_or_else(|| {
             RpcError::invalid_params("Dumping state not supported with the current configuration")
                 .into()
@@ -765,14 +767,16 @@ impl Backend {
                 state.best_block_number.unwrap_or(block.number.to::<U64>());
         }
 
-        if !self.db.write().await.load_state(state)? {
-            Err(RpcError::invalid_params(
+        if !self.db.write().await.load_state(state.clone())? {
+            return Err(RpcError::invalid_params(
                 "Loading state not supported with the current configuration",
             )
-            .into())
-        } else {
-            Ok(true)
+            .into());
         }
+
+        self.blockchain.storage.write().load_blocks(state.blocks.clone());
+
+        Ok(true)
     }
 
     /// Deserialize and add all chain data to the backend storage
@@ -936,6 +940,9 @@ impl Backend {
             env.block.basefee = U256::from(current_base_fee);
             env.block.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
             env.block.timestamp = U256::from(self.time.next_timestamp());
+
+            // pick a random value for prevrandao
+            env.block.prevrandao = Some(B256::random());
 
             let best_hash = self.blockchain.storage.read().best_hash;
 

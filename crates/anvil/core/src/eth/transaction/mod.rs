@@ -10,9 +10,10 @@ use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256, U64};
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
-    other::OtherFields, request::TransactionRequest, AccessList, AnyTransactionReceipt,
-    Signature as RpcSignature, Transaction as RpcTransaction, TransactionReceipt, WithOtherFields,
+    request::TransactionRequest, AccessList, AnyTransactionReceipt, Signature as RpcSignature,
+    Transaction as RpcTransaction, TransactionReceipt,
 };
+use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 use revm::{
@@ -593,7 +594,7 @@ impl PendingTransaction {
 }
 
 /// Container type for signed, typed transactions.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypedTransaction {
     /// Legacy transaction type
     Legacy(Signed<TxLegacy>),

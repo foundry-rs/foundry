@@ -7,8 +7,8 @@
 use eyre::Result;
 use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_compilers::{
-    artifacts::{Settings, Source, Sources},
-    CompilerOutput, Solc, SolcInput,
+    artifacts::{CompilerOutput, Settings, SolcInput, Source, Sources},
+    compilers::solc::Solc,
 };
 use foundry_config::{Config, SolcReq};
 use foundry_evm::{backend::Backend, opts::EvmOpts};
@@ -115,16 +115,15 @@ impl SessionSourceConfig {
                     }
                 }
 
-                let solc =
-                    if let Some(solc) = Solc::find_svm_installed_version(version.to_string())? {
-                        solc
-                    } else {
-                        if self.foundry_config.offline {
-                            eyre::bail!("can't install missing solc {version} in offline mode")
-                        }
-                        println!("{}", format!("Installing solidity version {version}...").green());
-                        Solc::blocking_install(&version)?
-                    };
+                let solc = if let Some(solc) = Solc::find_svm_installed_version(&version)? {
+                    solc
+                } else {
+                    if self.foundry_config.offline {
+                        eyre::bail!("can't install missing solc {version} in offline mode")
+                    }
+                    println!("{}", format!("Installing solidity version {version}...").green());
+                    Solc::blocking_install(&version)?
+                };
                 Ok(solc)
             }
             SolcReq::Local(solc) => {

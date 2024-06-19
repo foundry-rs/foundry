@@ -17,7 +17,9 @@ use revm::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
         Interpreter, InterpreterResult,
     },
-    primitives::{BlockEnv, Env, EnvWithHandlerCfg, ExecutionResult, Output, TransactTo},
+    primitives::{
+        BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult, Output, TransactTo,
+    },
     EvmContext, Inspector,
 };
 use std::{
@@ -197,31 +199,25 @@ impl InspectorStackBuilder {
 /// dispatch.
 #[macro_export]
 macro_rules! call_inspectors {
-    ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {{$(
-        if let Some($id) = $inspector {
-            $call
-        }
-    )+}}
+    ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {
+        $(
+            if let Some($id) = $inspector {
+                $call
+            }
+        )+
+    }
 }
 
 /// Same as [call_inspectors] macro, but with depth adjustment for isolated execution.
 macro_rules! call_inspectors_adjust_depth {
     (#[no_ret] [$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr, $self:ident, $data:ident $(,)?) => {
-        if $self.in_inner_context {
-            $data.journaled_state.depth += 1;
-            $(
-                if let Some($id) = $inspector {
-                    $call
-                }
-            )+
-            $data.journaled_state.depth -= 1;
-        } else {
-            $(
-                if let Some($id) = $inspector {
-                    $call
-                }
-            )+
-        }
+        $data.journaled_state.depth += $self.in_inner_context as usize;
+        $(
+            if let Some($id) = $inspector {
+                $call
+            }
+        )+
+        $data.journaled_state.depth -= $self.in_inner_context as usize;
     };
     ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr, $self:ident, $data:ident $(,)?) => {
         if $self.in_inner_context {
@@ -333,6 +329,27 @@ impl InspectorStack {
     #[inline]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Logs the status of the inspectors.
+    pub fn log_status(&self) {
+        trace!(enabled=%{
+            let mut enabled = Vec::with_capacity(16);
+            macro_rules! push {
+                ($($id:ident),* $(,)?) => {
+                    $(
+                        if self.$id.is_some() {
+                            enabled.push(stringify!($id));
+                        }
+                    )*
+                };
+            }
+            push!(cheatcodes, chisel_state, coverage, debugger, fuzzer, log_collector, printer, tracer);
+            if self.enable_isolation {
+                enabled.push("isolation");
+            }
+            format!("[{}]", enabled.join(", "))
+        });
     }
 
     /// Set variables from an environment for the relevant inspectors.
@@ -668,7 +685,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         call_inspectors_adjust_depth!(
             #[no_ret]
-            [&mut self.tracer, &mut self.cheatcodes, &mut self.chisel_state, &mut self.printer],
+            [&mut self.tracer, &mut self.chisel_state, &mut self.printer],
             |inspector| inspector.step_end(interpreter, ecx),
             self,
             ecx
@@ -781,7 +798,11 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
             ecx
         );
 
-        if self.enable_isolation && !self.in_inner_context && ecx.journaled_state.depth == 1 {
+        if !matches!(create.scheme, CreateScheme::Create2 { .. }) &&
+            self.enable_isolation &&
+            !self.in_inner_context &&
+            ecx.journaled_state.depth == 1
+        {
             let (result, address) = self.transact_inner(
                 ecx,
                 TransactTo::Create,

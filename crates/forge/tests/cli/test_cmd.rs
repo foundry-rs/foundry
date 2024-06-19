@@ -209,6 +209,7 @@ contract MyTest is DSTest {
 });
 
 // checks that forge test repeatedly produces the same output
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_test_repeatedly, |_prj, cmd| {
     cmd.arg("test");
     cmd.assert_non_empty_stdout();
@@ -264,6 +265,7 @@ contract ContractTest is DSTest {
 });
 
 // tests that libraries are handled correctly in multiforking mode
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.wipe_contracts();
 

@@ -1,6 +1,8 @@
-//! wrappers for transactions
+//! Wrappers for transactions.
+
 use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_rpc_types::{AnyTransactionReceipt, BlockId, WithOtherFields};
+use alloy_rpc_types::{AnyTransactionReceipt, BlockId};
+use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::Result;
 use serde::{Deserialize, Serialize};

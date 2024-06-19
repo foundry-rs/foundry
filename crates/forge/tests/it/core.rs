@@ -75,6 +75,20 @@ async fn test_core() {
                     None,
                 )],
             ),
+            (
+                "default/core/MultipleAfterInvariant.t.sol:MultipleAfterInvariant",
+                vec![(
+                    "afterInvariant()",
+                    false,
+                    Some("multiple afterInvariant functions".to_string()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/core/BadSigAfterInvariant.t.sol:BadSigAfterInvariant",
+                vec![("testShouldPassWithWarning()", true, None, None, None)],
+            ),
         ]),
     );
 }

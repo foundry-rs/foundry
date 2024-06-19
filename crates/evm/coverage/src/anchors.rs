@@ -1,6 +1,6 @@
 use super::{CoverageItem, CoverageItemKind, ItemAnchor, SourceLocation};
 use eyre::ensure;
-use foundry_compilers::sourcemap::{SourceElement, SourceMap};
+use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
 use foundry_evm_core::utils::IcPcMap;
 use revm::interpreter::opcode;
 use rustc_hash::{FxHashMap, FxHashSet};

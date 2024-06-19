@@ -19,20 +19,20 @@ use figment::{
 use foundry_compilers::{
     artifacts::{
         output_selection::{ContractOutputSelection, OutputSelection},
-        serde_helpers, BytecodeHash, DebuggingSettings, Libraries, ModelCheckerSettings,
-        ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings, Settings, SettingsMetadata,
-        Severity,
+        remappings::{RelativeRemapping, Remapping},
+        serde_helpers, BytecodeHash, DebuggingSettings, EvmVersion, Libraries,
+        ModelCheckerSettings, ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings,
+        Settings, SettingsMetadata, Severity,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
         multi::{MultiCompiler, MultiCompilerSettings},
-        solc::SolcCompiler,
+        solc::{Solc, SolcCompiler},
         vyper::{Vyper, VyperSettings},
         Compiler,
     },
     error::SolcError,
-    remappings::{RelativeRemapping, Remapping},
-    ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc,
+    ConfigurableArtifacts, Project, ProjectPathsConfig,
 };
 use inflector::Inflector;
 use regex::Regex;
@@ -804,7 +804,7 @@ impl Config {
                 Severity::Error
             })
             .set_offline(self.offline)
-            .set_cached(cached && !self.build_info)
+            .set_cached(cached)
             .set_build_info(!no_artifacts && self.build_info)
             .set_no_artifacts(no_artifacts);
 
@@ -851,7 +851,7 @@ impl Config {
         if let Some(ref solc) = self.solc {
             let solc = match solc {
                 SolcReq::Version(version) => {
-                    if let Some(solc) = Solc::find_svm_installed_version(version.to_string())? {
+                    if let Some(solc) = Solc::find_svm_installed_version(version)? {
                         solc
                     } else {
                         if self.offline {
@@ -913,12 +913,12 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// use foundry_compilers::Solc;
+    /// use foundry_compilers::solc::Solc;
     /// use foundry_config::Config;
     /// let config = Config::load_with_root(".").sanitized();
     /// let paths = config.project_paths::<Solc>();
     /// ```
-    pub fn project_paths<C>(&self) -> ProjectPathsConfig<C> {
+    pub fn project_paths<L>(&self) -> ProjectPathsConfig<L> {
         let mut builder = ProjectPathsConfig::builder()
             .cache(self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
@@ -1240,7 +1240,8 @@ impl Config {
 
     /// Returns all libraries with applied remappings. Same as `self.solc_settings()?.libraries`.
     pub fn libraries_with_remappings(&self) -> Result<Libraries, SolcError> {
-        Ok(self.parsed_libraries()?.with_applied_remappings(&self.project_paths()))
+        let paths: ProjectPathsConfig = self.project_paths();
+        Ok(self.parsed_libraries()?.apply(|libs| paths.apply_lib_remappings(libs)))
     }
 
     /// Returns the configured `solc` `Settings` that includes:
@@ -2023,7 +2024,10 @@ impl Default for Config {
             profile: Self::DEFAULT_PROFILE,
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             prague: false,
+            #[cfg(not(feature = "isolate-by-default"))]
             isolate: false,
+            #[cfg(feature = "isolate-by-default")]
+            isolate: true,
             root: Default::default(),
             src: "src".into(),
             test: "test".into(),
@@ -2816,9 +2820,8 @@ mod tests {
         etherscan::ResolvedEtherscanConfigs,
     };
     use figment::error::Kind::InvalidType;
-    use foundry_compilers::{
-        artifacts::{ModelCheckerEngine, YulDetails},
-        compilers::vyper::settings::VyperOptimizationMode,
+    use foundry_compilers::artifacts::{
+        vyper::VyperOptimizationMode, ModelCheckerEngine, YulDetails,
     };
     use similar_asserts::assert_eq;
     use std::{collections::BTreeMap, fs::File, io::Write};

@@ -4,9 +4,9 @@ use crate::TransactionReceiptWithRevertReason;
 use alloy_consensus::{AnyReceiptEnvelope, Receipt, ReceiptWithBloom, TxType};
 use alloy_primitives::*;
 use alloy_rpc_types::{
-    other::OtherFields, AnyTransactionReceipt, Block, BlockTransactions, Log, Transaction,
-    TransactionReceipt,
+    AnyTransactionReceipt, Block, BlockTransactions, Log, Transaction, TransactionReceipt,
 };
+use alloy_serde::OtherFields;
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -488,7 +488,7 @@ receiptsRoot         {}
 sha3Uncles           {}
 size                 {}
 stateRoot            {}
-timestamp            {}
+timestamp            {} ({})
 withdrawalsRoot      {}
 totalDifficulty      {}{}",
         block.header.base_fee_per_gas.pretty(),
@@ -509,6 +509,9 @@ totalDifficulty      {}{}",
         block.size.pretty(),
         block.header.state_root.pretty(),
         block.header.timestamp.pretty(),
+        chrono::DateTime::from_timestamp(block.header.timestamp as i64, 0)
+            .expect("block timestamp in range")
+            .to_rfc2822(),
         block.header.withdrawals_root.pretty(),
         block.header.total_difficulty.pretty(),
         block.other.pretty()

@@ -4,7 +4,7 @@ use crate::Config;
 use alloy_primitives::U256;
 use eyre::WrapErr;
 use figment::value::Value;
-use foundry_compilers::{
+use foundry_compilers::artifacts::{
     remappings::{Remapping, RemappingError},
     EvmVersion,
 };

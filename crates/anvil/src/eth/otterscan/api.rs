@@ -8,8 +8,10 @@ use crate::eth::{
     EthApi,
 };
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_rpc_types::{Block, BlockId, BlockNumberOrTag as BlockNumber};
-use alloy_rpc_types_trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
+use alloy_rpc_types::{
+    trace::parity::{Action, CreateAction, CreateOutput, TraceOutput},
+    Block, BlockId, BlockNumberOrTag as BlockNumber,
+};
 use itertools::Itertools;
 
 impl EthApi {

@@ -2,23 +2,20 @@ use crate::{
     executors::{Executor, RawCallResult},
     inspectors::Fuzzer,
 };
-use alloy_primitives::{Address, FixedBytes, Selector, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, Selector, U256};
 use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
-use foundry_evm_core::{
-    constants::{
-        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
-    },
-    utils::get_function,
+use foundry_evm_core::constants::{
+    CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
 };
 use foundry_evm_fuzz::{
     invariant::{
         ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract,
-        RandomCallGenerator, SenderFilters, TargetedContracts,
+        RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
-    strategies::{collect_created_contracts, invariant_strat, override_call_strat, EvmFuzzState},
+    strategies::{invariant_strat, override_call_strat, EvmFuzzState},
     FuzzCase, FuzzFixtures, FuzzedCases,
 };
 use foundry_evm_traces::CallTraceArena;
@@ -28,10 +25,10 @@ use proptest::{
     strategy::{Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
-use result::{assert_invariants, can_continue};
+use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::primitives::HashMap;
 use shrink::shrink_sequence;
-use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
+use std::{cell::RefCell, collections::btree_map::Entry, sync::Arc};
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError};
@@ -43,6 +40,7 @@ mod result;
 pub use result::InvariantFuzzTestResult;
 
 mod shrink;
+use crate::executors::EvmError;
 pub use shrink::check_sequence;
 
 sol! {
@@ -65,11 +63,16 @@ sol! {
             string[] artifacts;
         }
 
+        function afterInvariant() external;
+
         #[derive(Default)]
         function excludeArtifacts() public view returns (string[] memory excludedArtifacts);
 
         #[derive(Default)]
         function excludeContracts() public view returns (address[] memory excludedContracts);
+
+        #[derive(Default)]
+        function excludeSelectors() public view returns (FuzzSelector[] memory excludedSelectors);
 
         #[derive(Default)]
         function excludeSenders() public view returns (address[] memory excludedSenders);
@@ -248,17 +251,14 @@ impl<'a> InvariantExecutor<'a> {
 
                     // Collect created contracts and add to fuzz targets only if targeted contracts
                     // are updatable.
-                    if targeted_contracts.is_updatable {
-                        if let Err(error) = collect_created_contracts(
-                            &state_changeset,
-                            self.project_contracts,
-                            self.setup_contracts,
-                            &self.artifact_filters,
-                            &targeted_contracts,
-                            &mut created_contracts,
-                        ) {
-                            warn!(target: "forge::test", "{error}");
-                        }
+                    if let Err(error) = &targeted_contracts.collect_created_contracts(
+                        &state_changeset,
+                        self.project_contracts,
+                        self.setup_contracts,
+                        &self.artifact_filters,
+                        &mut created_contracts,
+                    ) {
+                        warn!(target: "forge::test", "{error}");
                     }
 
                     fuzz_runs.push(FuzzCase {
@@ -302,13 +302,21 @@ impl<'a> InvariantExecutor<'a> {
                 );
             }
 
-            // We clear all the targeted contracts created during this run.
-            if !created_contracts.is_empty() {
-                let mut writable_targeted = targeted_contracts.targets.lock();
-                for addr in created_contracts.iter() {
-                    writable_targeted.remove(addr);
-                }
+            // Call `afterInvariant` only if it is declared and test didn't fail already.
+            if invariant_contract.call_after_invariant && failures.borrow().error.is_none() {
+                assert_after_invariant(
+                    &invariant_contract,
+                    &self.config,
+                    &targeted_contracts,
+                    &mut executor,
+                    &mut failures.borrow_mut(),
+                    &inputs,
+                )
+                .map_err(|_| TestCaseError::Fail("Failed to call afterInvariant".into()))?;
             }
+
+            // We clear all the targeted contracts created during this run.
+            let _ = &targeted_contracts.clear_created_contracts(created_contracts);
 
             if gas_report_traces.borrow().len() < self.config.gas_report_samples as usize {
                 gas_report_traces.borrow_mut().push(run_traces);
@@ -509,7 +517,7 @@ impl<'a> InvariantExecutor<'a> {
         let excluded =
             self.call_sol_default(to, &IInvariantTest::excludeContractsCall {}).excludedContracts;
 
-        let mut contracts: TargetedContracts = self
+        let contracts = self
             .setup_contracts
             .iter()
             .filter(|&(addr, (identifier, _))| {
@@ -520,8 +528,11 @@ impl<'a> InvariantExecutor<'a> {
                     (excluded.is_empty() || !excluded.contains(addr)) &&
                     self.artifact_filters.matches(identifier)
             })
-            .map(|(addr, (identifier, abi))| (*addr, (identifier.clone(), abi.clone(), vec![])))
+            .map(|(addr, (identifier, abi))| {
+                (*addr, TargetedContract::new(identifier.clone(), abi.clone()))
+            })
             .collect();
+        let mut contracts = TargetedContracts { inner: contracts };
 
         self.target_interfaces(to, &mut contracts)?;
 
@@ -553,7 +564,7 @@ impl<'a> InvariantExecutor<'a> {
         // the specified interfaces for the same address. For example:
         // `[(addr1, ["IERC20", "IOwnable"])]` and `[(addr1, ["IERC20"]), (addr1, ("IOwnable"))]`
         // should be equivalent.
-        let mut combined: TargetedContracts = BTreeMap::new();
+        let mut combined = TargetedContracts::new();
 
         // Loop through each address and its associated artifact identifiers.
         // We're borrowing here to avoid taking full ownership.
@@ -569,18 +580,18 @@ impl<'a> InvariantExecutor<'a> {
                         .entry(*addr)
                         // If the entry exists, extends its ABI with the function list.
                         .and_modify(|entry| {
-                            let (_, contract_abi, _) = entry;
-
                             // Extend the ABI's function list with the new functions.
-                            contract_abi.functions.extend(contract.abi.functions.clone());
+                            entry.abi.functions.extend(contract.abi.functions.clone());
                         })
                         // Otherwise insert it into the map.
-                        .or_insert_with(|| (identifier.to_string(), contract.abi.clone(), vec![]));
+                        .or_insert_with(|| {
+                            TargetedContract::new(identifier.to_string(), contract.abi.clone())
+                        });
                 }
             }
         }
 
-        targeted_contracts.extend(combined);
+        targeted_contracts.extend(combined.inner);
 
         Ok(())
     }
@@ -597,44 +608,47 @@ impl<'a> InvariantExecutor<'a> {
                 if selectors.is_empty() {
                     continue;
                 }
-                self.add_address_with_functions(*address, selectors, targeted_contracts)?;
+                self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
             }
         }
 
+        // Collect contract functions marked as target for fuzzing campaign.
         let selectors = self.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
         for IInvariantTest::FuzzSelector { addr, selectors } in selectors.targetedSelectors {
-            self.add_address_with_functions(addr, &selectors, targeted_contracts)?;
+            self.add_address_with_functions(addr, &selectors, false, targeted_contracts)?;
         }
+
+        // Collect contract functions excluded from fuzzing campaign.
+        let selectors = self.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
+        for IInvariantTest::FuzzSelector { addr, selectors } in selectors.excludedSelectors {
+            self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
+        }
+
         Ok(())
     }
 
-    /// Adds the address and fuzzable functions to `TargetedContracts`.
+    /// Adds the address and fuzzed or excluded functions to `TargetedContracts`.
     fn add_address_with_functions(
         &self,
         address: Address,
         selectors: &[Selector],
+        should_exclude: bool,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
-        if let Some((name, abi, address_selectors)) = targeted_contracts.get_mut(&address) {
-            // The contract is already part of our filter, and all we do is specify that we're
-            // only looking at specific functions coming from `bytes4_array`.
-            for &selector in selectors {
-                address_selectors.push(get_function(name, selector, abi).cloned()?);
+        let contract = match targeted_contracts.entry(address) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let (identifier, abi) = self.setup_contracts.get(&address).ok_or_else(|| {
+                    eyre::eyre!(
+                        "[{}] address does not have an associated contract: {}",
+                        if should_exclude { "excludeSelectors" } else { "targetSelectors" },
+                        address
+                    )
+                })?;
+                entry.insert(TargetedContract::new(identifier.clone(), abi.clone()))
             }
-        } else {
-            let (name, abi) = self.setup_contracts.get(&address).ok_or_else(|| {
-                eyre::eyre!(
-                    "[targetSelectors] address does not have an associated contract: {address}"
-                )
-            })?;
-
-            let functions = selectors
-                .iter()
-                .map(|&selector| get_function(name, selector, abi).cloned())
-                .collect::<Result<Vec<_>, _>>()?;
-
-            targeted_contracts.insert(address, (name.to_string(), abi.clone(), functions));
-        }
+        };
+        contract.add_selectors(selectors.iter().copied(), should_exclude)?;
         Ok(())
     }
 
@@ -689,4 +703,28 @@ fn collect_data(
     if let Some(changed) = sender_changeset {
         state_changeset.insert(tx.sender, changed);
     }
+}
+
+/// Calls the `afterInvariant()` function on a contract.
+/// Returns call result and if call succeeded.
+/// The state after the call is not persisted.
+pub(crate) fn call_after_invariant_function(
+    executor: &Executor,
+    to: Address,
+) -> std::result::Result<(RawCallResult, bool), EvmError> {
+    let calldata = Bytes::from_static(&IInvariantTest::afterInvariantCall::SELECTOR);
+    let mut call_result = executor.call_raw(CALLER, to, calldata, U256::ZERO)?;
+    let success = executor.is_raw_call_mut_success(to, &mut call_result, false);
+    Ok((call_result, success))
+}
+
+/// Calls the invariant function and returns call result and if succeeded.
+pub(crate) fn call_invariant_function(
+    executor: &Executor,
+    address: Address,
+    calldata: Bytes,
+) -> Result<(RawCallResult, bool)> {
+    let mut call_result = executor.call_raw(CALLER, address, calldata, U256::ZERO)?;
+    let success = executor.is_raw_call_mut_success(address, &mut call_result, false);
+    Ok((call_result, success))
 }

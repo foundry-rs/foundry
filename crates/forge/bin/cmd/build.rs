@@ -18,6 +18,7 @@ use foundry_config::{
     Config,
 };
 use serde::Serialize;
+use std::path::PathBuf;
 use watchexec::config::{InitConfig, RuntimeConfig};
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
@@ -46,6 +47,10 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Build options", about = None, long_about = None)] // override doc
 pub struct BuildArgs {
+    /// Build source files from specified paths.
+    #[serde(skip)]
+    pub paths: Option<Vec<PathBuf>>,
+
     /// Print compiled contract names.
     #[arg(long)]
     #[serde(skip)]
@@ -86,9 +91,9 @@ impl BuildArgs {
 
         // Collect sources to compile if build subdirectories specified.
         let mut files = vec![];
-        if let Some(dirs) = self.args.paths {
-            for dir in dirs {
-                files.extend(source_files_iter(dir, MultiCompilerLanguage::FILE_EXTENSIONS));
+        if let Some(paths) = self.paths {
+            for path in paths {
+                files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
             }
         }
 

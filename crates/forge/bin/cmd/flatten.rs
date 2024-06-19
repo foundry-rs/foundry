@@ -4,8 +4,12 @@ use foundry_cli::{
     opts::{CoreBuildArgs, ProjectPathsArgs},
     utils::LoadConfig,
 };
-use foundry_common::{compile::compile_target, fs};
-use foundry_compilers::{compilers::solc::SolcLanguage, error::SolcError, flatten::Flattener};
+use foundry_common::{compile::with_compilation_reporter, fs};
+use foundry_compilers::{
+    compilers::solc::SolcLanguage,
+    error::SolcError,
+    flatten::{Flattener, FlattenerError},
+};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge flatten`.
@@ -36,24 +40,24 @@ impl FlattenArgs {
 
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
         let build_args = CoreBuildArgs { project_paths, ..Default::default() };
-        let mut config = build_args.try_load_config_emit_warnings()?;
-        // `Flattener` uses the typed AST for better flattening results.
-        config.ast = true;
+        let config = build_args.try_load_config_emit_warnings()?;
         let project = config.create_project(false, true)?;
 
         let target_path = dunce::canonicalize(target_path)?;
-        let compiler_output = compile_target(&target_path, &project, false);
 
-        let flattened = match compiler_output {
-            Ok(compiler_output) => {
-                Flattener::new(&project, &compiler_output, &target_path).map(|f| f.flatten())
-            }
-            Err(_) => {
+        let flattener = with_compilation_reporter(build_args.silent, || {
+            Flattener::new(project.clone(), &target_path)
+        });
+
+        let flattened = match flattener {
+            Ok(flattener) => Ok(flattener.flatten()),
+            Err(FlattenerError::Compilation(_)) => {
                 // Fallback to the old flattening implementation if we couldn't compile the target
                 // successfully. This would be the case if the target has invalid
                 // syntax. (e.g. Solang)
                 project.paths.clone().with_language::<SolcLanguage>().flatten(&target_path)
             }
+            Err(FlattenerError::Other(err)) => Err(err),
         }
         .map_err(|err: SolcError| eyre::eyre!("Failed to flatten: {err}"))?;
 

@@ -1,6 +1,10 @@
-use crate::executors::{invariant::error::FailedInvariantCaseData, Executor};
+use crate::executors::{
+    invariant::{
+        call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
+    },
+    Executor,
+};
 use alloy_primitives::{Address, Bytes, U256};
-use foundry_evm_core::constants::CALLER;
 use foundry_evm_fuzz::invariant::BasicTxDetails;
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
@@ -84,6 +88,7 @@ pub(crate) fn shrink_sequence(
     failed_case: &FailedInvariantCaseData,
     calls: &[BasicTxDetails],
     executor: &Executor,
+    call_after_invariant: bool,
     progress: Option<&ProgressBar>,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
@@ -97,9 +102,9 @@ pub(crate) fn shrink_sequence(
 
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
-    let error_call_result =
-        executor.call_raw(CALLER, failed_case.addr, failed_case.calldata.clone(), U256::ZERO)?;
-    if error_call_result.reverted {
+    let (_, success) =
+        call_invariant_function(executor, failed_case.addr, failed_case.calldata.clone())?;
+    if !success {
         return Ok(vec![]);
     }
 
@@ -113,6 +118,7 @@ pub(crate) fn shrink_sequence(
             failed_case.addr,
             failed_case.calldata.clone(),
             failed_case.fail_on_revert,
+            call_after_invariant,
         ) {
             // If candidate sequence still fails then shrink more if possible.
             Ok((false, _)) if !shrinker.simplify() => break,
@@ -133,7 +139,8 @@ pub(crate) fn shrink_sequence(
 /// Checks if the given call sequence breaks the invariant.
 /// Used in shrinking phase for checking candidate sequences and in replay failures phase to test
 /// persisted failures.
-/// Returns the result of invariant check and if sequence was entirely applied.
+/// Returns the result of invariant check (and afterInvariant call if needed) and if sequence was
+/// entirely applied.
 pub fn check_sequence(
     mut executor: Executor,
     calls: &[BasicTxDetails],
@@ -141,6 +148,7 @@ pub fn check_sequence(
     test_address: Address,
     calldata: Bytes,
     fail_on_revert: bool,
+    call_after_invariant: bool,
 ) -> eyre::Result<(bool, bool)> {
     // Apply the call sequence.
     for call_index in sequence {
@@ -159,7 +167,12 @@ pub fn check_sequence(
     }
 
     // Check the invariant for call sequence.
-    let mut call_result = executor.call_raw(CALLER, test_address, calldata, U256::ZERO)?;
-    let success = executor.is_raw_call_mut_success(test_address, &mut call_result, false);
+    let (_, mut success) = call_invariant_function(&executor, test_address, calldata)?;
+    // Check after invariant result if invariant is success and `afterInvariant` function is
+    // declared.
+    if success && call_after_invariant {
+        (_, success) = call_after_invariant_function(&executor, test_address)?;
+    }
+
     Ok((success, true))
 }

@@ -283,12 +283,10 @@ impl<'a> ContractRunner<'a> {
         let start = Instant::now();
         let mut warnings = Vec::new();
 
+        // Check if `setUp` function with valid signature declared.
         let setup_fns: Vec<_> =
             self.contract.abi.functions().filter(|func| func.name.is_setup()).collect();
-
-        // Whether to call the `setUp` function.
         let call_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
-
         // There is a single miss-cased `setUp` function, so we add a warning
         for &setup_fn in setup_fns.iter() {
             if setup_fn.name != "setUp" {
@@ -298,7 +296,6 @@ impl<'a> ContractRunner<'a> {
                 ));
             }
         }
-
         // There are multiple setUp function, so we return a single test result for `setUp`
         if setup_fns.len() > 1 {
             return SuiteResult::new(
@@ -309,9 +306,34 @@ impl<'a> ContractRunner<'a> {
             )
         }
 
-        let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
+        // Check if `afterInvariant` function with valid signature declared.
+        let after_invariant_fns: Vec<_> =
+            self.contract.abi.functions().filter(|func| func.name.is_after_invariant()).collect();
+        if after_invariant_fns.len() > 1 {
+            // Return a single test result failure if multiple functions declared.
+            return SuiteResult::new(
+                start.elapsed(),
+                [(
+                    "afterInvariant()".to_string(),
+                    TestResult::fail("multiple afterInvariant functions".to_string()),
+                )]
+                .into(),
+                warnings,
+            )
+        }
+        let call_after_invariant = after_invariant_fns.first().map_or(false, |after_invariant_fn| {
+            let match_sig = after_invariant_fn.name == "afterInvariant";
+            if !match_sig {
+                warnings.push(format!(
+                    "Found invalid afterInvariant function \"{}\" did you mean \"afterInvariant()\"?",
+                    after_invariant_fn.signature()
+                ));
+            }
+            match_sig
+        });
 
         // Invariant testing requires tracing to figure out what contracts were created.
+        let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
         let tmp_tracing = self.executor.inspector.tracer.is_none() && has_invariants && call_setup;
         if tmp_tracing {
             self.executor.set_tracing(true);
@@ -362,8 +384,8 @@ impl<'a> ContractRunner<'a> {
             find_time,
         );
 
-        let identified_contracts =
-            has_invariants.then(|| load_contracts(setup.traces.clone(), &known_contracts));
+        let identified_contracts = has_invariants
+            .then(|| load_contracts(setup.traces.iter().map(|(_, t)| t), &known_contracts));
         let test_results = functions
             .par_iter()
             .map(|&func| {
@@ -392,6 +414,7 @@ impl<'a> ContractRunner<'a> {
                         setup,
                         invariant_config.clone(),
                         func,
+                        call_after_invariant,
                         &known_contracts,
                         identified_contracts.as_ref().unwrap(),
                     )
@@ -511,12 +534,14 @@ impl<'a> ContractRunner<'a> {
     }
 
     #[instrument(level = "debug", name = "invariant", skip_all)]
+    #[allow(clippy::too_many_arguments)]
     pub fn run_invariant_test(
         &self,
         runner: TestRunner,
         setup: TestSetup,
         invariant_config: InvariantConfig,
         func: &Function,
+        call_after_invariant: bool,
         known_contracts: &ContractsByArtifact,
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
@@ -551,8 +576,12 @@ impl<'a> ContractRunner<'a> {
             identified_contracts,
             known_contracts,
         );
-        let invariant_contract =
-            InvariantContract { address, invariant_function: func, abi: &self.contract.abi };
+        let invariant_contract = InvariantContract {
+            address,
+            invariant_function: func,
+            call_after_invariant,
+            abi: &self.contract.abi,
+        };
 
         let mut logs = logs.clone();
         let mut traces = traces.clone();
@@ -567,13 +596,12 @@ impl<'a> ContractRunner<'a> {
         {
             // Create calls from failed sequence and check if invariant still broken.
             let txes = call_sequence
-                .clone()
-                .into_iter()
+                .iter()
                 .map(|seq| BasicTxDetails {
                     sender: seq.sender.unwrap_or_default(),
                     call_details: CallDetails {
                         target: seq.addr.unwrap_or_default(),
-                        calldata: seq.calldata,
+                        calldata: seq.calldata.clone(),
                     },
                 })
                 .collect::<Vec<BasicTxDetails>>();
@@ -584,6 +612,7 @@ impl<'a> ContractRunner<'a> {
                 invariant_contract.address,
                 invariant_contract.invariant_function.selector().to_vec().into(),
                 invariant_config.fail_on_revert,
+                invariant_contract.call_after_invariant,
             ) {
                 if !success {
                     // If sequence still fails then replay error to collect traces and
@@ -596,7 +625,7 @@ impl<'a> ContractRunner<'a> {
                         &mut logs,
                         &mut traces,
                         &mut coverage,
-                        txes,
+                        &txes,
                     );
                     return TestResult {
                         status: TestStatus::Failure,
@@ -698,7 +727,7 @@ impl<'a> ContractRunner<'a> {
                     &mut logs,
                     &mut traces,
                     &mut coverage,
-                    last_run_inputs.clone(),
+                    &last_run_inputs,
                 ) {
                     error!(%err, "Failed to replay last invariant run");
                 }

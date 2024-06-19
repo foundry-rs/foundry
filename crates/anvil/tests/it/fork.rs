@@ -4,16 +4,17 @@ use crate::{
     abi::{Greeter, ERC721},
     utils::{http_provider, http_provider_with_signer},
 };
-use alloy_network::{EthereumSigner, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{address, Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
+    anvil::Forking,
     request::{TransactionInput, TransactionRequest},
-    BlockId, BlockNumberOrTag, WithOtherFields,
+    BlockId, BlockNumberOrTag,
 };
-use alloy_signer_wallet::LocalWallet;
+use alloy_serde::WithOtherFields;
+use alloy_signer_local::PrivateKeySigner;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
-use anvil_core::types::Forking;
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint};
@@ -421,7 +422,7 @@ async fn can_deploy_greeter_on_fork() {
     let (_api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
 
     let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = wallet.into();
+    let signer: EthereumWallet = wallet.into();
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
@@ -570,13 +571,13 @@ async fn test_fork_can_send_tx() {
     let (api, handle) =
         spawn(fork_config().with_blocktime(Some(std::time::Duration::from_millis(800)))).await;
 
-    let wallet = LocalWallet::random();
+    let wallet = PrivateKeySigner::random();
     let signer = wallet.address();
     let provider = handle.http_provider();
     // let provider = SignerMiddleware::new(provider, wallet);
 
     api.anvil_set_balance(signer, U256::MAX).await.unwrap();
-    api.anvil_impersonate_account(signer).await.unwrap(); // Added until SignerFiller for alloy-provider is fixed.
+    api.anvil_impersonate_account(signer).await.unwrap(); // Added until WalletFiller for alloy-provider is fixed.
     let balance = provider.get_balance(signer).await.unwrap();
     assert_eq!(balance, U256::MAX);
 
@@ -603,7 +604,7 @@ async fn test_fork_nft_set_approve_all() {
     .await;
 
     // create and fund a random wallet
-    let wallet = LocalWallet::random();
+    let wallet = PrivateKeySigner::random();
     let signer = wallet.address();
     api.anvil_set_balance(signer, U256::from(1000e18)).await.unwrap();
 
@@ -1033,7 +1034,7 @@ async fn can_override_fork_chain_id() {
     .await;
 
     let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = wallet.into();
+    let signer: EthereumWallet = wallet.into();
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let greeter_contract =

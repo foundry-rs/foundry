@@ -170,6 +170,6 @@ impl<'cheats, 'evm, 'db, DB: DatabaseExt> std::ops::DerefMut for CheatsCtxt<'che
 impl<'cheats, 'evm, 'db, DB: DatabaseExt> CheatsCtxt<'cheats, 'evm, DB> {
     #[inline]
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
-        self.precompiles.contains_key(address)
+        self.precompiles.contains(address)
     }
 }

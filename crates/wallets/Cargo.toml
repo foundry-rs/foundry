@@ -17,7 +17,7 @@ foundry-config.workspace = true
 
 alloy-primitives.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
-alloy-signer-wallet = { workspace = true, features = ["mnemonic", "keystore"] }
+alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-signer-ledger = { workspace = true, features = ["eip712"] }
 alloy-signer-trezor.workspace = true
 alloy-network.workspace = true
@@ -37,14 +37,14 @@ gcloud-sdk = { version = "0.24", features = [
   "google-longrunning",
 ], optional = true }
 
-async-trait = "0.1"
+async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 derive_builder = "0.20.0"
 eyre.workspace = true
 hex = { workspace = true, features = ["serde"] }
 rpassword = "7"
 serde.workspace = true
-thiserror = "1"
+thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

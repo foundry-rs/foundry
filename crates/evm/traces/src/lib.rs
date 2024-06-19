@@ -20,7 +20,7 @@ use yansi::{Color, Paint};
 ///
 /// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
 pub mod identifier;
-use identifier::LocalTraceIdentifier;
+use identifier::{LocalTraceIdentifier, TraceIdentifier};
 
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
@@ -295,21 +295,19 @@ fn trace_color(trace: &CallTrace) -> Color {
 }
 
 /// Given a list of traces and artifacts, it returns a map connecting address to abi
-pub fn load_contracts(traces: Traces, known_contracts: &ContractsByArtifact) -> ContractsByAddress {
+pub fn load_contracts<'a>(
+    traces: impl IntoIterator<Item = &'a CallTraceArena>,
+    known_contracts: &ContractsByArtifact,
+) -> ContractsByAddress {
     let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
-    let mut decoder = CallTraceDecoderBuilder::new().build();
-    for (_, trace) in &traces {
-        decoder.identify(trace, &mut local_identifier);
-    }
-
-    decoder
-        .contracts
-        .iter()
-        .filter_map(|(addr, name)| {
-            if let Ok(Some((_, contract))) = known_contracts.find_by_name_or_identifier(name) {
-                return Some((*addr, (name.clone(), contract.abi.clone())));
+    let decoder = CallTraceDecoder::new();
+    let mut contracts = ContractsByAddress::new();
+    for trace in traces {
+        for address in local_identifier.identify_addresses(decoder.trace_addresses(trace)) {
+            if let (Some(contract), Some(abi)) = (address.contract, address.abi) {
+                contracts.insert(address.address, (contract, abi.into_owned()));
             }
-            None
-        })
-        .collect()
+        }
+    }
+    contracts
 }

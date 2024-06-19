@@ -19,8 +19,7 @@ use foundry_cli::{
 };
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
-    artifacts::{CompactBytecode, CompactDeployedBytecode},
-    sourcemap::SourceMap,
+    artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode},
     Artifact, ArtifactId, Project, ProjectCompileOutput,
 };
 use foundry_config::{Config, SolcReq};

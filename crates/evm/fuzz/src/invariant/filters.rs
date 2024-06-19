@@ -25,8 +25,7 @@ impl ArtifactFilters {
     /// Gets all the targeted functions from `artifact`. Returns error, if selectors do not match
     /// the `artifact`.
     ///
-    /// An empty vector means that it targets any mutable function. See `select_random_function` for
-    /// more.
+    /// An empty vector means that it targets any mutable function.
     pub fn get_targeted_functions(
         &self,
         artifact: &ArtifactId,

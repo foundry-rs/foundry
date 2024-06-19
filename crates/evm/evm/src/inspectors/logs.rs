@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, Log};
+use alloy_primitives::{Bytes, Log};
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use foundry_common::{fmt::ConsoleFmt, ErrorExt};
 use foundry_evm_core::{
@@ -70,6 +70,9 @@ impl<DB: Database> Inspector<DB> for LogCollector {
 fn convert_hh_log_to_event(call: HardhatConsole::HardhatConsoleCalls) -> Log {
     // Convert the parameters of the call to their string representation using `ConsoleFmt`.
     let fmt = call.fmt(Default::default());
-    Log::new(Address::default(), vec![Console::log::SIGNATURE_HASH], fmt.abi_encode().into())
-        .unwrap_or_else(|| Log { ..Default::default() })
+    Log::new_unchecked(
+        HARDHAT_CONSOLE_ADDRESS,
+        vec![Console::log::SIGNATURE_HASH],
+        fmt.abi_encode().into(),
+    )
 }

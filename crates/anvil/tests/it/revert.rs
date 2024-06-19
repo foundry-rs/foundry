@@ -2,7 +2,8 @@ use crate::abi::VendingMachine;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{bytes, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_rpc_types::TransactionRequest;
+use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use anvil::{spawn, NodeConfig};
 

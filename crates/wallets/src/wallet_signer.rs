@@ -5,8 +5,8 @@ use alloy_network::TxSigner;
 use alloy_primitives::{Address, ChainId, B256};
 use alloy_signer::{Signature, Signer};
 use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
+use alloy_signer_local::{coins_bip39::English, MnemonicBuilder, PrivateKeySigner};
 use alloy_signer_trezor::{HDPath as TrezorHDPath, TrezorSigner};
-use alloy_signer_wallet::{coins_bip39::English, LocalWallet, MnemonicBuilder};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -29,7 +29,7 @@ pub type Result<T> = std::result::Result<T, WalletSignerError>;
 #[derive(Debug)]
 pub enum WalletSigner {
     /// Wrapper around local wallet. e.g. private key, mnemonic
-    Local(LocalWallet),
+    Local(PrivateKeySigner),
     /// Wrapper around Ledger signer.
     Ledger(LedgerSigner),
     /// Wrapper around Trezor signer.
@@ -107,7 +107,7 @@ impl WalletSigner {
     }
 
     pub fn from_private_key(private_key: &B256) -> Result<Self> {
-        Ok(Self::Local(LocalWallet::from_bytes(private_key)?))
+        Ok(Self::Local(PrivateKeySigner::from_bytes(private_key)?))
     }
 
     /// Returns a list of addresses available to use with current signer
@@ -263,7 +263,7 @@ impl PendingSigner {
         match self {
             Self::Keystore(path) => {
                 let password = rpassword::prompt_password("Enter keystore password:")?;
-                Ok(WalletSigner::Local(LocalWallet::decrypt_keystore(path, password)?))
+                Ok(WalletSigner::Local(PrivateKeySigner::decrypt_keystore(path, password)?))
             }
             Self::Interactive => {
                 let private_key = rpassword::prompt_password("Enter private key:")?;

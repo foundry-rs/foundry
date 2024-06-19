@@ -1,15 +1,18 @@
 use crate::{fork::fork_config, utils::http_provider_with_signer};
-use alloy_network::{EthereumSigner, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::{
     ext::{DebugApi, TraceApi},
     Provider,
 };
-use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, WithOtherFields};
-use alloy_rpc_types_trace::{
-    geth::{GethDebugTracingCallOptions, GethTrace},
-    parity::{Action, LocalizedTransactionTrace},
+use alloy_rpc_types::{
+    trace::{
+        geth::{GethDebugTracingCallOptions, GethTrace},
+        parity::{Action, LocalizedTransactionTrace},
+    },
+    BlockNumberOrTag, TransactionRequest,
 };
+use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use anvil::{spawn, Hardfork, NodeConfig};
 
@@ -98,7 +101,7 @@ sol!(
 async fn test_transfer_debug_trace_call() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let deployer: EthereumSigner = wallets[0].clone().into();
+    let deployer: EthereumWallet = wallets[0].clone().into();
     let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
 
     let contract_addr = DebugTraceContract::deploy_builder(provider.clone())
@@ -107,7 +110,7 @@ async fn test_transfer_debug_trace_call() {
         .await
         .unwrap();
 
-    let caller: EthereumSigner = wallets[1].clone().into();
+    let caller: EthereumWallet = wallets[1].clone().into();
     let caller_provider = http_provider_with_signer(&handle.http_endpoint(), caller);
     let contract = DebugTraceContract::new(contract_addr, caller_provider);
 
