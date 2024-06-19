@@ -260,6 +260,7 @@ tower-http = "0.5"
 soldeer = "0.2.15"
 
 [patch.crates-io]
+alloy-rpc-types-anvil = { git = "https://github.com/alloy-rs/alloy", rev = "8dc637e" }
 revm = { git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f" }
 revm-interpreter = { git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f" }
 revm-precompile = { git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f" }
