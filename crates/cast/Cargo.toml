@@ -97,6 +97,7 @@ openssl = ["foundry-cli/openssl"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
 aws-kms = ["foundry-wallets/aws-kms", "dep:aws-sdk-kms"]
+isolate-by-default = ["foundry-config/isolate-by-default"]
 
 [[bench]]
 name = "vanity"

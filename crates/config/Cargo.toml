@@ -52,3 +52,4 @@ tempfile.workspace = true
 [features]
 default = ["rustls"]
 rustls = ["reqwest/rustls-tls-native-roots"]
+isolate-by-default = []

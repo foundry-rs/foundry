@@ -16,7 +16,9 @@ use revm::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
         Interpreter, InterpreterResult,
     },
-    primitives::{BlockEnv, Env, EnvWithHandlerCfg, ExecutionResult, Output, TransactTo},
+    primitives::{
+        BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult, Output, TransactTo,
+    },
     DatabaseCommit, EvmContext, Inspector,
 };
 use std::{collections::HashMap, sync::Arc};
@@ -749,7 +751,11 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
             ecx
         );
 
-        if self.enable_isolation && !self.in_inner_context && ecx.journaled_state.depth == 1 {
+        if !matches!(create.scheme, CreateScheme::Create2 { .. }) &&
+            self.enable_isolation &&
+            !self.in_inner_context &&
+            ecx.journaled_state.depth == 1
+        {
             let (result, address) = self.transact_inner(
                 ecx,
                 TransactTo::Create,
