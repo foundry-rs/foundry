@@ -271,7 +271,7 @@ impl Cheatcode for deployCodeCall {
         executor: &mut E,
     ) -> Result {
         let Self { artifactPath: path } = self;
-        let bytecode = get_artifact_code(&ccx.state, path, false)?;
+        let bytecode = get_artifact_code(ccx.state, path, false)?;
         let output = executor
             .exec_create(
                 CreateInputs {
@@ -281,8 +281,8 @@ impl Cheatcode for deployCodeCall {
                     init_code: bytecode,
                     gas_limit: ccx.gas_limit,
                 },
-                &mut ccx.state,
-                &mut ccx.ecx,
+                ccx.state,
+                ccx.ecx,
             )
             .unwrap();
 

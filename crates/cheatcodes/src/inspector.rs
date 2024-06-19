@@ -1,4 +1,4 @@
-//! Cheatcode EVM [Inspector].
+//! Cheatcode EVM inspector.
 
 use crate::{
     evm::{

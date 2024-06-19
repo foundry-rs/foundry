@@ -461,7 +461,7 @@ impl InspectorStack {
         }
     }
 
-    fn as_stack_ref<'a>(&'a mut self) -> InspectorStackRefMut<'a> {
+    fn as_stack_ref(&mut self) -> InspectorStackRefMut<'_> {
         InspectorStackRefMut { cheatcodes: self.cheatcodes.as_mut(), inner: &mut self.inner }
     }
 }
