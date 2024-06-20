@@ -15,7 +15,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::time::Interval;
+use tokio::time::{Interval, MissedTickBehavior};
 
 #[derive(Clone, Debug)]
 pub struct Miner {
@@ -149,7 +149,11 @@ impl FixedBlockTimeMiner {
     /// Creates a new instance with an interval of `duration`
     pub fn new(duration: Duration) -> Self {
         let start = tokio::time::Instant::now() + duration;
-        Self { interval: tokio::time::interval_at(start, duration) }
+        let mut interval = tokio::time::interval_at(start, duration);
+        // we use delay here, to ensure ticks are not shortened and to tick at multiples of interval
+        // from when tick was called rather than from start
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        Self { interval }
     }
 
     fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {
