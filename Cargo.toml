@@ -41,11 +41,13 @@ dbg-macro = "warn"
 manual-string-new = "warn"
 uninlined-format-args = "warn"
 use-self = "warn"
+redundant-clone = "warn"
+octal-escapes = "allow"
 
 [workspace.lints.rust]
-rust-2018-idioms = "deny"
+rust-2018-idioms = "warn"
 # unreachable-pub = "warn"
-unused-must-use = "deny"
+unused-must-use = "warn"
 
 [workspace.lints.rustdoc]
 all = "warn"

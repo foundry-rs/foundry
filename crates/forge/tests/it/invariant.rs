@@ -300,7 +300,7 @@ async fn test_shrink(opts: TestOptions, contract_pattern: &str) {
         ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol",
     );
     let mut runner = TEST_DATA_DEFAULT.runner();
-    runner.test_options = opts.clone();
+    runner.test_options = opts;
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),

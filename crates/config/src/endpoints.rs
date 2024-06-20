@@ -68,16 +68,16 @@ impl RpcEndpointType {
     /// Returns the string variant
     pub fn as_endpoint_string(&self) -> Option<&RpcEndpoint> {
         match self {
-            RpcEndpointType::String(url) => Some(url),
-            RpcEndpointType::Config(_) => None,
+            Self::String(url) => Some(url),
+            Self::Config(_) => None,
         }
     }
 
     /// Returns the config variant
     pub fn as_endpoint_config(&self) -> Option<&RpcEndpointConfig> {
         match self {
-            RpcEndpointType::Config(config) => Some(config),
-            RpcEndpointType::String(_) => None,
+            Self::Config(config) => Some(config),
+            Self::String(_) => None,
         }
     }
 
@@ -88,8 +88,8 @@ impl RpcEndpointType {
     /// Returns an error if the type holds a reference to an env var and the env var is not set
     pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
         match self {
-            RpcEndpointType::String(url) => url.resolve(),
-            RpcEndpointType::Config(config) => config.endpoint.resolve(),
+            Self::String(url) => url.resolve(),
+            Self::Config(config) => config.endpoint.resolve(),
         }
     }
 }
@@ -97,8 +97,8 @@ impl RpcEndpointType {
 impl fmt::Display for RpcEndpointType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RpcEndpointType::String(url) => url.fmt(f),
-            RpcEndpointType::Config(config) => config.fmt(f),
+            Self::String(url) => url.fmt(f),
+            Self::Config(config) => config.fmt(f),
         }
     }
 }
@@ -134,16 +134,16 @@ impl RpcEndpoint {
     /// Returns the url variant
     pub fn as_url(&self) -> Option<&str> {
         match self {
-            RpcEndpoint::Url(url) => Some(url),
-            RpcEndpoint::Env(_) => None,
+            Self::Url(url) => Some(url),
+            Self::Env(_) => None,
         }
     }
 
     /// Returns the env variant
     pub fn as_env(&self) -> Option<&str> {
         match self {
-            RpcEndpoint::Env(val) => Some(val),
-            RpcEndpoint::Url(_) => None,
+            Self::Env(val) => Some(val),
+            Self::Url(_) => None,
         }
     }
 
@@ -154,8 +154,8 @@ impl RpcEndpoint {
     /// Returns an error if the type holds a reference to an env var and the env var is not set
     pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
         match self {
-            RpcEndpoint::Url(url) => Ok(url),
-            RpcEndpoint::Env(val) => interpolate(&val),
+            Self::Url(url) => Ok(url),
+            Self::Env(val) => interpolate(&val),
         }
     }
 }
@@ -163,8 +163,8 @@ impl RpcEndpoint {
 impl fmt::Display for RpcEndpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RpcEndpoint::Url(url) => url.fmt(f),
-            RpcEndpoint::Env(var) => var.fmt(f),
+            Self::Url(url) => url.fmt(f),
+            Self::Env(var) => var.fmt(f),
         }
     }
 }
@@ -192,11 +192,7 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
         D: Deserializer<'de>,
     {
         let val = String::deserialize(deserializer)?;
-        let endpoint = if RE_PLACEHOLDER.is_match(&val) {
-            RpcEndpoint::Env(val)
-        } else {
-            RpcEndpoint::Url(val)
-        };
+        let endpoint = if RE_PLACEHOLDER.is_match(&val) { Self::Env(val) } else { Self::Url(val) };
 
         Ok(endpoint)
     }
@@ -204,13 +200,13 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
 
 impl From<RpcEndpoint> for RpcEndpointType {
     fn from(endpoint: RpcEndpoint) -> Self {
-        RpcEndpointType::String(endpoint)
+        Self::String(endpoint)
     }
 }
 
 impl From<RpcEndpoint> for RpcEndpointConfig {
     fn from(endpoint: RpcEndpoint) -> Self {
-        RpcEndpointConfig { endpoint, ..Default::default() }
+        Self { endpoint, ..Default::default() }
     }
 }
 
@@ -241,20 +237,20 @@ impl RpcEndpointConfig {
 
 impl fmt::Display for RpcEndpointConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let RpcEndpointConfig { endpoint, retries, retry_backoff, compute_units_per_second } = self;
+        let Self { endpoint, retries, retry_backoff, compute_units_per_second } = self;
 
-        write!(f, "{}", endpoint)?;
+        write!(f, "{endpoint}")?;
 
         if let Some(retries) = retries {
-            write!(f, ", retries={}", retries)?;
+            write!(f, ", retries={retries}")?;
         }
 
         if let Some(retry_backoff) = retry_backoff {
-            write!(f, ", retry_backoff={}", retry_backoff)?;
+            write!(f, ", retry_backoff={retry_backoff}")?;
         }
 
         if let Some(compute_units_per_second) = compute_units_per_second {
-            write!(f, ", compute_units_per_second={}", compute_units_per_second)?;
+            write!(f, ", compute_units_per_second={compute_units_per_second}")?;
         }
 
         Ok(())
@@ -308,13 +304,13 @@ impl<'de> Deserialize<'de> for RpcEndpointConfig {
         let RpcEndpointConfigInner { endpoint, retries, retry_backoff, compute_units_per_second } =
             serde_json::from_value(value).map_err(serde::de::Error::custom)?;
 
-        Ok(RpcEndpointConfig { endpoint, retries, retry_backoff, compute_units_per_second })
+        Ok(Self { endpoint, retries, retry_backoff, compute_units_per_second })
     }
 }
 
 impl From<RpcEndpointConfig> for RpcEndpointType {
     fn from(config: RpcEndpointConfig) -> Self {
-        RpcEndpointType::Config(config)
+        Self::Config(config)
     }
 }
 

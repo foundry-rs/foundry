@@ -198,8 +198,7 @@ mod tests {
         let param0 = B256::random();
         let param1 = vec![3; 32];
         let param2 = B256::random();
-        let log =
-            LogData::new_unchecked(vec![event.selector(), param0, param2], param1.clone().into());
+        let log = LogData::new_unchecked(vec![event.selector(), param0, param2], param1.into());
         let event = get_indexed_event(event, &log);
 
         assert_eq!(event.inputs.len(), 3);

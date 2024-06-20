@@ -274,10 +274,10 @@ pub enum Numeric {
 }
 
 impl From<Numeric> for U256 {
-    fn from(n: Numeric) -> U256 {
+    fn from(n: Numeric) -> Self {
         match n {
             Numeric::U256(n) => n,
-            Numeric::Num(n) => U256::from(n),
+            Numeric::Num(n) => Self::from(n),
         }
     }
 }

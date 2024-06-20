@@ -76,8 +76,7 @@ impl TestConfig {
                         result
                             .traces
                             .iter()
-                            .map(|(_, a)| render_trace_arena(a, &call_trace_decoder))
-                            .collect::<Vec<_>>(),
+                            .map(|(_, a)| render_trace_arena(a, &call_trace_decoder)),
                     )
                     .await
                     .into_iter()

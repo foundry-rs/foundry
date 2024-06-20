@@ -1402,7 +1402,7 @@ mod tests {
         let signature = Signature::from_str("0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b").unwrap();
 
         let tx = TypedTransaction::Legacy(Signed::new_unchecked(
-            tx.clone(),
+            tx,
             signature,
             b256!("a517b206d2223278f860ea017d3626cacad4f52ff51030dc9a96b432f17f8d34"),
         ));

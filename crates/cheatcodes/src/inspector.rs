@@ -1225,7 +1225,7 @@ impl Cheatcodes {
                     }
                     _ => {
                         // if just starting with CREATE opcodes, record its inner frame gas
-                        if let Some(None) = self.gas_metering_create {
+                        if self.gas_metering_create == Some(None) {
                             self.gas_metering_create = Some(Some(interpreter.gas))
                         }
 
