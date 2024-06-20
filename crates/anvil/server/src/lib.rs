@@ -12,10 +12,10 @@ use anvil_rpc::{
     response::{ResponseResult, RpcResponse},
 };
 use axum::{
+    extract::DefaultBodyLimit,
     http::{header, HeaderValue, Method},
     routing::{post, MethodRouter},
     Router,
-    extract::DefaultBodyLimit,
 };
 use serde::de::DeserializeOwned;
 use std::fmt;
@@ -73,7 +73,7 @@ fn router_inner<S: Clone + Send + Sync + 'static>(
                 .allow_methods([Method::GET, Method::POST]),
         );
     }
-    if !no_request_size_limit {
+    if no_request_size_limit {
         router = router.layer(DefaultBodyLimit::disable());
     }
     router
