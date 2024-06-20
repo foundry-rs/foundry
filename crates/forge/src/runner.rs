@@ -441,7 +441,7 @@ impl<'a> ContractRunner<'a> {
     #[instrument(level = "debug", name = "normal", skip_all)]
     pub fn run_test(&self, func: &Function, should_fail: bool, setup: TestSetup) -> TestResult {
         let address = setup.address;
-        let mut test_result = TestResult::new(setup);
+        let test_result = TestResult::new(setup);
 
         // Run unit test
         let (mut raw_call_result, reason) = match self.executor.call(

@@ -452,14 +452,14 @@ impl TestResult {
     }
 
     /// Returns the skipped result for single test (used in skipped fuzz test too).
-    pub fn single_skip(&mut self) -> Self {
+    pub fn single_skip(mut self) -> Self {
         self.status = TestStatus::Skipped;
         self.decoded_logs = decode_console_logs(&self.logs);
         self.to_owned()
     }
 
     /// Returns the failed result with reason for single test.
-    pub fn single_fail(&mut self, err: EvmError) -> Self {
+    pub fn single_fail(mut self, err: EvmError) -> Self {
         self.status = TestStatus::Failure;
         self.reason = Some(err.to_string());
         self.to_owned()
@@ -468,7 +468,7 @@ impl TestResult {
     /// Returns the result for single test. Merges execution results (logs, labeled addresses,
     /// traces and coverages) in initial setup results.
     pub fn single_result(
-        &mut self,
+        mut self,
         success: bool,
         reason: Option<String>,
         raw_call_result: RawCallResult,
@@ -497,7 +497,7 @@ impl TestResult {
 
     /// Returns the result for a fuzzed test. Merges fuzz execution results (logs, labeled
     /// addresses, traces and coverages) in initial setup results.
-    pub fn fuzz_result(&mut self, result: FuzzTestResult) -> Self {
+    pub fn fuzz_result(mut self, result: FuzzTestResult) -> Self {
         self.kind = TestKind::Fuzz {
             median_gas: result.median_gas(false),
             mean_gas: result.mean_gas(false),
@@ -524,7 +524,7 @@ impl TestResult {
     }
 
     /// Returns the skipped result for invariant test.
-    pub fn invariant_skip(&mut self) -> Self {
+    pub fn invariant_skip(mut self) -> Self {
         self.kind = TestKind::Invariant { runs: 1, calls: 1, reverts: 1 };
         self.status = TestStatus::Skipped;
         self.decoded_logs = decode_console_logs(&self.logs);
@@ -533,7 +533,7 @@ impl TestResult {
 
     /// Returns the fail result for replayed invariant test.
     pub fn invariant_replay_fail(
-        &mut self,
+        mut self,
         replayed_entirely: bool,
         invariant_name: &String,
         call_sequence: Vec<BaseCounterExample>,
@@ -551,7 +551,7 @@ impl TestResult {
     }
 
     /// Returns the fail result for invariant test setup.
-    pub fn invariant_setup_fail(&mut self, e: Report) -> Self {
+    pub fn invariant_setup_fail(mut self, e: Report) -> Self {
         self.kind = TestKind::Invariant { runs: 0, calls: 0, reverts: 0 };
         self.status = TestStatus::Failure;
         self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
@@ -561,7 +561,7 @@ impl TestResult {
 
     /// Returns the invariant test result.
     pub fn invariant_result(
-        &mut self,
+        mut self,
         gas_report_traces: Vec<Vec<CallTraceArena>>,
         success: bool,
         reason: Option<String>,
