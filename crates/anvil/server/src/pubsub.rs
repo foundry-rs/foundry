@@ -167,7 +167,7 @@ where
         let pin = self.get_mut();
         loop {
             // drive the websocket
-            while let Poll::Ready(Ok(())) = pin.connection.poll_ready_unpin(cx) {
+            while matches!(pin.connection.poll_ready_unpin(cx), Poll::Ready(Ok(()))) {
                 // only start sending if socket is ready
                 if let Some(msg) = pin.pending.pop_front() {
                     if let Err(err) = pin.connection.start_send_unpin(msg) {

@@ -38,7 +38,7 @@ pub struct InvariantConfig {
 
 impl Default for InvariantConfig {
     fn default() -> Self {
-        InvariantConfig {
+        Self {
             runs: 256,
             depth: 500,
             fail_on_revert: false,
@@ -55,7 +55,7 @@ impl Default for InvariantConfig {
 impl InvariantConfig {
     /// Creates invariant configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
     pub fn new(cache_dir: PathBuf) -> Self {
-        InvariantConfig {
+        Self {
             runs: 256,
             depth: 500,
             fail_on_revert: false,

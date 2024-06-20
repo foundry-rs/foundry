@@ -188,7 +188,7 @@ impl EtherscanConfig {
         self,
         alias: Option<&str>,
     ) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
-        let EtherscanConfig { chain, mut url, key } = self;
+        let Self { chain, mut url, key } = self;
 
         if let Some(url) = &mut url {
             *url = interpolate(url)?;
@@ -294,7 +294,7 @@ impl ResolvedEtherscanConfig {
         self,
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
     {
-        let ResolvedEtherscanConfig { api_url, browser_url, key: api_key, chain } = self;
+        let Self { api_url, browser_url, key: api_key, chain } = self;
         let (mainnet_api, mainnet_url) = NamedChain::Mainnet.etherscan_urls().expect("exist; qed");
 
         let cache = chain
@@ -346,16 +346,16 @@ impl EtherscanApiKey {
     /// Returns the key variant
     pub fn as_key(&self) -> Option<&str> {
         match self {
-            EtherscanApiKey::Key(url) => Some(url),
-            EtherscanApiKey::Env(_) => None,
+            Self::Key(url) => Some(url),
+            Self::Env(_) => None,
         }
     }
 
     /// Returns the env variant
     pub fn as_env(&self) -> Option<&str> {
         match self {
-            EtherscanApiKey::Env(val) => Some(val),
-            EtherscanApiKey::Key(_) => None,
+            Self::Env(val) => Some(val),
+            Self::Key(_) => None,
         }
     }
 
@@ -366,8 +366,8 @@ impl EtherscanApiKey {
     /// Returns an error if the type holds a reference to an env var and the env var is not set
     pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
         match self {
-            EtherscanApiKey::Key(key) => Ok(key),
-            EtherscanApiKey::Env(val) => interpolate(&val),
+            Self::Key(key) => Ok(key),
+            Self::Env(val) => interpolate(&val),
         }
     }
 }
@@ -387,11 +387,7 @@ impl<'de> Deserialize<'de> for EtherscanApiKey {
         D: Deserializer<'de>,
     {
         let val = String::deserialize(deserializer)?;
-        let endpoint = if RE_PLACEHOLDER.is_match(&val) {
-            EtherscanApiKey::Env(val)
-        } else {
-            EtherscanApiKey::Key(val)
-        };
+        let endpoint = if RE_PLACEHOLDER.is_match(&val) { Self::Env(val) } else { Self::Key(val) };
 
         Ok(endpoint)
     }
@@ -400,8 +396,8 @@ impl<'de> Deserialize<'de> for EtherscanApiKey {
 impl fmt::Display for EtherscanApiKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EtherscanApiKey::Key(key) => key.fmt(f),
-            EtherscanApiKey::Env(var) => var.fmt(f),
+            Self::Key(key) => key.fmt(f),
+            Self::Env(var) => var.fmt(f),
         }
     }
 }

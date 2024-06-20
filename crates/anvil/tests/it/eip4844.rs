@@ -21,7 +21,7 @@ async fn can_send_eip4844_transaction() {
     let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
 
-    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice("Hello World".as_bytes());
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Hello World");
 
     let sidecar = sidecar.build().unwrap();
     let tx = TransactionRequest::default()

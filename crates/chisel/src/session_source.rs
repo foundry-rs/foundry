@@ -520,7 +520,7 @@ contract {contract_name} {{
                         pt::Import::Rename(s, _, _) |
                         pt::Import::GlobalSymbol(s, _, _) => {
                             let s = match s {
-                                pt::ImportPath::Filename(s) => s.string.clone(),
+                                pt::ImportPath::Filename(s) => s.string,
                                 pt::ImportPath::Path(p) => p.to_string(),
                             };
                             let path = PathBuf::from(s);
