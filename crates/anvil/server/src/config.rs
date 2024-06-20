@@ -23,6 +23,13 @@ pub struct ServerConfig {
         arg(long, help = "Disable CORS", conflicts_with = "allow_origin")
     )]
     pub no_cors: bool,
+
+    /// Whether to disable the axum default body size limit
+    #[cfg_attr(
+        feature = "clap",
+        arg(long, help = "Disable the default request body size limit")
+    )]
+    pub no_request_size_limit: bool,
 }
 
 impl ServerConfig {
@@ -41,7 +48,7 @@ impl ServerConfig {
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { allow_origin: "*".parse::<HeaderValue>().unwrap().into(), no_cors: false }
+        Self { allow_origin: "*".parse::<HeaderValue>().unwrap().into(), no_cors: false, no_request_size_limit: false }
     }
 }
 
