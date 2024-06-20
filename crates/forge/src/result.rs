@@ -600,9 +600,7 @@ impl TestResult {
         let old_coverage = std::mem::take(&mut self.coverage);
         self.coverage = match (old_coverage, other_coverage) {
             (Some(old_coverage), Some(other)) => Some(old_coverage.merged(other)),
-            (None, Some(other)) => Some(other),
-            (Some(old_coverage), None) => Some(old_coverage),
-            (None, None) => None,
+            (a, b) => a.or(b),
         };
     }
 }
