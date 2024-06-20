@@ -202,10 +202,7 @@ impl fmt::Display for Line {
     }
 }
 
-fn format_diff_summary<'a, 'b, 'r>(name: &str, diff: &'r TextDiff<'a, 'b, '_, str>) -> String
-where
-    'r: 'a + 'b,
-{
+fn format_diff_summary<'a>(name: &str, diff: &'a TextDiff<'a, 'a, '_, str>) -> String {
     let cap = 128;
     let mut diff_summary = String::with_capacity(cap);
 
