@@ -22,7 +22,7 @@ impl Db for ForkedDatabase {
         self.database_mut().insert_account(address, account)
     }
 
-    fn set_storage_at(&mut self, address: Address, slot: U256, val: B256) -> DatabaseResult<()> {
+    fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()> {
         // this ensures the account is loaded first
         let _ = Database::basic(self, address)?;
         self.database_mut().set_storage_at(address, slot, val)
@@ -56,7 +56,7 @@ impl Db for ForkedDatabase {
                         nonce: v.info.nonce,
                         balance: v.info.balance,
                         code: code.original_bytes(),
-                        storage: v.storage.into_iter().map(|(k, v)| (k, v.into())).collect(),
+                        storage: v.storage.into_iter().map(|(k, v)| (k.into(), v.into())).collect(),
                     },
                 ))
             })
