@@ -2493,7 +2493,7 @@ impl Provider for DappEnvCompatProvider {
     }
 }
 
-/// Renames a profile from `from` to `to
+/// Renames a profile from `from` to `to`.
 ///
 /// For example given:
 ///
