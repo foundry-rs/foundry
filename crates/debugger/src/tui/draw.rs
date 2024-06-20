@@ -279,7 +279,7 @@ impl DebuggerContext<'_> {
         // Highlighted text: cyan, bold.
         let h_text = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 
-        let mut lines = SourceLines::new(decimal_digits(num_lines));
+        let mut lines = SourceLines::new(start_line, end_line);
 
         // We check if there is other text on the same line before the highlight starts.
         if let Some(last) = before.pop() {
@@ -625,12 +625,13 @@ impl DebuggerContext<'_> {
 /// Wrapper around a list of [`Line`]s that prepends the line number on each new line.
 struct SourceLines<'a> {
     lines: Vec<Line<'a>>,
+    start_line: usize,
     max_line_num: usize,
 }
 
 impl<'a> SourceLines<'a> {
-    fn new(max_line_num: usize) -> Self {
-        Self { lines: Vec::new(), max_line_num }
+    fn new(start_line: usize, end_line: usize) -> Self {
+        Self { lines: Vec::new(), start_line, max_line_num: decimal_digits(end_line) }
     }
 
     fn push(&mut self, line_number_style: Style, line: &'a str, line_style: Style) {
@@ -640,8 +641,11 @@ impl<'a> SourceLines<'a> {
     fn push_raw(&mut self, line_number_style: Style, spans: &[Span<'a>]) {
         let mut line_spans = Vec::with_capacity(4);
 
-        let line_number =
-            format!("{number: >width$} ", number = self.lines.len() + 1, width = self.max_line_num);
+        let line_number = format!(
+            "{number: >width$} ",
+            number = self.start_line + self.lines.len() + 1,
+            width = self.max_line_num
+        );
         line_spans.push(Span::styled(line_number, line_number_style));
 
         // Space between line number and line text.

@@ -85,7 +85,7 @@ impl EtherscanIdentifier {
 
         // construct the map
         for res in outputs {
-            let (project, output, _) = res?;
+            let (project, output, _root) = res?;
             sources.insert(&output, project.root(), None)?;
         }
 
