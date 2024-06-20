@@ -30,7 +30,7 @@ use revm::{
     interpreter::{return_ok, InstructionResult},
     primitives::{
         BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output, ResultAndState,
-        SpecId, TransactTo, TxEnv,
+        SpecId, TxEnv, TxKind,
     },
 };
 use std::{borrow::Cow, collections::HashMap};
@@ -206,7 +206,7 @@ impl Executor {
         value: U256,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
-        let env = self.build_test_env(from, TransactTo::Create, code, value);
+        let env = self.build_test_env(from, TxKind::Create, code, value);
         self.deploy_with_env(env, rd)
     }
 
@@ -215,14 +215,14 @@ impl Executor {
     ///
     /// # Panics
     ///
-    /// Panics if `env.tx.transact_to` is not `TransactTo::Create(_)`.
+    /// Panics if `env.tx.transact_to` is not `TxKind::Create(_)`.
     pub fn deploy_with_env(
         &mut self,
         env: EnvWithHandlerCfg,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         assert!(
-            matches!(env.tx.transact_to, TransactTo::Create),
+            matches!(env.tx.transact_to, TxKind::Create),
             "Expected create transaction, got {:?}",
             env.tx.transact_to
         );
@@ -331,7 +331,7 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
         self.call_with_env(env)
     }
 
@@ -343,7 +343,7 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
         self.transact_with_env(env)
     }
 
@@ -518,7 +518,7 @@ impl Executor {
     fn build_test_env(
         &self,
         caller: Address,
-        transact_to: TransactTo,
+        transact_to: TxKind,
         data: Bytes,
         value: U256,
     ) -> EnvWithHandlerCfg {
