@@ -87,7 +87,6 @@ pub async fn render_trace_arena(
 
             // Display trace header
             let (trace, return_data) = render_trace(&node.trace, decoder).await?;
-            // writeln!(s, "{left}{trace}")?;
 
             // Prepend our tree structure symbols to each line of the displayed trace
             let call_left_prefix = left.to_string();
