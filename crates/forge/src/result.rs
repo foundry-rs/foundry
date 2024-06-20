@@ -455,14 +455,14 @@ impl TestResult {
     pub fn single_skip(mut self) -> Self {
         self.status = TestStatus::Skipped;
         self.decoded_logs = decode_console_logs(&self.logs);
-        self.to_owned()
+        self
     }
 
     /// Returns the failed result with reason for single test.
     pub fn single_fail(mut self, err: EvmError) -> Self {
         self.status = TestStatus::Failure;
         self.reason = Some(err.to_string());
-        self.to_owned()
+        self
     }
 
     /// Returns the result for single test. Merges execution results (logs, labeled addresses,
@@ -492,7 +492,7 @@ impl TestResult {
         self.breakpoints = raw_call_result.cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
         self.duration = Duration::default();
         self.gas_report_traces = Vec::new();
-        self.to_owned()
+        self
     }
 
     /// Returns the result for a fuzzed test. Merges fuzz execution results (logs, labeled
@@ -520,7 +520,7 @@ impl TestResult {
         self.decoded_logs = decode_console_logs(&self.logs);
         self.duration = Duration::default();
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
-        self.to_owned()
+        self
     }
 
     /// Returns the skipped result for invariant test.
@@ -528,7 +528,7 @@ impl TestResult {
         self.kind = TestKind::Invariant { runs: 1, calls: 1, reverts: 1 };
         self.status = TestStatus::Skipped;
         self.decoded_logs = decode_console_logs(&self.logs);
-        self.to_owned()
+        self
     }
 
     /// Returns the fail result for replayed invariant test.
@@ -547,7 +547,7 @@ impl TestResult {
         };
         self.counterexample = Some(CounterExample::Sequence(call_sequence));
         self.decoded_logs = decode_console_logs(&self.logs);
-        self.to_owned()
+        self
     }
 
     /// Returns the fail result for invariant test setup.
@@ -556,7 +556,7 @@ impl TestResult {
         self.status = TestStatus::Failure;
         self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
         self.decoded_logs = decode_console_logs(&self.logs);
-        self.to_owned()
+        self
     }
 
     /// Returns the invariant test result.
@@ -582,7 +582,7 @@ impl TestResult {
         self.counterexample = counterexample;
         self.decoded_logs = decode_console_logs(&self.logs);
         self.gas_report_traces = gas_report_traces;
-        self.to_owned()
+        self
     }
 
     /// Returns `true` if this is the result of a fuzz test
