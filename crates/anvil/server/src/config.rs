@@ -7,38 +7,28 @@ use std::str::FromStr;
 #[cfg_attr(feature = "clap", derive(clap::Parser), command(next_help_heading = "Server options"))]
 pub struct ServerConfig {
     /// The cors `allow_origin` header
-    #[cfg_attr(
-        feature = "clap",
-        arg(
-            long,
-            help = "Set the CORS allow_origin",
-            default_value = "*",
-            value_name = "ALLOW_ORIGIN"
-        )
-    )]
+    #[cfg_attr(feature = "clap", arg(long, default_value = "*"))]
     pub allow_origin: HeaderValueWrapper,
-    /// Whether to enable CORS
-    #[cfg_attr(
-        feature = "clap",
-        arg(long, help = "Disable CORS", conflicts_with = "allow_origin")
-    )]
+
+    /// Disable CORS.
+    #[cfg_attr(feature = "clap", arg(long, conflicts_with = "allow_origin"))]
     pub no_cors: bool,
 
-    /// Whether to disable the axum default body size limit
-    #[cfg_attr(feature = "clap", arg(long, help = "Disable the default request body size limit. At time of writing the default limit is 2MB"))]
+    /// Disable the default request body size limit. At time of writing the default limit is 2MB.
+    #[cfg_attr(feature = "clap", arg(long))]
     pub no_request_size_limit: bool,
 }
 
 impl ServerConfig {
-    /// Sets the "allow origin" header for cors
+    /// Sets the "allow origin" header for CORS.
     pub fn with_allow_origin(mut self, allow_origin: impl Into<HeaderValueWrapper>) -> Self {
         self.allow_origin = allow_origin.into();
         self
     }
 
-    /// Whether to enable CORS
+    /// Whether to enable CORS.
     pub fn set_cors(mut self, cors: bool) -> Self {
-        self.no_cors = cors;
+        self.no_cors = !cors;
         self
     }
 }
