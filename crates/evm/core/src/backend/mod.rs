@@ -19,7 +19,7 @@ use revm::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
         Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, EvmState, EvmStorageSlot,
-        HashMap as Map, Log, ResultAndState, SpecId, TransactTo, KECCAK_EMPTY,
+        HashMap as Map, Log, ResultAndState, SpecId, TxKind, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, JournaledState,
 };
@@ -767,8 +767,8 @@ impl Backend {
         self.set_spec_id(env.handler_cfg.spec_id);
 
         let test_contract = match env.tx.transact_to {
-            TransactTo::Call(to) => to,
-            TransactTo::Create => {
+            TxKind::Call(to) => to,
+            TxKind::Create => {
                 let nonce = self
                     .basic_ref(env.tx.caller)
                     .map(|b| b.unwrap_or_default().nonce)

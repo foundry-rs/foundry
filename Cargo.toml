@@ -29,7 +29,7 @@ resolver = "2"
 version = "0.2.0"
 edition = "2021"
 # Remember to update clippy.toml as well
-rust-version = "1.76"
+rust-version = "1.79"
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/foundry-rs/foundry"
@@ -48,6 +48,7 @@ octal-escapes = "allow"
 rust-2018-idioms = "warn"
 # unreachable-pub = "warn"
 unused-must-use = "warn"
+redundant-lifetimes = "warn"
 
 [workspace.lints.rustdoc]
 all = "warn"
@@ -160,11 +161,9 @@ foundry-compilers = { version = "0.8.0", default-features = false }
 
 ## revm
 # no default features to avoid c-kzg
-revm = { version = "9.0.0", default-features = false }
-revm-primitives = { version = "4.0.0", default-features = false }
-revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", rev = "4fe17f0", features = [
-    "serde",
-] }
+revm = { version = "10.0.0", default-features = false }
+revm-primitives = { version = "5.0.0", default-features = false }
+revm-inspectors = { version = "0.1", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
@@ -260,9 +259,3 @@ tower = "0.4"
 tower-http = "0.5"
 # soldeer
 soldeer = "0.2.15"
-
-[patch.crates-io]
-revm = { git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f" }
-revm-interpreter = { git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f" }
-revm-precompile = { git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f" }
-revm-primitives = { git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f" }

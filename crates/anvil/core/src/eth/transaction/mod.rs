@@ -18,7 +18,7 @@ use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 use revm::{
     interpreter::InstructionResult,
-    primitives::{OptimismFields, TransactTo, TxEnv},
+    primitives::{OptimismFields, TxEnv},
 };
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
@@ -446,10 +446,10 @@ impl PendingTransaction {
     /// Converts the [PendingTransaction] into the [TxEnv] context that [`revm`](foundry_evm)
     /// expects.
     pub fn to_revm_tx_env(&self) -> TxEnv {
-        fn transact_to(kind: &TxKind) -> TransactTo {
+        fn transact_to(kind: &TxKind) -> TxKind {
             match kind {
-                TxKind::Call(c) => TransactTo::Call(*c),
-                TxKind::Create => TransactTo::Create,
+                TxKind::Call(c) => TxKind::Call(*c),
+                TxKind::Create => TxKind::Create,
             }
         }
 
@@ -542,7 +542,7 @@ impl PendingTransaction {
                 } = tx.tx().tx();
                 TxEnv {
                     caller,
-                    transact_to: TransactTo::call(*to),
+                    transact_to: TxKind::Call(*to),
                     data: input.clone(),
                     chain_id: Some(*chain_id),
                     nonce: Some(*nonce),

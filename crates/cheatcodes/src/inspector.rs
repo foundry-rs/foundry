@@ -32,7 +32,7 @@ use revm::{
         opcode, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
-    primitives::{BlockEnv, CreateScheme, TransactTo},
+    primitives::{BlockEnv, CreateScheme},
     EvmContext, InnerEvmContext, Inspector,
 };
 use rustc_hash::FxHashMap;
@@ -846,7 +846,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // try to diagnose reverts in multi-fork mode where a call is made to an address that does
         // not exist
-        if let TransactTo::Call(test_contract) = ecx.env.tx.transact_to {
+        if let TxKind::Call(test_contract) = ecx.env.tx.transact_to {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
             if ecx.db.is_forked_mode() &&
