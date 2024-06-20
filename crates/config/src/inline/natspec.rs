@@ -95,7 +95,7 @@ impl SolcParser {
     /// the provided contract_id.
     fn contract_root_node<'a>(&self, nodes: &'a [Node], contract_id: &str) -> Option<&'a Node> {
         for n in nodes.iter() {
-            if let NodeType::ContractDefinition = n.node_type {
+            if n.node_type == NodeType::ContractDefinition {
                 let contract_data = &n.other;
                 if let Value::String(contract_name) = contract_data.get("name")? {
                     if contract_id.ends_with(contract_name) {
@@ -126,7 +126,7 @@ impl SolcParser {
     ///
     /// Return None otherwise.
     fn get_fn_data(&self, node: &Node) -> Option<(String, String, String)> {
-        if let NodeType::FunctionDefinition = node.node_type {
+        if node.node_type == NodeType::FunctionDefinition {
             let fn_data = &node.other;
             let fn_name: String = self.get_fn_name(fn_data)?;
             let (fn_docs, docs_src_line): (String, String) = self.get_fn_docs(fn_data)?;

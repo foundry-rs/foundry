@@ -16,10 +16,11 @@ pub struct SoldeerDependency {
 }
 
 /// Type for Soldeer configs, under dependencies tag in the foundry.toml
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SoldeerConfig(BTreeMap<String, SoldeerDependency>);
-impl AsRef<SoldeerConfig> for SoldeerConfig {
-    fn as_ref(&self) -> &SoldeerConfig {
+
+impl AsRef<Self> for SoldeerConfig {
+    fn as_ref(&self) -> &Self {
         self
     }
 }

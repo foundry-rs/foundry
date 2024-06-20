@@ -184,9 +184,8 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
             frame_or_result
         });
 
-    let create2_overrides_inner = create2_overrides.clone();
+    let create2_overrides_inner = create2_overrides;
     let old_handle = handler.execution.insert_call_outcome.clone();
-
     handler.execution.insert_call_outcome =
         Arc::new(move |ctx, frame, shared_memory, mut outcome| {
             // If we are on the depth of the latest override, handle the outcome.

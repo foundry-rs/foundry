@@ -108,24 +108,22 @@ impl MultiSolMacroGen {
         let cargo_toml_path = bindings_path.join("Cargo.toml");
         let mut toml_contents = format!(
             r#"[package]
-name = "{}"
-version = "{}"
+name = "{name}"
+version = "{version}"
 edition = "2021"
 
 [dependencies]
-"#,
-            name, version
+"#
         );
 
         let alloy_dep = if let Some(alloy_version) = alloy_version {
             format!(
-                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{}", features = ["sol-types", "contract"] }}"#,
-                alloy_version
+                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{alloy_version}", features = ["sol-types", "contract"] }}"#
             )
         } else {
             r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
         };
-        write!(toml_contents, "{}", alloy_dep)?;
+        write!(toml_contents, "{alloy_dep}")?;
 
         fs::write(cargo_toml_path, toml_contents).wrap_err("Failed to write Cargo.toml")?;
 
@@ -146,14 +144,14 @@ edition = "2021"
             let contents = instance.expansion.as_ref().unwrap().to_string();
 
             if !single_file {
-                let path = src.join(format!("{}.rs", name));
+                let path = src.join(format!("{name}.rs"));
                 let file = syn::parse_file(&contents)?;
                 let contents = prettyplease::unparse(&file);
 
                 fs::write(path.clone(), contents).wrap_err("Failed to write file")?;
-                writeln!(&mut lib_contents, "pub mod {};", name)?;
+                writeln!(&mut lib_contents, "pub mod {name};")?;
             } else {
-                write!(&mut lib_contents, "{}", contents)?;
+                write!(&mut lib_contents, "{contents}")?;
             }
         }
 
@@ -196,13 +194,13 @@ edition = "2021"
                 let file = syn::parse_file(&contents)?;
 
                 let contents = prettyplease::unparse(&file);
-                fs::write(bindings_path.join(format!("{}.rs", name)), contents)
+                fs::write(bindings_path.join(format!("{name}.rs")), contents)
                     .wrap_err("Failed to write file")?;
             } else {
                 // Single File
                 let mut contents = String::new();
                 write!(contents, "{}\n\n", instance.expansion.as_ref().unwrap())?;
-                write!(mod_contents, "{}", contents)?;
+                write!(mod_contents, "{contents}")?;
             }
         }
 
@@ -249,9 +247,9 @@ edition = "2021"
             for instance in &self.instances {
                 let name = instance.name.to_lowercase();
                 let path = if is_mod {
-                    crate_path.join(format!("{}.rs", name))
+                    crate_path.join(format!("{name}.rs"))
                 } else {
-                    crate_path.join(format!("src/{}.rs", name))
+                    crate_path.join(format!("src/{name}.rs"))
                 };
                 let tokens = instance
                     .expansion
@@ -263,9 +261,8 @@ edition = "2021"
 
                 write!(
                     &mut super_contents,
-                    r#"pub mod {};
-                    "#,
-                    name
+                    r#"pub mod {name};
+                    "#
                 )?;
             }
 

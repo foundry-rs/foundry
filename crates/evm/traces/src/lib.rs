@@ -242,7 +242,7 @@ async fn render_trace_log(
                 .collect::<Vec<String>>()
                 .join(", ");
 
-            write!(s, "emit {}({params})", name.clone().cyan())?;
+            write!(s, "emit {}({params})", name.cyan())?;
         }
     }
 

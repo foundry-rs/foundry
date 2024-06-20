@@ -21,7 +21,7 @@ pub struct UnresolvedEnvVarError {
 
 impl UnresolvedEnvVarError {
     /// Tries to resolve a value
-    pub fn try_resolve(&self) -> Result<String, UnresolvedEnvVarError> {
+    pub fn try_resolve(&self) -> Result<String, Self> {
         interpolate(&self.unresolved)
     }
 }

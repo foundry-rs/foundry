@@ -229,7 +229,7 @@ impl ForgeTestData {
             .enable_isolation(opts.isolate)
             .sender(sender)
             .with_test_options(self.test_opts.clone())
-            .build(root, output, env, opts.clone())
+            .build(root, output, env, opts)
             .unwrap()
     }
 

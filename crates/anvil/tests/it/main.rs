@@ -1,4 +1,3 @@
-#![allow(clippy::octal_escapes)]
 mod abi;
 mod anvil;
 mod anvil_api;
