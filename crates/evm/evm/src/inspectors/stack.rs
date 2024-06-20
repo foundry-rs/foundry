@@ -16,9 +16,7 @@ use revm::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
         Interpreter, InterpreterResult,
     },
-    primitives::{
-        BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult, Output, TransactTo,
-    },
+    primitives::{BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult, Output, TxKind},
     DatabaseCommit, EvmContext, Inspector,
 };
 use std::{collections::HashMap, sync::Arc};
@@ -455,7 +453,7 @@ impl InspectorStack {
     fn transact_inner<DB: DatabaseExt + DatabaseCommit>(
         &mut self,
         ecx: &mut EvmContext<&mut DB>,
-        transact_to: TransactTo,
+        transact_to: TxKind,
         caller: Address,
         input: Bytes,
         gas_limit: u64,
@@ -477,7 +475,7 @@ impl InspectorStack {
 
         ecx.env.block.basefee = U256::ZERO;
         ecx.env.tx.caller = caller;
-        ecx.env.tx.transact_to = transact_to.clone();
+        ecx.env.tx.transact_to = transact_to;
         ecx.env.tx.data = input;
         ecx.env.tx.value = value;
         ecx.env.tx.nonce = Some(nonce);
@@ -495,7 +493,7 @@ impl InspectorStack {
             sender: ecx.env.tx.caller,
             original_origin: cached_env.tx.caller,
             original_sender_nonce: nonce,
-            is_create: matches!(transact_to, TransactTo::Create),
+            is_create: matches!(transact_to, TxKind::Create),
         });
         self.in_inner_context = true;
 
@@ -690,7 +688,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
         {
             let (result, _) = self.transact_inner(
                 ecx,
-                TransactTo::Call(call.target_address),
+                TxKind::Call(call.target_address),
                 call.caller,
                 call.input.clone(),
                 call.gas_limit,
@@ -752,7 +750,7 @@ impl<DB: DatabaseExt + DatabaseCommit> Inspector<&mut DB> for InspectorStack {
         {
             let (result, address) = self.transact_inner(
                 ecx,
-                TransactTo::Create,
+                TxKind::Create,
                 create.caller,
                 create.init_code.clone(),
                 create.gas_limit,
