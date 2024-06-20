@@ -1004,7 +1004,7 @@ impl Config {
     /// let rpc_jwt = config.get_rpc_jwt_secret().unwrap().unwrap();
     /// # }
     /// ```
-    pub fn get_rpc_jwt_secret(&self) -> Result<Option<Cow<str>>, UnresolvedEnvVarError> {
+    pub fn get_rpc_jwt_secret(&self) -> Result<Option<Cow<'_, str>>, UnresolvedEnvVarError> {
         Ok(self.eth_rpc_jwt.as_ref().map(|jwt| Cow::Borrowed(jwt.as_str())))
     }
 
@@ -1023,7 +1023,7 @@ impl Config {
     /// let rpc_url = config.get_rpc_url().unwrap().unwrap();
     /// # }
     /// ```
-    pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
+    pub fn get_rpc_url(&self) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
         let maybe_alias = self.eth_rpc_url.as_ref().or(self.etherscan_api_key.as_ref())?;
         if let Some(alias) = self.get_rpc_url_with_alias(maybe_alias) {
             Some(alias)
@@ -1050,7 +1050,7 @@ impl Config {
     pub fn get_rpc_url_with_alias(
         &self,
         maybe_alias: &str,
-    ) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
+    ) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
         let mut endpoints = self.rpc_endpoints.clone().resolved();
         Some(endpoints.remove(maybe_alias)?.map(Cow::Owned))
     }
@@ -1069,7 +1069,7 @@ impl Config {
     pub fn get_rpc_url_or<'a>(
         &'a self,
         fallback: impl Into<Cow<'a, str>>,
-    ) -> Result<Cow<str>, UnresolvedEnvVarError> {
+    ) -> Result<Cow<'_, str>, UnresolvedEnvVarError> {
         if let Some(url) = self.get_rpc_url() {
             url
         } else {
@@ -1088,7 +1088,7 @@ impl Config {
     /// let rpc_url = config.get_rpc_url_or_localhost_http().unwrap();
     /// # }
     /// ```
-    pub fn get_rpc_url_or_localhost_http(&self) -> Result<Cow<str>, UnresolvedEnvVarError> {
+    pub fn get_rpc_url_or_localhost_http(&self) -> Result<Cow<'_, str>, UnresolvedEnvVarError> {
         self.get_rpc_url_or("http://localhost:8545")
     }
 

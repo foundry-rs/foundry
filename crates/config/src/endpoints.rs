@@ -239,18 +239,18 @@ impl fmt::Display for RpcEndpointConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self { endpoint, retries, retry_backoff, compute_units_per_second } = self;
 
-        write!(f, "{}", endpoint)?;
+        write!(f, "{endpoint}")?;
 
         if let Some(retries) = retries {
-            write!(f, ", retries={}", retries)?;
+            write!(f, ", retries={retries}")?;
         }
 
         if let Some(retry_backoff) = retry_backoff {
-            write!(f, ", retry_backoff={}", retry_backoff)?;
+            write!(f, ", retry_backoff={retry_backoff}")?;
         }
 
         if let Some(compute_units_per_second) = compute_units_per_second {
-            write!(f, ", compute_units_per_second={}", compute_units_per_second)?;
+            write!(f, ", compute_units_per_second={compute_units_per_second}")?;
         }
 
         Ok(())
