@@ -10,7 +10,7 @@ use foundry_compilers::{
     },
     ArtifactId,
 };
-use std::{collections::BTreeMap, ops::Deref, str::FromStr, sync::Arc};
+use std::{collections::BTreeMap, f64::consts::E, ops::Deref, str::FromStr, sync::Arc};
 
 /// Libraries' runtime code always starts with the following instruction:
 /// `PUSH20 0x0000000000000000000000000000000000000000`
@@ -118,24 +118,32 @@ impl ContractsByArtifact {
 
     /// Finds a contract which has a similar bytecode as `code`.
     pub fn find_by_creation_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
-        self.iter().find(|(_, contract)| {
-            if let Some(bytecode) = contract.bytecode() {
-                bytecode_diff_score(bytecode.as_ref(), code) <= 0.1
-            } else {
-                false
-            }
-        })
+        self.iter()
+            .filter_map(|(id, contract)| {
+                if let Some(bytecode) = contract.bytecode() {
+                    let score = bytecode_diff_score(bytecode.as_ref(), code);
+                    (score <= 0.1).then_some((score, (id, contract)))
+                } else {
+                    None
+                }
+            })
+            .min_by(|(score1, _), (score2, _)| score1.partial_cmp(score2).unwrap())
+            .map(|(_, data)| data)
     }
 
     /// Finds a contract which has a similar deployed bytecode as `code`.
     pub fn find_by_deployed_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
-        self.iter().find(|(_, contract)| {
-            if let Some(deployed_bytecode) = contract.deployed_bytecode() {
-                bytecode_diff_score(deployed_bytecode.as_ref(), code) <= 0.1
-            } else {
-                false
-            }
-        })
+        self.iter()
+            .filter_map(|(id, contract)| {
+                if let Some(deployed_bytecode) = contract.deployed_bytecode() {
+                    let score = bytecode_diff_score(deployed_bytecode.as_ref(), code);
+                    (score <= 0.1).then_some((score, (id, contract)))
+                } else {
+                    None
+                }
+            })
+            .min_by(|(score1, _), (score2, _)| score1.partial_cmp(score2).unwrap())
+            .map(|(_, data)| data)
     }
 
     /// Finds a contract which deployed bytecode exactly matches the given code. Accounts for link
