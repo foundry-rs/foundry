@@ -10,7 +10,7 @@ use foundry_compilers::{
     },
     ArtifactId,
 };
-use std::{collections::BTreeMap, f64::consts::E, ops::Deref, str::FromStr, sync::Arc};
+use std::{collections::BTreeMap, ops::Deref, str::FromStr, sync::Arc};
 
 /// Libraries' runtime code always starts with the following instruction:
 /// `PUSH20 0x0000000000000000000000000000000000000000`
