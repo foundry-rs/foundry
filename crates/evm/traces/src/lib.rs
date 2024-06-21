@@ -55,7 +55,7 @@ pub async fn render_trace_arena(
     decoder: &CallTraceDecoder,
 ) -> Result<String, std::fmt::Error> {
     decoder.prefetch_signatures(arena.nodes()).await;
-    decoder.extend_trace(arena).await;
+    decoder.extend_traces(arena).await;
 
     let mut w = TraceWriter::new(Vec::<u8>::new()).use_colors(revm_inspectors::ColorChoice::Auto);
     w.write_arena(arena).expect("Failed to write traces");
