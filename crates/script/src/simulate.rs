@@ -154,11 +154,11 @@ impl PreSimulationState {
 
         let mut abort = false;
         for res in join_all(futs).await {
-            let (tx, traces) = res?;
+            let (tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
             if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
-                for (_, trace) in &traces {
+                for (_, trace) in &mut traces {
                     println!(
                         "{}",
                         render_trace_arena(trace, &self.execution_artifacts.decoder).await?

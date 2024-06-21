@@ -932,7 +932,7 @@ impl ChiselDispatcher {
         }
 
         println!("{}", "Traces:".green());
-        for (kind, trace) in &result.traces {
+        for (kind, trace) in &mut result.traces {
             // Display all Setup + Execution traces.
             if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
                 println!("{}", render_trace_arena(trace, decoder).await?);

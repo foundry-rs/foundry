@@ -3967,7 +3967,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "yansi",
 ]
 
 [[package]]
@@ -6946,7 +6945,7 @@ dependencies = [
 [[package]]
 name = "revm-inspectors"
 version = "0.1.2"
-source = "git+https://github.com/zerosnacks/evm-inspectors.git?rev=7984d56294a266286544ad045e7d8fc9176dd5e4#7984d56294a266286544ad045e7d8fc9176dd5e4"
+source = "git+https://github.com/zerosnacks/evm-inspectors.git?rev=df563b737c05eb62269384f432091a165cd76611#df563b737c05eb62269384f432091a165cd76611"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",

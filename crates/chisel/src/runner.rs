@@ -7,7 +7,7 @@ use alloy_primitives::{Address, Bytes, Log, U256};
 use eyre::Result;
 use foundry_evm::{
     executors::{DeployResult, Executor, RawCallResult},
-    traces::{CallTraceArena, TraceKind},
+    traces::{TraceKind, Traces},
 };
 use revm::interpreter::{return_ok, InstructionResult};
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ pub struct ChiselResult {
     /// Transaction logs
     pub logs: Vec<Log>,
     /// Call traces
-    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub traces: Traces,
     /// Amount of gas used in the transaction
     pub gas_used: u64,
     /// Map of addresses to their labels

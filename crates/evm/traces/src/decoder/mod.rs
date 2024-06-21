@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
-use alloy_primitives::{Address, LogData, Selector, B256};
+use alloy_primitives::{Address, Selector, B256};
 use foundry_common::{
     abi::get_indexed_event, fmt::format_token, ContractsByArtifact, SELECTOR_LEN,
 };
@@ -20,6 +20,7 @@ use foundry_evm_core::{
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
+use revm_inspectors::tracing::types::CallLog;
 use rustc_hash::FxHashMap;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 
@@ -291,6 +292,28 @@ impl CallTraceDecoder {
         }
     }
 
+    pub async fn decode(&self, traces: &mut CallTraceArena) {
+        for node in traces.nodes_mut() {
+            let decoded = self.decode_function(&mut node.trace).await;
+            node.trace.decoded_label = decoded.label;
+            node.trace.decoded_call_data = decoded.func;
+            node.trace.decoded_return_data = decoded.return_data;
+            node.trace.decoded_contract_name = decoded.contract;
+
+            for log in node.logs.iter_mut() {
+                let decoded = self.decode_event(log).await;
+
+                match decoded {
+                    DecodedCallLog::Decoded(name, params) => {
+                        log.decoded_name = Some(name);
+                        log.decoded_params = Some(params);
+                    }
+                    DecodedCallLog::Raw(_) => {}
+                }
+            }
+        }
+    }
+
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
         // Decode precompile
         if let Some((label, func)) = precompiles::decode(trace, 1) {
@@ -533,23 +556,23 @@ impl CallTraceDecoder {
     }
 
     /// Decodes an event.
-    pub async fn decode_event<'a>(&self, log: &'a LogData) -> DecodedCallLog<'a> {
-        let &[t0, ..] = log.topics() else { return DecodedCallLog::Raw(log) };
+    pub async fn decode_event<'a>(&self, log: &'a CallLog) -> DecodedCallLog<'a> {
+        let &[t0, ..] = log.raw_log.topics() else { return DecodedCallLog::Raw(log) };
 
         let mut events = Vec::new();
-        let events = match self.events.get(&(t0, log.topics().len() - 1)) {
+        let events = match self.events.get(&(t0, log.raw_log.topics().len() - 1)) {
             Some(es) => es,
             None => {
                 if let Some(identifier) = &self.signature_identifier {
                     if let Some(event) = identifier.write().await.identify_event(&t0[..]).await {
-                        events.push(get_indexed_event(event, log));
+                        events.push(get_indexed_event(event, &log.raw_log));
                     }
                 }
                 &events
             }
         };
         for event in events {
-            if let Ok(decoded) = event.decode_log(log, false) {
+            if let Ok(decoded) = event.decode_log(&log.raw_log, false) {
                 let params = reconstruct_params(event, &decoded);
                 return DecodedCallLog::Decoded(
                     event.name.clone(),
@@ -575,7 +598,7 @@ impl CallTraceDecoder {
 
         let events_it = nodes
             .iter()
-            .flat_map(|node| node.logs.iter().filter_map(|log| log.topics().first()))
+            .flat_map(|node| node.logs.iter().filter_map(|log| log.raw_log.topics().first()))
             .unique();
         identifier.write().await.identify_events(events_it).await;
 

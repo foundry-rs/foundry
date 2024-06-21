@@ -163,7 +163,7 @@ foundry-compilers = { version = "0.8.0", default-features = false }
 # no default features to avoid c-kzg
 revm = { version = "10.0.0", default-features = false }
 revm-primitives = { version = "5.0.0", default-features = false }
-revm-inspectors = { git = "https://github.com/zerosnacks/evm-inspectors.git", rev = "7984d56294a266286544ad045e7d8fc9176dd5e4", features = [
+revm-inspectors = { git = "https://github.com/zerosnacks/evm-inspectors.git", rev = "df563b737c05eb62269384f432091a165cd76611", features = [
     "serde",
 ] }
 

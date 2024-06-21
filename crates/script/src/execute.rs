@@ -421,7 +421,7 @@ impl PreSimulationState {
             }
 
             shell::println("Traces:")?;
-            for (kind, trace) in &result.traces {
+            for (kind, mut trace) in result.traces.clone() {
                 let should_include = match kind {
                     TraceKind::Setup => verbosity >= 5,
                     TraceKind::Execution => verbosity > 3,
@@ -429,7 +429,7 @@ impl PreSimulationState {
                 } || !result.success;
 
                 if should_include {
-                    shell::println(render_trace_arena(trace, decoder).await?)?;
+                    shell::println(render_trace_arena(&mut trace, decoder).await?)?;
                 }
             }
             shell::println(String::new())?;

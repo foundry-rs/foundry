@@ -475,7 +475,7 @@ impl TestArgs {
 
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
-                for (kind, arena) in &result.traces {
+                for (kind, arena) in &mut result.traces.clone() {
                     if identify_addresses {
                         decoder.identify(arena, &mut identifier);
                     }
@@ -517,7 +517,7 @@ impl TestArgs {
 
                         // Re-execute setup and deployment traces to collect identities created in
                         // setUp and constructor.
-                        for (kind, arena) in &result.traces {
+                        for (kind, arena) in &mut result.traces.clone() {
                             if !matches!(kind, TraceKind::Execution) {
                                 decoder.identify(arena, &mut identifier);
                             }

@@ -65,7 +65,7 @@ impl TestConfig {
             eyre::bail!("empty test result");
         }
         for (_, SuiteResult { test_results, .. }) in suite_result {
-            for (test_name, result) in test_results {
+            for (test_name, mut result) in test_results {
                 if self.should_fail && (result.status == TestStatus::Success) ||
                     !self.should_fail && (result.status == TestStatus::Failure)
                 {
@@ -75,7 +75,7 @@ impl TestConfig {
                     let decoded_traces = join_all(
                         result
                             .traces
-                            .iter()
+                            .iter_mut()
                             .map(|(_, a)| render_trace_arena(a, &call_trace_decoder)),
                     )
                     .await
