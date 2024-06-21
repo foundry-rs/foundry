@@ -12,9 +12,16 @@ use alloy_primitives::LogData;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use futures::{future::BoxFuture, FutureExt};
+use revm_inspectors::tracing::types::TraceMemberOrder;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use yansi::{Color, Paint};
+
+pub use revm_inspectors::tracing::{
+    types::{CallKind, CallTrace, CallTraceNode},
+    CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TracingInspector,
+    TracingInspectorConfig,
+};
 
 /// Call trace address identifiers.
 ///
@@ -24,13 +31,6 @@ use identifier::{LocalTraceIdentifier, TraceIdentifier};
 
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
-
-use revm_inspectors::tracing::types::LogCallOrder;
-pub use revm_inspectors::tracing::{
-    types::{CallKind, CallTrace, CallTraceNode},
-    CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TracingInspector,
-    TracingInspectorConfig,
-};
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
@@ -94,7 +94,7 @@ pub async fn render_trace_arena(
             let right_prefix = format!("{child}{PIPE}");
             for child in &node.ordering {
                 match child {
-                    LogCallOrder::Log(index) => {
+                    TraceMemberOrder::Log(index) => {
                         let log = render_trace_log(&node.logs[*index], decoder).await?;
 
                         // Prepend our tree structure symbols to each line of the displayed log
@@ -107,7 +107,7 @@ pub async fn render_trace_arena(
                             )
                         })?;
                     }
-                    LogCallOrder::Call(index) => {
+                    TraceMemberOrder::Call(index) => {
                         inner(
                             arena,
                             decoder,
@@ -118,6 +118,7 @@ pub async fn render_trace_arena(
                         )
                         .await?;
                     }
+                    TraceMemberOrder::Step(_) => {}
                 }
             }
 
