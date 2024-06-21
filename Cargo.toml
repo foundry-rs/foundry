@@ -259,6 +259,3 @@ tower = "0.4"
 tower-http = "0.5"
 # soldeer
 soldeer = "0.2.15"
-
-[patch.crates-io]
-revm-inspectors = { git = "https://github.com/klkvr/evm-inspectors", rev = "7b649e5" }

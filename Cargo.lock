@@ -3656,7 +3656,6 @@ dependencies = [
  "foundry-block-explorers",
  "foundry-compilers",
  "foundry-config",
- "foundry-linking",
  "foundry-macros",
  "num-format",
  "once_cell",
@@ -3957,6 +3956,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm-core",
+ "foundry-linking",
  "futures",
  "itertools 0.13.0",
  "once_cell",
@@ -6944,8 +6944,9 @@ dependencies = [
 
 [[package]]
 name = "revm-inspectors"
-version = "0.1.0"
-source = "git+https://github.com/klkvr/evm-inspectors?rev=7b649e5#7b649e5ca690f94bd6bbd9f8bcc655bc282a16b6"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b0971cad2f8f1ecb10e270d80646e63bf19daef0dc0a17a45680d24bb346b7c"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",

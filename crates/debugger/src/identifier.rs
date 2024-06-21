@@ -1,11 +1,12 @@
 use alloy_primitives::Address;
-use foundry_common::{compile::ContractSources, get_contract_name};
+use foundry_common::get_contract_name;
 use foundry_compilers::{
     artifacts::sourcemap::{Jump, SourceElement},
     multi::MultiCompilerLanguage,
 };
-use foundry_evm_core::utils::PcIcMap;
-use foundry_evm_traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedTraceStep};
+use foundry_evm_traces::{
+    identifier::ContractSources, CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedTraceStep,
+};
 use revm::interpreter::OpCode;
 use std::collections::HashMap;
 
@@ -14,8 +15,6 @@ pub struct DebugTraceIdentifier {
     identified_contracts: HashMap<Address, String>,
     /// Source map of contract sources
     contracts_sources: ContractSources,
-    /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
-    pc_ic_maps: HashMap<String, (PcIcMap, PcIcMap)>,
 }
 
 impl DebugTraceIdentifier {
@@ -27,19 +26,7 @@ impl DebugTraceIdentifier {
         identified_contracts: HashMap<Address, String>,
         contracts_sources: ContractSources,
     ) -> Self {
-        let pc_ic_maps = contracts_sources
-            .entries()
-            .filter_map(|(name, artifact, _)| {
-                Some((
-                    name.to_owned(),
-                    (
-                        PcIcMap::new(artifact.bytecode.bytecode.bytes()?),
-                        PcIcMap::new(artifact.bytecode.deployed_bytecode.bytes()?),
-                    ),
-                ))
-            })
-            .collect();
-        Self { identified_contracts, contracts_sources, pc_ic_maps }
+        Self { identified_contracts, contracts_sources }
     }
 
     pub fn identify(
@@ -56,20 +43,19 @@ impl DebugTraceIdentifier {
             return Err(format!("No source map index for contract {contract_name}"));
         };
 
-        let Some((create_map, rt_map)) = self.pc_ic_maps.get(contract_name) else {
-            return Err(format!("No PC-IC maps for contract {contract_name}"));
-        };
-
         let Some((source_element, source_code, source_file)) =
             files_source_code.find_map(|(artifact, source)| {
-                let bytecode = if init_code {
-                    &artifact.bytecode.bytecode
+                let source_map = if init_code {
+                    artifact.source_map.as_ref()
                 } else {
-                    artifact.bytecode.deployed_bytecode.bytecode.as_ref()?
-                };
-                let source_map = bytecode.source_map()?.expect("failed to parse");
+                    artifact.source_map_runtime.as_ref()
+                }?;
 
-                let pc_ic_map = if init_code { create_map } else { rt_map };
+                let pc_ic_map = if init_code {
+                    artifact.pc_ic_map.as_ref()
+                } else {
+                    artifact.pc_ic_map_runtime.as_ref()
+                }?;
                 let ic = pc_ic_map.get(pc)?;
 
                 // Solc indexes source maps by instruction counter, but Vyper indexes by program

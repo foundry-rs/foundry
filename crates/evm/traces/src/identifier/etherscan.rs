@@ -1,10 +1,10 @@
-use super::{AddressIdentity, TraceIdentifier};
+use super::{AddressIdentity, ContractSources, TraceIdentifier};
 use alloy_primitives::Address;
 use foundry_block_explorers::{
     contract::{ContractMetadata, Metadata},
     errors::EtherscanError,
 };
-use foundry_common::compile::{etherscan_project, ContractSources};
+use foundry_common::compile::etherscan_project;
 use foundry_config::{Chain, Config};
 use futures::{
     future::{join_all, Future},

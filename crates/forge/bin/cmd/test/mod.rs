@@ -8,8 +8,8 @@ use forge::{
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
-        identifier::SignaturesIdentifier, render_trace_arena_with_internals,
-        CallTraceDecoderBuilder, TraceKind,
+        identifier::{ContractSources, SignaturesIdentifier},
+        render_trace_arena_with_internals, CallTraceDecoderBuilder, TraceKind,
     },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
@@ -17,11 +17,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{
-    compile::{ContractSources, ProjectCompiler},
-    evm::EvmArgs,
-    shell,
-};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, shell};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
