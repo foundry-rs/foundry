@@ -25,7 +25,7 @@ use identifier::{LocalTraceIdentifier, TraceIdentifier};
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
-use revm_inspectors::tracing::types::LogCallOrder;
+use revm_inspectors::tracing::types::TraceMemberOrder;
 pub use revm_inspectors::tracing::{
     types::{CallKind, CallTrace, CallTraceNode},
     CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TracingInspector,
@@ -59,24 +59,106 @@ pub enum DecodedCallLog<'a> {
     Decoded(String, Vec<(String, String)>),
 }
 
+#[derive(Debug, Clone)]
+pub struct DecodedTraceStep<'a> {
+    pub start_step_idx: usize,
+    pub end_step_idx: usize,
+    pub function_name: &'a str,
+    pub gas_used: i64,
+}
+
 const PIPE: &str = "  │ ";
 const EDGE: &str = "  └─ ";
 const BRANCH: &str = "  ├─ ";
 const CALL: &str = "→ ";
 const RETURN: &str = "← ";
 
-/// Render a collection of call traces.
-///
-/// The traces will be decoded using the given decoder, if possible.
-pub async fn render_trace_arena(
+pub async fn render_trace_arena_with_internals<'a>(
     arena: &CallTraceArena,
     decoder: &CallTraceDecoder,
+    identified_internals: &'a [Vec<DecodedTraceStep<'a>>],
 ) -> Result<String, std::fmt::Error> {
     decoder.prefetch_signatures(arena.nodes()).await;
+
+    fn render_items<'a>(
+        arena: &'a [CallTraceNode],
+        decoder: &'a CallTraceDecoder,
+        identified_internals: &'a [Vec<DecodedTraceStep<'a>>],
+        s: &'a mut String,
+        node_idx: usize,
+        mut ordering_idx: usize,
+        internal_end_step_idx: Option<usize>,
+        left: &'a str,
+        right: &'a str,
+    ) -> BoxFuture<'a, Result<usize, std::fmt::Error>> {
+        async move {
+            let node = &arena[node_idx];
+
+            while ordering_idx < node.ordering.len() {
+                let child = &node.ordering[ordering_idx];
+                match child {
+                    TraceMemberOrder::Log(index) => {
+                        let log = render_trace_log(&node.logs[*index], decoder).await?;
+
+                        // Prepend our tree structure symbols to each line of the displayed log
+                        log.lines().enumerate().try_for_each(|(i, line)| {
+                            writeln!(s, "{}{}", if i == 0 { left } else { right }, line)
+                        })?;
+                    }
+                    TraceMemberOrder::Call(index) => {
+                        inner(
+                            arena,
+                            decoder,
+                            identified_internals,
+                            s,
+                            node.children[*index],
+                            left,
+                            right,
+                        )
+                        .await?;
+                    }
+                    TraceMemberOrder::Step(step_idx) => {
+                        if let Some(internal_step_end_idx) = internal_end_step_idx {
+                            if *step_idx >= internal_step_end_idx {
+                                return Ok(ordering_idx);
+                            }
+                        }
+                        if let Some(decoded) = identified_internals[node_idx]
+                            .iter()
+                            .find(|d| *step_idx == d.start_step_idx)
+                        {
+                            writeln!(s, "{left}[{}] {}", decoded.gas_used, decoded.function_name)?;
+                            let left_prefix = format!("{right}{BRANCH}");
+                            let right_prefix = format!("{right}{PIPE}");
+                            ordering_idx = render_items(
+                                arena,
+                                decoder,
+                                identified_internals,
+                                s,
+                                node_idx,
+                                ordering_idx + 1,
+                                Some(decoded.end_step_idx),
+                                &left_prefix,
+                                &right_prefix,
+                            )
+                            .await?;
+
+                            writeln!(s, "{right}{EDGE}{}", RETURN,)?;
+                        }
+                    }
+                }
+                ordering_idx += 1;
+            }
+
+            Ok(ordering_idx)
+        }
+        .boxed()
+    }
 
     fn inner<'a>(
         arena: &'a [CallTraceNode],
         decoder: &'a CallTraceDecoder,
+        identified_internals: &'a [Vec<DecodedTraceStep<'a>>],
         s: &'a mut String,
         idx: usize,
         left: &'a str,
@@ -90,36 +172,18 @@ pub async fn render_trace_arena(
             writeln!(s, "{left}{trace}")?;
 
             // Display logs and subcalls
-            let left_prefix = format!("{child}{BRANCH}");
-            let right_prefix = format!("{child}{PIPE}");
-            for child in &node.ordering {
-                match child {
-                    LogCallOrder::Log(index) => {
-                        let log = render_trace_log(&node.logs[*index], decoder).await?;
-
-                        // Prepend our tree structure symbols to each line of the displayed log
-                        log.lines().enumerate().try_for_each(|(i, line)| {
-                            writeln!(
-                                s,
-                                "{}{}",
-                                if i == 0 { &left_prefix } else { &right_prefix },
-                                line
-                            )
-                        })?;
-                    }
-                    LogCallOrder::Call(index) => {
-                        inner(
-                            arena,
-                            decoder,
-                            s,
-                            node.children[*index],
-                            &left_prefix,
-                            &right_prefix,
-                        )
-                        .await?;
-                    }
-                }
-            }
+            render_items(
+                arena,
+                decoder,
+                identified_internals,
+                s,
+                idx,
+                0,
+                None,
+                &format!("{child}{BRANCH}"),
+                &format!("{child}{PIPE}"),
+            )
+            .await?;
 
             // Display trace return data
             let color = trace_color(&node.trace);
@@ -145,8 +209,23 @@ pub async fn render_trace_arena(
     }
 
     let mut s = String::new();
-    inner(arena.nodes(), decoder, &mut s, 0, "  ", "  ").await?;
+    inner(arena.nodes(), decoder, identified_internals, &mut s, 0, "  ", "  ").await?;
     Ok(s)
+}
+
+/// Render a collection of call traces.
+///
+/// The traces will be decoded using the given decoder, if possible.
+pub async fn render_trace_arena(
+    arena: &CallTraceArena,
+    decoder: &CallTraceDecoder,
+) -> Result<String, std::fmt::Error> {
+    render_trace_arena_with_internals(
+        arena,
+        decoder,
+        &std::iter::repeat(Vec::new()).take(arena.nodes().len()).collect::<Vec<_>>(),
+    )
+    .await
 }
 
 /// Render a call trace.

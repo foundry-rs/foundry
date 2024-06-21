@@ -40,6 +40,8 @@ pub struct InspectorStackBuilder {
     pub fuzzer: Option<Fuzzer>,
     /// Whether to enable tracing.
     pub trace: Option<bool>,
+    /// Whether to enable steps tracking in the tracer.
+    pub debug_trace: Option<bool>,
     /// Whether to enable the debugger.
     pub debug: Option<bool>,
     /// Whether logs should be collected.
@@ -133,6 +135,13 @@ impl InspectorStackBuilder {
         self
     }
 
+    /// Set whether to enable steps tracking in the tracer.
+    #[inline]
+    pub fn debug_trace(mut self, yes: bool) -> Self {
+        self.debug_trace = Some(yes);
+        self
+    }
+
     /// Set whether to enable the call isolation.
     /// For description of call isolation, see [`InspectorStack::enable_isolation`].
     #[inline]
@@ -155,6 +164,7 @@ impl InspectorStackBuilder {
             print,
             chisel_state,
             enable_isolation,
+            debug_trace,
         } = self;
         let mut stack = InspectorStack::new();
 
@@ -172,7 +182,7 @@ impl InspectorStackBuilder {
         stack.collect_logs(logs.unwrap_or(true));
         stack.enable_debugger(debug.unwrap_or(false));
         stack.print(print.unwrap_or(false));
-        stack.tracing(trace.unwrap_or(false));
+        stack.tracing(trace.unwrap_or(false), debug_trace.unwrap_or(false));
 
         stack.enable_isolation(enable_isolation);
 
@@ -386,17 +396,21 @@ impl InspectorStack {
 
     /// Set whether to enable the tracer.
     #[inline]
-    pub fn tracing(&mut self, yes: bool) {
-        self.tracer = yes.then(|| {
-            TracingInspector::new(TracingInspectorConfig {
-                record_steps: false,
-                record_memory_snapshots: false,
-                record_stack_snapshots: StackSnapshotType::None,
-                record_state_diff: false,
-                exclude_precompile_calls: false,
-                record_logs: true,
-            })
-        });
+    pub fn tracing(&mut self, yes: bool, debug: bool) {
+        if self.tracer.is_none() && yes ||
+            !self.tracer.as_ref().map_or(false, |t| t.config().record_steps) && debug
+        {
+            self.tracer = Some({
+                TracingInspector::new(TracingInspectorConfig {
+                    record_steps: debug,
+                    record_memory_snapshots: false,
+                    record_stack_snapshots: StackSnapshotType::None,
+                    record_state_diff: false,
+                    exclude_precompile_calls: false,
+                    record_logs: true,
+                })
+            });
+        }
     }
 
     /// Collects all the data gathered during inspection into a single struct.

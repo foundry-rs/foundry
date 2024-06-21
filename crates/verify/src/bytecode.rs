@@ -284,7 +284,7 @@ impl VerifyBytecodeArgs {
             TracingExecutor::get_fork_material(&fork_config, evm_opts).await?;
 
         let mut executor =
-            TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false);
+            TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false, false);
         env.block.number = U256::from(simulation_block);
         let block = provider.get_block(simulation_block.into(), true.into()).await?;
 

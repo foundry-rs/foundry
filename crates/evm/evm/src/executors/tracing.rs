@@ -16,13 +16,14 @@ impl TracingExecutor {
         fork: Option<CreateFork>,
         version: Option<EvmVersion>,
         debug: bool,
+        trace_steps: bool,
     ) -> Self {
         let db = Backend::spawn(fork);
         Self {
             // configures a bare version of the evm executor: no cheatcode inspector is enabled,
             // tracing will be enabled only for the targeted transaction
             executor: ExecutorBuilder::new()
-                .inspectors(|stack| stack.trace(true).debug(debug))
+                .inspectors(|stack| stack.trace(true).debug(debug).debug_trace(trace_steps))
                 .spec(evm_spec_id(&version.unwrap_or_default()))
                 .build(env, db),
         }

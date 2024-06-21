@@ -1,20 +1,19 @@
 //! The TUI implementation.
 
-use alloy_primitives::Address;
+use crate::DebugTraceIdentifier;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use eyre::Result;
-use foundry_common::{compile::ContractSources, evm::Breakpoints};
-use foundry_evm_core::{debug::DebugNodeFlat, utils::PcIcMap};
+use foundry_common::evm::Breakpoints;
+use foundry_evm_core::debug::DebugNodeFlat;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
 };
 use std::{
-    collections::{BTreeMap, HashMap},
     io,
     ops::ControlFlow,
     sync::{mpsc, Arc},
@@ -42,11 +41,7 @@ pub enum ExitReason {
 /// The TUI debugger.
 pub struct Debugger {
     debug_arena: Vec<DebugNodeFlat>,
-    identified_contracts: HashMap<Address, String>,
-    /// Source map of contract sources
-    contracts_sources: ContractSources,
-    /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
-    pc_ic_maps: BTreeMap<String, (PcIcMap, PcIcMap)>,
+    identifier: DebugTraceIdentifier,
     breakpoints: Breakpoints,
 }
 
@@ -60,23 +55,10 @@ impl Debugger {
     /// Creates a new debugger.
     pub fn new(
         debug_arena: Vec<DebugNodeFlat>,
-        identified_contracts: HashMap<Address, String>,
-        contracts_sources: ContractSources,
+        identifier: DebugTraceIdentifier,
         breakpoints: Breakpoints,
     ) -> Self {
-        let pc_ic_maps = contracts_sources
-            .entries()
-            .filter_map(|(name, artifact, _)| {
-                Some((
-                    name.to_owned(),
-                    (
-                        PcIcMap::new(artifact.bytecode.bytecode.bytes()?),
-                        PcIcMap::new(artifact.bytecode.deployed_bytecode.bytes()?),
-                    ),
-                ))
-            })
-            .collect();
-        Self { debug_arena, identified_contracts, contracts_sources, pc_ic_maps, breakpoints }
+        Self { debug_arena, identifier, breakpoints }
     }
 
     /// Starts the debugger TUI. Terminates the current process on failure or user exit.

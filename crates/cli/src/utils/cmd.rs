@@ -9,14 +9,13 @@ use foundry_compilers::{
     Artifact, ProjectCompileOutput,
 };
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
-use foundry_debugger::Debugger;
+use foundry_debugger::{DebugTraceIdentifier, Debugger};
 use foundry_evm::{
     debug::DebugArena,
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        identifier::{EtherscanIdentifier, SignaturesIdentifier}, render_trace_arena, render_trace_arena_with_internals, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces
     },
 };
 use std::{
@@ -357,6 +356,7 @@ pub async fn handle_traces(
     chain: Option<Chain>,
     labels: Vec<String>,
     debug: bool,
+    decode_internal: bool,
 ) -> Result<()> {
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
@@ -392,23 +392,37 @@ pub async fn handle_traces(
         };
         let mut debugger = Debugger::builder()
             .debug_arena(result.debug.as_ref().expect("missing debug arena"))
-            .decoder(&decoder)
-            .sources(sources)
+            .identifier(|b| b.decoder(&decoder).sources(sources))
             .build();
         debugger.try_run()?;
     } else {
-        print_traces(&mut result, &decoder).await?;
+        let identifier = if decode_internal {
+            let sources = if let Some(etherscan_identifier) = etherscan_identifier {
+                etherscan_identifier.get_compiled_contracts().await?
+            } else {
+                Default::default()
+            };
+            Some(DebugTraceIdentifier::builder().sources(sources).decoder(&decoder).build())
+        } else {
+            None
+        };
+        print_traces(&mut result, &decoder, identifier.as_ref()).await?;
     }
 
     Ok(())
 }
 
-pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) -> Result<()> {
+pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder, identifier: Option<&DebugTraceIdentifier>) -> Result<()> {
     let traces = result.traces.as_ref().expect("No traces found");
 
     println!("Traces:");
     for (_, arena) in traces {
-        println!("{}", render_trace_arena(arena, decoder).await?);
+        let arena = if let Some(identifier) = identifier {
+            render_trace_arena_with_internals(arena, decoder, &identifier.identify_arena(arena)).await?
+        } else {
+            render_trace_arena(arena, decoder).await?
+        };
+        println!("{}", arena);
     }
     println!();
 

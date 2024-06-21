@@ -33,7 +33,7 @@ pub fn replay_run(
     inputs: &[BasicTxDetails],
 ) -> Result<Vec<BaseCounterExample>> {
     // We want traces for a failed case.
-    executor.set_tracing(true);
+    executor.set_tracing(true, false);
 
     let mut counterexample_sequence = vec![];
 

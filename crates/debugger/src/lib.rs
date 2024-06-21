@@ -10,5 +10,7 @@ extern crate tracing;
 
 mod op;
 
+mod identifier;
 mod tui;
+pub use identifier::DebugTraceIdentifier;
 pub use tui::{Debugger, DebuggerBuilder, ExitReason};

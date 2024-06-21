@@ -1,13 +1,16 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
 use clap::Parser;
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use forge::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
-    traces::{identifier::SignaturesIdentifier, CallTraceDecoderBuilder, TraceKind},
+    traces::{
+        identifier::SignaturesIdentifier, render_trace_arena_with_internals,
+        CallTraceDecoderBuilder, TraceKind,
+    },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
 use foundry_cli::{
@@ -32,7 +35,7 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
-use foundry_debugger::Debugger;
+use foundry_debugger::{DebugTraceIdentifier, Debugger};
 use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
 use std::{
@@ -75,6 +78,10 @@ pub struct TestArgs {
     /// For more fine-grained control of which fuzz case is run, see forge run.
     #[arg(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
+
+    /// Whether to identify internal functions in traces.
+    #[arg(long)]
+    decode_internal: bool,
 
     /// Print a gas report.
     #[arg(long, env = "FORGE_GAS_REPORT")]
@@ -293,7 +300,7 @@ impl TestArgs {
         let env = evm_opts.evm_env().await?;
 
         // Prepare the test builder
-        let should_debug = self.debug.is_some();
+        let should_debug = self.debug.is_some() || self.decode_internal;
 
         // Clone the output only if we actually need it later for the debugger.
         let output_clone = should_debug.then(|| output.clone());
@@ -341,16 +348,43 @@ impl TestArgs {
                 Some(&libraries),
             )?;
 
-            // Run the debugger.
-            let mut builder = Debugger::builder()
-                .debug_arenas(test_result.debug.as_slice())
-                .sources(sources)
-                .breakpoints(test_result.breakpoints.clone());
-            if let Some(decoder) = &outcome.last_run_decoder {
+            if self.decode_internal {
+                let mut builder = DebugTraceIdentifier::builder().sources(sources);
+                let Some(decoder) = &outcome.last_run_decoder else {
+                    eyre::bail!("Missing decoder for debugging");
+                };
                 builder = builder.decoder(decoder);
+
+                let identifier = builder.build();
+                let arena = &test_result
+                    .traces
+                    .iter()
+                    .find(|(t, _)| t.is_execution())
+                    .ok_or_eyre("didn't find execution trace for debugging")?
+                    .1;
+
+                let identified = identifier.identify_arena(arena);
+
+                println!(
+                    "{}",
+                    render_trace_arena_with_internals(arena, &decoder, &identified).await?
+                );
+            } else if self.debug.is_some() {
+                // Run the debugger.
+                let builder = Debugger::builder()
+                    .debug_arenas(test_result.debug.as_slice())
+                    .identifier(|mut builder| {
+                        if let Some(decoder) = &outcome.last_run_decoder {
+                            builder = builder.decoder(decoder);
+                        }
+
+                        builder.sources(sources)
+                    })
+                    .breakpoints(test_result.breakpoints.clone());
+
+                let mut debugger = builder.build();
+                debugger.try_run()?;
             }
-            let mut debugger = builder.build();
-            debugger.try_run()?;
         }
 
         Ok(outcome)

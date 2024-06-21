@@ -172,8 +172,8 @@ impl Executor {
     }
 
     #[inline]
-    pub fn set_tracing(&mut self, tracing: bool) -> &mut Self {
-        self.inspector.tracing(tracing);
+    pub fn set_tracing(&mut self, tracing: bool, debug: bool) -> &mut Self {
+        self.inspector.tracing(tracing, debug);
         self
     }
 

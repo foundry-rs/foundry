@@ -27,6 +27,10 @@ pub struct RunArgs {
     #[arg(long, short)]
     debug: bool,
 
+    /// Whether to identify internal functions in traces.
+    #[arg(long)]
+    decode_internal: bool,
+
     /// Print out opcode traces.
     #[arg(long, short)]
     trace_printer: bool,
@@ -142,7 +146,7 @@ impl RunArgs {
             }
         }
 
-        let mut executor = TracingExecutor::new(env.clone(), fork, evm_version, self.debug);
+        let mut executor = TracingExecutor::new(env.clone(), fork, evm_version, self.debug, self.decode_internal);
         let mut env =
             EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 
@@ -220,7 +224,7 @@ impl RunArgs {
             }
         };
 
-        handle_traces(result, &config, chain, self.label, self.debug).await?;
+        handle_traces(result, &config, chain, self.label, self.debug, self.decode_internal).await?;
 
         Ok(())
     }
