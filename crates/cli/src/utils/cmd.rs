@@ -15,7 +15,9 @@ use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
-        identifier::{EtherscanIdentifier, SignaturesIdentifier}, render_trace_arena, render_trace_arena_with_internals, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces
+        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        render_trace_arena, render_trace_arena_with_internals, CallTraceDecoder,
+        CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
 use std::{
@@ -412,17 +414,22 @@ pub async fn handle_traces(
     Ok(())
 }
 
-pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder, identifier: Option<&DebugTraceIdentifier>) -> Result<()> {
+pub async fn print_traces(
+    result: &mut TraceResult,
+    decoder: &CallTraceDecoder,
+    identifier: Option<&DebugTraceIdentifier>,
+) -> Result<()> {
     let traces = result.traces.as_ref().expect("No traces found");
 
     println!("Traces:");
     for (_, arena) in traces {
         let arena = if let Some(identifier) = identifier {
-            render_trace_arena_with_internals(arena, decoder, &identifier.identify_arena(arena)).await?
+            render_trace_arena_with_internals(arena, decoder, &identifier.identify_arena(arena))
+                .await?
         } else {
             render_trace_arena(arena, decoder).await?
         };
-        println!("{}", arena);
+        println!("{arena}");
     }
     println!();
 

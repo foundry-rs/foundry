@@ -146,7 +146,8 @@ impl RunArgs {
             }
         }
 
-        let mut executor = TracingExecutor::new(env.clone(), fork, evm_version, self.debug, self.decode_internal);
+        let mut executor =
+            TracingExecutor::new(env.clone(), fork, evm_version, self.debug, self.decode_internal);
         let mut env =
             EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 

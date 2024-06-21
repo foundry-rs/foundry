@@ -143,7 +143,7 @@ pub async fn render_trace_arena_with_internals<'a>(
                             )
                             .await?;
 
-                            writeln!(s, "{right}{EDGE}{}", RETURN,)?;
+                            writeln!(s, "{right}{EDGE}{RETURN}")?;
                         }
                     }
                 }

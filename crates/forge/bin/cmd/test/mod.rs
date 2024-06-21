@@ -367,7 +367,7 @@ impl TestArgs {
 
                 println!(
                     "{}",
-                    render_trace_arena_with_internals(arena, &decoder, &identified).await?
+                    render_trace_arena_with_internals(arena, decoder, &identified).await?
                 );
             } else if self.debug.is_some() {
                 // Run the debugger.
