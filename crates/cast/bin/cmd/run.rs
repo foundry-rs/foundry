@@ -1,17 +1,15 @@
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
-use cast::revm::primitives::EnvWithHandlerCfg;
+use cast::{revm::primitives::EnvWithHandlerCfg, traces::TraceKind};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    init_progress,
     opts::RpcOpts,
-    update_progress,
-    utils::{handle_traces_helper, TraceResult},
+    utils::{handle_traces, init_progress, TraceResult},
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
-use foundry_compilers::EvmVersion;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
     executors::{EvmError, TracingExecutor},
@@ -104,7 +102,7 @@ impl RunArgs {
         let tx = provider
             .get_transaction_by_hash(tx_hash)
             .await
-            .wrap_err_with(|| format!("tx not found: {:?}", tx_hash))?
+            .wrap_err_with(|| format!("tx not found: {tx_hash:?}"))?
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
@@ -119,7 +117,7 @@ impl RunArgs {
             tx.block_number.ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
 
         // fetch the block the transaction was mined in
-        let block = provider.get_block(tx_block_number.into(), true).await?;
+        let block = provider.get_block(tx_block_number.into(), true.into()).await?;
 
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
@@ -157,7 +155,7 @@ impl RunArgs {
             println!("Executing previous transactions from the block.");
 
             if let Some(block) = block {
-                let pb = init_progress!(block.transactions, "tx");
+                let pb = init_progress(block.transactions.len() as u64, "tx");
                 pb.set_position(0);
 
                 let BlockTransactions::Full(txs) = block.transactions else {
@@ -171,7 +169,7 @@ impl RunArgs {
                     if is_known_system_sender(tx.from)
                         || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                     {
-                        update_progress!(pb, index);
+                        pb.set_position((index + 1) as u64);
                         continue;
                     }
                     if tx.hash == tx_hash {
@@ -182,7 +180,7 @@ impl RunArgs {
 
                     if let Some(to) = tx.to {
                         trace!(tx=?tx.hash,?to, "executing previous call transaction");
-                        executor.commit_tx_with_env(env.clone()).wrap_err_with(|| {
+                        executor.transact_with_env(env.clone()).wrap_err_with(|| {
                             format!(
                                 "Failed to execute transaction: {:?} in block {}",
                                 tx.hash, env.block.number
@@ -206,7 +204,7 @@ impl RunArgs {
                         }
                     }
 
-                    update_progress!(pb, index);
+                    pb.set_position((index + 1) as u64);
                 }
             }
         }
@@ -219,13 +217,10 @@ impl RunArgs {
 
             if let Some(to) = tx.to {
                 trace!(tx=?tx.hash, to=?to, "executing call transaction");
-                TraceResult::from(executor.commit_tx_with_env(env)?)
+                TraceResult::from_raw(executor.transact_with_env(env)?, TraceKind::Execution)
             } else {
                 trace!(tx=?tx.hash, "executing create transaction");
-                match executor.deploy_with_env(env, None) {
-                    Ok(res) => TraceResult::from(res),
-                    Err(err) => TraceResult::try_from(err)?,
-                }
+                TraceResult::try_from(executor.deploy_with_env(env, None))?
             }
         };
 

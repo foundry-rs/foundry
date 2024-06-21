@@ -1,3 +1,6 @@
+#![doc = include_str!("../README.md")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+
 #[macro_use]
 extern crate tracing;
 
@@ -18,7 +21,7 @@ use crate::{
     tasks::TaskManager,
 };
 use alloy_primitives::{Address, U256};
-use alloy_signer_wallet::LocalWallet;
+use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
@@ -162,7 +165,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
             .alloc
             .values()
             .filter_map(|acc| acc.private_key)
-            .flat_map(|k| LocalWallet::from_bytes(&k))
+            .flat_map(|k| PrivateKeySigner::from_bytes(&k))
             .collect::<Vec<_>>();
         if !genesis_signers.is_empty() {
             signers.push(Box::new(DevSigner::new(genesis_signers)));
@@ -272,7 +275,7 @@ impl NodeHandle {
         self.config.print(fork);
         if !self.config.silent {
             if let Some(ipc_path) = self.ipc_path() {
-                println!("IPC path: {}", ipc_path);
+                println!("IPC path: {ipc_path}");
             }
             println!(
                 "Listening on {}",
@@ -329,7 +332,7 @@ impl NodeHandle {
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub fn dev_wallets(&self) -> impl Iterator<Item = LocalWallet> + '_ {
+    pub fn dev_wallets(&self) -> impl Iterator<Item = PrivateKeySigner> + '_ {
         self.config.signer_accounts.iter().cloned()
     }
 

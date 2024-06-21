@@ -1,14 +1,14 @@
-//! Implementations of [`Utils`](crate::Group::Utils) cheatcodes.
+//! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer::{Signer, SignerSync};
-use alloy_signer_wallet::{
+use alloy_signer_local::{
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
     },
-    LocalWallet, MnemonicBuilder,
+    MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
@@ -19,6 +19,7 @@ use k256::{
     Secp256k1,
 };
 use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey as P256SigningKey};
+use rand::Rng;
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -89,10 +90,10 @@ impl Cheatcode for deriveKey_3Call {
 impl Cheatcode for rememberKeyCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey } = self;
-        let key = parse_private_key(privateKey)?;
-        let address = LocalWallet::from(key.clone()).address();
-        if let Some(script_wallets) = &ccx.state.script_wallets {
-            script_wallets.add_signer(key.to_bytes())?;
+        let wallet = parse_wallet(privateKey)?;
+        let address = wallet.address();
+        if let Some(script_wallets) = ccx.state.script_wallets() {
+            script_wallets.add_local_signer(wallet);
         }
         Ok(address.abi_encode())
     }
@@ -145,6 +146,35 @@ impl Cheatcode for ensNamehashCall {
     }
 }
 
+impl Cheatcode for randomUint_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        // Use thread_rng to get a random number
+        let mut rng = rand::thread_rng();
+        let random_number: U256 = rng.gen();
+        Ok(random_number.abi_encode())
+    }
+}
+
+impl Cheatcode for randomUint_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { min, max } = self;
+        // Generate random between range min..=max
+        let mut rng = rand::thread_rng();
+        let range = *max - *min + U256::from(1);
+        let random_number = rng.gen::<U256>() % range + *min;
+        Ok(random_number.abi_encode())
+    }
+}
+
+impl Cheatcode for randomAddressCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        let addr = Address::random();
+        Ok(addr.abi_encode())
+    }
+}
+
 /// Using a given private key, return its public ETH address, its public key affine x and y
 /// coordinates, and its private key (see the 'Wallet' struct)
 ///
@@ -174,12 +204,8 @@ fn encode_vrs(sig: alloy_primitives::Signature) -> Vec<u8> {
 pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
     let wallet = parse_wallet(private_key)?;
-
     let sig = wallet.sign_hash_sync(digest)?;
-    let recovered = sig.recover_address_from_prehash(digest)?;
-
-    assert_eq!(recovered, wallet.address());
-
+    debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
     Ok(encode_vrs(sig))
 }
 
@@ -188,8 +214,8 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     signer: Option<Address>,
     digest: &B256,
 ) -> Result {
-    let Some(script_wallets) = &ccx.state.script_wallets else {
-        return Err("no wallets are available".into());
+    let Some(script_wallets) = ccx.state.script_wallets() else {
+        bail!("no wallets are available");
     };
 
     let mut script_wallets = script_wallets.inner.lock();
@@ -203,19 +229,15 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     } else if signers.len() == 1 {
         *signers.keys().next().unwrap()
     } else {
-        return Err("could not determine signer".into());
+        bail!("could not determine signer");
     };
 
     let wallet = signers
         .get(&signer)
         .ok_or_else(|| fmt_err!("signer with address {signer} is not available"))?;
 
-    let sig =
-        foundry_common::block_on(wallet.sign_hash(digest)).map_err(|err| fmt_err!("{err}"))?;
-
-    let recovered = sig.recover_address_from_prehash(digest).map_err(|err| fmt_err!("{err}"))?;
-    assert_eq!(recovered, signer);
-
+    let sig = foundry_common::block_on(wallet.sign_hash(digest))?;
+    debug_assert_eq!(sig.recover_address_from_prehash(digest)?, signer);
     Ok(encode_vrs(sig))
 }
 
@@ -246,8 +268,8 @@ pub(super) fn parse_private_key(private_key: &U256) -> Result<SigningKey> {
     SigningKey::from_bytes((&bytes).into()).map_err(Into::into)
 }
 
-pub(super) fn parse_wallet(private_key: &U256) -> Result<LocalWallet> {
-    parse_private_key(private_key).map(LocalWallet::from)
+pub(super) fn parse_wallet(private_key: &U256) -> Result<PrivateKeySigner> {
+    parse_private_key(private_key).map(PrivateKeySigner::from)
 }
 
 fn derive_key_str(mnemonic: &str, path: &str, index: u32, language: &str) -> Result {
@@ -280,7 +302,7 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
         .phrase(mnemonic)
         .derivation_path(derive_key_path(path, index))?
         .build()?;
-    let private_key = U256::from_be_bytes(wallet.signer().to_bytes().into());
+    let private_key = U256::from_be_bytes(wallet.credential().to_bytes().into());
     Ok(private_key.abi_encode())
 }
 

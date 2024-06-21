@@ -9,7 +9,8 @@ use crate::{
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{b256, keccak256, Address, B256, U256};
-use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction, WithOtherFields};
+use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
+use alloy_serde::WithOtherFields;
 use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use revm::{
@@ -17,8 +18,8 @@ use revm::{
     inspectors::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        Account, AccountInfo, Bytecode, CreateScheme, Env, EnvWithHandlerCfg, HashMap as Map, Log,
-        ResultAndState, SpecId, State, StorageSlot, TransactTo, KECCAK_EMPTY,
+        Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, EvmState, EvmStorageSlot,
+        HashMap as Map, Log, ResultAndState, SpecId, TxKind, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, JournaledState,
 };
@@ -54,7 +55,7 @@ pub type LocalForkId = U256;
 /// This is used for fast lookup
 type ForkLookupIndex = usize;
 
-/// All accounts that will have persistent storage across fork swaps. See also [`clone_data()`]
+/// All accounts that will have persistent storage across fork swaps.
 const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
@@ -392,19 +393,19 @@ pub struct Backend {
     /// The journaled_state to use to initialize new forks with
     ///
     /// The way [`revm::JournaledState`] works is, that it holds the "hot" accounts loaded from the
-    /// underlying `Database` that feeds the Account and State data ([`revm::AccountInfo`])to the
-    /// journaled_state so it can apply changes to the state while the evm executes.
+    /// underlying `Database` that feeds the Account and State data to the journaled_state so it
+    /// can apply changes to the state while the EVM executes.
     ///
     /// In a way the `JournaledState` is something like a cache that
     /// 1. check if account is already loaded (hot)
     /// 2. if not load from the `Database` (this will then retrieve the account via RPC in forking
-    /// mode)
+    ///    mode)
     ///
     /// To properly initialize we store the `JournaledState` before the first fork is selected
     /// ([`DatabaseExt::select_fork`]).
     ///
     /// This will be an empty `JournaledState`, which will be populated with persistent accounts,
-    /// See [`Self::update_fork_db()`] and [`clone_data()`].
+    /// See [`Self::update_fork_db()`].
     fork_init_journaled_state: JournaledState,
     /// The currently active fork database
     ///
@@ -413,8 +414,6 @@ pub struct Backend {
     /// holds additional Backend data
     inner: BackendInner,
 }
-
-// === impl Backend ===
 
 impl Backend {
     /// Creates a new Backend with a spawned multi fork thread.
@@ -496,15 +495,11 @@ impl Backend {
         slot: U256,
         value: U256,
     ) -> Result<(), DatabaseError> {
-        let ret = if let Some(db) = self.active_fork_db_mut() {
+        if let Some(db) = self.active_fork_db_mut() {
             db.insert_account_storage(address, slot, value)
         } else {
             self.mem_db.insert_account_storage(address, slot, value)
-        };
-
-        debug_assert!(self.storage(address, slot).unwrap() == value);
-
-        ret
+        }
     }
 
     /// Completely replace an account's storage without overriding account info.
@@ -536,11 +531,6 @@ impl Backend {
     /// This will also grant cheatcode access to the test account
     pub fn set_test_contract(&mut self, acc: Address) -> &mut Self {
         trace!(?acc, "setting test account");
-        // toggle the previous sender
-        if let Some(current) = self.inner.test_contract_address.take() {
-            self.remove_persistent_account(&current);
-            self.revoke_cheatcode_access(&acc);
-        }
 
         self.add_persistent_account(acc);
         self.allow_cheatcode_access(acc);
@@ -603,11 +593,11 @@ impl Backend {
     /// Instead, it stores whether an `assert` failed in a boolean variable that we can read
     pub fn is_failed_test_contract(&self, address: Address) -> bool {
         /*
-         contract DSTest {
+        contract DSTest {
             bool public IS_TEST = true;
             // slot 0 offset 1 => second byte of slot0
             bool private _failed;
-         }
+        }
         */
         let value = self.storage_ref(address, U256::ZERO).unwrap_or_default();
         value.as_le_bytes()[1] != 0
@@ -675,9 +665,8 @@ impl Backend {
         active_journaled_state: &mut JournaledState,
         target_fork: &mut Fork,
     ) {
-        if let Some((_, fork_idx)) = self.active_fork_ids.as_ref() {
-            let active = self.inner.get_fork(*fork_idx);
-            merge_account_data(accounts, &active.db, active_journaled_state, target_fork)
+        if let Some(db) = self.active_fork_db() {
+            merge_account_data(accounts, db, active_journaled_state, target_fork)
         } else {
             merge_account_data(accounts, &self.mem_db, active_journaled_state, target_fork)
         }
@@ -716,6 +705,24 @@ impl Backend {
     /// Returns the currently active `ForkDB`, if any
     pub fn active_fork_db_mut(&mut self) -> Option<&mut ForkDB> {
         self.active_fork_mut().map(|f| &mut f.db)
+    }
+
+    /// Returns the current database implementation as a `&dyn` value.
+    #[inline(always)]
+    pub fn db(&self) -> &dyn Database<Error = DatabaseError> {
+        match self.active_fork_db() {
+            Some(fork_db) => fork_db,
+            None => &self.mem_db,
+        }
+    }
+
+    /// Returns the current database implementation as a `&mut dyn` value.
+    #[inline(always)]
+    pub fn db_mut(&mut self) -> &mut dyn Database<Error = DatabaseError> {
+        match self.active_fork_ids.map(|(_, idx)| &mut self.inner.get_fork_mut(idx).db) {
+            Some(fork_db) => fork_db,
+            None => &mut self.mem_db,
+        }
     }
 
     /// Creates a snapshot of the currently active database
@@ -760,13 +767,13 @@ impl Backend {
         self.set_spec_id(env.handler_cfg.spec_id);
 
         let test_contract = match env.tx.transact_to {
-            TransactTo::Call(to) => to,
-            TransactTo::Create(CreateScheme::Create) => {
-                env.tx.caller.create(env.tx.nonce.unwrap_or_default())
-            }
-            TransactTo::Create(CreateScheme::Create2 { salt }) => {
-                let code_hash = B256::from_slice(keccak256(&env.tx.data).as_slice());
-                env.tx.caller.create2(B256::from(salt), code_hash)
+            TxKind::Call(to) => to,
+            TxKind::Create => {
+                let nonce = self
+                    .basic_ref(env.tx.caller)
+                    .map(|b| b.unwrap_or_default().nonce)
+                    .unwrap_or_default();
+                env.tx.caller.create(nonce)
             }
         };
         self.set_test_contract(test_contract);
@@ -894,6 +901,7 @@ impl Backend {
     ) -> eyre::Result<Option<Transaction>> {
         trace!(?id, ?tx_hash, "replay until transaction");
 
+        let persistent_accounts = self.inner.persistent_accounts.clone();
         let fork_id = self.ensure_fork_id(id)?.clone();
 
         let env = self.env_with_handler_cfg(env);
@@ -923,6 +931,7 @@ impl Backend {
                     journaled_state,
                     fork,
                     &fork_id,
+                    &persistent_accounts,
                     &mut NoOpInspector,
                 )?;
             }
@@ -931,8 +940,6 @@ impl Backend {
         Ok(None)
     }
 }
-
-// === impl a bunch of `revm::Database` adjacent implementations ===
 
 impl DatabaseExt for Backend {
     fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
@@ -1182,16 +1189,22 @@ impl DatabaseExt for Backend {
                     merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
 
-                // ensure all previously loaded accounts are present in the journaled state to
+                // Ensure all previously loaded accounts are present in the journaled state to
                 // prevent issues in the new journalstate, e.g. assumptions that accounts are loaded
-                // if the account is not touched, we reload it, if it's touched we clone it
+                // if the account is not touched, we reload it, if it's touched we clone it.
+                //
+                // Special case for accounts that are not created: we don't merge their state but
+                // load it in order to reflect their state at the new block (they should explicitly
+                // be marked as persistent if it is desired to keep state between fork rolls).
                 for (addr, acc) in journaled_state.state.iter() {
-                    if acc.is_touched() {
-                        merge_journaled_state_data(
-                            *addr,
-                            journaled_state,
-                            &mut active.journaled_state,
-                        );
+                    if acc.is_created() {
+                        if acc.is_touched() {
+                            merge_journaled_state_data(
+                                *addr,
+                                journaled_state,
+                                &mut active.journaled_state,
+                            );
+                        }
                     } else {
                         let _ = active.journaled_state.load_account(*addr, &mut active.db);
                     }
@@ -1229,7 +1242,7 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    fn transact<I: InspectorExt<Backend>>(
+    fn transact<I: InspectorExt<Self>>(
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,
@@ -1238,6 +1251,7 @@ impl DatabaseExt for Backend {
         inspector: &mut I,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
+        let persistent_accounts = self.inner.persistent_accounts.clone();
         let id = self.ensure_fork(maybe_id)?;
         let fork_id = self.ensure_fork_id(id).cloned()?;
 
@@ -1255,7 +1269,15 @@ impl DatabaseExt for Backend {
 
         let env = self.env_with_handler_cfg(env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
-        commit_transaction(tx, env, journaled_state, fork, &fork_id, inspector)
+        commit_transaction(
+            tx,
+            env,
+            journaled_state,
+            fork,
+            &fork_id,
+            &persistent_accounts,
+            inspector,
+        )
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
@@ -1357,7 +1379,7 @@ impl DatabaseExt for Backend {
                         let slot = U256::from_be_bytes(slot.0);
                         (
                             slot,
-                            StorageSlot::new_changed(
+                            EvmStorageSlot::new_changed(
                                 state_acc
                                     .storage
                                     .get(&slot)
@@ -1506,8 +1528,6 @@ pub struct Fork {
     journaled_state: JournaledState,
 }
 
-// === impl Fork ===
-
 impl Fork {
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
@@ -1570,16 +1590,12 @@ pub struct BackendInner {
     /// All accounts that should be kept persistent when switching forks.
     /// This means all accounts stored here _don't_ use a separate storage section on each fork
     /// instead the use only one that's persistent across fork swaps.
-    ///
-    /// See also [`clone_data()`]
     pub persistent_accounts: HashSet<Address>,
     /// The configured spec id
     pub spec_id: SpecId,
     /// All accounts that are allowed to execute cheatcodes
     pub cheatcode_access_accounts: HashSet<Address>,
 }
-
-// === impl BackendInner ===
 
 impl BackendInner {
     pub fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
@@ -1875,6 +1891,7 @@ fn commit_transaction<I: InspectorExt<Backend>>(
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
     fork_id: &ForkId,
+    persistent_accounts: &HashSet<Address>,
     inspector: I,
 ) -> eyre::Result<()> {
     configure_tx_env(&mut env.env, &tx);
@@ -1890,16 +1907,23 @@ fn commit_transaction<I: InspectorExt<Backend>>(
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
-    apply_state_changeset(res.state, journaled_state, fork)?;
+    apply_state_changeset(res.state, journaled_state, fork, persistent_accounts)?;
     Ok(())
 }
 
 /// Helper method which updates data in the state with the data from the database.
-pub fn update_state<DB: Database>(state: &mut State, db: &mut DB) -> Result<(), DB::Error> {
+/// Does not change state for persistent accounts (for roll fork to transaction and transact).
+pub fn update_state<DB: Database>(
+    state: &mut EvmState,
+    db: &mut DB,
+    persistent_accounts: Option<&HashSet<Address>>,
+) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
-        acc.info = db.basic(*addr)?.unwrap_or_default();
-        for (key, val) in acc.storage.iter_mut() {
-            val.present_value = db.storage(*addr, *key)?;
+        if !persistent_accounts.map_or(false, |accounts| accounts.contains(addr)) {
+            acc.info = db.basic(*addr)?.unwrap_or_default();
+            for (key, val) in acc.storage.iter_mut() {
+                val.present_value = db.storage(*addr, *key)?;
+            }
         }
     }
 
@@ -1912,12 +1936,13 @@ fn apply_state_changeset(
     state: Map<revm::primitives::Address, Account>,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
+    persistent_accounts: &HashSet<Address>,
 ) -> Result<(), DatabaseError> {
     // commit the state and update the loaded accounts
     fork.db.commit(state);
 
-    update_state(&mut journaled_state.state, &mut fork.db)?;
-    update_state(&mut fork.journaled_state.state, &mut fork.db)?;
+    update_state(&mut journaled_state.state, &mut fork.db, Some(persistent_accounts))?;
+    update_state(&mut fork.journaled_state.state, &mut fork.db, Some(persistent_accounts))?;
 
     Ok(())
 }

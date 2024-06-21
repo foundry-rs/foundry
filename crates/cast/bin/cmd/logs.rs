@@ -60,7 +60,7 @@ pub struct LogsArgs {
 
 impl LogsArgs {
     pub async fn run(self) -> Result<()> {
-        let LogsArgs {
+        let Self {
             from_block,
             to_block,
             address,
@@ -91,7 +91,7 @@ impl LogsArgs {
         if !subscribe {
             let logs = cast.filter_logs(filter, json).await?;
 
-            println!("{}", logs);
+            println!("{logs}");
 
             return Ok(())
         }
@@ -221,7 +221,7 @@ fn build_filter_topics(topics: Vec<String>) -> Result<Filter, eyre::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U160, U256 as rU256};
+    use alloy_primitives::{U160, U256};
     use alloy_rpc_types::ValueOrArray;
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn test_build_filter_sig_with_arguments() {
         let addr = Address::from_str(ADDRESS).unwrap();
-        let addr = rU256::from(U160::from_be_bytes(addr.0 .0));
+        let addr = U256::from(U160::from_be_bytes(addr.0 .0));
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
             address: vec![].into(),
@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn test_build_filter_sig_with_skipped_arguments() {
         let addr = Address::from_str(ADDRESS).unwrap();
-        let addr = rU256::from(U160::from_be_bytes(addr.0 .0));
+        let addr = U256::from(U160::from_be_bytes(addr.0 .0));
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
             address: vec![].into(),

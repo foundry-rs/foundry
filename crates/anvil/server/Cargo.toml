@@ -10,6 +10,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 anvil-rpc = { path = "../rpc" }
 
@@ -21,8 +24,8 @@ tower-http = { workspace = true, features = ["trace", "cors"] }
 tracing.workspace = true
 
 # async
-parking_lot = "0.12"
-futures = "0.3"
+parking_lot.workspace = true
+futures.workspace = true
 
 # ipc
 interprocess = { version = "2", optional = true, features = ["tokio"] }
@@ -32,8 +35,8 @@ tokio-util = { version = "0.7", features = ["codec"], optional = true }
 # misc
 serde_json.workspace = true
 serde.workspace = true
-async-trait = "0.1"
-thiserror = "1"
+async-trait.workspace = true
+thiserror.workspace = true
 
 clap = { version = "4", features = ["derive", "env"], optional = true }
 pin-project = "1"

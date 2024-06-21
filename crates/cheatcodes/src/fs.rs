@@ -1,4 +1,4 @@
-//! Implementations of [`Filesystem`](crate::Group::Filesystem) cheatcodes.
+//! Implementations of [`Filesystem`](spec::Group::Filesystem) cheatcodes.
 
 use super::string::parse;
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
@@ -283,7 +283,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
         let mut version = None;
 
         let path_or_name = parts.next().unwrap();
-        if path_or_name.ends_with(".sol") {
+        if path_or_name.contains('.') {
             file = Some(PathBuf::from(path_or_name));
             if let Some(name_or_version) = parts.next() {
                 if name_or_version.contains('.') {
@@ -356,27 +356,30 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
             }?;
 
             let maybe_bytecode = if deployed {
-                artifact.1.deployed_bytecode.clone()
+                artifact.1.deployed_bytecode().cloned()
             } else {
-                artifact.1.bytecode.clone()
+                artifact.1.bytecode().cloned()
             };
 
             return maybe_bytecode
                 .ok_or_else(|| fmt_err!("No bytecode for contract. Is it abstract or unlinked?"));
         } else {
-            match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
-                (Some(file), Some(contract_name)) => {
-                    PathBuf::from(format!("{file}/{contract_name}.json"))
-                }
-                (None, Some(contract_name)) => {
-                    PathBuf::from(format!("{contract_name}.sol/{contract_name}.json"))
-                }
-                (Some(file), None) => {
-                    let name = file.replace(".sol", "");
-                    PathBuf::from(format!("{file}/{name}.json"))
-                }
-                _ => return Err(fmt_err!("Invalid artifact path")),
-            }
+            let path_in_artifacts =
+                match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
+                    (Some(file), Some(contract_name)) => {
+                        PathBuf::from(format!("{file}/{contract_name}.json"))
+                    }
+                    (None, Some(contract_name)) => {
+                        PathBuf::from(format!("{contract_name}.sol/{contract_name}.json"))
+                    }
+                    (Some(file), None) => {
+                        let name = file.replace(".sol", "");
+                        PathBuf::from(format!("{file}/{name}.json"))
+                    }
+                    _ => bail!("invalid artifact path"),
+                };
+
+            state.config.paths.artifacts.join(path_in_artifacts)
         }
     };
 
@@ -420,6 +423,13 @@ impl Cheatcode for promptSecretCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { promptText: text } = self;
         prompt(state, text, prompt_password).map(|res| res.abi_encode())
+    }
+}
+
+impl Cheatcode for promptSecretUintCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { promptText: text } = self;
+        parse(&prompt(state, text, prompt_password)?, &DynSolType::Uint(256))
     }
 }
 

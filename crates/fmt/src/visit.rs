@@ -456,19 +456,19 @@ impl Visitable for SourceUnitPart {
         V: Visitor,
     {
         match self {
-            SourceUnitPart::ContractDefinition(contract) => v.visit_contract(contract),
-            SourceUnitPart::PragmaDirective(loc, ident, str) => v.visit_pragma(*loc, ident, str),
-            SourceUnitPart::ImportDirective(import) => import.visit(v),
-            SourceUnitPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
-            SourceUnitPart::StructDefinition(structure) => v.visit_struct(structure),
-            SourceUnitPart::EventDefinition(event) => v.visit_event(event),
-            SourceUnitPart::ErrorDefinition(error) => v.visit_error(error),
-            SourceUnitPart::FunctionDefinition(function) => v.visit_function(function),
-            SourceUnitPart::VariableDefinition(variable) => v.visit_var_definition(variable),
-            SourceUnitPart::TypeDefinition(def) => v.visit_type_definition(def),
-            SourceUnitPart::StraySemicolon(_) => v.visit_stray_semicolon(),
-            SourceUnitPart::Using(using) => v.visit_using(using),
-            SourceUnitPart::Annotation(annotation) => v.visit_annotation(annotation),
+            Self::ContractDefinition(contract) => v.visit_contract(contract),
+            Self::PragmaDirective(loc, ident, str) => v.visit_pragma(*loc, ident, str),
+            Self::ImportDirective(import) => import.visit(v),
+            Self::EnumDefinition(enumeration) => v.visit_enum(enumeration),
+            Self::StructDefinition(structure) => v.visit_struct(structure),
+            Self::EventDefinition(event) => v.visit_event(event),
+            Self::ErrorDefinition(error) => v.visit_error(error),
+            Self::FunctionDefinition(function) => v.visit_function(function),
+            Self::VariableDefinition(variable) => v.visit_var_definition(variable),
+            Self::TypeDefinition(def) => v.visit_type_definition(def),
+            Self::StraySemicolon(_) => v.visit_stray_semicolon(),
+            Self::Using(using) => v.visit_using(using),
+            Self::Annotation(annotation) => v.visit_annotation(annotation),
         }
     }
 }
@@ -479,11 +479,11 @@ impl Visitable for Import {
         V: Visitor,
     {
         match self {
-            Import::Plain(import, loc) => v.visit_import_plain(*loc, import),
-            Import::GlobalSymbol(global, import_as, loc) => {
+            Self::Plain(import, loc) => v.visit_import_plain(*loc, import),
+            Self::GlobalSymbol(global, import_as, loc) => {
                 v.visit_import_global(*loc, global, import_as)
             }
-            Import::Rename(from, imports, loc) => v.visit_import_renames(*loc, imports, from),
+            Self::Rename(from, imports, loc) => v.visit_import_renames(*loc, imports, from),
         }
     }
 }
@@ -494,16 +494,16 @@ impl Visitable for ContractPart {
         V: Visitor,
     {
         match self {
-            ContractPart::StructDefinition(structure) => v.visit_struct(structure),
-            ContractPart::EventDefinition(event) => v.visit_event(event),
-            ContractPart::ErrorDefinition(error) => v.visit_error(error),
-            ContractPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
-            ContractPart::VariableDefinition(variable) => v.visit_var_definition(variable),
-            ContractPart::FunctionDefinition(function) => v.visit_function(function),
-            ContractPart::TypeDefinition(def) => v.visit_type_definition(def),
-            ContractPart::StraySemicolon(_) => v.visit_stray_semicolon(),
-            ContractPart::Using(using) => v.visit_using(using),
-            ContractPart::Annotation(annotation) => v.visit_annotation(annotation),
+            Self::StructDefinition(structure) => v.visit_struct(structure),
+            Self::EventDefinition(event) => v.visit_event(event),
+            Self::ErrorDefinition(error) => v.visit_error(error),
+            Self::EnumDefinition(enumeration) => v.visit_enum(enumeration),
+            Self::VariableDefinition(variable) => v.visit_var_definition(variable),
+            Self::FunctionDefinition(function) => v.visit_function(function),
+            Self::TypeDefinition(def) => v.visit_type_definition(def),
+            Self::StraySemicolon(_) => v.visit_stray_semicolon(),
+            Self::Using(using) => v.visit_using(using),
+            Self::Annotation(annotation) => v.visit_annotation(annotation),
         }
     }
 }
@@ -514,40 +514,34 @@ impl Visitable for Statement {
         V: Visitor,
     {
         match self {
-            Statement::Block { loc, unchecked, statements } => {
+            Self::Block { loc, unchecked, statements } => {
                 v.visit_block(*loc, *unchecked, statements)
             }
-            Statement::Assembly { loc, dialect, block, flags } => {
+            Self::Assembly { loc, dialect, block, flags } => {
                 v.visit_assembly(*loc, dialect, block, flags)
             }
-            Statement::Args(loc, args) => v.visit_args(*loc, args),
-            Statement::If(loc, cond, if_branch, else_branch) => {
+            Self::Args(loc, args) => v.visit_args(*loc, args),
+            Self::If(loc, cond, if_branch, else_branch) => {
                 v.visit_if(*loc, cond, if_branch, else_branch, true)
             }
-            Statement::While(loc, cond, body) => v.visit_while(*loc, cond, body),
-            Statement::Expression(loc, expr) => {
+            Self::While(loc, cond, body) => v.visit_while(*loc, cond, body),
+            Self::Expression(loc, expr) => {
                 v.visit_expr(*loc, expr)?;
                 v.visit_stray_semicolon()
             }
-            Statement::VariableDefinition(loc, declaration, expr) => {
+            Self::VariableDefinition(loc, declaration, expr) => {
                 v.visit_var_definition_stmt(*loc, declaration, expr)
             }
-            Statement::For(loc, init, cond, update, body) => {
-                v.visit_for(*loc, init, cond, update, body)
-            }
-            Statement::DoWhile(loc, body, cond) => v.visit_do_while(*loc, body, cond),
-            Statement::Continue(loc) => v.visit_continue(*loc, true),
-            Statement::Break(loc) => v.visit_break(*loc, true),
-            Statement::Return(loc, expr) => v.visit_return(*loc, expr),
-            Statement::Revert(loc, error, args) => v.visit_revert(*loc, error, args),
-            Statement::RevertNamedArgs(loc, error, args) => {
-                v.visit_revert_named_args(*loc, error, args)
-            }
-            Statement::Emit(loc, event) => v.visit_emit(*loc, event),
-            Statement::Try(loc, expr, returns, clauses) => {
-                v.visit_try(*loc, expr, returns, clauses)
-            }
-            Statement::Error(loc) => v.visit_parser_error(*loc),
+            Self::For(loc, init, cond, update, body) => v.visit_for(*loc, init, cond, update, body),
+            Self::DoWhile(loc, body, cond) => v.visit_do_while(*loc, body, cond),
+            Self::Continue(loc) => v.visit_continue(*loc, true),
+            Self::Break(loc) => v.visit_break(*loc, true),
+            Self::Return(loc, expr) => v.visit_return(*loc, expr),
+            Self::Revert(loc, error, args) => v.visit_revert(*loc, error, args),
+            Self::RevertNamedArgs(loc, error, args) => v.visit_revert_named_args(*loc, error, args),
+            Self::Emit(loc, event) => v.visit_emit(*loc, event),
+            Self::Try(loc, expr, returns, clauses) => v.visit_try(*loc, expr, returns, clauses),
+            Self::Error(loc) => v.visit_parser_error(*loc),
         }
     }
 }
@@ -603,24 +597,20 @@ impl Visitable for YulStatement {
         V: Visitor,
     {
         match self {
-            YulStatement::Assign(loc, exprs, expr) => {
-                v.visit_yul_assignment(*loc, exprs, &mut Some(expr))
-            }
-            YulStatement::Block(block) => {
-                v.visit_yul_block(block.loc, block.statements.as_mut(), false)
-            }
-            YulStatement::Break(loc) => v.visit_break(*loc, false),
-            YulStatement::Continue(loc) => v.visit_continue(*loc, false),
-            YulStatement::For(stmt) => v.visit_yul_for(stmt),
-            YulStatement::FunctionCall(stmt) => v.visit_yul_function_call(stmt),
-            YulStatement::FunctionDefinition(stmt) => v.visit_yul_fun_def(stmt),
-            YulStatement::If(loc, expr, block) => v.visit_yul_if(*loc, expr, block),
-            YulStatement::Leave(loc) => v.visit_yul_leave(*loc),
-            YulStatement::Switch(stmt) => v.visit_yul_switch(stmt),
-            YulStatement::VariableDeclaration(loc, idents, expr) => {
+            Self::Assign(loc, exprs, expr) => v.visit_yul_assignment(*loc, exprs, &mut Some(expr)),
+            Self::Block(block) => v.visit_yul_block(block.loc, block.statements.as_mut(), false),
+            Self::Break(loc) => v.visit_break(*loc, false),
+            Self::Continue(loc) => v.visit_continue(*loc, false),
+            Self::For(stmt) => v.visit_yul_for(stmt),
+            Self::FunctionCall(stmt) => v.visit_yul_function_call(stmt),
+            Self::FunctionDefinition(stmt) => v.visit_yul_fun_def(stmt),
+            Self::If(loc, expr, block) => v.visit_yul_if(*loc, expr, block),
+            Self::Leave(loc) => v.visit_yul_leave(*loc),
+            Self::Switch(stmt) => v.visit_yul_switch(stmt),
+            Self::VariableDeclaration(loc, idents, expr) => {
                 v.visit_yul_var_declaration(*loc, idents, expr)
             }
-            YulStatement::Error(loc) => v.visit_parser_error(*loc),
+            Self::Error(loc) => v.visit_parser_error(*loc),
         }
     }
 }

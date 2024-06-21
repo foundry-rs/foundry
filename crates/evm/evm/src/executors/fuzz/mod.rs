@@ -14,8 +14,9 @@ use foundry_evm_fuzz::{
     BaseCounterExample, CounterExample, FuzzCase, FuzzError, FuzzFixtures, FuzzTestResult,
 };
 use foundry_evm_traces::CallTraceArena;
+use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::{borrow::Cow, cell::RefCell};
+use std::cell::RefCell;
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -59,6 +60,7 @@ impl FuzzedExecutor {
         address: Address,
         should_fail: bool,
         rd: &RevertDecoder,
+        progress: Option<&ProgressBar>,
     ) -> FuzzTestResult {
         // Stores the first Fuzzcase
         let first_case: RefCell<Option<FuzzCase>> = RefCell::default();
@@ -91,6 +93,11 @@ impl FuzzedExecutor {
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
 
+            // If running with progress then increment current run.
+            if let Some(progress) = progress {
+                progress.inc(1);
+            };
+
             match fuzz_res {
                 FuzzOutcome::Case(case) => {
                     let mut first_case = first_case.borrow_mut();
@@ -105,31 +112,26 @@ impl FuzzedExecutor {
                         traces.borrow_mut().push(call_traces);
                     }
 
-                    if let Some(prev) = coverage.take() {
-                        // Safety: If `Option::or` evaluates to `Some`, then `call.coverage` must
-                        // necessarily also be `Some`
-                        coverage.replace(Some(prev.merge(case.coverage.unwrap())));
-                    } else {
-                        coverage.replace(case.coverage);
+                    match &mut *coverage.borrow_mut() {
+                        Some(prev) => prev.merge(case.coverage.unwrap()),
+                        opt => *opt = case.coverage,
                     }
 
                     Ok(())
                 }
                 FuzzOutcome::CounterExample(CounterExampleOutcome {
-                    exit_reason,
-                    counterexample: _counterexample,
+                    exit_reason: status,
+                    counterexample: outcome,
                     ..
                 }) => {
-                    let status = exit_reason;
                     // We cannot use the calldata returned by the test runner in `TestError::Fail`,
                     // since that input represents the last run case, which may not correspond with
                     // our failure - when a fuzz case fails, proptest will try
                     // to run at least one more case to find a minimal failure
                     // case.
-                    let call_res = _counterexample.1.result.clone();
-                    *counterexample.borrow_mut() = _counterexample;
-                    // HACK: we have to use an empty string here to denote `None`
-                    let reason = rd.maybe_decode(&call_res, Some(status));
+                    let reason = rd.maybe_decode(&outcome.1.result, Some(status));
+                    *counterexample.borrow_mut() = outcome;
+                    // HACK: we have to use an empty string here to denote `None`.
                     Err(TestCaseError::fail(reason.unwrap_or_default()))
                 }
             }
@@ -175,18 +177,15 @@ impl FuzzedExecutor {
                 } else {
                     vec![]
                 };
-                result.counterexample = Some(CounterExample::Single(BaseCounterExample {
-                    sender: None,
-                    addr: None,
-                    signature: None,
-                    contract_name: None,
-                    traces: call.traces,
-                    calldata,
-                    args,
-                }));
+
+                result.counterexample = Some(CounterExample::Single(
+                    BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                ));
             }
             _ => {}
         }
+
+        state.log_stats();
 
         result
     }
@@ -203,7 +202,6 @@ impl FuzzedExecutor {
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
-        let state_changeset = call.state_changeset.take().unwrap();
 
         // When the `assume` cheatcode is called it returns a special string
         if call.result.as_ref() == MAGIC_ASSUME {
@@ -215,13 +213,7 @@ impl FuzzedExecutor {
             .as_ref()
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
-        let success = self.executor.is_raw_call_success(
-            address,
-            Cow::Owned(state_changeset),
-            &call,
-            should_fail,
-        );
-
+        let success = self.executor.is_raw_call_mut_success(address, &mut call, should_fail);
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },

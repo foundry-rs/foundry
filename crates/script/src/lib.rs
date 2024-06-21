@@ -1,4 +1,9 @@
+//! # foundry-script
+//!
+//! Smart contract scripting.
+
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -17,7 +22,6 @@ use forge_verify::RetryArgs;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
     abi::{encode_function_args, get_func},
-    compile::SkipBuildFilter,
     evm::{Breakpoints, EvmArgs},
     shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
@@ -44,13 +48,14 @@ use foundry_evm::{
 };
 use foundry_wallets::MultiWalletOpts;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 use yansi::Paint;
 
 mod broadcast;
 mod build;
 mod execute;
 mod multi_sequence;
+mod progress;
 mod providers;
 mod receipts;
 mod runner;
@@ -174,12 +179,6 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
-    /// Skip building files whose names contain the given filter.
-    ///
-    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
-    #[arg(long, num_args(1..))]
-    pub skip: Option<Vec<SkipBuildFilter>>,
-
     #[command(flatten)]
     pub opts: CoreBuildArgs,
 
@@ -195,8 +194,6 @@ pub struct ScriptArgs {
     #[command(flatten)]
     pub retry: RetryArgs,
 }
-
-// === impl ScriptArgs ===
 
 impl ScriptArgs {
     async fn preprocess(self) -> Result<PreprocessedState> {
@@ -361,8 +358,8 @@ impl ScriptArgs {
 
         // From artifacts
         for (artifact, contract) in known_contracts.iter() {
-            let Some(bytecode) = &contract.bytecode else { continue };
-            let Some(deployed_bytecode) = &contract.deployed_bytecode else { continue };
+            let Some(bytecode) = contract.bytecode() else { continue };
+            let Some(deployed_bytecode) = contract.deployed_bytecode() else { continue };
             bytecodes.push((artifact.name.clone(), bytecode, deployed_bytecode));
         }
 
@@ -591,7 +588,7 @@ impl ScriptConfig {
                         CheatsConfig::new(
                             &self.config,
                             self.evm_opts.clone(),
-                            Some(Arc::new(known_contracts)),
+                            Some(known_contracts),
                             Some(script_wallets),
                             Some(target.version),
                         )

@@ -9,6 +9,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-common.workspace = true
 foundry-evm.workspace = true
@@ -20,12 +23,10 @@ revm = { workspace = true, default-features = false, features = [
 ] }
 
 alloy-primitives = { workspace = true, features = ["serde"] }
-alloy-rpc-types.workspace = true
-alloy-rpc-types-trace.workspace = true
+alloy-rpc-types = { workspace = true, features = ["anvil", "trace"] }
 alloy-serde.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
-alloy-network = { workspace = true, features = ["k256"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-trie.workspace = true
@@ -33,13 +34,9 @@ alloy-trie.workspace = true
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
 bytes = "1.4"
-c-kzg = { version = "1", features = ["serde"] }
 
 # misc
 rand = "0.8"
-
-[dev-dependencies]
-anvil-core = { path = ".", features = ["serde"] }
 
 [features]
 default = ["serde"]

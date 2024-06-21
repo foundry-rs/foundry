@@ -2,8 +2,8 @@
 
 use crate::{
     eth::backend::db::{
-        Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableState,
-        StateDb,
+        Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
+        SerializableState, StateDb,
     },
     mem::state::state_root,
     revm::{db::DbAccount, primitives::AccountInfo},
@@ -37,6 +37,7 @@ impl Db for MemDb {
         &self,
         at: BlockEnv,
         best_number: U64,
+        blocks: Vec<SerializableBlock>,
     ) -> DatabaseResult<Option<SerializableState>> {
         let accounts = self
             .inner
@@ -48,8 +49,7 @@ impl Db for MemDb {
                     code
                 } else {
                     self.inner.code_by_hash_ref(v.info.code_hash)?
-                }
-                .to_checked();
+                };
                 Ok((
                     k,
                     SerializableAccountRecord {
@@ -66,6 +66,7 @@ impl Db for MemDb {
             block: Some(at),
             accounts,
             best_block_number: Some(best_number),
+            blocks,
         }))
     }
 
@@ -95,7 +96,7 @@ impl Db for MemDb {
     }
 
     fn current_state(&self) -> StateDb {
-        StateDb::new(MemDb { inner: self.inner.clone(), ..Default::default() })
+        StateDb::new(Self { inner: self.inner.clone(), ..Default::default() })
     }
 }
 
@@ -138,7 +139,7 @@ mod tests {
     use foundry_evm::revm::primitives::{Bytecode, KECCAK_EMPTY};
     use std::{collections::BTreeMap, str::FromStr};
 
-    // verifies that all substantial aspects of a loaded account remain the state after an account
+    // verifies that all substantial aspects of a loaded account remain the same after an account
     // is dumped and reloaded
     #[test]
     fn test_dump_reload_cycle() {
@@ -147,8 +148,7 @@ mod tests {
 
         let mut dump_db = MemDb::default();
 
-        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
-
+        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code"));
         dump_db.insert_account(
             test_addr,
             AccountInfo {
@@ -158,10 +158,10 @@ mod tests {
                 nonce: 1234,
             },
         );
-
         dump_db.set_storage_at(test_addr, U256::from(1234567), U256::from(1)).unwrap();
 
-        let state = dump_db.dump_state(Default::default(), U64::ZERO).unwrap().unwrap();
+        // blocks dumping/loading tested in storage.rs
+        let state = dump_db.dump_state(Default::default(), U64::ZERO, Vec::new()).unwrap().unwrap();
 
         let mut load_db = MemDb::default();
 
@@ -184,7 +184,7 @@ mod tests {
         let test_addr2: Address =
             Address::from_str("0x70997970c51812dc3a010c7d01b50e0d17dc79c8").unwrap();
 
-        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
+        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code"));
 
         let mut db = MemDb::default();
 

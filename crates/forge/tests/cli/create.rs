@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_primitives::Address;
 use anvil::{spawn, NodeConfig};
-use foundry_compilers::{artifacts::BytecodeHash, remappings::Remapping};
+use foundry_compilers::artifacts::{remappings::Remapping, BytecodeHash};
 use foundry_config::Config;
 use foundry_test_utils::{
     forgetest, forgetest_async,
@@ -135,7 +135,7 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = hex::encode(wallet.signer().to_bytes());
+    let pk = hex::encode(wallet.credential().to_bytes());
 
     // explicitly byte code hash for consistent checks
     let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
@@ -201,7 +201,7 @@ forgetest_async!(can_create_with_constructor_args, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = hex::encode(wallet.signer().to_bytes());
+    let pk = hex::encode(wallet.credential().to_bytes());
 
     // explicitly byte code hash for consistent checks
     let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
@@ -276,7 +276,7 @@ forgetest_async!(can_create_and_call, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = hex::encode(wallet.signer().to_bytes());
+    let pk = hex::encode(wallet.credential().to_bytes());
 
     // explicitly byte code hash for consistent checks
     let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };

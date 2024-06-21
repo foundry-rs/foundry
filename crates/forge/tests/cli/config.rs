@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, U256};
 use foundry_cli::utils as forge_utils;
 use foundry_compilers::{
     artifacts::{BytecodeHash, OptimizerDetails, RevertStrings, YulDetails},
-    compilers::{solc::SolcVersionManager, CompilerVersionManager},
+    solc::Solc,
 };
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
@@ -13,7 +13,7 @@ use foundry_config::{
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
-    foundry_compilers::{remappings::Remapping, EvmVersion},
+    foundry_compilers::artifacts::{remappings::Remapping, EvmVersion},
     util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
 };
 use path_slash::PathBufExt;
@@ -29,7 +29,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
     // explicitly set all values
     let input = Config {
         profile: Config::DEFAULT_PROFILE,
-        __root: Default::default(),
+        root: Default::default(),
         src: "test-src".into(),
         test: "test-test".into(),
         script: "test-script".into(),
@@ -72,7 +72,11 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             failure_persist_file: Some("failures".to_string()),
             ..Default::default()
         },
-        invariant: InvariantConfig { runs: 256, ..Default::default() },
+        invariant: InvariantConfig {
+            runs: 256,
+            failure_persist_dir: Some("test-cache/fuzz".into()),
+            ..Default::default()
+        },
         ffi: true,
         always_use_create_2_factory: false,
         prompt_timeout: 0,
@@ -127,12 +131,15 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         doc: Default::default(),
         fs_permissions: Default::default(),
         labels: Default::default(),
-        cancun: true,
+        prague: true,
         isolate: true,
         unchecked_cheatcode_artifacts: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
-        __non_exhaustive: (),
-        __warnings: vec![],
+        vyper: Default::default(),
+        skip: vec![],
+        dependencies: Default::default(),
+        warnings: vec![],
+        _non_exhaustive: (),
     };
     prj.write_config(input.clone());
     let config = cmd.config();
@@ -357,11 +364,10 @@ contract Foo {}
 
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
-    assert!(cmd.stderr_lossy().contains("this/solc/does/not/exist does not exist"));
+    assert!(cmd.stderr_lossy().contains("`solc` this/solc/does/not/exist does not exist"));
 
     // `OTHER_SOLC_VERSION` was installed in previous step, so we can use the path to this directly
-    let local_solc =
-        SolcVersionManager::default().get_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
+    let local_solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
     cmd.forge_fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
     let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));
@@ -441,7 +447,6 @@ forgetest!(can_set_gas_price, |prj, cmd| {
 forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
-    dbg!(&remappings);
     similar_asserts::assert_eq!(
         remappings,
         vec![

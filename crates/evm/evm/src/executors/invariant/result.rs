@@ -1,14 +1,16 @@
-use super::{error::FailedInvariantCaseData, InvariantFailures, InvariantFuzzError};
+use super::{
+    call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
+    InvariantFailures, InvariantFuzzError,
+};
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use eyre::Result;
 use foundry_config::InvariantConfig;
-use foundry_evm_core::{constants::CALLER, utils::StateChangeset};
+use foundry_evm_core::utils::StateChangeset;
 use foundry_evm_fuzz::{
     invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract},
     FuzzedCases,
 };
-use revm::primitives::U256;
 use revm_inspectors::tracing::CallTraceArena;
 use std::borrow::Cow;
 
@@ -60,21 +62,12 @@ pub(crate) fn assert_invariants(
         }
     }
 
-    let func = invariant_contract.invariant_function;
-    let mut call_result = executor.call_raw(
-        CALLER,
+    let (call_result, success) = call_invariant_function(
+        executor,
         invariant_contract.address,
-        func.abi_encode_input(&[]).expect("invariant should have no inputs").into(),
-        U256::ZERO,
+        invariant_contract.invariant_function.abi_encode_input(&[])?.into(),
     )?;
-
-    let is_err = !executor.is_raw_call_success(
-        invariant_contract.address,
-        Cow::Owned(call_result.state_changeset.take().unwrap()),
-        &call_result,
-        false,
-    );
-    if is_err {
+    if !success {
         // We only care about invariants which we haven't broken yet.
         if invariant_failures.error.is_none() {
             let case_data = FailedInvariantCaseData::new(
@@ -110,13 +103,14 @@ pub(crate) fn can_continue(
 ) -> Result<RichInvariantResults> {
     let mut call_results = None;
 
-    // Detect handler assertion failures first.
-    let handlers_failed = targeted_contracts.targets.lock().iter().any(|contract| {
-        !executor.is_success(*contract.0, false, Cow::Borrowed(state_changeset), false)
-    });
+    let handlers_succeeded = || {
+        targeted_contracts.targets.lock().keys().all(|address| {
+            executor.is_success(*address, false, Cow::Borrowed(state_changeset), false)
+        })
+    };
 
-    // Assert invariants IF the call did not revert and the handlers did not fail.
-    if !call_result.reverted && !handlers_failed {
+    // Assert invariants if the call did not revert and the handlers did not fail.
+    if !call_result.reverted && handlers_succeeded() {
         if let Some(traces) = call_result.traces {
             run_traces.push(traces);
         }
@@ -153,4 +147,31 @@ pub(crate) fn can_continue(
         }
     }
     Ok(RichInvariantResults::new(true, call_results))
+}
+
+/// Given the executor state, asserts conditions within `afterInvariant` function.
+/// If call fails then the invariant test is considered failed.
+pub(crate) fn assert_after_invariant(
+    invariant_contract: &InvariantContract<'_>,
+    invariant_config: &InvariantConfig,
+    targeted_contracts: &FuzzRunIdentifiedContracts,
+    executor: &mut Executor,
+    invariant_failures: &mut InvariantFailures,
+    inputs: &[BasicTxDetails],
+) -> Result<bool> {
+    let (call_result, success) =
+        call_after_invariant_function(executor, invariant_contract.address)?;
+    // Fail the test case if `afterInvariant` doesn't succeed.
+    if !success {
+        let case_data = FailedInvariantCaseData::new(
+            invariant_contract,
+            invariant_config,
+            targeted_contracts,
+            inputs,
+            call_result,
+            &[],
+        );
+        invariant_failures.error = Some(InvariantFuzzError::BrokenInvariant(case_data));
+    }
+    Ok(success)
 }

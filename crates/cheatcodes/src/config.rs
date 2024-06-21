@@ -12,7 +12,6 @@ use semver::Version;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
     time::Duration,
 };
 
@@ -29,6 +28,8 @@ pub struct CheatsConfig {
     pub prompt_timeout: Duration,
     /// RPC storage caching settings determines what chains and endpoints to cache
     pub rpc_storage_caching: StorageCachingConfig,
+    /// Disables storage caching entirely.
+    pub no_storage_caching: bool,
     /// All known endpoints and their aliases
     pub rpc_endpoints: ResolvedRpcEndpoints,
     /// Project's paths as configured
@@ -48,7 +49,7 @@ pub struct CheatsConfig {
     /// Artifacts which are guaranteed to be fresh (either recompiled or cached).
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
-    pub available_artifacts: Option<Arc<ContractsByArtifact>>,
+    pub available_artifacts: Option<ContractsByArtifact>,
     /// Version of the script/test contract which is currently running.
     pub running_version: Option<Version>,
 }
@@ -58,11 +59,11 @@ impl CheatsConfig {
     pub fn new(
         config: &Config,
         evm_opts: EvmOpts,
-        available_artifacts: Option<Arc<ContractsByArtifact>>,
+        available_artifacts: Option<ContractsByArtifact>,
         script_wallets: Option<ScriptWallets>,
         running_version: Option<Version>,
     ) -> Self {
-        let mut allowed_paths = vec![config.__root.0.clone()];
+        let mut allowed_paths = vec![config.root.0.clone()];
         allowed_paths.extend(config.libs.clone());
         allowed_paths.extend(config.allow_paths.clone());
 
@@ -78,10 +79,11 @@ impl CheatsConfig {
             always_use_create_2_factory: evm_opts.always_use_create_2_factory,
             prompt_timeout: Duration::from_secs(config.prompt_timeout),
             rpc_storage_caching: config.rpc_storage_caching.clone(),
+            no_storage_caching: config.no_storage_caching,
             rpc_endpoints,
             paths: config.project_paths(),
-            fs_permissions: config.fs_permissions.clone().joined(&config.__root),
-            root: config.__root.0.clone(),
+            fs_permissions: config.fs_permissions.clone().joined(config.root.as_ref()),
+            root: config.root.0.clone(),
             allowed_paths,
             evm_opts,
             labels: config.labels.clone(),
@@ -204,6 +206,7 @@ impl Default for CheatsConfig {
             always_use_create_2_factory: false,
             prompt_timeout: Duration::from_secs(120),
             rpc_storage_caching: Default::default(),
+            no_storage_caching: false,
             rpc_endpoints: Default::default(),
             paths: ProjectPathsConfig::builder().build_with_root("./"),
             fs_permissions: Default::default(),
@@ -225,7 +228,7 @@ mod tests {
 
     fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
-            &Config { __root: PathBuf::from(root).into(), fs_permissions, ..Default::default() },
+            &Config { root: PathBuf::from(root).into(), fs_permissions, ..Default::default() },
             Default::default(),
             None,
             None,

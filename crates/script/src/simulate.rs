@@ -26,11 +26,11 @@ use std::{
     sync::Arc,
 };
 
-/// Same as [ExecutedState], but also contains [ExecutionArtifacts] which are obtained from
-/// [ScriptResult].
+/// Same as [ExecutedState](crate::execute::ExecutedState), but also contains [ExecutionArtifacts]
+/// which are obtained from [ScriptResult].
 ///
-/// Can be either converted directly to [BundledState] via [PreSimulationState::resume] or driven to
-/// it through [FilledTransactionsState].
+/// Can be either converted directly to [BundledState] or driven to it through
+/// [FilledTransactionsState].
 pub struct PreSimulationState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
@@ -402,7 +402,7 @@ impl FilledTransactionsState {
             )?)
         };
 
-        let commit = get_commit_hash(&self.script_config.config.__root.0);
+        let commit = get_commit_hash(&self.script_config.config.root.0);
 
         let libraries = self
             .build_data

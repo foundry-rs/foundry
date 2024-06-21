@@ -1,6 +1,9 @@
 [package]
 name = "chisel"
-authors = ["clabby <https://github.com/clabby>", "asnared <https://github.com/abigger87>"]
+authors = [
+    "clabby <https://github.com/clabby>",
+    "asnared <https://github.com/abigger87>",
+]
 description = "Fast, utilitarian, and verbose Solidity REPL"
 
 version.workspace = true
@@ -10,12 +13,19 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "chisel"
 path = "bin/main.rs"
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
+vergen = { workspace = true, default-features = false, features = [
+    "build",
+    "git",
+    "gitcl",
+] }
 
 [dependencies]
 # forge
@@ -28,7 +38,12 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary"] }
-alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-primitives = { workspace = true, features = [
+    "serde",
+    "getrandom",
+    "arbitrary",
+    "rlp",
+] }
 alloy-json-abi.workspace = true
 alloy-rpc-types.workspace = true
 
@@ -40,7 +55,7 @@ regex = "1"
 reqwest.workspace = true
 revm.workspace = true
 rustyline = "12"
-semver = "1"
+semver.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 solang-parser.workspace = true
@@ -59,7 +74,7 @@ serial_test = "3"
 tracing-subscriber.workspace = true
 
 [features]
-default = ["rustls"]
+default = ["rustls", "jemalloc"]
 rustls = ["reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
 openssl = ["foundry-compilers/openssl", "reqwest/default-tls"]
 asm-keccak = ["alloy-primitives/asm-keccak"]

@@ -34,6 +34,9 @@ pub trait TestFunctionExt {
     /// Returns whether this function is a `setUp` function.
     fn is_setup(&self) -> bool;
 
+    /// Returns whether this function is `afterInvariant` function.
+    fn is_after_invariant(&self) -> bool;
+
     /// Returns whether this function is a fixture function.
     fn is_fixture(&self) -> bool;
 }
@@ -58,6 +61,10 @@ impl TestFunctionExt for Function {
 
     fn is_setup(&self) -> bool {
         self.name.is_setup()
+    }
+
+    fn is_after_invariant(&self) -> bool {
+        self.name.is_after_invariant()
     }
 
     fn is_fixture(&self) -> bool {
@@ -86,6 +93,10 @@ impl TestFunctionExt for String {
         self.as_str().is_setup()
     }
 
+    fn is_after_invariant(&self) -> bool {
+        self.as_str().is_after_invariant()
+    }
+
     fn is_fixture(&self) -> bool {
         self.as_str().is_fixture()
     }
@@ -110,6 +121,10 @@ impl TestFunctionExt for str {
 
     fn is_setup(&self) -> bool {
         self.eq_ignore_ascii_case("setup")
+    }
+
+    fn is_after_invariant(&self) -> bool {
+        self.eq_ignore_ascii_case("afterinvariant")
     }
 
     fn is_fixture(&self) -> bool {

@@ -4,7 +4,7 @@ use crate::Config;
 use alloy_primitives::U256;
 use eyre::WrapErr;
 use figment::value::Value;
-use foundry_compilers::{
+use foundry_compilers::artifacts::{
     remappings::{Remapping, RemappingError},
     EvmVersion,
 };
@@ -274,10 +274,10 @@ pub enum Numeric {
 }
 
 impl From<Numeric> for U256 {
-    fn from(n: Numeric) -> U256 {
+    fn from(n: Numeric) -> Self {
         match n {
             Numeric::U256(n) => n,
-            Numeric::Num(n) => U256::from(n),
+            Numeric::Num(n) => Self::from(n),
         }
     }
 }

@@ -3,7 +3,7 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{p_println, utils::Git};
 use foundry_common::fs;
-use foundry_compilers::remappings::Remapping;
+use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::Config;
 use std::path::{Path, PathBuf};
 use yansi::Paint;
@@ -43,7 +43,7 @@ pub struct InitArgs {
 
 impl InitArgs {
     pub fn run(self) -> Result<()> {
-        let InitArgs { root, template, branch, opts, offline, force, vscode } = self;
+        let Self { root, template, branch, opts, offline, force, vscode } = self;
         let DependencyInstallOpts { shallow, no_git, no_commit, quiet } = opts;
 
         // create the root dir if it does not exist

@@ -1,7 +1,8 @@
 use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::{Address, Bytes, TxKind, B256};
-use alloy_rpc_types::{request::TransactionRequest, WithOtherFields};
+use alloy_rpc_types::request::TransactionRequest;
+use alloy_serde::WithOtherFields;
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, ContractData, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
@@ -41,7 +42,7 @@ pub struct TransactionWithMetadata {
 }
 
 fn default_string() -> Option<String> {
-    Some("".to_string())
+    Some(String::new())
 }
 
 fn default_address() -> Option<Address> {
@@ -131,7 +132,7 @@ impl TransactionWithMetadata {
 
         let Some(data) = self.transaction.input.input() else { return Ok(()) };
         let Some(info) = info else { return Ok(()) };
-        let Some(bytecode) = info.bytecode.as_ref() else { return Ok(()) };
+        let Some(bytecode) = info.bytecode() else { return Ok(()) };
 
         // `create2` transactions are prefixed by a 32 byte salt.
         let creation_code = if is_create2 {

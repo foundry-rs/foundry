@@ -3,9 +3,11 @@ use ethers_contract_abigen::{
     Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts,
 };
 use eyre::{Result, WrapErr};
+use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
+use regex::Regex;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -31,10 +33,6 @@ pub struct BindArgs {
     /// Create bindings only for contracts whose names match the specified filter(s)
     #[arg(long)]
     pub select: Vec<regex::Regex>,
-
-    /// Create bindings only for contracts whose names do not match the specified filter(s)
-    #[arg(long, conflicts_with = "select")]
-    pub skip: Vec<regex::Regex>,
 
     /// Explicitly generate bindings for all contracts
     ///
@@ -84,8 +82,12 @@ pub struct BindArgs {
     skip_extra_derives: bool,
 
     /// Generate bindings for the `alloy` library, instead of `ethers`.
-    #[arg(skip)]
+    #[arg(long, conflicts_with = "ethers")]
     alloy: bool,
+
+    /// Specify the alloy version.
+    #[arg(long, value_name = "ALLOY_VERSION")]
+    alloy_version: Option<String>,
 
     /// Generate bindings for the `ethers` library, instead of `alloy` (default, deprecated).
     #[arg(long)]
@@ -103,13 +105,10 @@ impl BindArgs {
         }
 
         if !self.alloy {
-            eprintln!("Warning: ethers bindings are deprecated and will be removed in the future");
-            /*
             eprintln!(
                 "Warning: `--ethers` (default) bindings are deprecated and will be removed in the future. \
                  Consider using `--alloy` instead."
             );
-            */
         }
 
         let config = self.try_load_config_emit_warnings()?;
@@ -133,18 +132,25 @@ impl BindArgs {
     }
 
     /// Returns the filter to use for `MultiAbigen`
-    fn get_filter(&self) -> ContractFilter {
+    fn get_filter(&self) -> Result<ContractFilter> {
         if self.select_all {
-            return ContractFilter::All
+            return Ok(ContractFilter::All)
         }
         if !self.select.is_empty() {
-            return SelectContracts::default().extend_regex(self.select.clone()).into()
+            return Ok(SelectContracts::default().extend_regex(self.select.clone()).into())
         }
-        if !self.skip.is_empty() {
-            return ExcludeContracts::default().extend_regex(self.skip.clone()).into()
+        if let Some(skip) = self.build_args.skip.as_ref().filter(|s| !s.is_empty()) {
+            return Ok(ExcludeContracts::default()
+                .extend_regex(
+                    skip.clone()
+                        .into_iter()
+                        .map(|s| Regex::new(s.file_pattern()))
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+                .into())
         }
         // This excludes all Test/Script and forge-std contracts
-        ExcludeContracts::default()
+        Ok(ExcludeContracts::default()
             .extend_pattern([
                 ".*Test.*",
                 ".*Script",
@@ -155,16 +161,41 @@ impl BindArgs {
                 "[Vv]m.*",
             ])
             .extend_names(["IMulticall3"])
-            .into()
+            .into())
+    }
+
+    fn get_alloy_filter(&self) -> Result<Filter> {
+        if self.select_all {
+            // Select all json files
+            return Ok(Filter::All);
+        }
+        if !self.select.is_empty() {
+            // Return json files that match the select regex
+            return Ok(Filter::Select(self.select.clone()));
+        }
+
+        if let Some(skip) = self.build_args.skip.as_ref().filter(|s| !s.is_empty()) {
+            return Ok(Filter::Skip(
+                skip.clone()
+                    .into_iter()
+                    .map(|s| Regex::new(s.file_pattern()))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ));
+        }
+
+        // Exclude defaults
+        Ok(Filter::skip_default())
     }
 
     /// Returns an iterator over the JSON files and the contract name in the `artifacts` directory.
-    fn get_json_files(&self, artifacts: &Path) -> impl Iterator<Item = (String, PathBuf)> {
-        let filter = self.get_filter();
-        json_files(artifacts)
+    fn get_json_files(&self, artifacts: &Path) -> Result<impl Iterator<Item = (String, PathBuf)>> {
+        let filter = self.get_filter()?;
+        let alloy_filter = self.get_alloy_filter()?;
+        let is_alloy = self.alloy;
+        Ok(json_files(artifacts)
             .filter_map(|path| {
                 // Ignore the build info JSON.
-                if path.to_str()?.contains("/build-info/") {
+                if path.to_str()?.contains("build-info") {
                     return None;
                 }
 
@@ -181,17 +212,25 @@ impl BindArgs {
 
                 Some((name, path))
             })
-            .filter(move |(name, _path)| filter.is_match(name))
+            .filter(
+                move |(name, _path)| {
+                    if is_alloy {
+                        alloy_filter.is_match(name)
+                    } else {
+                        filter.is_match(name)
+                    }
+                },
+            ))
     }
 
     /// Instantiate the multi-abigen
     fn get_multi(&self, artifacts: &Path) -> Result<MultiAbigen> {
         let abigens = self
-            .get_json_files(artifacts)
+            .get_json_files(artifacts)?
             .map(|(name, path)| {
                 trace!(?path, "parsing Abigen from file");
                 let abi = Abigen::new(name, path.to_str().unwrap())
-                    .wrap_err_with(|| format!("failed to parse Abigen from file: {:?}", path));
+                    .wrap_err_with(|| format!("failed to parse Abigen from file: {path:?}"));
                 if !self.skip_extra_derives {
                     abi?.add_derive("serde::Serialize")?.add_derive("serde::Deserialize")
                 } else {
@@ -204,13 +243,32 @@ impl BindArgs {
         Ok(multi)
     }
 
+    fn get_solmacrogen(&self, artifacts: &Path) -> Result<MultiSolMacroGen> {
+        let mut dup = std::collections::HashSet::<String>::new();
+        let instances = self
+            .get_json_files(artifacts)?
+            .filter_map(|(name, path)| {
+                trace!(?path, "parsing SolMacroGen from file");
+                if dup.insert(name.clone()) {
+                    Some(SolMacroGen::new(path, name))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let multi = MultiSolMacroGen::new(artifacts, instances);
+        eyre::ensure!(!multi.instances.is_empty(), "No contract artifacts found");
+        Ok(multi)
+    }
+
     /// Check that the existing bindings match the expected abigen output
     fn check_existing_bindings(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
         if !self.alloy {
             return self.check_ethers(artifacts, bindings_root);
         }
 
-        todo!("alloy")
+        self.check_alloy(artifacts, bindings_root)
     }
 
     fn check_ethers(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
@@ -239,13 +297,30 @@ impl BindArgs {
         Ok(())
     }
 
+    fn check_alloy(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
+        let mut bindings = self.get_solmacrogen(artifacts)?;
+        bindings.generate_bindings()?;
+        println!("Checking bindings for {} contracts", bindings.instances.len());
+        bindings.check_consistency(
+            &self.crate_name,
+            &self.crate_version,
+            bindings_root,
+            self.single_file,
+            !self.skip_cargo_toml,
+            self.module,
+            self.alloy_version.clone(),
+        )?;
+        println!("OK.");
+        Ok(())
+    }
+
     /// Generate the bindings
     fn generate_bindings(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
         if !self.alloy {
             return self.generate_ethers(artifacts, bindings_root);
         }
 
-        todo!("alloy")
+        self.generate_alloy(artifacts, bindings_root)
     }
 
     fn generate_ethers(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
@@ -266,5 +341,60 @@ impl BindArgs {
             trace!(single_file = self.single_file, "generating module");
             bindings.write_to_module(bindings_root, self.single_file)
         }
+    }
+
+    fn generate_alloy(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
+        let mut solmacrogen = self.get_solmacrogen(artifacts)?;
+        println!("Generating bindings for {} contracts", solmacrogen.instances.len());
+
+        if !self.module {
+            trace!(single_file = self.single_file, "generating crate");
+            solmacrogen.write_to_crate(
+                &self.crate_name,
+                &self.crate_version,
+                bindings_root,
+                self.single_file,
+                self.alloy_version.clone(),
+            )?;
+        } else {
+            trace!(single_file = self.single_file, "generating module");
+            solmacrogen.write_to_module(bindings_root, self.single_file)?;
+        }
+
+        Ok(())
+    }
+}
+
+pub enum Filter {
+    All,
+    Select(Vec<regex::Regex>),
+    Skip(Vec<regex::Regex>),
+}
+
+impl Filter {
+    pub fn is_match(&self, name: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Select(regexes) => regexes.iter().any(|regex| regex.is_match(name)),
+            Self::Skip(regexes) => !regexes.iter().any(|regex| regex.is_match(name)),
+        }
+    }
+
+    pub fn skip_default() -> Self {
+        let skip = [
+            ".*Test.*",
+            ".*Script",
+            "console[2]?",
+            "CommonBase",
+            "Components",
+            "[Ss]td(Chains|Math|Error|Json|Utils|Cheats|Style|Invariant|Assertions|Toml|Storage(Safe)?)",
+            "[Vv]m.*",
+            "IMulticall3",
+        ]
+        .iter()
+        .map(|pattern| regex::Regex::new(pattern).unwrap())
+        .collect::<Vec<_>>();
+
+        Self::Skip(skip)
     }
 }

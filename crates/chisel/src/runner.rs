@@ -189,7 +189,7 @@ impl ChiselRunner {
 
         if commit {
             // if explicitly requested we can now commit the call
-            res = self.executor.call_raw_committing(from, to, calldata, value)?;
+            res = self.executor.transact_raw(from, to, calldata, value)?;
         }
 
         let RawCallResult { result, reverted, logs, traces, labels, chisel_state, .. } = res;

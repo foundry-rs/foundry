@@ -27,18 +27,18 @@ impl BufferKind {
     /// Helper to cycle through the active buffers.
     pub(crate) fn next(&self) -> Self {
         match self {
-            BufferKind::Memory => BufferKind::Calldata,
-            BufferKind::Calldata => BufferKind::Returndata,
-            BufferKind::Returndata => BufferKind::Memory,
+            Self::Memory => Self::Calldata,
+            Self::Calldata => Self::Returndata,
+            Self::Returndata => Self::Memory,
         }
     }
 
     /// Helper to format the title of the active buffer pane
     pub(crate) fn title(&self, size: usize) -> String {
         match self {
-            BufferKind::Memory => format!("Memory (max expansion: {} bytes)", size),
-            BufferKind::Calldata => format!("Calldata (size: {} bytes)", size),
-            BufferKind::Returndata => format!("Returndata (size: {} bytes)", size),
+            Self::Memory => format!("Memory (max expansion: {size} bytes)"),
+            Self::Calldata => format!("Calldata (size: {size} bytes)"),
+            Self::Returndata => format!("Returndata (size: {size} bytes)"),
         }
     }
 }

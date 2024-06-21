@@ -3,7 +3,9 @@
 use super::context::{BufferKind, DebuggerContext};
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
-use foundry_compilers::sourcemap::SourceElement;
+use foundry_compilers::{
+    artifacts::sourcemap::SourceElement, compilers::multi::MultiCompilerLanguage,
+};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -191,8 +193,8 @@ impl DebuggerContext<'_> {
     }
 
     fn draw_src(&self, f: &mut Frame<'_>, area: Rect) {
-        let text_output = self.src_text(area);
-        let title = match self.call_kind() {
+        let (text_output, source_name) = self.src_text(area);
+        let call_kind_text = match self.call_kind() {
             CallKind::Create | CallKind::Create2 => "Contract creation",
             CallKind::Call => "Contract call",
             CallKind::StaticCall => "Contract staticcall",
@@ -200,23 +202,28 @@ impl DebuggerContext<'_> {
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
         };
+        let title = format!(
+            "{} {} ",
+            call_kind_text,
+            source_name.map(|s| format!("| {s}")).unwrap_or_default()
+        );
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text_output).block(block).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
     }
 
-    fn src_text(&self, area: Rect) -> Text<'_> {
-        let (source_element, source_code) = match self.src_map() {
+    fn src_text(&self, area: Rect) -> (Text<'_>, Option<&str>) {
+        let (source_element, source_code, source_file) = match self.src_map() {
             Ok(r) => r,
-            Err(e) => return Text::from(e),
+            Err(e) => return (Text::from(e), None),
         };
 
         // We are handed a vector of SourceElements that give us a span of sourcecode that is
         // currently being executed. This includes an offset and length.
         // This vector is in instruction pointer order, meaning the location of the instruction
         // minus `sum(push_bytes[..pc])`.
-        let offset = source_element.offset;
-        let len = source_element.length;
+        let offset = source_element.offset() as usize;
+        let len = source_element.length() as usize;
         let max = source_code.len();
 
         // Split source into before, relevant, and after chunks, split by line, for formatting.
@@ -322,10 +329,19 @@ impl DebuggerContext<'_> {
             lines.push(u_num, line, u_text);
         }
 
-        Text::from(lines.lines)
+        // pad with empty to each line to ensure the previous text is cleared
+        for line in &mut lines.lines {
+            // note that the \n is not included in the line length
+            if area.width as usize > line.width() + 1 {
+                line.push_span(Span::raw(" ".repeat(area.width as usize - line.width() - 1)));
+            }
+        }
+
+        (Text::from(lines.lines), Some(source_file))
     }
 
-    fn src_map(&self) -> Result<(SourceElement, &str), String> {
+    /// Returns source map, source code and source name of the current line.
+    fn src_map(&self) -> Result<(SourceElement, &str, &str), String> {
         let address = self.address();
         let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
@@ -343,38 +359,52 @@ impl DebuggerContext<'_> {
 
         let is_create = matches!(self.call_kind(), CallKind::Create | CallKind::Create2);
         let pc = self.current_step().pc;
-        let Some((source_element, source_code)) =
-            files_source_code.find_map(|(file_id, source_code, contract_source)| {
+        let Some((source_element, source_code, source_file)) =
+            files_source_code.find_map(|(artifact, source)| {
                 let bytecode = if is_create {
-                    &contract_source.bytecode
+                    &artifact.bytecode.bytecode
                 } else {
-                    contract_source.deployed_bytecode.bytecode.as_ref()?
+                    artifact.bytecode.deployed_bytecode.bytecode.as_ref()?
                 };
-                let mut source_map = bytecode.source_map()?.ok()?;
+                let source_map = bytecode.source_map()?.expect("failed to parse");
 
                 let pc_ic_map = if is_create { create_map } else { rt_map };
                 let ic = pc_ic_map.get(pc)?;
-                let source_element = source_map.swap_remove(ic);
+
+                // Solc indexes source maps by instruction counter, but Vyper indexes by program
+                // counter.
+                let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
+                    source_map.get(ic)?
+                } else {
+                    source_map.get(pc)?
+                };
                 // if the source element has an index, find the sourcemap for that index
-                source_element
-                    .index
-                    .and_then(|index|
+                let res = source_element
+                    .index()
                     // if index matches current file_id, return current source code
-                    (index == file_id).then(|| (source_element.clone(), source_code)))
+                    .and_then(|index| {
+                        (index == artifact.file_id)
+                            .then(|| (source_element.clone(), source.source.as_str(), &source.name))
+                    })
                     .or_else(|| {
                         // otherwise find the source code for the element's index
                         self.debugger
                             .contracts_sources
                             .sources_by_id
-                            .get(&(source_element.index?))
-                            .map(|source_code| (source_element.clone(), source_code.as_ref()))
-                    })
+                            .get(&artifact.build_id)?
+                            .get(&source_element.index()?)
+                            .map(|source| {
+                                (source_element.clone(), source.source.as_str(), &source.name)
+                            })
+                    });
+
+                res
             })
         else {
             return Err(format!("No source map for contract {contract_name}"));
         };
 
-        Ok((source_element, source_code))
+        Ok((source_element, source_code, source_file))
     }
 
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {
@@ -419,7 +449,7 @@ impl DebuggerContext<'_> {
 
         let params = OpcodeParam::of(step.instruction);
 
-        let text: Vec<Line> = stack
+        let text: Vec<Line<'_>> = stack
             .iter()
             .rev()
             .enumerate()
@@ -514,7 +544,7 @@ impl DebuggerContext<'_> {
         let height = area.height as usize;
         let end_line = self.draw_memory.current_buf_startline + height;
 
-        let text: Vec<Line> = buf
+        let text: Vec<Line<'_>> = buf
             .chunks(32)
             .enumerate()
             .skip(self.draw_memory.current_buf_startline)

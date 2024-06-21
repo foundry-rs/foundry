@@ -26,7 +26,7 @@ impl RevertDiagnostic {
             |addr: &Address| labels.get(addr).cloned().unwrap_or_else(|| addr.to_string());
 
         match self {
-            RevertDiagnostic::ContractExistsOnOtherForks { contract, active, available_on } => {
+            Self::ContractExistsOnOtherForks { contract, active, available_on } => {
                 let contract_label = get_label(contract);
 
                 format!(
@@ -37,7 +37,7 @@ impl RevertDiagnostic {
                     available_on.iter().format(", ")
                 )
             }
-            RevertDiagnostic::ContractDoesNotExist { contract, persistent, .. } => {
+            Self::ContractDoesNotExist { contract, persistent, .. } => {
                 let contract_label = get_label(contract);
                 if *persistent {
                     format!("Contract {contract_label} does not exist")

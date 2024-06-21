@@ -2,7 +2,8 @@
 //!
 //! Foundry cheatcodes implementations.
 
-#![warn(missing_docs, unreachable_pub, unused_crate_dependencies, rust_2018_idioms)]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![allow(elided_lifetimes_in_paths)] // Cheats context uses 3 lifetimes
 
 #[macro_use]
@@ -18,26 +19,37 @@ pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, Context};
 pub use spec::{CheatcodeDef, Vm};
+pub use Vm::ForgeContext;
 
 #[macro_use]
 mod error;
-mod base64;
-mod config;
-mod env;
-mod evm;
-mod fs;
-mod inspector;
-mod json;
-mod script;
-mod string;
-mod test;
-mod toml;
-mod utils;
 
+mod base64;
+
+mod config;
+
+mod env;
 pub use env::set_execution_context;
-pub use script::ScriptWallets;
+
+mod evm;
+
+mod fs;
+
+mod inspector;
+
+mod json;
+
+mod script;
+pub use script::{ScriptWallets, ScriptWalletsInner};
+
+mod string;
+
+mod test;
 pub use test::expect::ExpectedCallTracker;
-pub use Vm::ForgeContext;
+
+mod toml;
+
+mod utils;
 
 /// Cheatcode implementation.
 pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
@@ -139,6 +151,6 @@ impl<'cheats, 'evm, DB: DatabaseExt> std::ops::DerefMut for CheatsCtxt<'cheats, 
 impl<'cheats, 'evm, DB: DatabaseExt> CheatsCtxt<'cheats, 'evm, DB> {
     #[inline]
     pub(crate) fn is_precompile(&self, address: &Address) -> bool {
-        self.precompiles.contains_key(address)
+        self.precompiles.contains(address)
     }
 }

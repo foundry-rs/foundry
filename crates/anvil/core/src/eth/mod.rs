@@ -1,15 +1,14 @@
-use crate::{
-    eth::subscription::SubscriptionId,
-    types::{EvmMineOptions, Forking, Index},
-};
+use crate::eth::subscription::SubscriptionId;
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_types::{
+    anvil::{Forking, MineOptions},
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
     state::StateOverride,
-    BlockId, BlockNumberOrTag as BlockNumber, Filter, WithOtherFields,
+    trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions},
+    BlockId, BlockNumberOrTag as BlockNumber, Filter, Index,
 };
-use alloy_rpc_types_trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
+use alloy_serde::WithOtherFields;
 
 pub mod block;
 pub mod proof;
@@ -195,6 +194,18 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionByBlockNumberAndIndex"))]
     EthGetTransactionByBlockNumberAndIndex(BlockNumber, Index),
 
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "eth_getRawTransactionByHash", with = "sequence")
+    )]
+    EthGetRawTransactionByHash(TxHash),
+
+    #[cfg_attr(feature = "serde", serde(rename = "eth_getRawTransactionByBlockHashAndIndex"))]
+    EthGetRawTransactionByBlockHashAndIndex(TxHash, Index),
+
+    #[cfg_attr(feature = "serde", serde(rename = "eth_getRawTransactionByBlockNumberAndIndex"))]
+    EthGetRawTransactionByBlockNumberAndIndex(BlockNumber, Index),
+
     #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionReceipt", with = "sequence"))]
     EthGetTransactionReceipt(B256),
 
@@ -264,6 +275,10 @@ pub enum EthRequest {
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_syncing", with = "empty_params"))]
     EthSyncing(()),
+
+    /// geth's `debug_getRawTransaction`  endpoint
+    #[cfg_attr(feature = "serde", serde(rename = "debug_getRawTransaction", with = "sequence"))]
+    DebugGetRawTransaction(TxHash),
 
     /// geth's `debug_traceTransaction`  endpoint
     #[cfg_attr(feature = "serde", serde(rename = "debug_traceTransaction"))]
@@ -592,7 +607,7 @@ pub enum EthRequest {
 
     /// Mine a single block
     #[cfg_attr(feature = "serde", serde(rename = "evm_mine"))]
-    EvmMine(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<EvmMineOptions>>>),
+    EvmMine(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<MineOptions>>>),
 
     /// Mine a single block and return detailed data
     ///
@@ -603,7 +618,7 @@ pub enum EthRequest {
         serde(rename = "anvil_mine_detailed", alias = "evm_mine_detailed",)
     )]
     EvmMineDetailed(
-        #[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<EvmMineOptions>>>,
+        #[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<MineOptions>>>,
     ),
 
     /// Execute a transaction regardless of signature status
@@ -620,26 +635,26 @@ pub enum EthRequest {
 
     /// Returns the number of transactions currently pending for inclusion in the next block(s), as
     /// well as the ones that are being scheduled for future execution only.
-    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status)
+    /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status>
     #[cfg_attr(feature = "serde", serde(rename = "txpool_status", with = "empty_params"))]
     TxPoolStatus(()),
 
     /// Returns a summary of all the transactions currently pending for inclusion in the next
     /// block(s), as well as the ones that are being scheduled for future execution only.
-    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_inspect)
+    /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_inspect>
     #[cfg_attr(feature = "serde", serde(rename = "txpool_inspect", with = "empty_params"))]
     TxPoolInspect(()),
 
     /// Returns the details of all transactions currently pending for inclusion in the next
     /// block(s), as well as the ones that are being scheduled for future execution only.
-    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content)
+    /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content>
     #[cfg_attr(feature = "serde", serde(rename = "txpool_content", with = "empty_params"))]
     TxPoolContent(()),
 
     /// Otterscan's `ots_getApiLevel` endpoint
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
-    /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71
-    /// Related upstream issue: https://github.com/otterscan/otterscan/issues/1081
+    /// <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
+    /// Related upstream issue: <https://github.com/otterscan/otterscan/issues/1081>
     #[cfg_attr(feature = "serde", serde(rename = "erigon_getHeaderByNumber"))]
     ErigonGetHeaderByNumber(
         #[cfg_attr(
@@ -1275,7 +1290,7 @@ mod tests {
             EthRequest::EvmMine(params) => {
                 assert_eq!(
                     params.unwrap().params.unwrap_or_default(),
-                    EvmMineOptions::Options { timestamp: Some(100), blocks: Some(100) }
+                    MineOptions::Options { timestamp: Some(100), blocks: Some(100) }
                 )
             }
             _ => unreachable!(),
@@ -1312,7 +1327,7 @@ mod tests {
             EthRequest::EvmMineDetailed(params) => {
                 assert_eq!(
                     params.unwrap().params.unwrap_or_default(),
-                    EvmMineOptions::Options { timestamp: Some(100), blocks: Some(100) }
+                    MineOptions::Options { timestamp: Some(100), blocks: Some(100) }
                 )
             }
             _ => unreachable!(),
@@ -1343,7 +1358,7 @@ mod tests {
             EthRequest::EvmMine(params) => {
                 assert_eq!(
                     params.unwrap().params.unwrap_or_default(),
-                    EvmMineOptions::Timestamp(Some(1672937224))
+                    MineOptions::Timestamp(Some(1672937224))
                 )
             }
             _ => unreachable!(),
@@ -1356,7 +1371,7 @@ mod tests {
             EthRequest::EvmMine(params) => {
                 assert_eq!(
                     params.unwrap().params.unwrap_or_default(),
-                    EvmMineOptions::Options { timestamp: Some(1672937224), blocks: None }
+                    MineOptions::Options { timestamp: Some(1672937224), blocks: None }
                 )
             }
             _ => unreachable!(),
@@ -1418,6 +1433,25 @@ mod tests {
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["syncing"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_raw_transaction() {
+        let s = r#"{"jsonrpc":"2.0","method":"debug_getRawTransaction","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getRawTransactionByHash","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getRawTransactionByBlockHashAndIndex","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c",1],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getRawTransactionByBlockNumberAndIndex","params":["0x3ed3a89b",0],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]

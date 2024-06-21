@@ -2,16 +2,20 @@
 
 use crate::eth::{backend::db::Db, error::BlockchainError};
 use alloy_primitives::{Address, Bytes, StorageValue, B256, U256};
-use alloy_provider::{ext::DebugApi, Provider};
+use alloy_provider::{
+    ext::{DebugApi, TraceApi},
+    Provider,
+};
 use alloy_rpc_types::{
-    request::TransactionRequest, AccessListWithGasUsed, Block, BlockId,
-    BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse, FeeHistory,
-    Filter, Log, Transaction, WithOtherFields,
+    request::TransactionRequest,
+    trace::{
+        geth::{GethDebugTracingOptions, GethTrace},
+        parity::LocalizedTransactionTrace as Trace,
+    },
+    AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
+    EIP1186AccountProofResponse, FeeHistory, Filter, Log, Transaction,
 };
-use alloy_rpc_types_trace::{
-    geth::{GethDebugTracingOptions, GethTrace},
-    parity::LocalizedTransactionTrace as Trace,
-};
+use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use anvil_core::eth::transaction::{convert_to_anvil_receipt, ReceiptResponse};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
@@ -38,8 +42,6 @@ pub struct ClientFork {
     /// This also holds a handle to the underlying database
     pub database: Arc<AsyncRwLock<Box<dyn Db>>>,
 }
-
-// === impl ClientFork ===
 
 impl ClientFork {
     /// Creates a new instance of the fork
@@ -74,8 +76,10 @@ impl ClientFork {
         }
 
         let provider = self.provider();
-        let block =
-            provider.get_block(block_number, false).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let block = provider
+            .get_block(block_number, false.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
         let block_hash = block.header.hash.ok_or(BlockchainError::BlockNotFound)?;
         let timestamp = block.header.timestamp;
         let base_fee = block.header.base_fee_per_gas;
@@ -163,7 +167,7 @@ impl ClientFork {
         keys: Vec<B256>,
         block_number: Option<BlockId>,
     ) -> Result<EIP1186AccountProofResponse, TransportError> {
-        self.provider().get_proof(address, keys, block_number.unwrap_or(BlockId::latest())).await
+        self.provider().get_proof(address, keys).block_id(block_number.unwrap_or_default()).await
     }
 
     /// Sends `eth_call`
@@ -184,8 +188,8 @@ impl ClientFork {
         request: &WithOtherFields<TransactionRequest>,
         block: Option<BlockNumber>,
     ) -> Result<u128, TransportError> {
-        let block = block.unwrap_or(BlockNumber::Latest);
-        let res = self.provider().estimate_gas(request, block.into()).await?;
+        let block = block.unwrap_or_default();
+        let res = self.provider().estimate_gas(request).block(block.into()).await?;
 
         Ok(res)
     }
@@ -196,9 +200,7 @@ impl ClientFork {
         request: &WithOtherFields<TransactionRequest>,
         block: Option<BlockNumber>,
     ) -> Result<AccessListWithGasUsed, TransportError> {
-        self.provider()
-            .create_access_list(request, block.unwrap_or(BlockNumber::Latest).into())
-            .await
+        self.provider().create_access_list(request).block_id(block.unwrap_or_default().into()).await
     }
 
     pub async fn storage_at(
@@ -208,7 +210,8 @@ impl ClientFork {
         number: Option<BlockNumber>,
     ) -> Result<StorageValue, TransportError> {
         self.provider()
-            .get_storage_at(address, index, number.unwrap_or(BlockNumber::Latest).into())
+            .get_storage_at(address, index)
+            .block_id(number.unwrap_or_default().into())
             .await
     }
 
@@ -234,9 +237,9 @@ impl ClientFork {
             return Ok(code);
         }
 
-        let block_id = BlockId::Number(blocknumber.into());
+        let block_id = BlockId::number(blocknumber);
 
-        let code = self.provider().get_code_at(address, block_id).await?;
+        let code = self.provider().get_code_at(address).block_id(block_id).await?;
 
         let mut storage = self.storage_write();
         storage.code_at.insert((address, blocknumber), code.clone().0.into());
@@ -250,12 +253,12 @@ impl ClientFork {
         blocknumber: u64,
     ) -> Result<U256, TransportError> {
         trace!(target: "backend::fork", "get_balance={:?}", address);
-        self.provider().get_balance(address, blocknumber.into()).await
+        self.provider().get_balance(address).block_id(blocknumber.into()).await
     }
 
     pub async fn get_nonce(&self, address: Address, block: u64) -> Result<u64, TransportError> {
         trace!(target: "backend::fork", "get_nonce={:?}", address);
-        self.provider().get_transaction_count(address, block.into()).await
+        self.provider().get_transaction_count(address).block_id(block.into()).await
     }
 
     pub async fn transaction_by_block_number_and_index(
@@ -482,7 +485,7 @@ impl ClientFork {
         &self,
         block_id: impl Into<BlockId>,
     ) -> Result<Option<Block>, TransportError> {
-        if let Some(block) = self.provider().get_block(block_id.into(), true).await? {
+        if let Some(block) = self.provider().get_block(block_id.into(), true.into()).await? {
             let hash = block.header.hash.unwrap();
             let block_number = block.header.number.unwrap();
             let mut storage = self.storage_write();
@@ -600,8 +603,6 @@ pub struct ClientForkConfig {
     pub total_difficulty: U256,
 }
 
-// === impl ClientForkConfig ===
-
 impl ClientForkConfig {
     /// Updates the provider URL
     ///
@@ -659,8 +660,6 @@ pub struct ForkedStorage {
     pub block_receipts: HashMap<u64, Vec<ReceiptResponse>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
 }
-
-// === impl ForkedStorage ===
 
 impl ForkedStorage {
     /// Clears all data

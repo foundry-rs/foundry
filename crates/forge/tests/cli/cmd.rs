@@ -1,9 +1,9 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::{artifacts::Metadata, remappings::Remapping, ConfigurableContractArtifact};
+use foundry_compilers::artifacts::{remappings::Remapping, ConfigurableContractArtifact, Metadata};
 use foundry_config::{
-    parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, SolidityErrorCode,
+    parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,
 };
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
@@ -546,18 +546,27 @@ forgetest_init!(can_clean_config, |prj, cmd| {
     assert!(!artifact.exists());
 });
 
-// checks that `clean` removes fuzz cache dir
-forgetest_init!(can_clean_fuzz_cache, |prj, cmd| {
-    let config = Config { fuzz: FuzzConfig::new("cache/fuzz".into()), ..Default::default() };
+// checks that `clean` removes fuzz and invariant cache dirs
+forgetest_init!(can_clean_test_cache, |prj, cmd| {
+    let config = Config {
+        fuzz: FuzzConfig::new("cache/fuzz".into()),
+        invariant: InvariantConfig::new("cache/invariant".into()),
+        ..Default::default()
+    };
     prj.write_config(config);
     // default test contract is written in custom out directory
-    let cache_dir = prj.root().join("cache/fuzz");
-    let _ = fs::create_dir(cache_dir.clone());
-    assert!(cache_dir.exists());
+    let fuzz_cache_dir = prj.root().join("cache/fuzz");
+    let _ = fs::create_dir(fuzz_cache_dir.clone());
+    let invariant_cache_dir = prj.root().join("cache/invariant");
+    let _ = fs::create_dir(invariant_cache_dir.clone());
+
+    assert!(fuzz_cache_dir.exists());
+    assert!(invariant_cache_dir.exists());
 
     cmd.forge_fuse().arg("clean");
     cmd.output();
-    assert!(!cache_dir.exists());
+    assert!(!fuzz_cache_dir.exists());
+    assert!(!invariant_cache_dir.exists());
 });
 
 // checks that extra output works
@@ -1655,6 +1664,69 @@ function test_run() external {}
     cmd.forge_fuse().args(["build", "--skip", "./test/**", "--skip", "./script/**", "--force"]);
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),
+    );
+});
+
+forgetest_init!(can_build_specific_paths, |prj, cmd| {
+    prj.wipe();
+    prj.add_source(
+        "Counter.sol",
+        r"
+contract Counter {
+function count() external {}
+}",
+    )
+    .unwrap();
+    prj.add_test(
+        "Foo.sol",
+        r"
+contract Foo {
+function test_foo() external {}
+}",
+    )
+    .unwrap();
+    prj.add_test(
+        "Bar.sol",
+        r"
+contract Bar {
+function test_bar() external {}
+}",
+    )
+    .unwrap();
+
+    // Build 2 files within test dir
+    prj.clear();
+    cmd.args(["build", "test", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_path_with_two_files.stdout"),
+    );
+
+    // Build one file within src dir
+    prj.clear();
+    cmd.forge_fuse();
+    cmd.args(["build", "src", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_path_with_one_file.stdout"),
+    );
+
+    // Build 3 files from test and src dirs
+    prj.clear();
+    cmd.forge_fuse();
+    cmd.args(["build", "src", "test", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_path_with_three_files.stdout"),
+    );
+
+    // Build single test file
+    prj.clear();
+    cmd.forge_fuse();
+    cmd.args(["build", "test/Bar.sol", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_path_with_one_file.stdout"),
     );
 });
 

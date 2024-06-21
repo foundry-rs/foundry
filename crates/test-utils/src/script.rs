@@ -1,7 +1,6 @@
 use crate::{init_tracing, TestCommand};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockId;
 use eyre::Result;
 use foundry_common::provider::{get_http_provider, RetryProvider};
 use std::{
@@ -61,7 +60,7 @@ impl ScriptTester {
         target_contract: &str,
     ) -> Self {
         init_tracing();
-        ScriptTester::copy_testdata(project_root).unwrap();
+        Self::copy_testdata(project_root).unwrap();
         init_script_cmd(&mut cmd, project_root, target_contract, endpoint);
 
         let mut provider = None;
@@ -69,7 +68,7 @@ impl ScriptTester {
             provider = Some(get_http_provider(endpoint))
         }
 
-        ScriptTester {
+        Self {
             accounts_pub: vec![
                 Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap(),
                 Address::from_str("0x70997970C51812dc3A010C7d01b50e0d17dc79C8").unwrap(),
@@ -141,7 +140,7 @@ impl ScriptTester {
 
             if let Some(provider) = &self.provider {
                 let nonce = provider
-                    .get_transaction_count(self.accounts_pub[index as usize], BlockId::latest())
+                    .get_transaction_count(self.accounts_pub[index as usize])
                     .await
                     .unwrap();
                 self.nonces.insert(index, nonce);
@@ -152,13 +151,8 @@ impl ScriptTester {
 
     pub async fn load_addresses(&mut self, addresses: &[Address]) -> &mut Self {
         for &address in addresses {
-            let nonce = self
-                .provider
-                .as_ref()
-                .unwrap()
-                .get_transaction_count(address, BlockId::latest())
-                .await
-                .unwrap();
+            let nonce =
+                self.provider.as_ref().unwrap().get_transaction_count(address).await.unwrap();
             self.address_nonces.insert(address, nonce);
         }
         self
@@ -198,13 +192,7 @@ impl ScriptTester {
     pub async fn assert_nonce_increment(&mut self, keys_indexes: &[(u32, u32)]) -> &mut Self {
         for &(private_key_slot, expected_increment) in keys_indexes {
             let addr = self.accounts_pub[private_key_slot as usize];
-            let nonce = self
-                .provider
-                .as_ref()
-                .unwrap()
-                .get_transaction_count(addr, BlockId::latest())
-                .await
-                .unwrap();
+            let nonce = self.provider.as_ref().unwrap().get_transaction_count(addr).await.unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
 
             assert_eq!(
@@ -223,13 +211,8 @@ impl ScriptTester {
         address_indexes: &[(Address, u32)],
     ) -> &mut Self {
         for (address, expected_increment) in address_indexes {
-            let nonce = self
-                .provider
-                .as_ref()
-                .unwrap()
-                .get_transaction_count(*address, BlockId::latest())
-                .await
-                .unwrap();
+            let nonce =
+                self.provider.as_ref().unwrap().get_transaction_count(*address).await.unwrap();
             let prev_nonce = self.address_nonces.get(address).unwrap();
 
             assert_eq!(nonce, *prev_nonce + *expected_increment as u64);
@@ -314,17 +297,17 @@ impl ScriptOutcome {
 
     pub fn is_err(&self) -> bool {
         match self {
-            ScriptOutcome::OkNoEndpoint |
-            ScriptOutcome::OkSimulation |
-            ScriptOutcome::OkBroadcast |
-            ScriptOutcome::WarnSpecifyDeployer |
-            ScriptOutcome::OkRun => false,
-            ScriptOutcome::MissingSender |
-            ScriptOutcome::MissingWallet |
-            ScriptOutcome::StaticCallNotAllowed |
-            ScriptOutcome::UnsupportedLibraries |
-            ScriptOutcome::ErrorSelectForkOnBroadcast |
-            ScriptOutcome::ScriptFailed => true,
+            Self::OkNoEndpoint |
+            Self::OkSimulation |
+            Self::OkBroadcast |
+            Self::WarnSpecifyDeployer |
+            Self::OkRun => false,
+            Self::MissingSender |
+            Self::MissingWallet |
+            Self::StaticCallNotAllowed |
+            Self::UnsupportedLibraries |
+            Self::ErrorSelectForkOnBroadcast |
+            Self::ScriptFailed => true,
         }
     }
 }

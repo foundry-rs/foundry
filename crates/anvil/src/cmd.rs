@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_genesis::Genesis;
 use alloy_primitives::{utils::Unit, U256};
-use alloy_signer_wallet::coins_bip39::{English, Mnemonic};
+use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
@@ -46,21 +46,21 @@ pub struct NodeArgs {
     pub timestamp: Option<u64>,
 
     /// BIP39 mnemonic phrase used for generating accounts.
-    /// Cannot be used if `mnemonic_random` or `mnemonic_seed` are used
+    /// Cannot be used if `mnemonic_random` or `mnemonic_seed` are used.
     #[arg(long, short, conflicts_with_all = &["mnemonic_seed", "mnemonic_random"])]
     pub mnemonic: Option<String>,
 
     /// Automatically generates a BIP39 mnemonic phrase, and derives accounts from it.
-    /// Cannot be used with other `mnemonic` options
+    /// Cannot be used with other `mnemonic` options.
     /// You can specify the number of words you want in the mnemonic.
     /// [default: 12]
     #[arg(long, conflicts_with_all = &["mnemonic", "mnemonic_seed"], default_missing_value = "12", num_args(0..=1))]
     pub mnemonic_random: Option<usize>,
 
     /// Generates a BIP39 mnemonic phrase from a given seed
-    /// Cannot be used with other `mnemonic` options
+    /// Cannot be used with other `mnemonic` options.
     ///
-    /// CAREFUL: this is NOT SAFE and should only be used for testing.
+    /// CAREFUL: This is NOT SAFE and should only be used for testing.
     /// Never use the private keys generated in production.
     #[arg(long = "mnemonic-seed-unsafe", conflicts_with_all = &["mnemonic", "mnemonic_random"])]
     pub mnemonic_seed: Option<u64>,
@@ -417,8 +417,7 @@ pub struct AnvilEvmArgs {
     ///
     /// default value: 330
     ///
-    /// See --fork-url.
-    /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
+    /// See also --fork-url and <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[arg(
         long,
         requires = "fork_url",
@@ -432,8 +431,7 @@ pub struct AnvilEvmArgs {
     ///
     /// default value: false
     ///
-    /// See --fork-url.
-    /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
+    /// See also --fork-url and <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[arg(
         long,
         requires = "fork_url",
@@ -596,7 +594,7 @@ impl Future for PeriodicStateDumper {
             if this.interval.poll_tick(cx).is_ready() {
                 let api = this.api.clone();
                 let path = this.dump_state.clone().expect("exists; see above");
-                this.in_progress_dump = Some(Box::pin(PeriodicStateDumper::dump_state(api, path)));
+                this.in_progress_dump = Some(Box::pin(Self::dump_state(api, path)));
             } else {
                 break
             }
@@ -663,17 +661,17 @@ impl FromStr for ForkUrl {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some((url, block)) = s.rsplit_once('@') {
             if block == "latest" {
-                return Ok(ForkUrl { url: url.to_string(), block: None })
+                return Ok(Self { url: url.to_string(), block: None })
             }
             // this will prevent false positives for auths `user:password@example.com`
             if !block.is_empty() && !block.contains(':') && !block.contains('.') {
                 let block: u64 = block
                     .parse()
                     .map_err(|_| format!("Failed to parse block number: `{block}`"))?;
-                return Ok(ForkUrl { url: url.to_string(), block: Some(block) })
+                return Ok(Self { url: url.to_string(), block: Some(block) })
             }
         }
-        Ok(ForkUrl { url: s.to_string(), block: None })
+        Ok(Self { url: s.to_string(), block: None })
     }
 }
 

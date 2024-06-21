@@ -1,16 +1,18 @@
 //! In-memory blockchain storage
 use crate::eth::{
     backend::{
-        db::{MaybeFullDatabase, StateDb},
+        db::{MaybeFullDatabase, SerializableBlock, StateDb},
         mem::cache::DiskStateCache,
     },
     pool::transactions::PoolTransaction,
 };
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo};
-use alloy_rpc_types_trace::{
-    geth::{DefaultFrame, GethDefaultTracingOptions},
-    parity::LocalizedTransactionTrace,
+use alloy_rpc_types::{
+    trace::{
+        geth::{DefaultFrame, GethDefaultTracingOptions},
+        parity::LocalizedTransactionTrace,
+    },
+    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
 };
 use anvil_core::eth::{
     block::{Block, PartialHeader},
@@ -35,8 +37,6 @@ const MIN_HISTORY_LIMIT: usize = 10;
 // 1hr of up-time at lowest 1s interval
 const MAX_ON_DISK_HISTORY_LIMIT: usize = 3_600;
 
-// === impl DiskStateCache ===
-
 /// Represents the complete state of single block
 pub struct InMemoryBlockStates {
     /// The states at a certain block
@@ -58,8 +58,6 @@ pub struct InMemoryBlockStates {
     /// Stores old states on disk
     disk_cache: DiskStateCache,
 }
-
-// === impl InMemoryBlockStates ===
 
 impl InMemoryBlockStates {
     /// Creates a new instance with limited slots
@@ -254,7 +252,7 @@ impl BlockchainStorage {
     }
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
-        BlockchainStorage {
+        Self {
             blocks: Default::default(),
             hashes: HashMap::from([(U64::from(block_number), block_hash)]),
             best_hash: block_hash,
@@ -296,8 +294,6 @@ impl BlockchainStorage {
     }
 }
 
-// === impl BlockchainStorage ===
-
 impl BlockchainStorage {
     /// Returns the hash for [BlockNumberOrTag]
     pub fn hash(&self, number: BlockNumberOrTag) -> Option<B256> {
@@ -325,6 +321,21 @@ impl BlockchainStorage {
             }
         }
     }
+
+    pub fn serialized_blocks(&self) -> Vec<SerializableBlock> {
+        self.blocks.values().map(|block| block.clone().into()).collect()
+    }
+
+    /// Deserialize and add all blocks data to the backend storage
+    pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
+        for serializable_block in serializable_blocks.iter() {
+            let block: Block = serializable_block.clone().into();
+            let block_hash = block.header.hash_slow();
+            let block_number = block.header.number;
+            self.blocks.insert(block_hash, block);
+            self.hashes.insert(U64::from(block_number), block_hash);
+        }
+    }
 }
 
 /// A simple in-memory blockchain
@@ -333,8 +344,6 @@ pub struct Blockchain {
     /// underlying storage that supports concurrent reads
     pub storage: Arc<RwLock<BlockchainStorage>>,
 }
-
-// === impl BlockchainStorage ===
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
@@ -395,8 +404,6 @@ pub struct MinedTransaction {
     pub block_number: u64,
 }
 
-// === impl MinedTransaction ===
-
 impl MinedTransaction {
     /// Returns the traces of the transaction for `trace_transaction`
     pub fn parity_traces(&self) -> Vec<LocalizedTransactionTrace> {
@@ -437,12 +444,14 @@ pub struct MinedTransactionReceipt {
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
-    use alloy_primitives::Address;
+    use alloy_primitives::{hex, Address};
+    use alloy_rlp::Decodable;
+    use anvil_core::eth::transaction::TypedTransaction;
     use foundry_evm::{
         backend::MemDb,
         revm::{
             db::DatabaseRef,
-            primitives::{AccountInfo, U256 as rU256},
+            primitives::{AccountInfo, U256},
         },
     };
 
@@ -461,7 +470,7 @@ mod tests {
 
         let mut state = MemDb::default();
         let addr = Address::random();
-        let info = AccountInfo::from_balance(rU256::from(1337));
+        let info = AccountInfo::from_balance(U256::from(1337));
         state.insert_account(addr, info);
         storage.insert(one, StateDb::new(state));
         storage.insert(two, StateDb::new(MemDb::default()));
@@ -475,7 +484,7 @@ mod tests {
         let loaded = storage.get(&one).unwrap();
 
         let acc = loaded.basic_ref(addr).unwrap().unwrap();
-        assert_eq!(acc.balance, rU256::from(1337u64));
+        assert_eq!(acc.balance, U256::from(1337u64));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -489,7 +498,7 @@ mod tests {
             let hash = B256::from(U256::from(idx));
             let addr = Address::from_word(hash);
             let balance = (idx * 2) as u64;
-            let info = AccountInfo::from_balance(rU256::from(balance));
+            let info = AccountInfo::from_balance(U256::from(balance));
             state.insert_account(addr, info);
             storage.insert(hash, StateDb::new(state));
         }
@@ -506,7 +515,36 @@ mod tests {
             let loaded = storage.get(&hash).unwrap();
             let acc = loaded.basic_ref(addr).unwrap().unwrap();
             let balance = (idx * 2) as u64;
-            assert_eq!(acc.balance, rU256::from(balance));
+            assert_eq!(acc.balance, U256::from(balance));
         }
+    }
+
+    // verifies that blocks in BlockchainStorage remain the same when dumped and reloaded
+    #[test]
+    fn test_storage_dump_reload_cycle() {
+        let mut dump_storage = BlockchainStorage::empty();
+
+        let partial_header = PartialHeader { gas_limit: 123456, ..Default::default() };
+        let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
+        let tx: MaybeImpersonatedTransaction =
+            TypedTransaction::decode(&mut &bytes_first[..]).unwrap().into();
+        let block = Block::new::<MaybeImpersonatedTransaction>(
+            partial_header.clone(),
+            vec![tx.clone()],
+            vec![],
+        );
+        let block_hash = block.header.hash_slow();
+        dump_storage.blocks.insert(block_hash, block);
+
+        let serialized_blocks = dump_storage.serialized_blocks();
+
+        let mut load_storage = BlockchainStorage::empty();
+
+        load_storage.load_blocks(serialized_blocks);
+
+        let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
+        assert_eq!(loaded_block.header.gas_limit, partial_header.gas_limit);
+        let loaded_tx = loaded_block.transactions.first().unwrap();
+        assert_eq!(loaded_tx, &tx);
     }
 }

@@ -207,8 +207,6 @@ pub struct ForkDbSnapshot {
     pub snapshot: StateSnapshot,
 }
 
-// === impl DbSnapshot ===
-
 impl ForkDbSnapshot {
     fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
         self.local.accounts.get(&address).and_then(|account| account.storage.get(&index)).copied()

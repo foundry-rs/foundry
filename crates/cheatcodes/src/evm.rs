@@ -1,4 +1,4 @@
-//! Implementations of [`Evm`](crate::Group::Evm) cheatcodes.
+//! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_genesis::{Genesis, GenesisAccount};
@@ -30,6 +30,21 @@ pub struct RecordAccess {
     pub reads: HashMap<Address, Vec<U256>>,
     /// Storage slots writes.
     pub writes: HashMap<Address, Vec<U256>>,
+}
+
+impl RecordAccess {
+    /// Records a read access to a storage slot.
+    pub fn record_read(&mut self, target: Address, slot: U256) {
+        self.reads.entry(target).or_default().push(slot);
+    }
+
+    /// Records a write access to a storage slot.
+    ///
+    /// This also records a read internally as `SSTORE` does an implicit `SLOAD`.
+    pub fn record_write(&mut self, target: Address, slot: U256) {
+        self.record_read(target, slot);
+        self.writes.entry(target).or_default().push(slot);
+    }
 }
 
 /// Records `deal` cheatcodes
@@ -402,7 +417,7 @@ impl Cheatcode for etchCall {
         let Self { target, newRuntimeBytecode } = self;
         ensure_not_precompile!(target, ccx);
         ccx.ecx.load_account(*target)?;
-        let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(newRuntimeBytecode)).to_checked();
+        let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(newRuntimeBytecode));
         ccx.ecx.journaled_state.set_code(*target, bytecode);
         Ok(Default::default())
     }

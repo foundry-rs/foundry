@@ -1,11 +1,16 @@
 //! Forge test runner for multiple contracts.
 
-use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
+use crate::{
+    progress::TestsProgress, result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner,
+    TestFilter, TestOptions,
+};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{get_contract_name, ContractsByArtifact, TestFunctionExt};
-use foundry_compilers::{artifacts::Libraries, Artifact, ArtifactId, ProjectCompileOutput};
+use foundry_compilers::{
+    artifacts::Libraries, compilers::Compiler, Artifact, ArtifactId, ProjectCompileOutput,
+};
 use foundry_config::Config;
 use foundry_evm::{
     backend::Backend, decode::RevertDecoder, executors::ExecutorBuilder, fork::CreateFork,
@@ -27,8 +32,6 @@ use std::{
 pub struct TestContract {
     pub abi: JsonAbi,
     pub bytecode: Bytes,
-    pub libs_to_deploy: Vec<Bytes>,
-    pub libraries: Libraries,
 }
 
 pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
@@ -61,8 +64,12 @@ pub struct MultiContractRunner {
     pub test_options: TestOptions,
     /// Whether to enable call isolation
     pub isolation: bool,
-    /// Output of the project compilation
-    pub output: ProjectCompileOutput,
+    /// Known contracts linked with computed library addresses.
+    pub known_contracts: ContractsByArtifact,
+    /// Libraries to deploy.
+    pub libs_to_deploy: Vec<Bytes>,
+    /// Library addresses used to link contracts.
+    pub libraries: Libraries,
 }
 
 impl MultiContractRunner {
@@ -136,7 +143,7 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
     ) -> impl Iterator<Item = (String, SuiteResult)> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx);
+        self.test(filter, tx, false);
         rx.into_iter()
     }
 
@@ -146,7 +153,12 @@ impl MultiContractRunner {
     /// before executing all contracts and their tests in _parallel_.
     ///
     /// Each Executor gets its own instance of the `Backend`.
-    pub fn test(&mut self, filter: &dyn TestFilter, tx: mpsc::Sender<(String, SuiteResult)>) {
+    pub fn test(
+        &mut self,
+        filter: &dyn TestFilter,
+        tx: mpsc::Sender<(String, SuiteResult)>,
+        show_progress: bool,
+    ) {
         let handle = tokio::runtime::Handle::current();
         trace!("running all tests");
 
@@ -163,33 +175,63 @@ impl MultiContractRunner {
             find_time,
         );
 
-        contracts.par_iter().for_each_with(tx, |tx, &(id, contract)| {
-            let _guard = handle.enter();
-            let result = self.run_tests(id, contract, db.clone(), filter, &handle);
-            let _ = tx.send((id.identifier(), result));
-        })
+        if show_progress {
+            let tests_progress = TestsProgress::new(contracts.len(), rayon::current_num_threads());
+            // Collect test suite results to stream at the end of test run.
+            let results: Vec<(String, SuiteResult)> = contracts
+                .par_iter()
+                .map(|&(id, contract)| {
+                    let _guard = handle.enter();
+                    tests_progress.inner.lock().start_suite_progress(&id.identifier());
+
+                    let result = self.run_test_suite(
+                        id,
+                        contract,
+                        db.clone(),
+                        filter,
+                        &handle,
+                        Some(&tests_progress),
+                    );
+
+                    tests_progress
+                        .inner
+                        .lock()
+                        .end_suite_progress(&id.identifier(), result.summary());
+
+                    (id.identifier(), result)
+                })
+                .collect();
+
+            tests_progress.inner.lock().clear();
+
+            results.iter().for_each(|result| {
+                let _ = tx.send(result.to_owned());
+            });
+        } else {
+            contracts.par_iter().for_each(|&(id, contract)| {
+                let _guard = handle.enter();
+                let result = self.run_test_suite(id, contract, db.clone(), filter, &handle, None);
+                let _ = tx.send((id.identifier(), result));
+            })
+        }
     }
 
-    fn run_tests(
+    fn run_test_suite(
         &self,
         artifact_id: &ArtifactId,
         contract: &TestContract,
         db: Backend,
         filter: &dyn TestFilter,
         handle: &tokio::runtime::Handle,
+        progress: Option<&TestsProgress>,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let mut span_name = identifier.as_str();
 
-        let linker =
-            Linker::new(self.config.project_paths().root, self.output.artifact_ids().collect());
-        let linked_contracts = linker.get_linked_artifacts(&contract.libraries).unwrap_or_default();
-        let known_contracts = Arc::new(ContractsByArtifact::new(linked_contracts));
-
         let cheats_config = CheatsConfig::new(
             &self.config,
             self.evm_opts.clone(),
-            Some(known_contracts.clone()),
+            Some(self.known_contracts.clone()),
             None,
             Some(artifact_id.version.clone()),
         );
@@ -210,7 +252,7 @@ impl MultiContractRunner {
         if !enabled!(tracing::Level::TRACE) {
             span_name = get_contract_name(&identifier);
         }
-        let _guard = info_span!("run_tests", name = span_name).entered();
+        let _guard = debug_span!("suite", name = span_name).entered();
 
         debug!("start executing all tests in contract");
 
@@ -218,12 +260,15 @@ impl MultiContractRunner {
             &identifier,
             executor,
             contract,
+            &self.libs_to_deploy,
             self.evm_opts.initial_balance,
             self.sender,
             &self.revert_decoder,
             self.debug,
+            progress,
         );
-        let r = runner.run_tests(filter, &self.test_options, known_contracts, handle);
+
+        let r = runner.run_tests(filter, &self.test_options, self.known_contracts.clone(), handle);
 
         debug!(duration=?r.duration, "executed all tests in contract");
 
@@ -313,10 +358,10 @@ impl MultiContractRunnerBuilder {
 
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
-    pub fn build(
+    pub fn build<C: Compiler>(
         self,
         root: &Path,
-        output: ProjectCompileOutput,
+        output: ProjectCompileOutput<C>,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
@@ -330,46 +375,37 @@ impl MultiContractRunnerBuilder {
             .filter_map(|(_, contract)| contract.abi.as_ref().map(|abi| abi.borrow()));
         let revert_decoder = RevertDecoder::new().with_abis(abis);
 
+        let LinkOutput { libraries, libs_to_deploy } = linker.link_with_nonce_or_address(
+            Default::default(),
+            LIBRARY_DEPLOYER,
+            0,
+            linker.contracts.keys(),
+        )?;
+
+        let linked_contracts = linker.get_linked_artifacts(&libraries)?;
+
         // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
-        for (id, contract) in linker.contracts.iter() {
-            let Some(abi) = contract.abi.as_ref() else {
-                continue;
-            };
+        for (id, contract) in linked_contracts.iter() {
+            let Some(abi) = &contract.abi else { continue };
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                 abi.functions().any(|func| func.name.is_test() || func.name.is_invariant_test())
             {
-                let LinkOutput { libs_to_deploy, libraries } = linker.link_with_nonce_or_address(
-                    Default::default(),
-                    evm_opts.sender,
-                    1,
-                    id,
-                )?;
-
-                let linked_contract = linker.link(id, &libraries)?;
-
-                let Some(bytecode) = linked_contract
-                    .get_bytecode_bytes()
-                    .map(|b| b.into_owned())
-                    .filter(|b| !b.is_empty())
+                let Some(bytecode) =
+                    contract.get_bytecode_bytes().map(|b| b.into_owned()).filter(|b| !b.is_empty())
                 else {
                     continue;
                 };
 
-                deployable_contracts.insert(
-                    id.clone(),
-                    TestContract {
-                        abi: abi.clone().into_owned(),
-                        bytecode,
-                        libs_to_deploy,
-                        libraries,
-                    },
-                );
+                deployable_contracts
+                    .insert(id.clone(), TestContract { abi: abi.clone(), bytecode });
             }
         }
+
+        let known_contracts = ContractsByArtifact::new(linked_contracts);
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -384,7 +420,9 @@ impl MultiContractRunnerBuilder {
             debug: self.debug,
             test_options: self.test_options.unwrap_or_default(),
             isolation: self.isolation,
-            output,
+            known_contracts,
+            libs_to_deploy,
+            libraries,
         })
     }
 }

@@ -8,9 +8,8 @@ use foundry_evm_core::{
 };
 use revm::{
     interpreter::{
-        opcode::{self, spec_opcode_gas},
-        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InstructionResult, Interpreter,
-        InterpreterResult,
+        opcode, CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InstructionResult,
+        Interpreter, InterpreterResult,
     },
     EvmContext, Inspector,
 };
@@ -38,9 +37,7 @@ impl Debugger {
     pub fn exit(&mut self) {
         if let Some(parent_id) = self.arena.arena[self.head].parent {
             let DebugNode { depth, address, kind, .. } = self.arena.arena[parent_id];
-            self.context = address;
-            self.head =
-                self.arena.push_node(DebugNode { depth, address, kind, ..Default::default() });
+            self.enter(depth, address, kind);
         }
     }
 }
@@ -50,17 +47,17 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
         let pc = interp.program_counter();
         let op = interp.current_opcode();
 
-        // Get opcode information
-        let opcode_infos = spec_opcode_gas(ecx.spec_id());
-        let opcode_info = &opcode_infos[op as usize];
-
         // Extract the push bytes
-        let push_size = if opcode_info.is_push() { (op - opcode::PUSH0) as usize } else { 0 };
+        let push_size = if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
+            (op - opcode::PUSH0) as usize
+        } else {
+            0
+        };
         let push_bytes = (push_size > 0).then(|| {
             let start = pc + 1;
             let end = start + push_size;
             let slice = &interp.contract.bytecode.bytecode()[start..end];
-            assert!(slice.len() <= 32);
+            debug_assert!(slice.len() <= 32);
             let mut array = ArrayVec::new();
             array.try_extend_from_slice(slice).unwrap();
             array
@@ -95,8 +92,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
     fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         self.enter(
             ecx.journaled_state.depth() as usize,
-            inputs.context.code_address,
-            inputs.context.scheme.into(),
+            inputs.bytecode_address,
+            inputs.scheme.into(),
         );
 
         None

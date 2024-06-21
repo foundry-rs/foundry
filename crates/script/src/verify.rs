@@ -77,7 +77,7 @@ impl VerifyBundle {
 
         let via_ir = config.via_ir;
 
-        VerifyBundle {
+        Self {
             num_of_optimizations,
             known_contracts,
             etherscan: Default::default(),
@@ -106,16 +106,18 @@ impl VerifyBundle {
         libraries: &[String],
     ) -> Option<VerifyArgs> {
         for (artifact, contract) in self.known_contracts.iter() {
-            let Some(bytecode) = contract.bytecode.as_ref() else { continue };
+            let Some(bytecode) = contract.bytecode() else { continue };
             // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
             // of the transaction
             if data.split_at(create2_offset).1.starts_with(bytecode) {
                 let constructor_args = data.split_at(create2_offset + bytecode.len()).1.to_vec();
 
+                if artifact.source.extension().map_or(false, |e| e.to_str() == Some("vy")) {
+                    warn!("Skipping verification of Vyper contract: {}", artifact.name);
+                }
+
                 let contract = ContractInfo {
-                    path: Some(
-                        artifact.source.to_str().expect("There should be an artifact.").to_string(),
-                    ),
+                    path: Some(artifact.source.to_string_lossy().to_string()),
                     name: artifact.name.clone(),
                 };
 
@@ -130,7 +132,7 @@ impl VerifyBundle {
 
                 let verify = VerifyArgs {
                     address: contract_address,
-                    contract,
+                    contract: Some(contract),
                     compiler_version: Some(version.to_string()),
                     constructor_args: Some(hex::encode(constructor_args)),
                     constructor_args_path: None,

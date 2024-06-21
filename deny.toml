@@ -40,6 +40,7 @@ allow = [
     "ISC",
     "Unicode-DFS-2016",
     "OpenSSL",
+    "Unicode-3.0",
     "Unlicense",
     "WTFPL",
     "BSL-1.0",
@@ -59,6 +60,7 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "notify" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
+    { allow = ["CC0-1.0"], name = "constant_time_eq" },
 ]
 #copyleft = "deny"
 
@@ -85,4 +87,8 @@ unknown-registry = "warn"
 # Lint level for what to happen when a crate from a git repository that is not
 # in the allow list is encountered
 unknown-git = "deny"
-allow-git = ["https://github.com/alloy-rs/alloy", "https://github.com/paradigmxyz/evm-inspectors"]
+allow-git = [
+    "https://github.com/alloy-rs/alloy",
+    "https://github.com/paradigmxyz/revm-inspectors",
+    "https://github.com/bluealloy/revm",
+]

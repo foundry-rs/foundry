@@ -4,7 +4,7 @@ use alloy_dyn_abi::TypedData;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, Signature, B256};
 use alloy_signer::Signer as AlloySigner;
-use alloy_signer_wallet::LocalWallet;
+use alloy_signer_local::PrivateKeySigner;
 use anvil_core::eth::transaction::{
     optimism::{DepositTransaction, DepositTransactionRequest},
     TypedTransaction, TypedTransactionRequest,
@@ -47,11 +47,11 @@ pub trait Signer: Send + Sync {
 /// Maintains developer keys
 pub struct DevSigner {
     addresses: Vec<Address>,
-    accounts: HashMap<Address, LocalWallet>,
+    accounts: HashMap<Address, PrivateKeySigner>,
 }
 
 impl DevSigner {
-    pub fn new(accounts: Vec<LocalWallet>) -> Self {
+    pub fn new(accounts: Vec<PrivateKeySigner>) -> Self {
         let addresses = accounts.iter().map(|wallet| wallet.address()).collect::<Vec<_>>();
         let accounts = addresses.iter().cloned().zip(accounts).collect();
         Self { addresses, accounts }

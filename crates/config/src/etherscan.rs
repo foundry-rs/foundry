@@ -66,8 +66,6 @@ pub struct EtherscanConfigs {
     configs: BTreeMap<String, EtherscanConfig>,
 }
 
-// === impl Endpoints ===
-
 impl EtherscanConfigs {
     /// Creates a new list of etherscan configs
     pub fn new(configs: impl IntoIterator<Item = (impl Into<String>, EtherscanConfig)>) -> Self {
@@ -113,15 +111,13 @@ impl DerefMut for EtherscanConfigs {
     }
 }
 
-/// Container type for _resolved_ etherscan keys, see [EtherscanConfigs::resolve_all()]
+/// Container type for _resolved_ etherscan keys, see [`EtherscanConfigs::resolved`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolvedEtherscanConfigs {
     /// contains all named `ResolvedEtherscanConfig` or an error if we failed to resolve the env
     /// var alias
     configs: BTreeMap<String, Result<ResolvedEtherscanConfig, EtherscanConfigError>>,
 }
-
-// === impl ResolvedEtherscanConfigs ===
 
 impl ResolvedEtherscanConfigs {
     /// Creates a new list of resolved etherscan configs
@@ -181,8 +177,6 @@ pub struct EtherscanConfig {
     pub key: EtherscanApiKey,
 }
 
-// === impl EtherscanConfig ===
-
 impl EtherscanConfig {
     /// Returns the etherscan config required to create a client.
     ///
@@ -194,7 +188,7 @@ impl EtherscanConfig {
         self,
         alias: Option<&str>,
     ) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
-        let EtherscanConfig { chain, mut url, key } = self;
+        let Self { chain, mut url, key } = self;
 
         if let Some(url) = &mut url {
             *url = interpolate(url)?;
@@ -262,8 +256,6 @@ pub struct ResolvedEtherscanConfig {
     pub chain: Option<Chain>,
 }
 
-// === impl ResolvedEtherscanConfig ===
-
 impl ResolvedEtherscanConfig {
     /// Creates a new instance using the api key and chain
     pub fn create(api_key: impl Into<String>, chain: impl Into<Chain>) -> Option<Self> {
@@ -302,7 +294,7 @@ impl ResolvedEtherscanConfig {
         self,
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
     {
-        let ResolvedEtherscanConfig { api_url, browser_url, key: api_key, chain } = self;
+        let Self { api_url, browser_url, key: api_key, chain } = self;
         let (mainnet_api, mainnet_url) = NamedChain::Mainnet.etherscan_urls().expect("exist; qed");
 
         let cache = chain
@@ -350,22 +342,20 @@ pub enum EtherscanApiKey {
     Env(String),
 }
 
-// === impl EtherscanApiKey ===
-
 impl EtherscanApiKey {
     /// Returns the key variant
     pub fn as_key(&self) -> Option<&str> {
         match self {
-            EtherscanApiKey::Key(url) => Some(url),
-            EtherscanApiKey::Env(_) => None,
+            Self::Key(url) => Some(url),
+            Self::Env(_) => None,
         }
     }
 
     /// Returns the env variant
     pub fn as_env(&self) -> Option<&str> {
         match self {
-            EtherscanApiKey::Env(val) => Some(val),
-            EtherscanApiKey::Key(_) => None,
+            Self::Env(val) => Some(val),
+            Self::Key(_) => None,
         }
     }
 
@@ -376,8 +366,8 @@ impl EtherscanApiKey {
     /// Returns an error if the type holds a reference to an env var and the env var is not set
     pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
         match self {
-            EtherscanApiKey::Key(key) => Ok(key),
-            EtherscanApiKey::Env(val) => interpolate(&val),
+            Self::Key(key) => Ok(key),
+            Self::Env(val) => interpolate(&val),
         }
     }
 }
@@ -397,11 +387,7 @@ impl<'de> Deserialize<'de> for EtherscanApiKey {
         D: Deserializer<'de>,
     {
         let val = String::deserialize(deserializer)?;
-        let endpoint = if RE_PLACEHOLDER.is_match(&val) {
-            EtherscanApiKey::Env(val)
-        } else {
-            EtherscanApiKey::Key(val)
-        };
+        let endpoint = if RE_PLACEHOLDER.is_match(&val) { Self::Env(val) } else { Self::Key(val) };
 
         Ok(endpoint)
     }
@@ -410,8 +396,8 @@ impl<'de> Deserialize<'de> for EtherscanApiKey {
 impl fmt::Display for EtherscanApiKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EtherscanApiKey::Key(key) => key.fmt(f),
-            EtherscanApiKey::Env(var) => var.fmt(f),
+            Self::Key(key) => key.fmt(f),
+            Self::Env(var) => var.fmt(f),
         }
     }
 }

@@ -1,3 +1,6 @@
+#![doc = include_str!("../README.md")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+
 #[macro_use]
 extern crate tracing;
 
@@ -21,6 +24,7 @@ pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 mod runner;
 pub use runner::ContractRunner;
 
+mod progress;
 pub mod result;
 
 // TODO: remove
@@ -149,6 +153,9 @@ impl TestOptions {
             failure_persistence: file_failure_persistence,
             cases,
             max_global_rejects: self.fuzz.max_test_rejects,
+            // Disable proptest shrink: for fuzz tests we provide single counterexample,
+            // for invariant tests we shrink outside proptest.
+            max_shrink_iters: 0,
             ..Default::default()
         };
 

@@ -16,8 +16,6 @@ pub struct StorageInfo {
     backend: Arc<Backend>,
 }
 
-// === impl StorageInfo ===
-
 impl StorageInfo {
     pub(crate) fn new(backend: Arc<Backend>) -> Self {
         Self { backend }

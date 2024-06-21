@@ -2,7 +2,8 @@
 //!
 //! EVM fuzzing implementation using [`proptest`].
 
-#![warn(unreachable_pub, unused_crate_dependencies, rust_2018_idioms)]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -43,19 +44,20 @@ pub struct BaseCounterExample {
     pub addr: Option<Address>,
     /// The data to provide
     pub calldata: Bytes,
-    /// Function signature if it exists
-    pub signature: Option<String>,
     /// Contract name if it exists
     pub contract_name: Option<String>,
+    /// Function signature if it exists
+    pub signature: Option<String>,
+    /// Args used to call the function
+    pub args: Option<String>,
     /// Traces
     #[serde(skip)]
     pub traces: Option<CallTraceArena>,
-    #[serde(skip)]
-    pub args: Vec<DynSolValue>,
 }
 
 impl BaseCounterExample {
-    pub fn create(
+    /// Creates counter example representing a step from invariant call sequence.
+    pub fn from_invariant_call(
         sender: Address,
         addr: Address,
         bytes: &Bytes,
@@ -66,27 +68,46 @@ impl BaseCounterExample {
             if let Some(func) = abi.functions().find(|f| f.selector() == bytes[..4]) {
                 // skip the function selector when decoding
                 if let Ok(args) = func.abi_decode_input(&bytes[4..], false) {
-                    return BaseCounterExample {
+                    return Self {
                         sender: Some(sender),
                         addr: Some(addr),
                         calldata: bytes.clone(),
-                        signature: Some(func.signature()),
                         contract_name: Some(name.clone()),
+                        signature: Some(func.signature()),
+                        args: Some(
+                            foundry_common::fmt::format_tokens(&args).format(", ").to_string(),
+                        ),
                         traces,
-                        args,
                     };
                 }
             }
         }
 
-        BaseCounterExample {
+        Self {
             sender: Some(sender),
             addr: Some(addr),
             calldata: bytes.clone(),
-            signature: None,
             contract_name: None,
+            signature: None,
+            args: None,
             traces,
-            args: vec![],
+        }
+    }
+
+    /// Creates counter example for a fuzz test failure.
+    pub fn from_fuzz_call(
+        bytes: Bytes,
+        args: Vec<DynSolValue>,
+        traces: Option<CallTraceArena>,
+    ) -> Self {
+        Self {
+            sender: None,
+            addr: None,
+            calldata: bytes,
+            contract_name: None,
+            signature: None,
+            args: Some(foundry_common::fmt::format_tokens(&args).format(", ").to_string()),
+            traces,
         }
     }
 }
@@ -108,10 +129,14 @@ impl fmt::Display for BaseCounterExample {
         if let Some(sig) = &self.signature {
             write!(f, "calldata={sig}")?
         } else {
-            write!(f, "calldata={}", self.calldata)?
+            write!(f, "calldata={}", &self.calldata)?
         }
 
-        write!(f, " args=[{}]", foundry_common::fmt::format_tokens(&self.args).format(", "))
+        if let Some(args) = &self.args {
+            write!(f, " args=[{args}]")
+        } else {
+            write!(f, " args=[]")
+        }
     }
 }
 
@@ -284,17 +309,14 @@ pub struct FuzzFixtures {
 }
 
 impl FuzzFixtures {
-    pub fn new(fixtures: HashMap<String, DynSolValue>) -> FuzzFixtures {
+    pub fn new(fixtures: HashMap<String, DynSolValue>) -> Self {
         Self { inner: Arc::new(fixtures) }
     }
 
     /// Returns configured fixtures for `param_name` fuzzed parameter.
     pub fn param_fixtures(&self, param_name: &str) -> Option<&[DynSolValue]> {
         if let Some(param_fixtures) = self.inner.get(&normalize_fixture(param_name)) {
-            match param_fixtures {
-                DynSolValue::FixedArray(_) => param_fixtures.as_fixed_array(),
-                _ => param_fixtures.as_array(),
-            }
+            param_fixtures.as_fixed_array().or_else(|| param_fixtures.as_array())
         } else {
             None
         }
@@ -309,5 +331,5 @@ pub fn fixture_name(function_name: String) -> String {
 
 /// Normalize fixture parameter name, for example `_Owner` to `owner`.
 fn normalize_fixture(param_name: &str) -> String {
-    param_name.trim_matches(&['_']).to_ascii_lowercase()
+    param_name.trim_matches('_').to_ascii_lowercase()
 }

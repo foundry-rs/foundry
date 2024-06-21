@@ -1,6 +1,9 @@
+//! # foundry-config
+//!
 //! Foundry configuration.
 
-#![warn(missing_docs, unused_crate_dependencies)]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -15,16 +18,21 @@ use figment::{
 };
 use foundry_compilers::{
     artifacts::{
-        output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
-        Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, OptimizerDetails,
-        RevertStrings, Settings, SettingsMetadata, Severity,
+        output_selection::{ContractOutputSelection, OutputSelection},
+        remappings::{RelativeRemapping, Remapping},
+        serde_helpers, BytecodeHash, DebuggingSettings, EvmVersion, Libraries,
+        ModelCheckerSettings, ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings,
+        Settings, SettingsMetadata, Severity,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
-    compilers::{solc::SolcVersionManager, CompilerVersionManager},
-    error::{SolcError, SolcIoError},
-    remappings::{RelativeRemapping, Remapping},
-    CompilerConfig, ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc,
-    SolcConfig,
+    compilers::{
+        multi::{MultiCompiler, MultiCompilerSettings},
+        solc::{Solc, SolcCompiler},
+        vyper::{Vyper, VyperSettings},
+        Compiler,
+    },
+    error::SolcError,
+    ConfigurableArtifacts, Project, ProjectPathsConfig,
 };
 use inflector::Inflector;
 use regex::Regex;
@@ -37,20 +45,21 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
 };
 
-// Macros useful for creating a figment.
 mod macros;
 
-// Utilities for making it easier to handle tests.
 pub mod utils;
-pub use crate::utils::*;
+pub use utils::*;
 
 mod endpoints;
 pub use endpoints::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints};
 
 mod etherscan;
+use etherscan::{
+    EtherscanConfigError, EtherscanConfigs, EtherscanEnvProvider, ResolvedEtherscanConfig,
+};
+
 mod resolve;
 pub use resolve::UnresolvedEnvVarError;
 
@@ -61,44 +70,45 @@ pub mod fmt;
 pub use fmt::FormatterConfig;
 
 pub mod fs_permissions;
-pub use crate::fs_permissions::FsPermissions;
+pub use fs_permissions::FsPermissions;
+use fs_permissions::PathPermission;
 
 pub mod error;
+use error::ExtractConfigError;
 pub use error::SolidityErrorCode;
 
 pub mod doc;
 pub use doc::DocConfig;
 
+pub mod filter;
+pub use filter::SkipBuildFilters;
+
 mod warning;
 pub use warning::*;
 
-// helpers for fixing configuration warnings
 pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
 
-/// config providers
 pub mod providers;
-
-use crate::{
-    error::ExtractConfigError,
-    etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig},
-};
-use providers::*;
+use providers::{remappings::RemappingsProvider, FallbackProfileProvider, WarningsProvider};
 
 mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzDictionaryConfig};
 
 mod invariant;
-use crate::fs_permissions::PathPermission;
 pub use invariant::InvariantConfig;
-use providers::remappings::RemappingsProvider;
 
 mod inline;
-use crate::etherscan::EtherscanEnvProvider;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
+
+pub mod soldeer;
+use soldeer::SoldeerConfig;
+
+mod vyper;
+use vyper::VyperConfig;
 
 /// Foundry configuration
 ///
@@ -167,6 +177,9 @@ pub struct Config {
     pub allow_paths: Vec<PathBuf>,
     /// additional solc include paths for `--include-path`
     pub include_paths: Vec<PathBuf>,
+    /// glob patterns to skip
+    #[serde(with = "from_vec_glob")]
+    pub skip: Vec<globset::Glob>,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -182,7 +195,7 @@ pub struct Config {
     /// auto-detection.
     ///
     /// **Note** for backwards compatibility reasons this also accepts solc_version from the toml
-    /// file, see [`BackwardsCompatProvider`]
+    /// file, see `BackwardsCompatTomlProvider`.
     pub solc: Option<SolcReq>,
     /// whether to autodetect the solc compiler version to use
     pub auto_detect_solc: bool,
@@ -356,8 +369,7 @@ pub struct Config {
     /// Whether to compile in sparse mode
     ///
     /// If this option is enabled, only the required contracts/files will be selected to be
-    /// included in solc's output selection, see also
-    /// [OutputSelection](foundry_compilers::artifacts::output_selection::OutputSelection)
+    /// included in solc's output selection, see also [`OutputSelection`].
     pub sparse_mode: bool,
     /// Generates additional build info json files for every new build, containing the
     /// `CompilerInput` and `CompilerOutput`.
@@ -373,11 +385,10 @@ pub struct Config {
     /// This includes what operations can be executed (read, write)
     pub fs_permissions: FsPermissions,
 
-    /// Temporary config to enable [SpecId::CANCUN]
+    /// Temporary config to enable [SpecId::PRAGUE]
     ///
-    /// <https://github.com/foundry-rs/foundry/issues/5782>
-    /// Should be removed once EvmVersion Cancun is supported by solc
-    pub cancun: bool,
+    /// Should be removed once EvmVersion Prague is supported by solc
+    pub prague: bool,
 
     /// Whether to enable call isolation.
     ///
@@ -397,13 +408,23 @@ pub struct Config {
     /// CREATE2 salt to use for the library deployment in scripts.
     pub create2_library_salt: B256,
 
-    /// The root path where the config detection started from, `Config::with_root`
-    #[doc(hidden)]
-    //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
+    /// Configuration for Vyper compiler
+    pub vyper: VyperConfig,
+
+    /// Soldeer dependencies
+    pub dependencies: Option<SoldeerConfig>,
+
+    /// The root path where the config detection started from, [`Config::with_root`].
+    // We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
     // representation, but will be deserialized from the `Figment` so that forge commands can
     // override it.
-    #[serde(rename = "root", default, skip_serializing)]
-    pub __root: RootPath,
+    #[serde(default, skip_serializing)]
+    pub root: RootPath,
+
+    /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
+    #[serde(rename = "__warnings", default, skip_serializing)]
+    pub warnings: Vec<Warning>,
+
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
@@ -414,10 +435,7 @@ pub struct Config {
     /// ```
     #[doc(hidden)]
     #[serde(skip)]
-    pub __non_exhaustive: (),
-    /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
-    #[serde(default, skip_serializing)]
-    pub __warnings: Vec<Warning>,
+    pub _non_exhaustive: (),
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`]
@@ -439,8 +457,17 @@ impl Config {
     pub const PROFILE_SECTION: &'static str = "profile";
 
     /// Standalone sections in the config which get integrated into the selected profile
-    pub const STANDALONE_SECTIONS: &'static [&'static str] =
-        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant", "labels"];
+    pub const STANDALONE_SECTIONS: &'static [&'static str] = &[
+        "rpc_endpoints",
+        "etherscan",
+        "fmt",
+        "doc",
+        "fuzz",
+        "invariant",
+        "labels",
+        "dependencies",
+        "vyper",
+    ];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -461,7 +488,7 @@ impl Config {
     /// See `Config::figment`
     #[track_caller]
     pub fn load() -> Self {
-        Config::from_provider(Config::figment())
+        Self::from_provider(Self::figment())
     }
 
     /// Returns the current `Config` with the given `providers` preset
@@ -469,7 +496,7 @@ impl Config {
     /// See `Config::to_figment`
     #[track_caller]
     pub fn load_with_providers(providers: FigmentProviders) -> Self {
-        Config::default().to_figment(providers).extract().unwrap()
+        Self::default().to_figment(providers).extract().unwrap()
     }
 
     /// Returns the current `Config`
@@ -477,7 +504,7 @@ impl Config {
     /// See `Config::figment_with_root`
     #[track_caller]
     pub fn load_with_root(root: impl Into<PathBuf>) -> Self {
-        Config::from_provider(Config::figment_with_root(root))
+        Self::from_provider(Self::figment_with_root(root))
     }
 
     /// Extract a `Config` from `provider`, panicking if extraction fails.
@@ -531,22 +558,21 @@ impl Config {
     /// This will merge various providers, such as env,toml,remappings into the figment.
     pub fn to_figment(self, providers: FigmentProviders) -> Figment {
         let mut c = self;
-        let profile = Config::selected_profile();
-        let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
+        let profile = Self::selected_profile();
+        let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.root.0));
 
         // merge global foundry.toml file
-        if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            figment = Config::merge_toml_provider(
+        if let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists()) {
+            figment = Self::merge_toml_provider(
                 figment,
                 TomlFileProvider::new(None, global_toml).cached(),
                 profile.clone(),
             );
         }
         // merge local foundry.toml file
-        figment = Config::merge_toml_provider(
+        figment = Self::merge_toml_provider(
             figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
-                .cached(),
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.root.0.join(Self::FILE_NAME)).cached(),
             profile.clone(),
         );
 
@@ -569,7 +595,7 @@ impl Config {
                     .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
                     .map(|key| {
                         let key = key.as_str();
-                        if Config::STANDALONE_SECTIONS.iter().any(|section| {
+                        if Self::STANDALONE_SECTIONS.iter().any(|section| {
                             key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
                         }) {
                             key.replacen('_', ".", 1).into()
@@ -594,7 +620,7 @@ impl Config {
                     .extract_inner::<Vec<PathBuf>>("libs")
                     .map(Cow::Owned)
                     .unwrap_or_else(|_| Cow::Borrowed(&c.libs)),
-                root: &c.__root.0,
+                root: &c.root.0,
                 remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
             };
             figment = figment.merge(remappings);
@@ -612,7 +638,7 @@ impl Config {
     /// This joins all relative paths with the current root and attempts to make them canonic
     #[must_use]
     pub fn canonic(self) -> Self {
-        let root = self.__root.0.clone();
+        let root = self.root.0.clone();
         self.canonic_at(root)
     }
 
@@ -753,22 +779,22 @@ impl Config {
     /// let config = Config::load_with_root(".").sanitized();
     /// let project = config.project();
     /// ```
-    pub fn project(&self) -> Result<Project, SolcError> {
+    pub fn project(&self) -> Result<Project<MultiCompiler>, SolcError> {
         self.create_project(self.cache, false)
     }
 
     /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
     /// cache.
-    pub fn ephemeral_no_artifacts_project(&self) -> Result<Project, SolcError> {
+    pub fn ephemeral_no_artifacts_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
         self.create_project(false, true)
     }
 
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let project = Project::builder()
+        let mut builder = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
-            .settings(SolcConfig::builder().settings(self.solc_settings()?).build().settings)
+            .settings(self.compiler_settings()?)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .ignore_paths(self.ignored_file_paths.clone())
             .set_compiler_severity_filter(if self.deny_warnings {
@@ -777,10 +803,16 @@ impl Config {
                 Severity::Error
             })
             .set_offline(self.offline)
-            .set_cached(cached && !self.build_info)
+            .set_cached(cached)
             .set_build_info(!no_artifacts && self.build_info)
-            .set_no_artifacts(no_artifacts)
-            .build(self.compiler_config()?)?;
+            .set_no_artifacts(no_artifacts);
+
+        if !self.skip.is_empty() {
+            let filter = SkipBuildFilters::new(self.skip.clone(), self.root.0.clone());
+            builder = builder.sparse_output(filter);
+        }
+
+        let project = builder.build(self.compiler()?)?;
 
         if self.force {
             self.cleanup(&project)?;
@@ -790,16 +822,20 @@ impl Config {
     }
 
     /// Cleans the project.
-    pub fn cleanup(&self, project: &Project) -> Result<(), SolcError> {
+    pub fn cleanup<C: Compiler>(&self, project: &Project<C>) -> Result<(), SolcError> {
         project.cleanup()?;
 
-        // Remove fuzz cache directory.
-        if let Some(fuzz_cache) = &self.fuzz.failure_persist_dir {
-            let path = project.root().join(fuzz_cache);
-            if path.exists() {
-                std::fs::remove_dir_all(&path).map_err(|e| SolcIoError::new(e, path))?;
+        // Remove fuzz and invariant cache directories.
+        let remove_test_dir = |test_dir: &Option<PathBuf>| {
+            if let Some(test_dir) = test_dir {
+                let path = project.root().join(test_dir);
+                if path.exists() {
+                    let _ = fs::remove_dir_all(&path);
+                }
             }
-        }
+        };
+        remove_test_dir(&self.fuzz.failure_persist_dir);
+        remove_test_dir(&self.invariant.failure_persist_dir);
 
         Ok(())
     }
@@ -812,10 +848,9 @@ impl Config {
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
         if let Some(ref solc) = self.solc {
-            let version_manager = SolcVersionManager::default();
             let solc = match solc {
                 SolcReq::Version(version) => {
-                    if let Ok(solc) = version_manager.get_installed(version) {
+                    if let Some(solc) = Solc::find_svm_installed_version(version)? {
                         solc
                     } else {
                         if self.offline {
@@ -823,7 +858,7 @@ impl Config {
                                 "can't install missing solc {version} in offline mode"
                             )))
                         }
-                        version_manager.install(version)?
+                        Solc::blocking_install(version)?
                     }
                 }
                 SolcReq::Local(solc) => {
@@ -845,8 +880,8 @@ impl Config {
     /// Returns the [SpecId] derived from the configured [EvmVersion]
     #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
-        if self.cancun {
-            return SpecId::CANCUN
+        if self.prague {
+            return SpecId::PRAGUE
         }
         evm_spec_id(&self.evm_version)
     }
@@ -877,11 +912,12 @@ impl Config {
     /// # Example
     ///
     /// ```
+    /// use foundry_compilers::solc::Solc;
     /// use foundry_config::Config;
     /// let config = Config::load_with_root(".").sanitized();
-    /// let paths = config.project_paths();
+    /// let paths = config.project_paths::<Solc>();
     /// ```
-    pub fn project_paths(&self) -> ProjectPathsConfig {
+    pub fn project_paths<L>(&self) -> ProjectPathsConfig<L> {
         let mut builder = ProjectPathsConfig::builder()
             .cache(self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
@@ -890,7 +926,7 @@ impl Config {
             .artifacts(&self.out)
             .libs(self.libs.iter())
             .remappings(self.get_all_remappings())
-            .allowed_path(&self.__root.0)
+            .allowed_path(&self.root.0)
             .allowed_paths(&self.libs)
             .allowed_paths(&self.allow_paths)
             .include_paths(&self.include_paths);
@@ -899,19 +935,40 @@ impl Config {
             builder = builder.build_infos(build_info_path);
         }
 
-        builder.build_with_root(&self.__root.0)
+        builder.build_with_root(&self.root.0)
     }
 
     /// Returns configuration for a compiler to use when setting up a [Project].
-    pub fn compiler_config(&self) -> Result<CompilerConfig<Solc>, SolcError> {
+    pub fn solc_compiler(&self) -> Result<SolcCompiler, SolcError> {
         if let Some(solc) = self.ensure_solc()? {
-            Ok(CompilerConfig::Specific(solc))
+            Ok(SolcCompiler::Specific(solc))
         } else {
-            Ok(CompilerConfig::AutoDetect(Arc::new(SolcVersionManager::default())))
+            Ok(SolcCompiler::AutoDetect)
         }
     }
 
-    /// Returns all configured [`Remappings`]
+    /// Returns configured [Vyper] compiler.
+    pub fn vyper_compiler(&self) -> Result<Option<Vyper>, SolcError> {
+        let vyper = if let Some(path) = &self.vyper.path {
+            Some(Vyper::new(path)?)
+        } else {
+            Vyper::new("vyper").ok()
+        };
+
+        Ok(vyper)
+    }
+
+    /// Returns configuration for a compiler to use when setting up a [Project].
+    pub fn compiler(&self) -> Result<MultiCompiler, SolcError> {
+        Ok(MultiCompiler { solc: self.solc_compiler()?, vyper: self.vyper_compiler()? })
+    }
+
+    /// Returns configured [MultiCompilerSettings].
+    pub fn compiler_settings(&self) -> Result<MultiCompilerSettings, SolcError> {
+        Ok(MultiCompilerSettings { solc: self.solc_settings()?, vyper: self.vyper_settings()? })
+    }
+
+    /// Returns all configured remappings.
     ///
     /// **Note:** this will add an additional `<src>/=<src path>` remapping here, see
     /// [Self::get_source_dir_remapping()]
@@ -947,7 +1004,7 @@ impl Config {
     /// let rpc_jwt = config.get_rpc_jwt_secret().unwrap().unwrap();
     /// # }
     /// ```
-    pub fn get_rpc_jwt_secret(&self) -> Result<Option<Cow<str>>, UnresolvedEnvVarError> {
+    pub fn get_rpc_jwt_secret(&self) -> Result<Option<Cow<'_, str>>, UnresolvedEnvVarError> {
         Ok(self.eth_rpc_jwt.as_ref().map(|jwt| Cow::Borrowed(jwt.as_str())))
     }
 
@@ -966,7 +1023,7 @@ impl Config {
     /// let rpc_url = config.get_rpc_url().unwrap().unwrap();
     /// # }
     /// ```
-    pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
+    pub fn get_rpc_url(&self) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
         let maybe_alias = self.eth_rpc_url.as_ref().or(self.etherscan_api_key.as_ref())?;
         if let Some(alias) = self.get_rpc_url_with_alias(maybe_alias) {
             Some(alias)
@@ -993,7 +1050,7 @@ impl Config {
     pub fn get_rpc_url_with_alias(
         &self,
         maybe_alias: &str,
-    ) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
+    ) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
         let mut endpoints = self.rpc_endpoints.clone().resolved();
         Some(endpoints.remove(maybe_alias)?.map(Cow::Owned))
     }
@@ -1012,7 +1069,7 @@ impl Config {
     pub fn get_rpc_url_or<'a>(
         &'a self,
         fallback: impl Into<Cow<'a, str>>,
-    ) -> Result<Cow<str>, UnresolvedEnvVarError> {
+    ) -> Result<Cow<'_, str>, UnresolvedEnvVarError> {
         if let Some(url) = self.get_rpc_url() {
             url
         } else {
@@ -1031,7 +1088,7 @@ impl Config {
     /// let rpc_url = config.get_rpc_url_or_localhost_http().unwrap();
     /// # }
     /// ```
-    pub fn get_rpc_url_or_localhost_http(&self) -> Result<Cow<str>, UnresolvedEnvVarError> {
+    pub fn get_rpc_url_or_localhost_http(&self) -> Result<Cow<'_, str>, UnresolvedEnvVarError> {
         self.get_rpc_url_or("http://localhost:8545")
     }
 
@@ -1126,7 +1183,7 @@ impl Config {
 
     /// Returns the remapping for the project's _test_ directory, but only if it exists
     pub fn get_test_dir_remapping(&self) -> Option<Remapping> {
-        if self.__root.0.join(&self.test).exists() {
+        if self.root.0.join(&self.test).exists() {
             get_dir_remapping(&self.test)
         } else {
             None
@@ -1135,7 +1192,7 @@ impl Config {
 
     /// Returns the remapping for the project's _script_ directory, but only if it exists
     pub fn get_script_dir_remapping(&self) -> Option<Remapping> {
-        if self.__root.0.join(&self.script).exists() {
+        if self.root.0.join(&self.script).exists() {
             get_dir_remapping(&self.script)
         } else {
             None
@@ -1182,7 +1239,8 @@ impl Config {
 
     /// Returns all libraries with applied remappings. Same as `self.solc_settings()?.libraries`.
     pub fn libraries_with_remappings(&self) -> Result<Libraries, SolcError> {
-        Ok(self.parsed_libraries()?.with_applied_remappings(&self.project_paths()))
+        let paths: ProjectPathsConfig = self.project_paths();
+        Ok(self.parsed_libraries()?.apply(|libs| paths.apply_lib_remappings(libs)))
     }
 
     /// Returns the configured `solc` `Settings` that includes:
@@ -1233,6 +1291,23 @@ impl Config {
         Ok(settings)
     }
 
+    /// Returns the configured [VyperSettings] that includes:
+    /// - evm version
+    pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
+        Ok(VyperSettings {
+            evm_version: Some(self.evm_version),
+            optimize: self.vyper.optimize,
+            bytecode_metadata: None,
+            // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
+            // those for now. It should be enough to run tests and deploy contracts.
+            output_selection: OutputSelection::common_output_selection([
+                "abi".to_string(),
+                "evm.bytecode".to_string(),
+                "evm.deployedBytecode".to_string(),
+            ]),
+        })
+    }
+
     /// Returns the default figment
     ///
     /// The default figment reads from the following sources, in ascending
@@ -1254,7 +1329,7 @@ impl Config {
     /// let my_config = Config::figment().extract::<Config>();
     /// ```
     pub fn figment() -> Figment {
-        Config::default().into()
+        Self::default().into()
     }
 
     /// Returns the default figment enhanced with additional context extracted from the provided
@@ -1285,8 +1360,8 @@ impl Config {
         let root = root.into();
         let paths = ProjectPathsConfig::builder().build_with_root::<()>(&root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
-        Config {
-            __root: paths.root.into(),
+        Self {
+            root: paths.root.into(),
             src: paths.sources.file_name().unwrap().into(),
             out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
@@ -1296,27 +1371,27 @@ impl Config {
                 .map(|r| RelativeRemapping::new(r, &root))
                 .collect(),
             fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
-            ..Config::default()
+            ..Self::default()
         }
     }
 
     /// Returns the default config but with hardhat paths
     pub fn hardhat() -> Self {
-        Config {
+        Self {
             src: "contracts".into(),
             out: "artifacts".into(),
             libs: vec!["node_modules".into()],
-            ..Config::default()
+            ..Self::default()
         }
     }
 
     /// Returns the default config that uses dapptools style paths
     pub fn dapptools() -> Self {
-        Config {
+        Self {
             chain: Some(Chain::from_id(99)),
             block_timestamp: 0,
             block_number: 0,
-            ..Config::default()
+            ..Self::default()
         }
     }
 
@@ -1344,7 +1419,7 @@ impl Config {
     /// [Self::get_config_path()] and if the closure returns `true`.
     pub fn update_at<F>(root: impl Into<PathBuf>, f: F) -> eyre::Result<()>
     where
-        F: FnOnce(&Config, &mut toml_edit::DocumentMut) -> bool,
+        F: FnOnce(&Self, &mut toml_edit::DocumentMut) -> bool,
     {
         let config = Self::load_with_root(root).sanitized();
         config.update(|doc| f(&config, doc))
@@ -1378,7 +1453,7 @@ impl Config {
     pub fn update_libs(&self) -> eyre::Result<()> {
         self.update(|doc| {
             let profile = self.profile.as_str().as_str();
-            let root = &self.__root.0;
+            let root = &self.root.0;
             let libs: toml_edit::Value = self
                 .libs
                 .iter()
@@ -1389,7 +1464,7 @@ impl Config {
                 })
                 .collect();
             let libs = toml_edit::value(libs);
-            doc[Config::PROFILE_SECTION][profile]["libs"] = libs;
+            doc[Self::PROFILE_SECTION][profile]["libs"] = libs;
             true
         })
     }
@@ -1411,7 +1486,7 @@ impl Config {
         // Config map always gets serialized as a table
         let value_table = value.as_table_mut().unwrap();
         // remove standalone sections from inner table
-        let standalone_sections = Config::STANDALONE_SECTIONS
+        let standalone_sections = Self::STANDALONE_SECTIONS
             .iter()
             .filter_map(|section| {
                 let section = section.to_string();
@@ -1420,7 +1495,7 @@ impl Config {
             .collect::<Vec<_>>();
         // wrap inner table in [profile.<profile>]
         let mut wrapping_table = [(
-            Config::PROFILE_SECTION.into(),
+            Self::PROFILE_SECTION.into(),
             toml::Value::Table([(self.profile.to_string(), value)].into_iter().collect()),
         )]
         .into_iter()
@@ -1433,77 +1508,77 @@ impl Config {
         toml::to_string_pretty(&toml::Value::Table(wrapping_table))
     }
 
-    /// Returns the path to the `foundry.toml`  of this `Config`
+    /// Returns the path to the `foundry.toml` of this `Config`.
     pub fn get_config_path(&self) -> PathBuf {
-        self.__root.0.join(Config::FILE_NAME)
+        self.root.0.join(Self::FILE_NAME)
     }
 
-    /// Returns the selected profile
+    /// Returns the selected profile.
     ///
-    /// If the `FOUNDRY_PROFILE` env variable is not set, this returns the `DEFAULT_PROFILE`
+    /// If the `FOUNDRY_PROFILE` env variable is not set, this returns the `DEFAULT_PROFILE`.
     pub fn selected_profile() -> Profile {
-        Profile::from_env_or("FOUNDRY_PROFILE", Config::DEFAULT_PROFILE)
+        Profile::from_env_or("FOUNDRY_PROFILE", Self::DEFAULT_PROFILE)
     }
 
-    /// Returns the path to foundry's global toml file that's stored at `~/.foundry/foundry.toml`
+    /// Returns the path to foundry's global TOML file: `~/.foundry/foundry.toml`.
     pub fn foundry_dir_toml() -> Option<PathBuf> {
-        Self::foundry_dir().map(|p| p.join(Config::FILE_NAME))
+        Self::foundry_dir().map(|p| p.join(Self::FILE_NAME))
     }
 
-    /// Returns the path to foundry's config dir `~/.foundry/`
+    /// Returns the path to foundry's config dir: `~/.foundry/`.
     pub fn foundry_dir() -> Option<PathBuf> {
-        dirs_next::home_dir().map(|p| p.join(Config::FOUNDRY_DIR_NAME))
+        dirs_next::home_dir().map(|p| p.join(Self::FOUNDRY_DIR_NAME))
     }
 
-    /// Returns the path to foundry's cache dir `~/.foundry/cache`
+    /// Returns the path to foundry's cache dir: `~/.foundry/cache`.
     pub fn foundry_cache_dir() -> Option<PathBuf> {
         Self::foundry_dir().map(|p| p.join("cache"))
     }
 
-    /// Returns the path to foundry rpc cache dir `~/.foundry/cache/rpc`
+    /// Returns the path to foundry rpc cache dir: `~/.foundry/cache/rpc`.
     pub fn foundry_rpc_cache_dir() -> Option<PathBuf> {
         Some(Self::foundry_cache_dir()?.join("rpc"))
     }
-    /// Returns the path to foundry chain's cache dir `~/.foundry/cache/rpc/<chain>`
+    /// Returns the path to foundry chain's cache dir: `~/.foundry/cache/rpc/<chain>`
     pub fn foundry_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
         Some(Self::foundry_rpc_cache_dir()?.join(chain_id.into().to_string()))
     }
 
-    /// Returns the path to foundry's etherscan cache dir `~/.foundry/cache/etherscan`
+    /// Returns the path to foundry's etherscan cache dir: `~/.foundry/cache/etherscan`.
     pub fn foundry_etherscan_cache_dir() -> Option<PathBuf> {
         Some(Self::foundry_cache_dir()?.join("etherscan"))
     }
 
-    /// Returns the path to foundry's keystores dir `~/.foundry/keystores`
+    /// Returns the path to foundry's keystores dir: `~/.foundry/keystores`.
     pub fn foundry_keystores_dir() -> Option<PathBuf> {
         Some(Self::foundry_dir()?.join("keystores"))
     }
 
-    /// Returns the path to foundry's etherscan cache dir for `chain_id`
+    /// Returns the path to foundry's etherscan cache dir for `chain_id`:
     /// `~/.foundry/cache/etherscan/<chain>`
     pub fn foundry_etherscan_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
         Some(Self::foundry_etherscan_cache_dir()?.join(chain_id.into().to_string()))
     }
 
-    /// Returns the path to the cache dir of the `block` on the `chain`
-    /// `~/.foundry/cache/rpc/<chain>/<block>
+    /// Returns the path to the cache dir of the `block` on the `chain`:
+    /// `~/.foundry/cache/rpc/<chain>/<block>`
     pub fn foundry_block_cache_dir(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
         Some(Self::foundry_chain_cache_dir(chain_id)?.join(format!("{block}")))
     }
 
-    /// Returns the path to the cache file of the `block` on the `chain`
+    /// Returns the path to the cache file of the `block` on the `chain`:
     /// `~/.foundry/cache/rpc/<chain>/<block>/storage.json`
     pub fn foundry_block_cache_file(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
         Some(Self::foundry_block_cache_dir(chain_id, block)?.join("storage.json"))
     }
 
-    #[doc = r#"Returns the path to `foundry`'s data directory inside the user's data directory
-    |Platform | Value                                 | Example                          |
-    | ------- | ------------------------------------- | -------------------------------- |
-    | Linux   | `$XDG_CONFIG_HOME` or `$HOME`/.config/foundry | /home/alice/.config/foundry|
-    | macOS   | `$HOME`/Library/Application Support/foundry   | /Users/Alice/Library/Application Support/foundry |
-    | Windows | `{FOLDERID_RoamingAppData}/foundry`           | C:\Users\Alice\AppData\Roaming/foundry   |
-    "#]
+    /// Returns the path to `foundry`'s data directory inside the user's data directory.
+    ///
+    /// | Platform | Value                                         | Example                                          |
+    /// | -------  | --------------------------------------------- | ------------------------------------------------ |
+    /// | Linux    | `$XDG_CONFIG_HOME` or `$HOME`/.config/foundry | /home/alice/.config/foundry                      |
+    /// | macOS    | `$HOME`/Library/Application Support/foundry   | /Users/Alice/Library/Application Support/foundry |
+    /// | Windows  | `{FOLDERID_RoamingAppData}/foundry`           | C:\Users\Alice\AppData\Roaming/foundry           |
     pub fn data_dir() -> eyre::Result<PathBuf> {
         let path = dirs_next::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
         std::fs::create_dir_all(&path).wrap_err("Failed to create module directory")?;
@@ -1515,7 +1590,7 @@ impl Config {
     /// and the first hit is used.
     ///
     /// If this search comes up empty, then it checks if a global `foundry.toml` exists at
-    /// `~/.foundry/foundry.tol`, see [`Self::foundry_dir_toml()`]
+    /// `~/.foundry/foundry.toml`, see [`Self::foundry_dir_toml`].
     pub fn find_config_file() -> Option<PathBuf> {
         fn find(path: &Path) -> Option<PathBuf> {
             if path.is_absolute() {
@@ -1534,13 +1609,13 @@ impl Config {
                 cwd = cwd.parent()?;
             }
         }
-        find(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME).as_ref())
+        find(Env::var_or("FOUNDRY_CONFIG", Self::FILE_NAME).as_ref())
             .or_else(|| Self::foundry_dir_toml().filter(|p| p.exists()))
     }
 
-    /// Clears the foundry cache
+    /// Clears the foundry cache.
     pub fn clean_foundry_cache() -> eyre::Result<()> {
-        if let Some(cache_dir) = Config::foundry_cache_dir() {
+        if let Some(cache_dir) = Self::foundry_cache_dir() {
             let path = cache_dir.as_path();
             let _ = fs::remove_dir_all(path);
         } else {
@@ -1550,9 +1625,9 @@ impl Config {
         Ok(())
     }
 
-    /// Clears the foundry cache for `chain`
+    /// Clears the foundry cache for `chain`.
     pub fn clean_foundry_chain_cache(chain: Chain) -> eyre::Result<()> {
-        if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
+        if let Some(cache_dir) = Self::foundry_chain_cache_dir(chain) {
             let path = cache_dir.as_path();
             let _ = fs::remove_dir_all(path);
         } else {
@@ -1562,9 +1637,9 @@ impl Config {
         Ok(())
     }
 
-    /// Clears the foundry cache for `chain` and `block`
+    /// Clears the foundry cache for `chain` and `block`.
     pub fn clean_foundry_block_cache(chain: Chain, block: u64) -> eyre::Result<()> {
-        if let Some(cache_dir) = Config::foundry_block_cache_dir(chain, block) {
+        if let Some(cache_dir) = Self::foundry_block_cache_dir(chain, block) {
             let path = cache_dir.as_path();
             let _ = fs::remove_dir_all(path);
         } else {
@@ -1574,9 +1649,9 @@ impl Config {
         Ok(())
     }
 
-    /// Clears the foundry etherscan cache
+    /// Clears the foundry etherscan cache.
     pub fn clean_foundry_etherscan_cache() -> eyre::Result<()> {
-        if let Some(cache_dir) = Config::foundry_etherscan_cache_dir() {
+        if let Some(cache_dir) = Self::foundry_etherscan_cache_dir() {
             let path = cache_dir.as_path();
             let _ = fs::remove_dir_all(path);
         } else {
@@ -1586,9 +1661,9 @@ impl Config {
         Ok(())
     }
 
-    /// Clears the foundry etherscan cache for `chain`
+    /// Clears the foundry etherscan cache for `chain`.
     pub fn clean_foundry_etherscan_chain_cache(chain: Chain) -> eyre::Result<()> {
-        if let Some(cache_dir) = Config::foundry_etherscan_chain_cache_dir(chain) {
+        if let Some(cache_dir) = Self::foundry_etherscan_chain_cache_dir(chain) {
             let path = cache_dir.as_path();
             let _ = fs::remove_dir_all(path);
         } else {
@@ -1598,9 +1673,9 @@ impl Config {
         Ok(())
     }
 
-    /// List the data in the foundry cache
+    /// List the data in the foundry cache.
     pub fn list_foundry_cache() -> eyre::Result<Cache> {
-        if let Some(cache_dir) = Config::foundry_rpc_cache_dir() {
+        if let Some(cache_dir) = Self::foundry_rpc_cache_dir() {
             let mut cache = Cache { chains: vec![] };
             if !cache_dir.exists() {
                 return Ok(cache)
@@ -1621,9 +1696,9 @@ impl Config {
         }
     }
 
-    /// List the cached data for `chain`
+    /// List the cached data for `chain`.
     pub fn list_foundry_chain_cache(chain: Chain) -> eyre::Result<ChainCache> {
-        let block_explorer_data_size = match Config::foundry_etherscan_chain_cache_dir(chain) {
+        let block_explorer_data_size = match Self::foundry_etherscan_chain_cache_dir(chain) {
             Some(cache_dir) => Self::get_cached_block_explorer_data(&cache_dir)?,
             None => {
                 warn!("failed to access foundry_etherscan_chain_cache_dir");
@@ -1631,7 +1706,7 @@ impl Config {
             }
         };
 
-        if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
+        if let Some(cache_dir) = Self::foundry_chain_cache_dir(chain) {
             let blocks = Self::get_cached_blocks(&cache_dir)?;
             Ok(ChainCache {
                 name: chain.to_string(),
@@ -1643,7 +1718,7 @@ impl Config {
         }
     }
 
-    //The path provided to this function should point to a cached chain folder
+    /// The path provided to this function should point to a cached chain folder.
     fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
         let mut blocks = vec![];
         if !chain_path.exists() {
@@ -1666,7 +1741,7 @@ impl Config {
         Ok(blocks)
     }
 
-    //The path provided to this function should point to the etherscan cache for a chain
+    /// The path provided to this function should point to the etherscan cache for a chain.
     fn get_cached_block_explorer_data(chain_path: &Path) -> eyre::Result<u64> {
         if !chain_path.exists() {
             return Ok(0)
@@ -1700,8 +1775,8 @@ impl Config {
         };
 
         // use [profile.<profile>] as [<profile>]
-        let mut profiles = vec![Config::DEFAULT_PROFILE];
-        if profile != Config::DEFAULT_PROFILE {
+        let mut profiles = vec![Self::DEFAULT_PROFILE];
+        if profile != Self::DEFAULT_PROFILE {
             profiles.push(profile.clone());
         }
         let provider = toml_provider.strict_select(profiles);
@@ -1710,11 +1785,11 @@ impl Config {
         let provider = BackwardsCompatTomlProvider(ForcedSnakeCaseData(provider));
 
         // merge the default profile as a base
-        if profile != Config::DEFAULT_PROFILE {
-            figment = figment.merge(provider.rename(Config::DEFAULT_PROFILE, profile.clone()));
+        if profile != Self::DEFAULT_PROFILE {
+            figment = figment.merge(provider.rename(Self::DEFAULT_PROFILE, profile.clone()));
         }
         // merge special keys into config
-        for standalone_key in Config::STANDALONE_SECTIONS {
+        for standalone_key in Self::STANDALONE_SECTIONS {
             if let Some((_, fallback)) =
                 STANDALONE_FALLBACK_SECTIONS.iter().find(|(key, _)| standalone_key == key)
             {
@@ -1758,7 +1833,7 @@ impl Config {
 }
 
 impl From<Config> for Figment {
-    fn from(c: Config) -> Figment {
+    fn from(c: Config) -> Self {
         c.to_figment(FigmentProviders::All)
     }
 }
@@ -1821,7 +1896,7 @@ impl From<RegexWrapper> for regex::Regex {
 
 impl From<regex::Regex> for RegexWrapper {
     fn from(re: Regex) -> Self {
-        RegexWrapper { inner: re }
+        Self { inner: re }
     }
 }
 
@@ -1851,6 +1926,30 @@ pub(crate) mod from_opt_glob {
     }
 }
 
+/// Ser/de `globset::Glob` explicitly to handle `Option<Glob>` properly
+pub(crate) mod from_vec_glob {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(value: &[globset::Glob], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let value = value.iter().map(|g| g.glob()).collect::<Vec<_>>();
+        value.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<globset::Glob>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Vec<String> = Vec::deserialize(deserializer)?;
+        s.into_iter()
+            .map(|s| globset::Glob::new(&s))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// A helper wrapper around the root path used during Config detection
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -1864,7 +1963,7 @@ impl Default for RootPath {
 
 impl<P: Into<PathBuf>> From<P> for RootPath {
     fn from(p: P) -> Self {
-        RootPath(p.into())
+        Self(p.into())
     }
 }
 
@@ -1908,7 +2007,7 @@ impl Provider for Config {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
         if let Some(entry) = data.get_mut(&self.profile) {
-            entry.insert("root".to_string(), Value::serialize(self.__root.clone())?);
+            entry.insert("root".to_string(), Value::serialize(self.root.clone())?);
         }
         Ok(data)
     }
@@ -1923,9 +2022,12 @@ impl Default for Config {
         Self {
             profile: Self::DEFAULT_PROFILE,
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
-            cancun: false,
+            prague: false,
+            #[cfg(not(feature = "isolate-by-default"))]
             isolate: false,
-            __root: Default::default(),
+            #[cfg(feature = "isolate-by-default")]
+            isolate: true,
+            root: Default::default(),
             src: "src".into(),
             test: "test".into(),
             script: "script".into(),
@@ -1941,6 +2043,7 @@ impl Default for Config {
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             solc: None,
+            vyper: Default::default(),
             auto_detect_solc: true,
             offline: false,
             optimizer: true,
@@ -1958,12 +2061,12 @@ impl Default for Config {
             path_pattern: None,
             path_pattern_inverse: None,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
-            invariant: Default::default(),
+            invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
             ffi: false,
             prompt_timeout: 120,
-            sender: Config::DEFAULT_SENDER,
-            tx_origin: Config::DEFAULT_SENDER,
+            sender: Self::DEFAULT_SENDER,
+            tx_origin: Self::DEFAULT_SENDER,
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
             block_number: 1,
             fork_block_number: None,
@@ -2012,9 +2115,11 @@ impl Default for Config {
             doc: Default::default(),
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
-            create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
-            __non_exhaustive: (),
-            __warnings: vec![],
+            create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
+            skip: vec![],
+            dependencies: Default::default(),
+            warnings: vec![],
+            _non_exhaustive: (),
         }
     }
 }
@@ -2081,10 +2186,10 @@ impl<'de> Deserialize<'de> for GasLimit {
         }
 
         let gas = match Gas::deserialize(deserializer)? {
-            Gas::Number(num) => GasLimit(num),
+            Gas::Number(num) => Self(num),
             Gas::Text(s) => match s.as_str() {
-                "max" | "MAX" | "Max" | "u64::MAX" | "u64::Max" => GasLimit(u64::MAX),
-                s => GasLimit(s.parse().map_err(D::Error::custom)?),
+                "max" | "MAX" | "Max" | "u64::MAX" | "u64::Max" => Self(u64::MAX),
+                s => Self(s.parse().map_err(D::Error::custom)?),
             },
         };
 
@@ -2110,8 +2215,8 @@ impl SolcReq {
     /// will try to get the version from the binary.
     fn try_version(&self) -> Result<Version, SolcError> {
         match self {
-            SolcReq::Version(version) => Ok(version.clone()),
-            SolcReq::Local(path) => Solc::new(path).map(|solc| solc.version),
+            Self::Version(version) => Ok(version.clone()),
+            Self::Local(path) => Solc::new(path).map(|solc| solc.version),
         }
     }
 }
@@ -2120,9 +2225,9 @@ impl<T: AsRef<str>> From<T> for SolcReq {
     fn from(s: T) -> Self {
         let s = s.as_ref();
         if let Ok(v) = Version::from_str(s) {
-            SolcReq::Version(v)
+            Self::Version(v)
         } else {
-            SolcReq::Local(s.into())
+            Self::Local(s.into())
         }
     }
 }
@@ -2388,7 +2493,7 @@ impl Provider for DappEnvCompatProvider {
     }
 }
 
-/// Renames a profile from `from` to `to
+/// Renames a profile from `from` to `to`.
 ///
 /// For example given:
 ///
@@ -2714,7 +2819,9 @@ mod tests {
         etherscan::ResolvedEtherscanConfigs,
     };
     use figment::error::Kind::InvalidType;
-    use foundry_compilers::artifacts::{ModelCheckerEngine, YulDetails};
+    use foundry_compilers::artifacts::{
+        vyper::VyperOptimizationMode, ModelCheckerEngine, YulDetails,
+    };
     use similar_asserts::assert_eq;
     use std::{collections::BTreeMap, fs::File, io::Write};
     use tempfile::tempdir;
@@ -2723,7 +2830,7 @@ mod tests {
     // Helper function to clear `__warnings` in config, since it will be populated during loading
     // from file, causing testing problem when comparing to those created from `default()`, etc.
     fn clear_warning(config: &mut Config) {
-        config.__warnings = vec![];
+        config.warnings = vec![];
     }
 
     #[test]
@@ -2845,7 +2952,7 @@ mod tests {
     fn test_default_test_path() {
         figment::Jail::expect_with(|_| {
             let config = Config::default();
-            let paths_config = config.project_paths();
+            let paths_config = config.project_paths::<Solc>();
             assert_eq!(paths_config.tests, PathBuf::from(r"test"));
             Ok(())
         });
@@ -2879,7 +2986,7 @@ mod tests {
                 test = "defaulttest"
                 src  = "defaultsrc"
                 libs = ['lib', 'node_modules']
-                
+
                 [profile.custom]
                 src = "customsrc"
             "#,
@@ -2912,7 +3019,7 @@ mod tests {
             )?;
 
             let config = Config::load();
-            let paths_config = config.project_paths();
+            let paths_config = config.project_paths::<Solc>();
             assert_eq!(paths_config.tests, PathBuf::from(r"mytest"));
             Ok(())
         });
@@ -3595,7 +3702,7 @@ mod tests {
                             Chain::optimism_mainnet(),
                             Chain::from_id(999999)
                         ]),
-                        endpoints: CachedEndpoints::All
+                        endpoints: CachedEndpoints::All,
                     },
                     use_literal_content: false,
                     bytecode_hash: BytecodeHash::Ipfs,
@@ -3701,7 +3808,7 @@ mod tests {
                 tx_origin = '0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38'
                 verbosity = 0
                 via_ir = false
-                
+
                 [profile.default.rpc_storage_caching]
                 chains = 'all'
                 endpoints = 'all'
@@ -3718,9 +3825,10 @@ mod tests {
 
                 [invariant]
                 runs = 256
-                depth = 15
+                depth = 500
                 fail_on_revert = false
                 call_override = false
+                shrink_run_limit = 5000
             "#,
             )?;
 
@@ -4169,7 +4277,7 @@ mod tests {
                         './src/SizeAuction.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c',
                         './src/test/ChainlinkTWAP.t.sol:ChainlinkTWAP:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
                         './src/SizeAuctionDiscount.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c',
-                    ]       
+                    ]
             ",
             )?;
             let config = Config::load();
@@ -4461,7 +4569,12 @@ mod tests {
             let loaded = Config::load().sanitized();
             assert_eq!(
                 loaded.invariant,
-                InvariantConfig { runs: 512, depth: 10, ..Default::default() }
+                InvariantConfig {
+                    runs: 512,
+                    depth: 10,
+                    failure_persist_dir: Some(PathBuf::from("cache/invariant")),
+                    ..Default::default()
+                }
             );
 
             Ok(())
@@ -4535,7 +4648,7 @@ mod tests {
             assert_eq!(loaded.src.file_name().unwrap(), "my-src");
             assert_eq!(loaded.out.file_name().unwrap(), "my-out");
             assert_eq!(
-                loaded.__warnings,
+                loaded.warnings,
                 vec![Warning::UnknownSection {
                     unknown_section: Profile::new("default"),
                     source: Some("foundry.toml".into())
@@ -4834,6 +4947,31 @@ mod tests {
                         "Uniswap V3: Positions NFT".to_string()
                     ),
                 ])
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_parse_vyper() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [vyper]
+                optimize = "codesize"
+                path = "/path/to/vyper"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(
+                config.vyper,
+                VyperConfig {
+                    optimize: Some(VyperOptimizationMode::Codesize),
+                    path: Some("/path/to/vyper".into())
+                }
             );
 
             Ok(())

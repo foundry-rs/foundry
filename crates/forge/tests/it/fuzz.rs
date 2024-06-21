@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fuzz() {
     let filter = Filter::new(".*", ".*", ".*fuzz/")
-        .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)|testSuccessChecker\(uint256\)|testSuccessChecker2\(int256\)|testSuccessChecker3\(uint32\)")
+        .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)|testSuccessChecker\(uint256\)|testSuccessChecker2\(int256\)|testSuccessChecker3\(uint32\)|testStorageOwner\(address\)|testImmutableOwner\(address\)")
         .exclude_paths("invariant");
     let mut runner = TEST_DATA_DEFAULT.runner();
     let suite_result = runner.test_collect(&filter);
@@ -152,4 +152,26 @@ async fn test_persist_fuzz_failure() {
     };
     // empty file is used to load failure so new calldata is generated
     assert_ne!(initial_calldata, new_calldata);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_scrape_bytecode() {
+    let filter = Filter::new(".*", ".*", ".*fuzz/FuzzScrapeBytecode.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.fuzz.runs = 2000;
+    runner.test_options.fuzz.seed = Some(U256::from(6u32));
+    let suite_result = runner.test_collect(&filter);
+
+    assert!(!suite_result.is_empty());
+
+    for (_, SuiteResult { test_results, .. }) in suite_result {
+        for (test_name, result) in test_results {
+            match test_name.as_str() {
+                "testImmutableOwner(address)" | "testStorageOwner(address)" => {
+                    assert_eq!(result.status, TestStatus::Failure)
+                }
+                _ => {}
+            }
+        }
+    }
 }

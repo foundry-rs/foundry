@@ -253,10 +253,20 @@ async fn main() -> Result<()> {
                     .await?
             );
         }
-        CastSubcommand::BlockNumber { rpc } => {
+        CastSubcommand::BlockNumber { rpc, block } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).block_number().await?);
+            let number = match block {
+                Some(id) => provider
+                    .get_block(id, false.into())
+                    .await?
+                    .ok_or_else(|| eyre::eyre!("block {id:?} not found"))?
+                    .header
+                    .number
+                    .ok_or_else(|| eyre::eyre!("block {id:?} has no block number"))?,
+                None => Cast::new(provider).block_number().await?,
+            };
+            println!("{number}");
         }
         CastSubcommand::Chain { rpc } => {
             let config = Config::from(&rpc);
@@ -309,7 +319,7 @@ async fn main() -> Result<()> {
                 {
                     let resolved = match func_names {
                         Some(v) => v.join("|"),
-                        None => "".to_string(),
+                        None => String::new(),
                     };
                     println!("{selector}\t{arguments:max_args_len$}\t{resolved}");
                 }
@@ -327,6 +337,11 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::Index { key_type, key, slot_number } => {
             println!("{}", SimpleCast::index(&key_type, &key, &slot_number)?);
+        }
+        CastSubcommand::IndexErc7201 { id, formula_id } => {
+            eyre::ensure!(formula_id == "erc7201", "unsupported formula ID: {formula_id}");
+            let id = stdin::unwrap_line(id)?;
+            println!("{}", foundry_common::erc7201(&id));
         }
         CastSubcommand::Implementation { block, who, rpc } => {
             let config = Config::from(&rpc);
@@ -351,7 +366,8 @@ async fn main() -> Result<()> {
             let provider = utils::get_provider(&config)?;
             let address = address.resolve(&provider).await?;
             let value = provider
-                .get_proof(address, slots.into_iter().collect(), block.unwrap_or(BlockId::latest()))
+                .get_proof(address, slots.into_iter().collect())
+                .block_id(block.unwrap_or_default())
                 .await?;
             println!("{}", serde_json::to_string(&value)?);
         }
@@ -514,17 +530,20 @@ async fn main() -> Result<()> {
         CastSubcommand::RightShift { value, bits, base_in, base_out } => {
             println!("{}", SimpleCast::right_shift(&value, &bits, base_in.as_deref(), &base_out)?);
         }
-        CastSubcommand::EtherscanSource { address, directory, etherscan } => {
+        CastSubcommand::EtherscanSource { address, directory, etherscan, flatten } => {
             let config = Config::from(&etherscan);
             let chain = config.chain.unwrap_or_default();
             let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-            match directory {
-                Some(dir) => {
+            match (directory, flatten) {
+                (Some(dir), false) => {
                     SimpleCast::expand_etherscan_source_to_directory(chain, address, api_key, dir)
                         .await?
                 }
-                None => {
+                (None, false) => {
                     println!("{}", SimpleCast::etherscan_source(chain, address, api_key).await?);
+                }
+                (dir, true) => {
+                    SimpleCast::etherscan_source_flatten(chain, address, api_key, dir).await?;
                 }
             }
         }
