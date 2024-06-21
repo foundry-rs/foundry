@@ -292,9 +292,9 @@ impl CallTraceDecoder {
         }
     }
 
-    pub async fn decode(&self, traces: &mut CallTraceArena) {
+    pub async fn extend_trace(&self, traces: &mut CallTraceArena) {
         for node in traces.nodes_mut() {
-            let decoded = self.decode_function(&mut node.trace).await;
+            let decoded = self.decode_function(&node.trace).await;
             node.trace.decoded_label = decoded.label;
             node.trace.decoded_call_data = decoded.func;
             node.trace.decoded_return_data = decoded.return_data;
