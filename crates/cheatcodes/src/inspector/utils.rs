@@ -2,13 +2,9 @@ use crate::inspector::Cheatcodes;
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_evm_core::backend::DatabaseExt;
 use revm::{
-    interpreter::{
-        CreateInputs, CreateOutcome, CreateScheme, EOFCreateInput, EOFCreateOutcome, Gas,
-        InstructionResult, InterpreterResult,
-    },
+    interpreter::{CreateInputs, CreateScheme, EOFCreateInputs, EOFCreateKind},
     InnerEvmContext,
 };
-use std::ops::Range;
 
 /// Common behaviour of legacy and EOF create inputs.
 pub(crate) trait CommonCreateInput<DB: DatabaseExt> {
@@ -18,12 +14,6 @@ pub(crate) trait CommonCreateInput<DB: DatabaseExt> {
     fn init_code(&self) -> Bytes;
     fn scheme(&self) -> Option<CreateScheme>;
     fn set_caller(&mut self, caller: Address);
-    fn create_outcome(
-        &self,
-        interpreter_result: InterpreterResult,
-        created_address: Option<Address>,
-        return_memory_range: Option<Range<usize>>,
-    ) -> CommonCreateOutcome;
     fn log_debug(&self, cheatcode: &mut Cheatcodes, scheme: &CreateScheme);
     fn allow_cheatcodes(
         &self,
@@ -31,7 +21,6 @@ pub(crate) trait CommonCreateInput<DB: DatabaseExt> {
         ecx: &mut InnerEvmContext<DB>,
     ) -> Address;
     fn computed_created_address(&self) -> Option<Address>;
-    fn return_memory_range(&self) -> Option<Range<usize>>;
 }
 
 impl<DB: DatabaseExt> CommonCreateInput<DB> for &mut CreateInputs {
@@ -52,14 +41,6 @@ impl<DB: DatabaseExt> CommonCreateInput<DB> for &mut CreateInputs {
     }
     fn set_caller(&mut self, caller: Address) {
         self.caller = caller;
-    }
-    fn create_outcome(
-        &self,
-        result: InterpreterResult,
-        address: Option<Address>,
-        _return_memory_range: Option<Range<usize>>,
-    ) -> CommonCreateOutcome {
-        CommonCreateOutcome::Create(CreateOutcome { result, address })
     }
     fn log_debug(&self, cheatcode: &mut Cheatcodes, scheme: &CreateScheme) {
         let kind = match scheme {
@@ -86,12 +67,9 @@ impl<DB: DatabaseExt> CommonCreateInput<DB> for &mut CreateInputs {
     fn computed_created_address(&self) -> Option<Address> {
         None
     }
-    fn return_memory_range(&self) -> Option<Range<usize>> {
-        None
-    }
 }
 
-impl<DB: DatabaseExt> CommonCreateInput<DB> for &mut EOFCreateInput {
+impl<DB: DatabaseExt> CommonCreateInput<DB> for &mut EOFCreateInputs {
     fn caller(&self) -> Address {
         self.caller
     }
@@ -102,25 +80,16 @@ impl<DB: DatabaseExt> CommonCreateInput<DB> for &mut EOFCreateInput {
         self.value
     }
     fn init_code(&self) -> Bytes {
-        self.eof_init_code.raw.clone()
+        match &self.kind {
+            EOFCreateKind::Tx { initdata } => initdata.clone(),
+            EOFCreateKind::Opcode { initcode, .. } => initcode.raw.clone(),
+        }
     }
     fn scheme(&self) -> Option<CreateScheme> {
         None
     }
     fn set_caller(&mut self, caller: Address) {
         self.caller = caller;
-    }
-    fn create_outcome(
-        &self,
-        result: InterpreterResult,
-        address: Option<Address>,
-        return_memory_range: Option<Range<usize>>,
-    ) -> CommonCreateOutcome {
-        CommonCreateOutcome::EOFCreate(EOFCreateOutcome {
-            result,
-            address: address.unwrap_or(self.created_address),
-            return_memory_range: return_memory_range.unwrap_or_default(),
-        })
     }
     fn log_debug(&self, cheatcode: &mut Cheatcodes, _scheme: &CreateScheme) {
         debug!(target: "cheatcodes", tx=?cheatcode.broadcastable_transactions.back().unwrap(), "broadcastable eofcreate");
@@ -130,91 +99,13 @@ impl<DB: DatabaseExt> CommonCreateInput<DB> for &mut EOFCreateInput {
         cheatcodes: &mut Cheatcodes,
         ecx: &mut InnerEvmContext<DB>,
     ) -> Address {
-        cheatcodes.allow_cheatcodes_on_create(ecx, self.caller, self.created_address);
-        self.created_address
+        let created_address =
+            <&mut EOFCreateInputs as CommonCreateInput<DB>>::computed_created_address(self)
+                .unwrap_or_default();
+        cheatcodes.allow_cheatcodes_on_create(ecx, self.caller, created_address);
+        created_address
     }
     fn computed_created_address(&self) -> Option<Address> {
-        Some(self.created_address)
+        self.kind.created_address().copied()
     }
-    fn return_memory_range(&self) -> Option<Range<usize>> {
-        Some(self.return_memory_range.clone())
-    }
-}
-
-pub(crate) enum CommonCreateOutcome {
-    Create(CreateOutcome),
-    EOFCreate(EOFCreateOutcome),
-}
-
-/// Common behaviour of legacy and EOF create_end inputs.
-pub(crate) trait CommonEndInput {
-    fn outcome_result(&self) -> InstructionResult;
-    fn outcome_output(&self) -> Bytes;
-    fn outcome_gas(&self) -> Gas;
-    fn address(&self) -> Option<Address>;
-    fn create_outcome(
-        &self,
-        result: InstructionResult,
-        output: Bytes,
-        address: Option<Address>,
-    ) -> CommonEndOutcome;
-}
-
-impl CommonEndInput for CreateOutcome {
-    fn outcome_result(&self) -> InstructionResult {
-        self.result.result
-    }
-    fn outcome_output(&self) -> Bytes {
-        self.result.output.clone()
-    }
-    fn outcome_gas(&self) -> Gas {
-        self.result.gas
-    }
-    fn address(&self) -> Option<Address> {
-        self.address
-    }
-
-    fn create_outcome(
-        &self,
-        result: InstructionResult,
-        output: Bytes,
-        address: Option<Address>,
-    ) -> CommonEndOutcome {
-        CommonEndOutcome::Create(Self {
-            result: InterpreterResult { result, output, gas: self.outcome_gas() },
-            address,
-        })
-    }
-}
-
-impl CommonEndInput for EOFCreateOutcome {
-    fn outcome_result(&self) -> InstructionResult {
-        self.result.result
-    }
-    fn outcome_output(&self) -> Bytes {
-        self.result.output.clone()
-    }
-    fn outcome_gas(&self) -> Gas {
-        self.result.gas
-    }
-    fn address(&self) -> Option<Address> {
-        Some(self.address)
-    }
-    fn create_outcome(
-        &self,
-        result: InstructionResult,
-        output: Bytes,
-        address: Option<Address>,
-    ) -> CommonEndOutcome {
-        CommonEndOutcome::EOFCreate(Self {
-            result: InterpreterResult { result, output, gas: self.outcome_gas() },
-            address: address.unwrap_or_default(),
-            return_memory_range: self.return_memory_range.clone(),
-        })
-    }
-}
-
-pub(crate) enum CommonEndOutcome {
-    Create(CreateOutcome),
-    EOFCreate(EOFCreateOutcome),
 }

@@ -7,14 +7,15 @@ use foundry_evm::{
     decode::decode_console_logs,
     inspectors::{LogCollector, TracingInspector},
     revm::{
-        interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
+        interpreter::{
+            CallInputs, CallOutcome, CreateInputs, CreateOutcome, EOFCreateInputs, Interpreter,
+        },
         primitives::U256,
         EvmContext,
     },
     traces::TracingInspectorConfig,
     InspectorExt,
 };
-use revm::interpreter::{EOFCreateInput, EOFCreateOutcome};
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
@@ -122,8 +123,8 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     fn eofcreate(
         &mut self,
         ecx: &mut EvmContext<DB>,
-        inputs: &mut EOFCreateInput,
-    ) -> Option<EOFCreateOutcome> {
+        inputs: &mut EOFCreateInputs,
+    ) -> Option<CreateOutcome> {
         if let Some(tracer) = &mut self.tracer {
             if let Some(out) = tracer.eofcreate(ecx, inputs) {
                 return Some(out);
@@ -136,9 +137,9 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     fn eofcreate_end(
         &mut self,
         ecx: &mut EvmContext<DB>,
-        inputs: &EOFCreateInput,
-        outcome: EOFCreateOutcome,
-    ) -> EOFCreateOutcome {
+        inputs: &EOFCreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
         if let Some(tracer) = &mut self.tracer {
             return tracer.eofcreate_end(ecx, inputs, outcome);
         }

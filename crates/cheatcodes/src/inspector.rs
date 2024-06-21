@@ -7,7 +7,7 @@ use crate::{
         prank::Prank,
         DealRecord, RecordAccess,
     },
-    inspector::utils::{CommonCreateInput, CommonCreateOutcome, CommonEndInput, CommonEndOutcome},
+    inspector::utils::CommonCreateInput,
     script::{Broadcast, ScriptWallets},
     test::expect::{
         self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
@@ -31,9 +31,8 @@ use foundry_evm_core::{
 use itertools::Itertools;
 use revm::{
     interpreter::{
-        opcode, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInput,
-        EOFCreateOutcome, Gas, InstructionResult, Interpreter, InterpreterAction,
-        InterpreterResult,
+        opcode, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
+        Gas, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
     primitives::{BlockEnv, CreateScheme, EVMError},
     EvmContext, InnerEvmContext, Inspector,
@@ -423,7 +422,7 @@ impl Cheatcodes {
         &mut self,
         ecx: &mut EvmContext<DB>,
         mut input: Input,
-    ) -> Option<CommonCreateOutcome>
+    ) -> Option<CreateOutcome>
     where
         DB: DatabaseExt,
         Input: CommonCreateInput<DB>,
@@ -454,15 +453,14 @@ impl Cheatcodes {
                 if let Err(err) =
                     ecx.journaled_state.load_account(broadcast.new_origin, &mut ecx.db)
                 {
-                    return Some(input.create_outcome(
-                        InterpreterResult {
+                    return Some(CreateOutcome {
+                        result: InterpreterResult {
                             result: InstructionResult::Revert,
                             output: Error::encode(err),
                             gas,
                         },
-                        input.computed_created_address(),
-                        input.return_memory_range().clone(),
-                    ));
+                        address: None,
+                    })
                 }
 
                 ecx.env.tx.caller = broadcast.new_origin;
@@ -478,7 +476,7 @@ impl Cheatcodes {
                             from: Some(broadcast.new_origin),
                             to: None,
                             value: Some(input.value()),
-                            input: TransactionInput::new(input.init_code().clone()),
+                            input: TransactionInput::new(input.init_code()),
                             nonce: Some(account.info.nonce),
                             gas: if is_fixed_gas_limit {
                                 Some(input.gas_limit() as u128)
@@ -511,7 +509,7 @@ impl Cheatcodes {
                 oldBalance: U256::ZERO, // updated on (eof)create_end
                 newBalance: U256::ZERO, // updated on (eof)create_end
                 value: input.value(),
-                data: input.init_code().clone(),
+                data: input.init_code(),
                 reverted: false,
                 deployedCode: Bytes::new(), // updated on (eof)create_end
                 storageAccesses: vec![],    // updated on (eof)create_end
@@ -523,14 +521,13 @@ impl Cheatcodes {
     }
 
     // common create_end functionality for both legacy and EOF.
-    fn create_end_common<DB, Input>(
+    fn create_end_common<DB>(
         &mut self,
         ecx: &mut EvmContext<DB>,
-        input: Input,
-    ) -> CommonEndOutcome
+        mut outcome: CreateOutcome,
+    ) -> CreateOutcome
     where
         DB: DatabaseExt,
-        Input: CommonEndInput,
     {
         let ecx = &mut ecx.inner;
 
@@ -567,19 +564,20 @@ impl Cheatcodes {
                 return match expect::handle_expect_revert(
                     true,
                     expected_revert.reason.as_deref(),
-                    input.outcome_result(),
-                    input.outcome_output().clone(),
+                    outcome.result.result,
+                    outcome.result.output.clone(),
                 ) {
-                    Ok((new_address, retdata)) => input.create_outcome(
-                        InstructionResult::Return,
-                        retdata.clone(),
-                        new_address,
-                    ),
-                    Err(err) => input.create_outcome(
-                        InstructionResult::Revert,
-                        Bytes::from(err.abi_encode()),
-                        input.address(),
-                    ),
+                    Ok((address, retdata)) => {
+                        outcome.result.result = InstructionResult::Return;
+                        outcome.result.output = retdata;
+                        outcome.address = address;
+                        outcome
+                    }
+                    Err(err) => {
+                        outcome.result.result = InstructionResult::Revert;
+                        outcome.result.output = err.abi_encode().into();
+                        outcome
+                    }
                 };
             }
         }
@@ -593,7 +591,7 @@ impl Cheatcodes {
                     recorded_account_diffs_stack.pop().expect("missing CREATE account accesses");
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
-                if input.outcome_result().is_revert() {
+                if outcome.result.is_revert() {
                     last_depth.iter_mut().for_each(|element| {
                         element.reverted = true;
                         element
@@ -612,7 +610,7 @@ impl Cheatcodes {
                         create_access.kind as u8,
                         crate::Vm::AccountAccessKind::Create as u8
                     );
-                    if let Some(address) = input.address() {
+                    if let Some(address) = outcome.address {
                         if let Ok((created_acc, _)) =
                             ecx.journaled_state.load_account(address, &mut ecx.db)
                         {
@@ -632,84 +630,80 @@ impl Cheatcodes {
                 }
             }
         }
-        input.create_outcome(
-            input.outcome_result(),
-            input.outcome_output().clone(),
-            input.address(),
-        )
+        outcome
     }
-}
 
-pub fn call_with_executor<DB: DatabaseExt>(
-    &mut self,
-    ecx: &mut EvmContext<DB>,
-    call: &mut CallInputs,
-    executor: &mut impl CheatcodesExecutor,
-) -> Option<CallOutcome> {
-    let gas = Gas::new(call.gas_limit);
+    pub fn call_with_executor<DB: DatabaseExt>(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        call: &mut CallInputs,
+        executor: &mut impl CheatcodesExecutor,
+    ) -> Option<CallOutcome> {
+        let gas = Gas::new(call.gas_limit);
 
-    // At the root call to test function or script `run()`/`setUp()` functions, we are
-    // decreasing sender nonce to ensure that it matches on-chain nonce once we start
-    // broadcasting.
-    if ecx.journaled_state.depth == 0 {
-        let sender = ecx.env.tx.caller;
-        if sender != Config::DEFAULT_SENDER {
-            let account = match super::evm::journaled_account(ecx, sender) {
-                Ok(account) => account,
-                Err(err) => {
-                    return Some(CallOutcome {
-                        result: InterpreterResult {
-                            result: InstructionResult::Revert,
-                            output: err.abi_encode().into(),
-                            gas,
-                        },
-                        memory_offset: call.return_memory_offset.clone(),
-                    })
-                }
-            };
-            let prev = account.info.nonce;
-            account.info.nonce = prev.saturating_sub(1);
+        // At the root call to test function or script `run()`/`setUp()` functions, we are
+        // decreasing sender nonce to ensure that it matches on-chain nonce once we start
+        // broadcasting.
+        if ecx.journaled_state.depth == 0 {
+            let sender = ecx.env.tx.caller;
+            if sender != Config::DEFAULT_SENDER {
+                let account = match super::evm::journaled_account(ecx, sender) {
+                    Ok(account) => account,
+                    Err(err) => {
+                        return Some(CallOutcome {
+                            result: InterpreterResult {
+                                result: InstructionResult::Revert,
+                                output: err.abi_encode().into(),
+                                gas,
+                            },
+                            memory_offset: call.return_memory_offset.clone(),
+                        })
+                    }
+                };
+                let prev = account.info.nonce;
+                account.info.nonce = prev.saturating_sub(1);
 
-            trace!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
+                trace!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
+            }
         }
-    }
 
-    if call.target_address == CHEATCODE_ADDRESS {
-        return match self.apply_cheatcode(ecx, call, executor) {
-            Ok(retdata) => Some(CallOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Return,
-                    output: retdata.into(),
-                    gas,
-                },
-                memory_offset: call.return_memory_offset.clone(),
-            }),
-            Err(err) => Some(CallOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Revert,
-                    output: err.abi_encode().into(),
-                    gas,
-                },
-                memory_offset: call.return_memory_offset.clone(),
-            }),
-        };
-    }
+        if call.target_address == CHEATCODE_ADDRESS {
+            return match self.apply_cheatcode(ecx, call, executor) {
+                Ok(retdata) => Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Return,
+                        output: retdata.into(),
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                }),
+                Err(err) => Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: err.abi_encode().into(),
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                }),
+            };
+        }
 
-    let ecx = &mut ecx.inner;
+        let ecx = &mut ecx.inner;
 
-    if call.target_address == HARDHAT_CONSOLE_ADDRESS {
-        return None
-    }
+        if call.target_address == HARDHAT_CONSOLE_ADDRESS {
+            return None
+        }
 
-    // Handle expected calls
+        // Handle expected calls
 
-    // Grab the different calldatas expected.
-    if let Some(expected_calls_for_target) = self.expected_calls.get_mut(&call.bytecode_address) {
-        // Match every partial/full calldata
-        for (calldata, (expected, actual_count)) in expected_calls_for_target {
-            // Increment actual times seen if...
-            // The calldata is at most, as big as this call's input, and
-            if calldata.len() <= call.input.len() &&
+        // Grab the different calldatas expected.
+        if let Some(expected_calls_for_target) = self.expected_calls.get_mut(&call.bytecode_address)
+        {
+            // Match every partial/full calldata
+            for (calldata, (expected, actual_count)) in expected_calls_for_target {
+                // Increment actual times seen if...
+                // The calldata is at most, as big as this call's input, and
+                if calldata.len() <= call.input.len() &&
                     // Both calldata match, taking the length of the assumed smaller one (which will have at least the selector), and
                     *calldata == call.input[..calldata.len()] &&
                     // The value matches, if provided
@@ -720,177 +714,183 @@ pub fn call_with_executor<DB: DatabaseExt>(
                     expected.gas.map_or(true, |gas| gas == call.gas_limit) &&
                     // The minimum gas matches, if provided
                     expected.min_gas.map_or(true, |min_gas| min_gas <= call.gas_limit)
-            {
-                *actual_count += 1;
-            }
-        }
-    }
-
-    // Handle mocked calls
-    if let Some(mocks) = self.mocked_calls.get(&call.bytecode_address) {
-        let ctx =
-            MockCallDataContext { calldata: call.input.clone(), value: call.transfer_value() };
-        if let Some(return_data) = mocks.get(&ctx).or_else(|| {
-            mocks
-                .iter()
-                .find(|(mock, _)| {
-                    call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
-                        mock.value.map_or(true, |value| Some(value) == call.transfer_value())
-                })
-                .map(|(_, v)| v)
-        }) {
-            return Some(CallOutcome {
-                result: InterpreterResult {
-                    result: return_data.ret_type,
-                    output: return_data.data.clone(),
-                    gas,
-                },
-                memory_offset: call.return_memory_offset.clone(),
-            })
-        }
-    }
-
-    // Apply our prank
-    if let Some(prank) = &self.prank {
-        if ecx.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
-            let mut prank_applied = false;
-
-            // At the target depth we set `msg.sender`
-            if ecx.journaled_state.depth() == prank.depth {
-                call.caller = prank.new_caller;
-                prank_applied = true;
-            }
-
-            // At the target depth, or deeper, we set `tx.origin`
-            if let Some(new_origin) = prank.new_origin {
-                ecx.env.tx.caller = new_origin;
-                prank_applied = true;
-            }
-
-            // If prank applied for first time, then update
-            if prank_applied {
-                if let Some(applied_prank) = prank.first_time_applied() {
-                    self.prank = Some(applied_prank);
+                {
+                    *actual_count += 1;
                 }
             }
         }
-    }
 
-    // Apply our broadcast
-    if let Some(broadcast) = &self.broadcast {
-        // We only apply a broadcast *to a specific depth*.
-        //
-        // We do this because any subsequent contract calls *must* exist on chain and
-        // we only want to grab *this* call, not internal ones
-        if ecx.journaled_state.depth() == broadcast.depth &&
-            call.caller == broadcast.original_caller
-        {
-            // At the target depth we set `msg.sender` & tx.origin.
-            // We are simulating the caller as being an EOA, so *both* must be set to the
-            // broadcast.origin.
-            ecx.env.tx.caller = broadcast.new_origin;
-
-            call.caller = broadcast.new_origin;
-            // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
-            // because we only need the from, to, value, and data. We can later change this
-            // into 1559, in the cli package, relatively easily once we
-            // know the target chain supports EIP-1559.
-            if !call.is_static {
-                if let Err(err) = ecx.load_account(broadcast.new_origin) {
-                    return Some(CallOutcome {
-                        result: InterpreterResult {
-                            result: InstructionResult::Revert,
-                            output: Error::encode(err),
-                            gas,
-                        },
-                        memory_offset: call.return_memory_offset.clone(),
+        // Handle mocked calls
+        if let Some(mocks) = self.mocked_calls.get(&call.bytecode_address) {
+            let ctx =
+                MockCallDataContext { calldata: call.input.clone(), value: call.transfer_value() };
+            if let Some(return_data) = mocks.get(&ctx).or_else(|| {
+                mocks
+                    .iter()
+                    .find(|(mock, _)| {
+                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
+                            mock.value.map_or(true, |value| Some(value) == call.transfer_value())
                     })
-                }
-
-                let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call.gas_limit);
-
-                let account = ecx.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
-
-                self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                    rpc: ecx.db.active_fork_url(),
-                    transaction: TransactionRequest {
-                        from: Some(broadcast.new_origin),
-                        to: Some(TxKind::from(Some(call.target_address))),
-                        value: call.transfer_value(),
-                        input: TransactionInput::new(call.input.clone()),
-                        nonce: Some(account.info.nonce),
-                        gas: if is_fixed_gas_limit { Some(call.gas_limit as u128) } else { None },
-                        ..Default::default()
-                    },
-                });
-                debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
-
-                let prev = account.info.nonce;
-
-                // Touch account to ensure that incremented nonce is committed
-                account.mark_touch();
-                account.info.nonce += 1;
-                debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
-            } else if broadcast.single_call {
-                let msg =
-                    "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
+                    .map(|(_, v)| v)
+            }) {
                 return Some(CallOutcome {
                     result: InterpreterResult {
-                        result: InstructionResult::Revert,
-                        output: Error::encode(msg),
+                        result: return_data.ret_type,
+                        output: return_data.data.clone(),
                         gas,
                     },
                     memory_offset: call.return_memory_offset.clone(),
                 })
             }
         }
-    }
 
-    // Record called accounts if `startStateDiffRecording` has been called
-    if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
-        // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
-        // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
-        let initialized;
-        let old_balance;
-        if let Ok((acc, _)) = ecx.load_account(call.target_address) {
-            initialized = acc.info.exists();
-            old_balance = acc.info.balance;
-        } else {
-            initialized = false;
-            old_balance = U256::ZERO;
+        // Apply our prank
+        if let Some(prank) = &self.prank {
+            if ecx.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
+                let mut prank_applied = false;
+
+                // At the target depth we set `msg.sender`
+                if ecx.journaled_state.depth() == prank.depth {
+                    call.caller = prank.new_caller;
+                    prank_applied = true;
+                }
+
+                // At the target depth, or deeper, we set `tx.origin`
+                if let Some(new_origin) = prank.new_origin {
+                    ecx.env.tx.caller = new_origin;
+                    prank_applied = true;
+                }
+
+                // If prank applied for first time, then update
+                if prank_applied {
+                    if let Some(applied_prank) = prank.first_time_applied() {
+                        self.prank = Some(applied_prank);
+                    }
+                }
+            }
         }
-        let kind = match call.scheme {
-            CallScheme::Call => crate::Vm::AccountAccessKind::Call,
-            CallScheme::CallCode => crate::Vm::AccountAccessKind::CallCode,
-            CallScheme::DelegateCall => crate::Vm::AccountAccessKind::DelegateCall,
-            CallScheme::StaticCall => crate::Vm::AccountAccessKind::StaticCall,
-        };
-        // Record this call by pushing it to a new pending vector; all subsequent calls at
-        // that depth will be pushed to the same vector. When the call ends, the
-        // RecordedAccountAccess (and all subsequent RecordedAccountAccesses) will be
-        // updated with the revert status of this call, since the EVM does not mark accounts
-        // as "warm" if the call from which they were accessed is reverted
-        recorded_account_diffs_stack.push(vec![AccountAccess {
-            chainInfo: crate::Vm::ChainInfo {
-                forkId: ecx.db.active_fork_id().unwrap_or_default(),
-                chainId: U256::from(ecx.env.cfg.chain_id),
-            },
-            accessor: call.caller,
-            account: call.bytecode_address,
-            kind,
-            initialized,
-            oldBalance: old_balance,
-            newBalance: U256::ZERO, // updated on call_end
-            value: call.call_value(),
-            data: call.input.clone(),
-            reverted: false,
-            deployedCode: Bytes::new(),
-            storageAccesses: vec![], // updated on step
-            depth: ecx.journaled_state.depth(),
-        }]);
-    }
 
-    None
+        // Apply our broadcast
+        if let Some(broadcast) = &self.broadcast {
+            // We only apply a broadcast *to a specific depth*.
+            //
+            // We do this because any subsequent contract calls *must* exist on chain and
+            // we only want to grab *this* call, not internal ones
+            if ecx.journaled_state.depth() == broadcast.depth &&
+                call.caller == broadcast.original_caller
+            {
+                // At the target depth we set `msg.sender` & tx.origin.
+                // We are simulating the caller as being an EOA, so *both* must be set to the
+                // broadcast.origin.
+                ecx.env.tx.caller = broadcast.new_origin;
+
+                call.caller = broadcast.new_origin;
+                // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
+                // because we only need the from, to, value, and data. We can later change this
+                // into 1559, in the cli package, relatively easily once we
+                // know the target chain supports EIP-1559.
+                if !call.is_static {
+                    if let Err(err) = ecx.load_account(broadcast.new_origin) {
+                        return Some(CallOutcome {
+                            result: InterpreterResult {
+                                result: InstructionResult::Revert,
+                                output: Error::encode(err),
+                                gas,
+                            },
+                            memory_offset: call.return_memory_offset.clone(),
+                        })
+                    }
+
+                    let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call.gas_limit);
+
+                    let account =
+                        ecx.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
+
+                    self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                        rpc: ecx.db.active_fork_url(),
+                        transaction: TransactionRequest {
+                            from: Some(broadcast.new_origin),
+                            to: Some(TxKind::from(Some(call.target_address))),
+                            value: call.transfer_value(),
+                            input: TransactionInput::new(call.input.clone()),
+                            nonce: Some(account.info.nonce),
+                            gas: if is_fixed_gas_limit {
+                                Some(call.gas_limit as u128)
+                            } else {
+                                None
+                            },
+                            ..Default::default()
+                        },
+                    });
+                    debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
+
+                    let prev = account.info.nonce;
+
+                    // Touch account to ensure that incremented nonce is committed
+                    account.mark_touch();
+                    account.info.nonce += 1;
+                    debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
+                } else if broadcast.single_call {
+                    let msg =
+                    "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
+                    return Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: Error::encode(msg),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                    })
+                }
+            }
+        }
+
+        // Record called accounts if `startStateDiffRecording` has been called
+        if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
+            // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
+            // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
+            let initialized;
+            let old_balance;
+            if let Ok((acc, _)) = ecx.load_account(call.target_address) {
+                initialized = acc.info.exists();
+                old_balance = acc.info.balance;
+            } else {
+                initialized = false;
+                old_balance = U256::ZERO;
+            }
+            let kind = match call.scheme {
+                CallScheme::Call => crate::Vm::AccountAccessKind::Call,
+                CallScheme::CallCode => crate::Vm::AccountAccessKind::CallCode,
+                CallScheme::DelegateCall => crate::Vm::AccountAccessKind::DelegateCall,
+                CallScheme::StaticCall => crate::Vm::AccountAccessKind::StaticCall,
+            };
+            // Record this call by pushing it to a new pending vector; all subsequent calls at
+            // that depth will be pushed to the same vector. When the call ends, the
+            // RecordedAccountAccess (and all subsequent RecordedAccountAccesses) will be
+            // updated with the revert status of this call, since the EVM does not mark accounts
+            // as "warm" if the call from which they were accessed is reverted
+            recorded_account_diffs_stack.push(vec![AccountAccess {
+                chainInfo: crate::Vm::ChainInfo {
+                    forkId: ecx.db.active_fork_id().unwrap_or_default(),
+                    chainId: U256::from(ecx.env.cfg.chain_id),
+                },
+                accessor: call.caller,
+                account: call.bytecode_address,
+                kind,
+                initialized,
+                oldBalance: old_balance,
+                newBalance: U256::ZERO, // updated on call_end
+                value: call.call_value(),
+                data: call.input.clone(),
+                reverted: false,
+                deployedCode: Bytes::new(),
+                storageAccesses: vec![], // updated on step
+                depth: ecx.journaled_state.depth(),
+            }]);
+        }
+
+        None
+    }
 }
 
 impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
@@ -1243,10 +1243,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         ecx: &mut EvmContext<DB>,
         call: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        self.create_common(ecx, call).and_then(|outcome| match outcome {
-            CommonCreateOutcome::Create(outcome) => Some(outcome),
-            _ => None,
-        })
+        self.create_common(ecx, call)
     }
 
     fn create_end(
@@ -1255,33 +1252,24 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         _call: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
-        match self.create_end_common(ecx, outcome.clone()) {
-            CommonEndOutcome::Create(outcome) => outcome,
-            _ => outcome, // This case should never happen
-        }
+        self.create_end_common(ecx, outcome)
     }
 
     fn eofcreate(
         &mut self,
         ecx: &mut EvmContext<DB>,
-        call: &mut EOFCreateInput,
-    ) -> Option<EOFCreateOutcome> {
-        self.create_common(ecx, call).and_then(|outcome| match outcome {
-            CommonCreateOutcome::EOFCreate(outcome) => Some(outcome),
-            _ => None,
-        })
+        call: &mut EOFCreateInputs,
+    ) -> Option<CreateOutcome> {
+        self.create_common(ecx, call)
     }
 
     fn eofcreate_end(
         &mut self,
         ecx: &mut EvmContext<DB>,
-        _call: &EOFCreateInput,
-        outcome: EOFCreateOutcome,
-    ) -> EOFCreateOutcome {
-        match self.create_end_common(ecx, outcome.clone()) {
-            CommonEndOutcome::EOFCreate(outcome) => outcome,
-            _ => outcome, // This case should never happen
-        }
+        _call: &EOFCreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        self.create_end_common(ecx, outcome)
     }
 }
 
