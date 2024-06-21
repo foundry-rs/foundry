@@ -60,6 +60,8 @@ pub struct MultiContractRunner {
     pub coverage: bool,
     /// Whether to collect debug info
     pub debug: bool,
+    /// Whether to enable steps tracking in the tracer.
+    pub trace_steps: bool,
     /// Settings related to fuzz and/or invariant tests
     pub test_options: TestOptions,
     /// Whether to enable call isolation
@@ -240,8 +242,9 @@ impl MultiContractRunner {
             .inspectors(|stack| {
                 stack
                     .cheatcodes(Arc::new(cheats_config))
-                    .trace(self.evm_opts.verbosity >= 3 || self.debug)
+                    .trace(self.evm_opts.verbosity >= 3 || self.debug || self.trace_steps)
                     .debug(self.debug)
+                    .debug_trace(self.trace_steps)
                     .coverage(self.coverage)
                     .enable_isolation(self.isolation)
             })
@@ -295,6 +298,8 @@ pub struct MultiContractRunnerBuilder {
     pub coverage: bool,
     /// Whether or not to collect debug info
     pub debug: bool,
+    /// Whether to enable steps tracking in the tracer.
+    pub trace_steps: bool,
     /// Whether to enable call isolation
     pub isolation: bool,
     /// Settings related to fuzz and/or invariant tests
@@ -313,6 +318,7 @@ impl MultiContractRunnerBuilder {
             debug: Default::default(),
             isolation: Default::default(),
             test_options: Default::default(),
+            trace_steps: Default::default(),
         }
     }
 
@@ -348,6 +354,11 @@ impl MultiContractRunnerBuilder {
 
     pub fn set_debug(mut self, enable: bool) -> Self {
         self.debug = enable;
+        self
+    }
+
+    pub fn set_trace_steps(mut self, enable: bool) -> Self {
+        self.trace_steps = enable;
         self
     }
 
@@ -418,6 +429,7 @@ impl MultiContractRunnerBuilder {
             config: self.config,
             coverage: self.coverage,
             debug: self.debug,
+            trace_steps: self.trace_steps,
             test_options: self.test_options.unwrap_or_default(),
             isolation: self.isolation,
             known_contracts,
