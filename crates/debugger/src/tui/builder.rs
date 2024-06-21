@@ -10,7 +10,7 @@ use foundry_evm_core::debug::{DebugArena, DebugNodeFlat};
 pub struct DebuggerBuilder {
     /// Debug traces returned from the EVM execution.
     debug_arena: Vec<DebugNodeFlat>,
-    /// Builder for [DebugTraceIdentifier].
+    /// Builder for [crate::DebugTraceIdentifier].
     identifier: DebugTraceIdentifierBuilder,
     /// Map of the debugger breakpoints.
     breakpoints: Breakpoints,
@@ -23,7 +23,7 @@ impl DebuggerBuilder {
         Self::default()
     }
 
-    /// Configures the [DebugTraceIdentifier].
+    /// Configures the [crate::DebugTraceIdentifier].
     #[inline]
     pub fn identifier(
         mut self,
