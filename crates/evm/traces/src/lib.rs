@@ -12,9 +12,16 @@ use alloy_primitives::LogData;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use futures::{future::BoxFuture, FutureExt};
+use revm_inspectors::tracing::types::TraceMemberOrder;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use yansi::{Color, Paint};
+
+pub use revm_inspectors::tracing::{
+    types::{CallKind, CallTrace, CallTraceNode},
+    CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TracingInspector,
+    TracingInspectorConfig,
+};
 
 /// Call trace address identifiers.
 ///
@@ -24,6 +31,7 @@ use identifier::{LocalTraceIdentifier, TraceIdentifier};
 
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
+
 
 use revm_inspectors::tracing::types::TraceMemberOrder;
 pub use revm_inspectors::tracing::{

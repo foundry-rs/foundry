@@ -123,13 +123,13 @@ impl EvmOpts {
                 difficulty: U256::from(self.env.block_difficulty),
                 prevrandao: Some(self.env.block_prevrandao),
                 basefee: U256::from(self.env.block_base_fee_per_gas),
-                gas_limit: self.gas_limit(),
+                gas_limit: U256::from(self.gas_limit()),
                 ..Default::default()
             },
             cfg,
             tx: TxEnv {
                 gas_price: U256::from(self.env.gas_price.unwrap_or_default()),
-                gas_limit: self.gas_limit().to(),
+                gas_limit: self.gas_limit(),
                 caller: self.sender,
                 ..Default::default()
             },
@@ -156,8 +156,8 @@ impl EvmOpts {
     }
 
     /// Returns the gas limit to use
-    pub fn gas_limit(&self) -> U256 {
-        U256::from(self.env.block_gas_limit.unwrap_or(self.env.gas_limit))
+    pub fn gas_limit(&self) -> u64 {
+        self.env.block_gas_limit.unwrap_or(self.env.gas_limit)
     }
 
     /// Returns the configured chain id, which will be
