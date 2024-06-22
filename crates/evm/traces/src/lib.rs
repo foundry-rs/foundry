@@ -60,10 +60,10 @@ pub enum DecodedCallLog<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct DecodedTraceStep<'a> {
+pub struct DecodedTraceStep {
     pub start_step_idx: usize,
     pub end_step_idx: usize,
-    pub function_name: &'a str,
+    pub function_name: String,
     pub gas_used: i64,
 }
 
@@ -76,14 +76,14 @@ const RETURN: &str = "← ";
 pub async fn render_trace_arena_with_internals<'a>(
     arena: &CallTraceArena,
     decoder: &CallTraceDecoder,
-    identified_internals: &'a [Vec<DecodedTraceStep<'a>>],
+    identified_internals: &'a [Vec<DecodedTraceStep>],
 ) -> Result<String, std::fmt::Error> {
     decoder.prefetch_signatures(arena.nodes()).await;
 
     fn render_items<'a>(
         arena: &'a [CallTraceNode],
         decoder: &'a CallTraceDecoder,
-        identified_internals: &'a [Vec<DecodedTraceStep<'a>>],
+        identified_internals: &'a [Vec<DecodedTraceStep>],
         s: &'a mut String,
         node_idx: usize,
         mut ordering_idx: usize,
@@ -158,7 +158,7 @@ pub async fn render_trace_arena_with_internals<'a>(
     fn inner<'a>(
         arena: &'a [CallTraceNode],
         decoder: &'a CallTraceDecoder,
-        identified_internals: &'a [Vec<DecodedTraceStep<'a>>],
+        identified_internals: &'a [Vec<DecodedTraceStep>],
         s: &'a mut String,
         idx: usize,
         left: &'a str,

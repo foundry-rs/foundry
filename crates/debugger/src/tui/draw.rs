@@ -4,6 +4,7 @@ use super::context::{BufferKind, DebuggerContext};
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
+use foundry_evm_traces::identifier::SourceData;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -13,7 +14,7 @@ use ratatui::{
 };
 use revm::interpreter::opcode;
 use revm_inspectors::tracing::types::CallKind;
-use std::{collections::VecDeque, fmt::Write, io, path::Path};
+use std::{collections::VecDeque, fmt::Write, io};
 
 impl DebuggerContext<'_> {
     /// Draws the TUI layout and subcomponents to the given terminal.
@@ -211,7 +212,7 @@ impl DebuggerContext<'_> {
     }
 
     fn src_text(&self, area: Rect) -> (Text<'_>, Option<&str>) {
-        let (source_element, source_code, source_file) = match self.src_map() {
+        let (source_element, source) = match self.src_map() {
             Ok(r) => r,
             Err(e) => return (Text::from(e), None),
         };
@@ -222,15 +223,16 @@ impl DebuggerContext<'_> {
         // minus `sum(push_bytes[..pc])`.
         let offset = source_element.offset() as usize;
         let len = source_element.length() as usize;
-        let max = source_code.len();
+        let max = source.source.len();
 
         // Split source into before, relevant, and after chunks, split by line, for formatting.
         let actual_start = offset.min(max);
         let actual_end = (offset + len).min(max);
 
-        let mut before: Vec<_> = source_code[..actual_start].split_inclusive('\n').collect();
-        let actual: Vec<_> = source_code[actual_start..actual_end].split_inclusive('\n').collect();
-        let mut after: VecDeque<_> = source_code[actual_end..].split_inclusive('\n').collect();
+        let mut before: Vec<_> = source.source[..actual_start].split_inclusive('\n').collect();
+        let actual: Vec<_> =
+            source.source[actual_start..actual_end].split_inclusive('\n').collect();
+        let mut after: VecDeque<_> = source.source[actual_end..].split_inclusive('\n').collect();
 
         let num_lines = before.len() + actual.len() + after.len();
         let height = area.height as usize;
@@ -335,11 +337,11 @@ impl DebuggerContext<'_> {
             }
         }
 
-        (Text::from(lines.lines), source_file.to_str())
+        (Text::from(lines.lines), source.path.to_str())
     }
 
     /// Returns source map, source code and source name of the current line.
-    fn src_map(&self) -> Result<(SourceElement, &str, &Path), String> {
+    fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
         self.debugger.identifier.identify(
             self.address(),
             self.current_step().pc,

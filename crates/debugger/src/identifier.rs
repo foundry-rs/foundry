@@ -5,10 +5,11 @@ use foundry_compilers::{
     multi::MultiCompilerLanguage,
 };
 use foundry_evm_traces::{
-    identifier::ContractSources, CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedTraceStep,
+    identifier::{ContractSources, SourceData},
+    CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedTraceStep,
 };
 use revm::interpreter::OpCode;
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 
 pub struct DebugTraceIdentifier {
     /// Mapping of contract address to identified contract name.
@@ -34,7 +35,7 @@ impl DebugTraceIdentifier {
         address: &Address,
         pc: usize,
         init_code: bool,
-    ) -> core::result::Result<(SourceElement, &str, &Path), String> {
+    ) -> core::result::Result<(SourceElement, &SourceData), String> {
         let Some(contract_name) = self.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
         };
@@ -43,61 +44,56 @@ impl DebugTraceIdentifier {
             return Err(format!("No source map index for contract {contract_name}"));
         };
 
-        let Some((source_element, source_code, source_file)) =
-            files_source_code.find_map(|(artifact, source)| {
-                let source_map = if init_code {
-                    artifact.source_map.as_ref()
-                } else {
-                    artifact.source_map_runtime.as_ref()
-                }?;
+        let Some((source_element, source)) = files_source_code.find_map(|(artifact, source)| {
+            let source_map = if init_code {
+                artifact.source_map.as_ref()
+            } else {
+                artifact.source_map_runtime.as_ref()
+            }?;
 
-                let pc_ic_map = if init_code {
-                    artifact.pc_ic_map.as_ref()
-                } else {
-                    artifact.pc_ic_map_runtime.as_ref()
-                }?;
-                let ic = pc_ic_map.get(pc)?;
+            let pc_ic_map = if init_code {
+                artifact.pc_ic_map.as_ref()
+            } else {
+                artifact.pc_ic_map_runtime.as_ref()
+            }?;
+            let ic = pc_ic_map.get(pc)?;
 
-                // Solc indexes source maps by instruction counter, but Vyper indexes by program
-                // counter.
-                let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
-                    source_map.get(ic)?
-                } else {
-                    source_map.get(pc)?
-                };
-                // if the source element has an index, find the sourcemap for that index
-                let res = source_element
-                    .index()
-                    // if index matches current file_id, return current source code
-                    .and_then(|index| {
-                        (index == artifact.file_id)
-                            .then(|| (source_element.clone(), source.source.as_str(), &source.path))
-                    })
-                    .or_else(|| {
-                        // otherwise find the source code for the element's index
-                        self.contracts_sources
-                            .sources_by_id
-                            .get(&artifact.build_id)?
-                            .get(&source_element.index()?)
-                            .map(|source| {
-                                (source_element.clone(), source.source.as_str(), &source.path)
-                            })
-                    });
+            // Solc indexes source maps by instruction counter, but Vyper indexes by program
+            // counter.
+            let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
+                source_map.get(ic)?
+            } else {
+                source_map.get(pc)?
+            };
+            // if the source element has an index, find the sourcemap for that index
+            let res = source_element
+                .index()
+                // if index matches current file_id, return current source code
+                .and_then(|index| {
+                    (index == artifact.file_id).then(|| (source_element.clone(), source))
+                })
+                .or_else(|| {
+                    // otherwise find the source code for the element's index
+                    self.contracts_sources
+                        .sources_by_id
+                        .get(&artifact.build_id)?
+                        .get(&source_element.index()?)
+                        .map(|source| (source_element.clone(), source.as_ref()))
+                });
 
-                res
-            })
-        else {
+            res
+        }) else {
             return Err(format!("No source map for contract {contract_name}"));
         };
 
-        Ok((source_element, source_code, source_file))
+        Ok((source_element, source))
     }
 
-    pub fn identify_arena(&self, arena: &CallTraceArena) -> Vec<Vec<DecodedTraceStep<'_>>> {
+    pub fn identify_arena(&self, arena: &CallTraceArena) -> Vec<Vec<DecodedTraceStep>> {
         arena.nodes().iter().map(move |node| self.identify_node_steps(node)).collect()
     }
 
-    pub fn identify_node_steps(&self, node: &CallTraceNode) -> Vec<DecodedTraceStep<'_>> {
+    pub fn identify_node_steps(&self, node: &CallTraceNode) -> Vec<DecodedTraceStep> {
         let mut stack = Vec::new();
         let mut identified = Vec::new();
 
@@ -112,24 +108,17 @@ impl DebugTraceIdentifier {
             }
 
             // Resolve source map if possible.
-            let Ok((source_element, source_code, _)) =
+            let Ok((source_element, source)) =
                 self.identify(&node.trace.address, step.pc, node.trace.kind.is_any_create())
             else {
                 prev_step_jump_in = false;
                 continue;
             };
 
-            // Get slice of the source code that corresponds to the current step.
-            let source_part = {
-                let start = source_element.offset() as usize;
-                let end = start + source_element.length() as usize;
-                &source_code[start..end]
-            };
-
             // If previous step was a jump record source location at JUMPDEST.
             if prev_step_jump_in {
                 if step.op == OpCode::JUMPDEST {
-                    if let Some(name) = parse_function_name(source_part) {
+                    if let Some(name) = parse_function_name(source, &source_element) {
                         stack.push((name, step_idx));
                     }
                 };
@@ -141,7 +130,7 @@ impl DebugTraceIdentifier {
                 Jump::In => prev_step_jump_in = true,
                 Jump::Out => {
                     // Find index matching the beginning of this function
-                    if let Some(name) = parse_function_name(source_part) {
+                    if let Some(name) = parse_function_name(source, &source_element) {
                         if let Some((i, _)) =
                             stack.iter().enumerate().rfind(|(_, (n, _))| n == &name)
                         {
@@ -224,12 +213,22 @@ impl DebugTraceIdentifierBuilder {
     }
 }
 
-fn parse_function_name(source: &str) -> Option<&str> {
-    if !source.starts_with("function") {
+/// Tries to parse the function name from the source code and detect the contract name which
+/// contains the given function.
+///
+/// Returns string in the format `Contract::function`.
+fn parse_function_name(source: &SourceData, loc: &SourceElement) -> Option<String> {
+    let start = loc.offset() as usize;
+    let end = start + loc.length() as usize;
+    let source_part = &source.source[start..end];
+    if !source_part.starts_with("function") {
         return None;
     }
-    if !source.contains("internal") && !source.contains("private") {
+    if !source_part.contains("internal") && !source_part.contains("private") {
         return None;
     }
-    Some(source.split_once("function")?.1.split('(').next()?.trim())
+    let function_name = source_part.split_once("function")?.1.split('(').next()?.trim();
+    let contract_name = source.find_contract_name(start, end)?;
+
+    Some(format!("{contract_name}::{function_name}"))
 }
