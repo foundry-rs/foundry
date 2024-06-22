@@ -65,6 +65,7 @@ impl<T: Into<String>> From<T> for ForkId {
 /// The Sender half of multi fork pair.
 /// Can send requests to the `MultiForkHandler` to create forks
 #[derive(Clone, Debug)]
+#[must_use]
 pub struct MultiFork {
     /// Channel to send `Request`s to the handler
     handler: Sender<Request>,
@@ -73,13 +74,6 @@ pub struct MultiFork {
 }
 
 impl MultiFork {
-    /// Creates a new pair multi fork pair
-    pub fn new() -> (Self, MultiForkHandler) {
-        let (handler, handler_rx) = channel(1);
-        let _shutdown = Arc::new(ShutDownMultiFork { handler: Some(handler.clone()) });
-        (Self { handler, _shutdown }, MultiForkHandler::new(handler_rx))
-    }
-
     /// Creates a new pair and spawns the `MultiForkHandler` on a background thread.
     pub fn spawn() -> Self {
         trace!(target: "fork::multi", "spawning multifork");
@@ -107,6 +101,16 @@ impl MultiFork {
             .expect("failed to spawn thread");
         trace!(target: "fork::multi", "spawned MultiForkHandler thread");
         fork
+    }
+
+    /// Creates a new pair multi fork pair.
+    ///
+    /// Use [`spawn`](Self::spawn) instead.
+    #[doc(hidden)]
+    pub fn new() -> (Self, MultiForkHandler) {
+        let (handler, handler_rx) = channel(1);
+        let _shutdown = Arc::new(ShutDownMultiFork { handler: Some(handler.clone()) });
+        (Self { handler, _shutdown }, MultiForkHandler::new(handler_rx))
     }
 
     /// Returns a fork backend
