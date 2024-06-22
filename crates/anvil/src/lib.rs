@@ -45,10 +45,10 @@ use tokio::{
 mod service;
 
 mod config;
-pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
+pub use config::{AccountGenerator, ForkChoice, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 
 mod hardfork;
-pub use hardfork::{ForkChoice, Hardfork};
+pub use hardfork::Hardfork;
 
 /// ethereum related implementations
 pub mod eth;

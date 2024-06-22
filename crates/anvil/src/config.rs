@@ -11,13 +11,12 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::TransactionOrder,
     },
-    hardfork::ForkChoice,
     mem::{self, in_memory_db::MemDb},
     FeeManager, Hardfork, PrecompileFactory,
 };
 use alloy_genesis::Genesis;
 use alloy_network::AnyNetwork;
-use alloy_primitives::{hex, utils::Unit, U256};
+use alloy_primitives::{hex, utils::Unit, BlockNumber, TxHash, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
@@ -81,6 +80,22 @@ const BANNER: &str = r"
     | (_| | | | | |  \ V /  | | | |
      \__,_| |_| |_|   \_/   |_| |_|
 ";
+
+/// Fork delimiter used to specify which block or transaction to fork from
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForkChoice {
+    /// Block number to fork from
+    Block(BlockNumber),
+    /// Transaction hash to fork from
+    Transaction(TxHash),
+}
+
+// Convert a decimal block number into a ForkChoice
+impl From<u64> for ForkChoice {
+    fn from(block: u64) -> Self {
+        Self::Block(block)
+    }
+}
 
 /// Configurations of the EVM node
 #[derive(Clone, Debug)]

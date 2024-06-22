@@ -1,7 +1,6 @@
 use crate::{
-    config::DEFAULT_MNEMONIC,
+    config::{ForkChoice, DEFAULT_MNEMONIC},
     eth::{backend::db::SerializableState, pool::transactions::TransactionOrder, EthApi},
-    hardfork::ForkChoice,
     AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
 use alloy_genesis::Genesis;
