@@ -13,7 +13,7 @@ use ratatui::{
 };
 use revm::interpreter::opcode;
 use revm_inspectors::tracing::types::CallKind;
-use std::{collections::VecDeque, fmt::Write, io};
+use std::{collections::VecDeque, fmt::Write, io, path::Path};
 
 impl DebuggerContext<'_> {
     /// Draws the TUI layout and subcomponents to the given terminal.
@@ -335,11 +335,11 @@ impl DebuggerContext<'_> {
             }
         }
 
-        (Text::from(lines.lines), Some(source_file))
+        (Text::from(lines.lines), source_file.to_str())
     }
 
     /// Returns source map, source code and source name of the current line.
-    fn src_map(&self) -> Result<(SourceElement, &str, &str), String> {
+    fn src_map(&self) -> Result<(SourceElement, &str, &Path), String> {
         self.debugger.identifier.identify(
             self.address(),
             self.current_step().pc,

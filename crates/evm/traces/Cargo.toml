@@ -43,6 +43,8 @@ tracing.workspace = true
 yansi.workspace = true
 rustc-hash.workspace = true
 tempfile.workspace = true
+rayon.workspace = true
+solang-parser.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

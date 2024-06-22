@@ -8,7 +8,7 @@ use foundry_evm_traces::{
     identifier::ContractSources, CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedTraceStep,
 };
 use revm::interpreter::OpCode;
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 pub struct DebugTraceIdentifier {
     /// Mapping of contract address to identified contract name.
@@ -34,7 +34,7 @@ impl DebugTraceIdentifier {
         address: &Address,
         pc: usize,
         init_code: bool,
-    ) -> core::result::Result<(SourceElement, &str, &str), String> {
+    ) -> core::result::Result<(SourceElement, &str, &Path), String> {
         let Some(contract_name) = self.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
         };
@@ -71,7 +71,7 @@ impl DebugTraceIdentifier {
                     // if index matches current file_id, return current source code
                     .and_then(|index| {
                         (index == artifact.file_id)
-                            .then(|| (source_element.clone(), source.source.as_str(), &source.name))
+                            .then(|| (source_element.clone(), source.source.as_str(), &source.path))
                     })
                     .or_else(|| {
                         // otherwise find the source code for the element's index
@@ -80,7 +80,7 @@ impl DebugTraceIdentifier {
                             .get(&artifact.build_id)?
                             .get(&source_element.index()?)
                             .map(|source| {
-                                (source_element.clone(), source.source.as_str(), &source.name)
+                                (source_element.clone(), source.source.as_str(), &source.path)
                             })
                     });
 
