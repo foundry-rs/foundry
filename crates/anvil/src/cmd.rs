@@ -1,10 +1,11 @@
 use crate::{
     config::DEFAULT_MNEMONIC,
     eth::{backend::db::SerializableState, pool::transactions::TransactionOrder, EthApi},
+    hardfork::ForkChoice,
     AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
 use alloy_genesis::Genesis;
-use alloy_primitives::{utils::Unit, U256};
+use alloy_primitives::{utils::Unit, B256, U256};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
@@ -204,10 +205,14 @@ impl NodeArgs {
             .with_genesis_balance(genesis_balance)
             .with_genesis_timestamp(self.timestamp)
             .with_port(self.port)
-            .with_fork_block_number(
-                self.evm_opts
-                    .fork_block_number
-                    .or_else(|| self.evm_opts.fork_url.as_ref().and_then(|f| f.block)),
+            .with_fork_choice(
+                match (self.evm_opts.fork_block_number, self.evm_opts.fork_transaction_hash) {
+                    (Some(block), None) => Some(ForkChoice::Block(block)),
+                    (None, Some(hash)) => Some(ForkChoice::Transaction(hash)),
+                    _ => Some(ForkChoice::Block(
+                        self.evm_opts.fork_url.as_ref().and_then(|f| f.block).unwrap(),
+                    )),
+                },
             )
             .with_fork_headers(self.evm_opts.fork_headers)
             .with_fork_chain_id(self.evm_opts.fork_chain_id.map(u64::from).map(U256::from))
@@ -393,6 +398,18 @@ pub struct AnvilEvmArgs {
     /// See --fork-url.
     #[arg(long, requires = "fork_url", value_name = "BLOCK", help_heading = "Fork config")]
     pub fork_block_number: Option<u64>,
+
+    /// Fetch state from a specific transaction hash over a remote endpoint.
+    ///
+    /// See --fork-url.
+    #[arg(
+        long,
+        requires = "fork_url",
+        value_name = "TRANSACTION",
+        help_heading = "Fork config",
+        conflicts_with = "fork_block_number"
+    )]
+    pub fork_transaction_hash: Option<B256>,
 
     /// Initial retry backoff on encountering errors.
     ///

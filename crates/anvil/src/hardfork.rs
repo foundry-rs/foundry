@@ -1,6 +1,19 @@
+use alloy_primitives::{BlockNumber, TxHash};
 use alloy_rpc_types::BlockNumberOrTag;
 use foundry_evm::revm::primitives::SpecId;
 use std::str::FromStr;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForkChoice {
+    Block(BlockNumber),
+    Transaction(TxHash),
+}
+
+impl From<u64> for ForkChoice {
+    fn from(block: u64) -> Self {
+        Self::Block(block)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Hardfork {

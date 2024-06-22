@@ -48,7 +48,7 @@ mod config;
 pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 
 mod hardfork;
-pub use hardfork::Hardfork;
+pub use hardfork::{ForkChoice, Hardfork};
 
 /// ethereum related implementations
 pub mod eth;

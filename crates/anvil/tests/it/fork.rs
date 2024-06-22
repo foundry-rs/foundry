@@ -5,7 +5,7 @@ use crate::{
     utils::{http_provider, http_provider_with_signer},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{address, bytes, Address, Bytes, TxKind, U256};
+use alloy_primitives::{address, bytes, Address, Bytes, TxHash, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     anvil::Forking,
@@ -55,7 +55,7 @@ impl LocalFork {
 pub fn fork_config() -> NodeConfig {
     NodeConfig::test()
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
-        .with_fork_block_number(Some(BLOCK_NUMBER))
+        .with_fork_choice(Some(BLOCK_NUMBER))
         .silent()
 }
 
@@ -390,7 +390,7 @@ async fn test_fork_snapshotting_blocks() {
 /// a cache file.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_separate_states() {
-    let (api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
+    let (api, handle) = spawn(fork_config().with_fork_choice(Some(14723772u64))).await;
     let provider = handle.http_provider();
 
     let addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
@@ -419,7 +419,7 @@ async fn test_separate_states() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_on_fork() {
-    let (_api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
+    let (_api, handle) = spawn(fork_config().with_fork_choice(Some(14723772u64))).await;
 
     let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumWallet = wallet.into();
@@ -597,7 +597,7 @@ async fn test_fork_can_send_tx() {
 async fn test_fork_nft_set_approve_all() {
     let (api, handle) = spawn(
         fork_config()
-            .with_fork_block_number(Some(14812197u64))
+            .with_fork_choice(Some(14812197u64))
             .with_blocktime(Some(Duration::from_secs(5)))
             .with_chain_id(1u64.into()),
     )
@@ -656,7 +656,7 @@ async fn test_fork_with_custom_chain_id() {
     // spawn a forked node with some random chainId
     let (api, handle) = spawn(
         fork_config()
-            .with_fork_block_number(Some(14812197u64))
+            .with_fork_choice(Some(14812197u64))
             .with_blocktime(Some(Duration::from_secs(5)))
             .with_chain_id(3145u64.into()),
     )
@@ -680,7 +680,7 @@ async fn test_fork_with_custom_chain_id() {
 async fn test_fork_can_send_opensea_tx() {
     let (api, handle) = spawn(
         fork_config()
-            .with_fork_block_number(Some(14983338u64))
+            .with_fork_choice(Some(14983338u64))
             .with_blocktime(Some(Duration::from_millis(5000))),
     )
     .await;
@@ -728,7 +728,7 @@ async fn test_fork_base_fee() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_init_base_fee() {
-    let (api, handle) = spawn(fork_config().with_fork_block_number(Some(13184859u64))).await;
+    let (api, handle) = spawn(fork_config().with_fork_choice(Some(13184859u64))).await;
 
     let provider = handle.http_provider();
 
@@ -790,7 +790,7 @@ async fn test_fork_call() {
     let tx = WithOtherFields::new(tx);
     let res0 = provider.call(&tx).block(BlockId::Number(block_number.into())).await.unwrap();
 
-    let (api, _) = spawn(fork_config().with_fork_block_number(Some(block_number))).await;
+    let (api, _) = spawn(fork_config().with_fork_choice(Some(block_number))).await;
 
     let res1 = api
         .call(
@@ -932,7 +932,7 @@ async fn test_fork_block_transaction_count() {
 // <https://github.com/foundry-rs/foundry/issues/2931>
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_in_fork() {
-    let (api, handle) = spawn(fork_config().with_fork_block_number(Some(15347924u64))).await;
+    let (api, handle) = spawn(fork_config().with_fork_choice(Some(15347924u64))).await;
     let provider = handle.http_provider();
 
     let token_holder: Address = "0x2f0b23f53734252bda2277357e97e1517d6b042a".parse().unwrap();
@@ -1027,9 +1027,7 @@ async fn test_block_receipts() {
 async fn can_override_fork_chain_id() {
     let chain_id_override = 5u64;
     let (_api, handle) = spawn(
-        fork_config()
-            .with_fork_block_number(Some(16506610u64))
-            .with_chain_id(Some(chain_id_override)),
+        fork_config().with_fork_choice(Some(16506610u64)).with_chain_id(Some(chain_id_override)),
     )
     .await;
 
@@ -1059,7 +1057,7 @@ async fn test_fork_reset_moonbeam() {
     let (api, handle) = spawn(
         fork_config()
             .with_eth_rpc_url(Some("https://rpc.api.moonbeam.network".to_string()))
-            .with_fork_block_number(None::<u64>),
+            .with_fork_choice(None::<u64>),
     )
     .await;
     let provider = handle.http_provider();
@@ -1095,7 +1093,7 @@ async fn test_fork_reset_moonbeam() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_reset_basefee() {
     // <https://etherscan.io/block/18835000>
-    let (api, _handle) = spawn(fork_config().with_fork_block_number(Some(18835000u64))).await;
+    let (api, _handle) = spawn(fork_config().with_fork_choice(Some(18835000u64))).await;
 
     api.mine_one().await;
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
@@ -1120,7 +1118,7 @@ async fn test_fork_reset_basefee() {
 async fn test_arbitrum_fork_dev_balance() {
     let (api, handle) = spawn(
         fork_config()
-            .with_fork_block_number(None::<u64>)
+            .with_fork_choice(None::<u64>)
             .with_eth_rpc_url(Some("https://arb1.arbitrum.io/rpc".to_string())),
     )
     .await;
@@ -1138,7 +1136,7 @@ async fn test_arbitrum_fork_block_number() {
     // fork to get initial block for test
     let (_, handle) = spawn(
         fork_config()
-            .with_fork_block_number(None::<u64>)
+            .with_fork_choice(None::<u64>)
             .with_eth_rpc_url(Some("https://arb1.arbitrum.io/rpc".to_string())),
     )
     .await;
@@ -1150,7 +1148,7 @@ async fn test_arbitrum_fork_block_number() {
     // trie node
     let (api, _) = spawn(
         fork_config()
-            .with_fork_block_number(Some(initial_block_number))
+            .with_fork_choice(Some(initial_block_number))
             .with_eth_rpc_url(Some("https://arb1.arbitrum.io/rpc".to_string())),
     )
     .await;
@@ -1185,7 +1183,7 @@ async fn test_arbitrum_fork_block_number() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_execution_reverted() {
     let target = 16681681u64;
-    let (api, _handle) = spawn(fork_config().with_fork_block_number(Some(target + 1))).await;
+    let (api, _handle) = spawn(fork_config().with_fork_choice(Some(target + 1))).await;
 
     let resp = api
         .call(
@@ -1202,4 +1200,29 @@ async fn test_fork_execution_reverted() {
     assert!(resp.is_err());
     let err = resp.unwrap_err();
     assert!(err.to_string().contains("execution reverted"));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/8227>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash() {
+    use anvil::ForkChoice;
+    use std::str::FromStr;
+    let hash =
+        TxHash::from_str("0x545c18ea749f22289fff75cb5e1cd948c8734c279bb7fbcbe84cb545a70bb991")
+            .unwrap();
+    let (_, handle) = spawn(
+        fork_config()
+            .with_fork_choice(Some(ForkChoice::Transaction(hash)))
+            .with_eth_rpc_url(Some("https://arb1.arbitrum.io/rpc".to_string())),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let initial_block_number = provider.get_block_number().await.unwrap();
+    assert_eq!(initial_block_number, 224480117);
+
+    let transaction = provider.get_transaction_by_hash(hash).await.unwrap().unwrap();
+    assert_eq!(
+        transaction.from,
+        Address::from_str("0x376c0d90cffacb90206b7c5942234952af734624").unwrap()
+    );
 }

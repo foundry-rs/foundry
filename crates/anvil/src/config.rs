@@ -11,6 +11,7 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::TransactionOrder,
     },
+    hardfork::ForkChoice,
     mem::{self, in_memory_db::MemDb},
     FeeManager, Hardfork, PrecompileFactory,
 };
@@ -118,8 +119,8 @@ pub struct NodeConfig {
     pub silent: bool,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
-    /// pins the block number for the state fork
-    pub fork_block_number: Option<u64>,
+    /// pins the block number or transaction hash for the state fork
+    pub fork_choice: Option<ForkChoice>,
     /// headers to use with `eth_rpc_url`
     pub fork_headers: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
@@ -391,7 +392,7 @@ impl Default for NodeConfig {
             max_transactions: 1_000,
             silent: false,
             eth_rpc_url: None,
-            fork_block_number: None,
+            fork_choice: None,
             account_generator: None,
             base_fee: None,
             blob_excess_gas_and_price: None,
@@ -694,10 +695,10 @@ impl NodeConfig {
         self
     }
 
-    /// Sets the `fork_block_number` to use to fork off from
+    /// Sets the `fork_choice` to use to fork off from
     #[must_use]
-    pub fn with_fork_block_number<U: Into<u64>>(mut self, fork_block_number: Option<U>) -> Self {
-        self.fork_block_number = fork_block_number.map(Into::into);
+    pub fn with_fork_choice<U: Into<ForkChoice>>(mut self, fork_choice: Option<U>) -> Self {
+        self.fork_choice = fork_choice.map(Into::into);
         self
     }
 
@@ -997,9 +998,18 @@ impl NodeConfig {
                 .expect("Failed to establish provider to fork url"),
         );
 
-        let (fork_block_number, fork_chain_id) = if let Some(fork_block_number) =
-            self.fork_block_number
-        {
+        let (fork_block_number, fork_chain_id) = if let Some(fork_choice) = &self.fork_choice {
+            let fork_block_number = match fork_choice {
+                ForkChoice::Block(block_number) => block_number.to_owned(),
+                ForkChoice::Transaction(transaction_hash) => {
+                    let transaction = provider
+                        .get_transaction_by_hash(transaction_hash.0.into())
+                        .await
+                        .expect("Failed to get fork transaction")
+                        .unwrap();
+                    transaction.block_number.unwrap()
+                }
+            };
             let chain_id = if let Some(chain_id) = self.fork_chain_id {
                 Some(chain_id)
             } else if self.hardfork.is_none() {
