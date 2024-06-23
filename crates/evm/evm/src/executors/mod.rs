@@ -80,17 +80,23 @@ pub struct Executor {
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
     /// the passed in environment, as those limits are used by the EVM for certain opcodes like
     /// `gaslimit`.
-    gas_limit: U256,
+    gas_limit: u64,
 }
 
 impl Executor {
+    /// Creates a new `ExecutorBuilder`.
+    #[inline]
+    pub fn builder() -> ExecutorBuilder {
+        ExecutorBuilder::new()
+    }
+
     /// Creates a new `Executor` with the given arguments.
     #[inline]
     pub fn new(
         mut backend: Backend,
         env: EnvWithHandlerCfg,
         inspector: InspectorStack,
-        gas_limit: U256,
+        gas_limit: u64,
     ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
@@ -190,7 +196,7 @@ impl Executor {
     }
 
     #[inline]
-    pub fn set_gas_limit(&mut self, gas_limit: U256) -> &mut Self {
+    pub fn set_gas_limit(&mut self, gas_limit: u64) -> &mut Self {
         self.gas_limit = gas_limit;
         self
     }
@@ -268,11 +274,10 @@ impl Executor {
         // and also the chainid, which can be set manually
         self.env.cfg.chain_id = res.env.cfg.chain_id;
 
-        if let Some(changeset) = &res.state_changeset {
-            let success = self.is_raw_call_success(to, Cow::Borrowed(changeset), &res, false);
-            if !success {
-                return Err(res.into_execution_error("execution error".to_string()).into());
-            }
+        let success =
+            self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res, false);
+        if !success {
+            return Err(res.into_execution_error("execution error".to_string()).into());
         }
 
         Ok(res)
@@ -374,9 +379,7 @@ impl Executor {
     /// This should not be exposed to the user, as it should be called only by `transact*`.
     fn commit(&mut self, result: &mut RawCallResult) {
         // Persist changes to db.
-        if let Some(changes) = &result.state_changeset {
-            self.backend.commit(changes.clone());
-        }
+        self.backend.commit(result.state_changeset.clone());
 
         // Persist cheatcode state.
         self.inspector.cheatcodes = result.cheatcodes.take();
@@ -405,7 +408,7 @@ impl Executor {
     ) -> bool {
         self.is_raw_call_success(
             address,
-            Cow::Owned(call_result.state_changeset.take().unwrap_or_default()),
+            Cow::Owned(std::mem::take(&mut call_result.state_changeset)),
             call_result,
             should_fail,
         )
@@ -529,7 +532,7 @@ impl Executor {
             // the cheatcode handler if it is enabled
             block: BlockEnv {
                 basefee: U256::ZERO,
-                gas_limit: self.gas_limit,
+                gas_limit: U256::from(self.gas_limit),
                 ..self.env.block.clone()
             },
             tx: TxEnv {
@@ -540,7 +543,7 @@ impl Executor {
                 // As above, we set the gas price to 0.
                 gas_price: U256::ZERO,
                 gas_priority_fee: None,
-                gas_limit: self.gas_limit.to(),
+                gas_limit: self.gas_limit,
                 ..self.env.tx.clone()
             },
         };
@@ -661,7 +664,7 @@ pub struct RawCallResult {
     /// Scripted transactions generated from this call
     pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
-    pub state_changeset: Option<StateChangeset>,
+    pub state_changeset: StateChangeset,
     /// The `revm::Env` after the call
     pub env: EnvWithHandlerCfg,
     /// The cheatcode states after execution
@@ -688,7 +691,7 @@ impl Default for RawCallResult {
             coverage: None,
             debug: None,
             transactions: None,
-            state_changeset: None,
+            state_changeset: HashMap::default(),
             env: EnvWithHandlerCfg::new_with_spec_id(Box::default(), SpecId::LATEST),
             cheatcodes: Default::default(),
             out: None,
@@ -772,19 +775,20 @@ impl std::ops::DerefMut for CallResult {
 fn convert_executed_result(
     env: EnvWithHandlerCfg,
     inspector: InspectorStack,
-    result: ResultAndState,
+    ResultAndState { result, state: state_changeset }: ResultAndState,
     has_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult> {
-    let ResultAndState { result: exec_result, state: state_changeset } = result;
-    let (exit_reason, gas_refunded, gas_used, out) = match exec_result {
-        ExecutionResult::Success { reason, gas_used, gas_refunded, output, .. } => {
-            (reason.into(), gas_refunded, gas_used, Some(output))
+    let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
+        ExecutionResult::Success { reason, gas_used, gas_refunded, output, logs, .. } => {
+            (reason.into(), gas_refunded, gas_used, Some(output), logs)
         }
         ExecutionResult::Revert { gas_used, output } => {
             // Need to fetch the unused gas
-            (InstructionResult::Revert, 0_u64, gas_used, Some(Output::Call(output)))
+            (InstructionResult::Revert, 0_u64, gas_used, Some(Output::Call(output)), vec![])
         }
-        ExecutionResult::Halt { reason, gas_used } => (reason.into(), 0_u64, gas_used, None),
+        ExecutionResult::Halt { reason, gas_used } => {
+            (reason.into(), 0_u64, gas_used, None, vec![])
+        }
     };
     let stipend = revm::interpreter::gas::validate_initial_tx_gas(
         env.spec_id(),
@@ -798,15 +802,17 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes, chisel_state } =
+    let InspectorData { mut logs, labels, traces, coverage, debug, cheatcodes, chisel_state } =
         inspector.collect();
 
-    let transactions = match cheatcodes.as_ref() {
-        Some(cheats) if !cheats.broadcastable_transactions.is_empty() => {
-            Some(cheats.broadcastable_transactions.clone())
-        }
-        _ => None,
-    };
+    if logs.is_empty() {
+        logs = exec_logs;
+    }
+
+    let transactions = cheatcodes
+        .as_ref()
+        .map(|c| c.broadcastable_transactions.clone())
+        .filter(|txs| !txs.is_empty());
 
     Ok(RawCallResult {
         exit_reason,
@@ -822,7 +828,7 @@ fn convert_executed_result(
         coverage,
         debug,
         transactions,
-        state_changeset: Some(state_changeset),
+        state_changeset,
         env,
         cheatcodes,
         out,

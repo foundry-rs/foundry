@@ -236,7 +236,7 @@ impl<'a> InvariantExecutor<'a> {
                     }
                 } else {
                     // Collect data for fuzzing from the state changeset.
-                    let mut state_changeset = call_result.state_changeset.clone().unwrap();
+                    let mut state_changeset = call_result.state_changeset.clone();
 
                     if !call_result.reverted {
                         collect_data(
