@@ -34,13 +34,6 @@ pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
 pub mod debug;
 
-use revm_inspectors::tracing::types::TraceMemberOrder;
-pub use revm_inspectors::tracing::{
-    types::{CallKind, CallTrace, CallTraceNode},
-    CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TracingInspector,
-    TracingInspectorConfig,
-};
-
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
 #[derive(Default, Debug, Eq, PartialEq)]
@@ -93,6 +86,7 @@ pub async fn render_trace_arena(
 
     let identified_internals = &decoder.identify_arena_steps(arena);
 
+    #[allow(clippy::too_many_arguments)]
     fn render_items<'a>(
         arena: &'a [CallTraceNode],
         decoder: &'a CallTraceDecoder,

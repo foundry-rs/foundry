@@ -154,11 +154,11 @@ impl ContractSources {
                 let mut artifacts = Vec::new();
                 if let Some(file_id) = artifact.id {
                     let artifact = if let Some((linker, libraries)) = link_data.as_ref() {
-                        linker.link(&id, libraries)?.into_contract_bytecode()
+                        linker.link(id, libraries)?.into_contract_bytecode()
                     } else {
                         (*artifact).clone().into_contract_bytecode()
                     };
-                    let bytecode = compact_to_contract(artifact.clone().into_contract_bytecode())?;
+                    let bytecode = compact_to_contract(artifact.into_contract_bytecode())?;
 
                     artifacts.push((
                         id.name.clone(),
