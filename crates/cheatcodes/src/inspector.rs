@@ -34,7 +34,7 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
     primitives::{BlockEnv, CreateScheme, EVMError},
-    EvmContext, InnerEvmContext
+    EvmContext, InnerEvmContext,
 };
 use rustc_hash::FxHashMap;
 use serde_json::Value;
