@@ -118,7 +118,7 @@ impl PreSimulationState {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    runner.executor.env.block.number += U256::from(1);
+                    runner.executor.env_mut().block.number += U256::from(1);
                 }
 
                 let is_fixed_gas_limit = tx.gas.is_some();
