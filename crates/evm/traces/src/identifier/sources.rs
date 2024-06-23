@@ -1,7 +1,10 @@
 use eyre::{Context, Result};
 use foundry_common::compact_to_contract;
 use foundry_compilers::{
-    artifacts::{sourcemap::SourceMap, Bytecode, ContractBytecodeSome, Libraries, Source},
+    artifacts::{
+        sourcemap::{SourceElement, SourceMap},
+        Bytecode, ContractBytecodeSome, Libraries, Source,
+    },
     multi::MultiCompilerLanguage,
     Artifact, Compiler, ProjectCompileOutput,
 };
@@ -233,6 +236,52 @@ impl ContractSources {
                     self.sources_by_id.get(artifact.build_id.as_str())?.get(&artifact.file_id)?;
                 Some((name.as_str(), artifact, source.as_ref()))
             })
+        })
+    }
+
+    pub fn find_source_mapping(
+        &self,
+        contract_name: &str,
+        pc: usize,
+        init_code: bool,
+    ) -> Option<(SourceElement, &SourceData)> {
+        self.get_sources(contract_name)?.find_map(|(artifact, source)| {
+            let source_map = if init_code {
+                artifact.source_map.as_ref()
+            } else {
+                artifact.source_map_runtime.as_ref()
+            }?;
+
+            let pc_ic_map = if init_code {
+                artifact.pc_ic_map.as_ref()
+            } else {
+                artifact.pc_ic_map_runtime.as_ref()
+            }?;
+            let ic = pc_ic_map.get(pc)?;
+
+            // Solc indexes source maps by instruction counter, but Vyper indexes by program
+            // counter.
+            let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
+                source_map.get(ic)?
+            } else {
+                source_map.get(pc)?
+            };
+            // if the source element has an index, find the sourcemap for that index
+            let res = source_element
+                .index()
+                // if index matches current file_id, return current source code
+                .and_then(|index| {
+                    (index == artifact.file_id).then(|| (source_element.clone(), source))
+                })
+                .or_else(|| {
+                    // otherwise find the source code for the element's index
+                    self.sources_by_id
+                        .get(&artifact.build_id)?
+                        .get(&source_element.index()?)
+                        .map(|source| (source_element.clone(), source.as_ref()))
+                });
+
+            res
         })
     }
 }

@@ -1,7 +1,7 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
 use clap::Parser;
-use eyre::{OptionExt, Result};
+use eyre::Result;
 use forge::{
     decode::decode_console_logs,
     gas_report::GasReport,
@@ -296,10 +296,10 @@ impl TestArgs {
         let env = evm_opts.evm_env().await?;
 
         // Prepare the test builder
-        let should_debug = self.debug.is_some() || self.decode_internal;
+        let should_debug = self.debug.is_some();
 
         // Clone the output only if we actually need it later for the debugger.
-        let output_clone = should_debug.then(|| output.clone());
+        let output_clone = (should_debug || self.decode_internal).then(|| output.clone());
 
         let config = Arc::new(config);
 
@@ -314,6 +314,12 @@ impl TestArgs {
             .enable_isolation(evm_opts.isolate)
             .build(project_root, output, env, evm_opts)?;
 
+        let debug_sources = output_clone
+            .map(|output| {
+                ContractSources::from_project_output(&output, project_root, Some(&runner.libraries))
+            })
+            .transpose()?;
+
         if let Some(debug_test_pattern) = &self.debug {
             let test_pattern = &mut filter.args_mut().test_pattern;
             if test_pattern.is_some() {
@@ -325,8 +331,8 @@ impl TestArgs {
             *test_pattern = Some(debug_test_pattern.clone());
         }
 
-        let libraries = runner.libraries.clone();
-        let outcome = self.run_tests(runner, config, verbosity, &filter).await?;
+        let outcome =
+            self.run_tests(runner, config, verbosity, &filter, debug_sources.as_ref()).await?;
 
         if should_debug {
             // Get first non-empty suite result. We will have only one such entry
@@ -339,49 +345,22 @@ impl TestArgs {
                 return Err(eyre::eyre!("no tests were executed"));
             };
 
-            let sources = ContractSources::from_project_output(
-                output_clone.as_ref().unwrap(),
-                project.root(),
-                Some(&libraries),
-            )?;
+            let sources = debug_sources.unwrap();
 
-            if self.decode_internal {
-                let mut builder = DebugTraceIdentifier::builder().sources(sources);
-                let Some(decoder) = &outcome.last_run_decoder else {
-                    eyre::bail!("Missing decoder for debugging");
-                };
-                builder = builder.decoder(decoder);
+            // Run the debugger.
+            let builder = Debugger::builder()
+                .debug_arenas(test_result.debug.as_slice())
+                .identifier(|mut builder| {
+                    if let Some(decoder) = &outcome.last_run_decoder {
+                        builder = builder.decoder(decoder);
+                    }
 
-                let identifier = builder.build();
-                let arena = &test_result
-                    .traces
-                    .iter()
-                    .find(|(t, _)| t.is_execution())
-                    .ok_or_eyre("didn't find execution trace for debugging")?
-                    .1;
+                    builder.sources(sources)
+                })
+                .breakpoints(test_result.breakpoints.clone());
 
-                let identified = identifier.identify_arena(arena);
-
-                println!(
-                    "{}",
-                    render_trace_arena_with_internals(arena, decoder, &identified).await?
-                );
-            } else if self.debug.is_some() {
-                // Run the debugger.
-                let builder = Debugger::builder()
-                    .debug_arenas(test_result.debug.as_slice())
-                    .identifier(|mut builder| {
-                        if let Some(decoder) = &outcome.last_run_decoder {
-                            builder = builder.decoder(decoder);
-                        }
-
-                        builder.sources(sources)
-                    })
-                    .breakpoints(test_result.breakpoints.clone());
-
-                let mut debugger = builder.build();
-                debugger.try_run()?;
-            }
+            let mut debugger = builder.build();
+            debugger.try_run()?;
         }
 
         Ok(outcome)
@@ -394,6 +373,7 @@ impl TestArgs {
         config: Arc<Config>,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
+        sources: Option<&ContractSources>,
     ) -> eyre::Result<TestOutcome> {
         if self.list {
             return list(runner, filter, self.json);
@@ -527,7 +507,31 @@ impl TestArgs {
                     };
 
                     if should_include {
-                        decoded_traces.push(render_trace_arena(arena, &decoder).await?);
+                        let decoded_internal = if self.decode_internal {
+                            if let Some(sources) = sources {
+                                let decoder = DebugTraceIdentifier::builder()
+                                    .sources(sources.clone())
+                                    .decoder(&decoder)
+                                    .build();
+                                Some(decoder.identify_arena(arena))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        if let Some(decoded_internal) = decoded_internal {
+                            decoded_traces.push(
+                                render_trace_arena_with_internals(
+                                    arena,
+                                    &decoder,
+                                    &decoded_internal,
+                                )
+                                .await?,
+                            );
+                        } else {
+                            decoded_traces.push(render_trace_arena(arena, &decoder).await?);
+                        }
                     }
                 }
 

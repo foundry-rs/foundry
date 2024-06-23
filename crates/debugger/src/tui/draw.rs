@@ -342,11 +342,11 @@ impl DebuggerContext<'_> {
 
     /// Returns source map, source code and source name of the current line.
     fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
-        self.debugger.identifier.identify(
-            self.address(),
-            self.current_step().pc,
-            self.call_kind().is_any_create(),
-        )
+        let Some(contract_name) = self.identified_contracts.get(address) else {
+            return Err(format!("Unknown contract at address {address}"));
+        };
+
+        
     }
 
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {

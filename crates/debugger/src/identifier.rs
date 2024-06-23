@@ -36,57 +36,7 @@ impl DebugTraceIdentifier {
         pc: usize,
         init_code: bool,
     ) -> core::result::Result<(SourceElement, &SourceData), String> {
-        let Some(contract_name) = self.identified_contracts.get(address) else {
-            return Err(format!("Unknown contract at address {address}"));
-        };
-
-        let Some(mut files_source_code) = self.contracts_sources.get_sources(contract_name) else {
-            return Err(format!("No source map index for contract {contract_name}"));
-        };
-
-        let Some((source_element, source)) = files_source_code.find_map(|(artifact, source)| {
-            let source_map = if init_code {
-                artifact.source_map.as_ref()
-            } else {
-                artifact.source_map_runtime.as_ref()
-            }?;
-
-            let pc_ic_map = if init_code {
-                artifact.pc_ic_map.as_ref()
-            } else {
-                artifact.pc_ic_map_runtime.as_ref()
-            }?;
-            let ic = pc_ic_map.get(pc)?;
-
-            // Solc indexes source maps by instruction counter, but Vyper indexes by program
-            // counter.
-            let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
-                source_map.get(ic)?
-            } else {
-                source_map.get(pc)?
-            };
-            // if the source element has an index, find the sourcemap for that index
-            let res = source_element
-                .index()
-                // if index matches current file_id, return current source code
-                .and_then(|index| {
-                    (index == artifact.file_id).then(|| (source_element.clone(), source))
-                })
-                .or_else(|| {
-                    // otherwise find the source code for the element's index
-                    self.contracts_sources
-                        .sources_by_id
-                        .get(&artifact.build_id)?
-                        .get(&source_element.index()?)
-                        .map(|source| (source_element.clone(), source.as_ref()))
-                });
-
-            res
-        }) else {
-            return Err(format!("No source map for contract {contract_name}"));
-        };
-
-        Ok((source_element, source))
+        
     }
 
     pub fn identify_arena(&self, arena: &CallTraceArena) -> Vec<Vec<DecodedTraceStep>> {
@@ -97,13 +47,17 @@ impl DebugTraceIdentifier {
         let mut stack = Vec::new();
         let mut identified = Vec::new();
 
+        // Helper to get a unique identifier for a source location.
+        let get_loc_id = |loc: &SourceElement| (loc.index(), loc.offset(), loc.length());
+
         // Flag marking whether previous instruction was a jump into function.
         // If it was, we expect next instruction to be a JUMPDEST with source location pointing to
         // the function.
-        let mut prev_step_jump_in = false;
+        let mut prev_step = None;
         for (step_idx, step) in node.trace.steps.iter().enumerate() {
             // We are only interested in JUMPs.
             if step.op != OpCode::JUMP && step.op != OpCode::JUMPI && step.op != OpCode::JUMPDEST {
+                prev_step = None;
                 continue;
             }
 
@@ -111,47 +65,69 @@ impl DebugTraceIdentifier {
             let Ok((source_element, source)) =
                 self.identify(&node.trace.address, step.pc, node.trace.kind.is_any_create())
             else {
-                prev_step_jump_in = false;
+                prev_step = None;
                 continue;
             };
 
-            // If previous step was a jump record source location at JUMPDEST.
-            if prev_step_jump_in {
-                if step.op == OpCode::JUMPDEST {
-                    if let Some(name) = parse_function_name(source, &source_element) {
-                        stack.push((name, step_idx));
-                    }
-                };
-                prev_step_jump_in = false;
-            }
+            let Some((prev_source_element, prev_source)) = prev_step else {
+                prev_step = Some((source_element, source));
+                continue;
+            };
 
-            match source_element.jump() {
-                // Source location is collected on the next step.
-                Jump::In => prev_step_jump_in = true,
-                Jump::Out => {
-                    // Find index matching the beginning of this function
-                    if let Some(name) = parse_function_name(source, &source_element) {
-                        if let Some((i, _)) =
-                            stack.iter().enumerate().rfind(|(_, (n, _))| n == &name)
-                        {
-                            // We've found a match, remove all records between start and end, those
-                            // are considered invalid.
-                            let (_, start_idx) = stack.split_off(i)[0];
+            match prev_source_element.jump() {
+                Jump::In => {
+                    let invocation_loc_id = get_loc_id(&prev_source_element);
+                    let fn_loc_id = get_loc_id(&source_element);
 
-                            let gas_used = node.trace.steps[start_idx].gas_remaining as i64 -
-                                node.trace.steps[step_idx].gas_remaining as i64;
-
-                            identified.push(DecodedTraceStep {
-                                start_step_idx: start_idx,
-                                end_step_idx: step_idx,
-                                function_name: name,
-                                gas_used,
-                            });
+                    // This usually means that this is a jump into the external function which is an
+                    // entrypoint for the current frame. We don't want to include this to avoid
+                    // duplicating traces.
+                    if invocation_loc_id != fn_loc_id {
+                        if let Some(name) = parse_function_name(source, &source_element) {
+                            stack.push((name, step_idx, invocation_loc_id, fn_loc_id));
                         }
+                    }
+                }
+                Jump::Out => {
+                    let invocation_loc_id = get_loc_id(&source_element);
+                    let fn_loc_id = get_loc_id(&prev_source_element);
+
+                    if let Some((i, _)) =
+                        stack.iter().enumerate().rfind(|(_, (_, _, i_loc, f_loc))| {
+                            *i_loc == invocation_loc_id || *f_loc == fn_loc_id
+                        })
+                    {
+                        // We've found a match, remove all records between start and end, those
+                        // are considered invalid.
+                        let (function_name, start_idx, ..) = stack.split_off(i).swap_remove(0);
+
+                        let gas_used = node.trace.steps[start_idx].gas_remaining as i64 -
+                            node.trace.steps[step_idx].gas_remaining as i64;
+
+                        identified.push(DecodedTraceStep {
+                            start_step_idx: start_idx,
+                            end_step_idx: Some(step_idx),
+                            function_name,
+                            gas_used,
+                        });
                     }
                 }
                 _ => {}
             };
+
+            prev_step = Some((source_element, source));
+        }
+
+        for (name, step_idx, ..) in stack {
+            let gas_used = node.trace.steps[step_idx].gas_remaining as i64 -
+                node.trace.steps.last().map(|s| s.gas_remaining).unwrap_or_default() as i64;
+
+            identified.push(DecodedTraceStep {
+                start_step_idx: step_idx,
+                end_step_idx: None,
+                function_name: name.clone(),
+                gas_used,
+            });
         }
 
         // Sort by start step index.
@@ -222,9 +198,6 @@ fn parse_function_name(source: &SourceData, loc: &SourceElement) -> Option<Strin
     let end = start + loc.length() as usize;
     let source_part = &source.source[start..end];
     if !source_part.starts_with("function") {
-        return None;
-    }
-    if !source_part.contains("internal") && !source_part.contains("private") {
         return None;
     }
     let function_name = source_part.split_once("function")?.1.split('(').next()?.trim();

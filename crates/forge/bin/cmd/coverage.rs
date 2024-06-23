@@ -249,7 +249,7 @@ impl CoverageArgs {
 
         let outcome = self
             .test
-            .run_tests(runner, config.clone(), verbosity, &self.test.filter(&config))
+            .run_tests(runner, config.clone(), verbosity, &self.test.filter(&config), None)
             .await?;
 
         // Add hit data to the coverage report

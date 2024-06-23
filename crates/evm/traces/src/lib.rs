@@ -70,7 +70,7 @@ pub enum DecodedCallLog<'a> {
 #[derive(Debug, Clone)]
 pub struct DecodedTraceStep {
     pub start_step_idx: usize,
-    pub end_step_idx: usize,
+    pub end_step_idx: Option<usize>,
     pub function_name: String,
     pub gas_used: i64,
 }
@@ -145,7 +145,7 @@ pub async fn render_trace_arena_with_internals<'a>(
                                 s,
                                 node_idx,
                                 ordering_idx + 1,
-                                Some(decoded.end_step_idx),
+                                decoded.end_step_idx,
                                 &left_prefix,
                                 &right_prefix,
                             )

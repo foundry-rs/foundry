@@ -373,7 +373,7 @@ pub fn etherscan_project(
     let sources_path = target_path.join(&metadata.contract_name);
     metadata.source_tree().write_to(&target_path)?;
 
-    let mut settings = metadata.source_code.settings()?.unwrap_or_default();
+    let mut settings = metadata.settings()?;
 
     // make remappings absolute with our root
     for remapping in settings.remappings.iter_mut() {
