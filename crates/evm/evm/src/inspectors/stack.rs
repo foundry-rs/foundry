@@ -303,7 +303,7 @@ pub struct InspectorStackInner {
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
 /// [revm::Inspector]. This struct can be obtained via [InspectorStack::as_mut] or via
 /// [CheatcodesExecutor::get_inspector] method implemented for [InspectorStackInner].
-struct InspectorStackRefMut<'a> {
+pub struct InspectorStackRefMut<'a> {
     pub cheatcodes: Option<&'a mut Cheatcodes>,
     pub inner: &'a mut InspectorStackInner,
 }
