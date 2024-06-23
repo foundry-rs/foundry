@@ -893,6 +893,28 @@ impl TypedTransaction {
     }
 }
 
+impl From<alloy_rpc_types::Transaction> for TypedTransaction {
+    fn from(transaction: alloy_rpc_types::Transaction) -> Self {
+        // TODO(serge): Implement or delete based on feedback
+        let legacy = TxLegacy {
+            nonce: transaction.nonce,
+            gas_price: transaction.gas_price.unwrap(),
+            gas_limit: transaction.gas,
+            value: transaction.value,
+            input: transaction.input,
+            to: TxKind::Call(transaction.to.unwrap()),
+            chain_id: transaction.chain_id,
+        };
+        use std::str::FromStr;
+        Self::Legacy(Signed::new_unchecked(
+            legacy,
+            Signature::from_str("0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b").unwrap(),
+            //transaction.signature.unwrap().try_into().unwrap(),
+            transaction.hash,
+        ))
+    }
+}
+
 impl Encodable for TypedTransaction {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
         match self {

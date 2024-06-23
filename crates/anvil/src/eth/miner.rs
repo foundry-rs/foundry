@@ -25,12 +25,20 @@ pub struct Miner {
     ///
     /// This will register the task so we can manually wake it up if the mining mode was changed
     inner: Arc<MinerInner>,
+    // TODO(serge): ...
+    //replay_transactions: Option<Vec<Arc<PoolTransaction>>>,
+    replay_transactions: Option<Vec<PoolTransaction>>,
 }
 
 impl Miner {
     /// Returns a new miner with that operates in the given `mode`
-    pub fn new(mode: MiningMode) -> Self {
-        Self { mode: Arc::new(RwLock::new(mode)), inner: Default::default() }
+    pub fn new(mode: MiningMode, replay_transactions: Vec<PoolTransaction>) -> Self {
+        Self {
+            mode: Arc::new(RwLock::new(mode)),
+            inner: Default::default(),
+            //replay_transactions: Some(replay_transactions.into_iter().map(Arc::new).collect()),
+            replay_transactions: Some(replay_transactions),
+        }
     }
 
     /// Returns the write lock of the mining mode
@@ -67,6 +75,12 @@ impl Miner {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction>>> {
         self.inner.register(cx);
+        // Add replay transactions to the pool
+        if let Some(replay_transactions) = self.replay_transactions.take() {
+            replay_transactions.into_iter().for_each(|tx| {
+                pool.add_transaction(tx).unwrap();
+            });
+        }
         self.mode.write().poll(pool, cx)
     }
 }

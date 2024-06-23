@@ -9,7 +9,7 @@ use crate::{
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
-        pool::transactions::TransactionOrder,
+        pool::transactions::{PoolTransaction, TransactionOrder, TransactionPriority},
     },
     mem::{self, in_memory_db::MemDb},
     FeeManager, Hardfork, PrecompileFactory,
@@ -25,6 +25,7 @@ use alloy_signer_local::{
     MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_transport::{Transport, TransportError};
+use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use anvil_server::ServerConfig;
 use foundry_common::{
     provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
@@ -36,6 +37,7 @@ use foundry_evm::{
     revm::primitives::{BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, SpecId, TxEnv},
     utils::apply_chain_and_block_specific_env_changes,
 };
+use itertools::Itertools;
 use parking_lot::RwLock;
 use rand::thread_rng;
 use revm::primitives::BlobExcessGasAndPrice;
@@ -710,6 +712,7 @@ impl NodeConfig {
         self
     }
 
+    // TODO(serge): revert usage of with_fork_choice to with_fork_block_number
     /// Sets the `fork_choice` to use to fork off from based on a block number
     #[must_use]
     pub fn with_fork_block_number<U: Into<u64>>(self, fork_block_number: Option<U>) -> Self {
@@ -1019,16 +1022,52 @@ impl NodeConfig {
                 .expect("Failed to establish provider to fork url"),
         );
 
-        let (fork_block_number, fork_chain_id) = if let Some(fork_choice) = &self.fork_choice {
-            let fork_block_number = match fork_choice {
-                ForkChoice::Block(block_number) => block_number.to_owned(),
+        let (fork_block_number, fork_chain_id, replay_transactions) = if let Some(fork_choice) =
+            &self.fork_choice
+        {
+            let (fork_block_number, replay_transactions) = match fork_choice {
+                ForkChoice::Block(block_number) => (block_number.to_owned(), Vec::new()),
                 ForkChoice::Transaction(transaction_hash) => {
+                    // Determine the block that this transaction was mined in
                     let transaction = provider
                         .get_transaction_by_hash(transaction_hash.0.into())
                         .await
                         .expect("Failed to get fork transaction")
                         .unwrap();
-                    transaction.block_number.unwrap()
+                    let transaction_block_number = transaction.block_number.unwrap();
+
+                    // Record all transactions preceding the specified transaction so as to
+                    // allow replay of them
+                    let transaction_block = provider
+                        .get_block_by_number(transaction_block_number.into(), false)
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    // Transactions that precede the specified one will be replayed (inclusive)
+                    // TODO(serge): re-impl this based on feedback
+                    let mut replay_transactions: Vec<PoolTransaction> = Vec::new();
+                    for hash in transaction_block
+                        .transactions
+                        .as_hashes()
+                        .unwrap()
+                        .iter()
+                        .take_while_inclusive(|&hash| hash != transaction_hash.0)
+                        .map(|&hash| TxHash::into(hash))
+                        .collect::<Vec<TxHash>>()
+                    {
+                        println!("tx: {:?}", hash);
+                        let tx = provider.get_transaction_by_hash(hash).await.unwrap().unwrap();
+                        let typed_transaction = TypedTransaction::from(tx.inner);
+                        let pending_transaction =
+                            PendingTransaction::new(typed_transaction).unwrap();
+                        replay_transactions.push(PoolTransaction {
+                            pending_transaction,
+                            requires: vec![],
+                            provides: vec![],
+                            priority: TransactionPriority(0),
+                        });
+                    }
+                    (transaction_block_number.saturating_sub(1), replay_transactions)
                 }
             };
             let chain_id = if let Some(chain_id) = self.fork_chain_id {
@@ -1048,12 +1087,12 @@ impl NodeConfig {
                 None
             };
 
-            (fork_block_number, chain_id)
+            (fork_block_number, chain_id, replay_transactions)
         } else {
             // pick the last block number but also ensure it's not pending anymore
             let bn =
                 find_latest_fork_block(&provider).await.expect("Failed to get fork block number");
-            (bn, None)
+            (bn, None, Vec::new())
         };
 
         let block = provider
@@ -1190,6 +1229,7 @@ latest block number: {latest_block}"
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
             blob_gas_used: block.header.blob_gas_used,
             blob_excess_gas_and_price: env.block.blob_excess_gas_and_price.clone(),
+            replay_transactions,
         };
 
         let mut db = ForkedDatabase::new(backend, block_chain_db);

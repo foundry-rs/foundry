@@ -156,7 +156,8 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
         let listener = pool.add_ready_listener();
         MiningMode::instant(max_transactions, listener)
     };
-    let miner = Miner::new(mode);
+    let miner =
+        Miner::new(mode, backend.get_fork().unwrap().config.read().replay_transactions.clone());
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(signer_accounts));
     let mut signers = vec![dev_signer];

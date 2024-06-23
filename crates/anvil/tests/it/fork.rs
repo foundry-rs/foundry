@@ -8,7 +8,7 @@ use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{address, bytes, Address, Bytes, TxHash, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    anvil::Forking,
+    anvil::{Forking, MineOptions},
     request::{TransactionInput, TransactionRequest},
     BlockId, BlockNumberOrTag,
 };
@@ -18,7 +18,7 @@ use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint};
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use std::{sync::Arc, time::Duration};
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
@@ -1204,25 +1204,28 @@ async fn test_fork_execution_reverted() {
 
 // <https://github.com/foundry-rs/foundry/issues/8227>
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_transaction_hash() {
+async fn test_arbitrum_fork_transaction_hash() {
     use anvil::ForkChoice;
     use std::str::FromStr;
+
+    // Fork to a block with a specific transaction
     let hash =
-        TxHash::from_str("0x545c18ea749f22289fff75cb5e1cd948c8734c279bb7fbcbe84cb545a70bb991")
+        TxHash::from_str("0x81ab9783151741b03b304f1874063da4f3263d0127c90ba500914d75e46b9c51")
             .unwrap();
-    let (_, handle) = spawn(
+    let (api, _) = spawn(
         fork_config()
+            .with_blocktime(Some(Duration::from_secs(20)))
             .with_fork_choice(Some(ForkChoice::Transaction(hash)))
             .with_eth_rpc_url(Some("https://arb1.arbitrum.io/rpc".to_string())),
     )
     .await;
-    let provider = handle.http_provider();
-    let initial_block_number = provider.get_block_number().await.unwrap();
-    assert_eq!(initial_block_number, 224480117);
 
-    let transaction = provider.get_transaction_by_hash(hash).await.unwrap().unwrap();
-    assert_eq!(
-        transaction.from,
-        Address::from_str("0x376c0d90cffacb90206b7c5942234952af734624").unwrap()
-    );
+    // ...
+    let block_number = api.block_number().unwrap().to::<u64>();
+    assert_eq!(block_number, 224480116);
+
+    //let snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await;
+    let block_number = api.block_number().unwrap().to::<u64>();
+    assert_eq!(block_number, 224480117);
 }
