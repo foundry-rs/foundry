@@ -92,7 +92,14 @@ pub enum ForkChoice {
     Transaction(TxHash),
 }
 
-// Convert a decimal block number into a ForkChoice
+/// Convert a transaction hash into a ForkChoice
+impl From<TxHash> for ForkChoice {
+    fn from(tx_hash: TxHash) -> Self {
+        Self::Transaction(tx_hash)
+    }
+}
+
+/// Convert a decimal block number into a ForkChoice
 impl From<u64> for ForkChoice {
     fn from(block: u64) -> Self {
         Self::Block(block)
@@ -712,11 +719,19 @@ impl NodeConfig {
         self
     }
 
-    // TODO(serge): revert usage of with_fork_choice to with_fork_block_number
     /// Sets the `fork_choice` to use to fork off from based on a block number
     #[must_use]
     pub fn with_fork_block_number<U: Into<u64>>(self, fork_block_number: Option<U>) -> Self {
         self.with_fork_choice(fork_block_number.map(Into::into))
+    }
+
+    /// Sets the `fork_choice` to use to fork off from based on a transaction hash
+    #[must_use]
+    pub fn with_fork_transaction_hash<U: Into<TxHash>>(
+        self,
+        fork_transaction_hash: Option<U>,
+    ) -> Self {
+        self.with_fork_choice(fork_transaction_hash.map(Into::into))
     }
 
     /// Sets the `fork_choice` to use to fork off from
