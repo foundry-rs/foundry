@@ -30,7 +30,7 @@ use revm::{
     interpreter::{return_ok, InstructionResult},
     primitives::{
         BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output, ResultAndState,
-        SpecId, TransactTo, TxEnv,
+        SpecId, TxEnv, TxKind,
     },
 };
 use std::{borrow::Cow, collections::HashMap};
@@ -80,17 +80,23 @@ pub struct Executor {
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
     /// the passed in environment, as those limits are used by the EVM for certain opcodes like
     /// `gaslimit`.
-    gas_limit: U256,
+    gas_limit: u64,
 }
 
 impl Executor {
+    /// Creates a new `ExecutorBuilder`.
+    #[inline]
+    pub fn builder() -> ExecutorBuilder {
+        ExecutorBuilder::new()
+    }
+
     /// Creates a new `Executor` with the given arguments.
     #[inline]
     pub fn new(
         mut backend: Backend,
         env: EnvWithHandlerCfg,
         inspector: InspectorStack,
-        gas_limit: U256,
+        gas_limit: u64,
     ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
@@ -190,7 +196,7 @@ impl Executor {
     }
 
     #[inline]
-    pub fn set_gas_limit(&mut self, gas_limit: U256) -> &mut Self {
+    pub fn set_gas_limit(&mut self, gas_limit: u64) -> &mut Self {
         self.gas_limit = gas_limit;
         self
     }
@@ -206,7 +212,7 @@ impl Executor {
         value: U256,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
-        let env = self.build_test_env(from, TransactTo::Create, code, value);
+        let env = self.build_test_env(from, TxKind::Create, code, value);
         self.deploy_with_env(env, rd)
     }
 
@@ -215,14 +221,14 @@ impl Executor {
     ///
     /// # Panics
     ///
-    /// Panics if `env.tx.transact_to` is not `TransactTo::Create(_)`.
+    /// Panics if `env.tx.transact_to` is not `TxKind::Create(_)`.
     pub fn deploy_with_env(
         &mut self,
         env: EnvWithHandlerCfg,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         assert!(
-            matches!(env.tx.transact_to, TransactTo::Create),
+            matches!(env.tx.transact_to, TxKind::Create),
             "Expected create transaction, got {:?}",
             env.tx.transact_to
         );
@@ -331,7 +337,7 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
         self.call_with_env(env)
     }
 
@@ -343,7 +349,7 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
         self.transact_with_env(env)
     }
 
@@ -518,7 +524,7 @@ impl Executor {
     fn build_test_env(
         &self,
         caller: Address,
-        transact_to: TransactTo,
+        transact_to: TxKind,
         data: Bytes,
         value: U256,
     ) -> EnvWithHandlerCfg {
@@ -529,7 +535,7 @@ impl Executor {
             // the cheatcode handler if it is enabled
             block: BlockEnv {
                 basefee: U256::ZERO,
-                gas_limit: self.gas_limit,
+                gas_limit: U256::from(self.gas_limit),
                 ..self.env.block.clone()
             },
             tx: TxEnv {
@@ -540,7 +546,7 @@ impl Executor {
                 // As above, we set the gas price to 0.
                 gas_price: U256::ZERO,
                 gas_priority_fee: None,
-                gas_limit: self.gas_limit.to(),
+                gas_limit: self.gas_limit,
                 ..self.env.tx.clone()
             },
         };

@@ -529,7 +529,7 @@ pub async fn import_selectors(data: SelectorImportData) -> eyre::Result<Selector
     OpenChainClient::new()?.import_selectors(data).await
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct ParsedSignatures {
     pub signatures: RawSelectorImportData,
     pub abis: Vec<JsonAbi>,

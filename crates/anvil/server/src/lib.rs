@@ -12,6 +12,7 @@ use anvil_rpc::{
     response::{ResponseResult, RpcResponse},
 };
 use axum::{
+    extract::DefaultBodyLimit,
     http::{header, HeaderValue, Method},
     routing::{post, MethodRouter},
     Router,
@@ -56,7 +57,7 @@ fn router_inner<S: Clone + Send + Sync + 'static>(
     root_method_router: MethodRouter<S>,
     state: S,
 ) -> Router {
-    let ServerConfig { allow_origin, no_cors } = config;
+    let ServerConfig { allow_origin, no_cors, no_request_size_limit } = config;
 
     let mut router = Router::new()
         .route("/", root_method_router)
@@ -71,6 +72,9 @@ fn router_inner<S: Clone + Send + Sync + 'static>(
                 .allow_headers([header::CONTENT_TYPE])
                 .allow_methods([Method::GET, Method::POST]),
         );
+    }
+    if no_request_size_limit {
+        router = router.layer(DefaultBodyLimit::disable());
     }
     router
 }

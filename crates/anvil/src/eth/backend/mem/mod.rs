@@ -70,7 +70,7 @@ use foundry_evm::{
         interpreter::InstructionResult,
         primitives::{
             BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ExecutionResult, Output, SpecId,
-            TransactTo, TxEnv, KECCAK_EMPTY,
+            TxEnv, KECCAK_EMPTY,
         },
     },
     utils::new_evm_with_inspector_ref,
@@ -1159,8 +1159,8 @@ impl Backend {
             gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
             max_fee_per_blob_gas: max_fee_per_blob_gas.map(U256::from),
             transact_to: match to {
-                Some(addr) => TransactTo::Call(*addr),
-                None => TransactTo::Create,
+                Some(addr) => TxKind::Call(*addr),
+                None => TxKind::Create,
             },
             value: value.unwrap_or_default(),
             data: input.into_input().unwrap_or_default(),

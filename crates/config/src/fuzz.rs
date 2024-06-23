@@ -33,7 +33,7 @@ pub struct FuzzConfig {
 
 impl Default for FuzzConfig {
     fn default() -> Self {
-        FuzzConfig {
+        Self {
             runs: 256,
             max_test_rejects: 65536,
             seed: None,
@@ -48,7 +48,7 @@ impl Default for FuzzConfig {
 impl FuzzConfig {
     /// Creates fuzz configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
     pub fn new(cache_dir: PathBuf) -> Self {
-        FuzzConfig {
+        Self {
             runs: 256,
             max_test_rejects: 65536,
             seed: None,
@@ -115,7 +115,7 @@ pub struct FuzzDictionaryConfig {
 
 impl Default for FuzzDictionaryConfig {
     fn default() -> Self {
-        FuzzDictionaryConfig {
+        Self {
             dictionary_weight: 40,
             include_storage: true,
             include_push_bytes: true,

@@ -19,7 +19,7 @@ use revm::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
         Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, EvmState, EvmStorageSlot,
-        HashMap as Map, Log, ResultAndState, SpecId, TransactTo, KECCAK_EMPTY,
+        HashMap as Map, Log, ResultAndState, SpecId, TxKind, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, JournaledState,
 };
@@ -363,6 +363,7 @@ struct _ObjectSafe(dyn DatabaseExt);
 /// snapshot is created before fork `B` is selected, then fork `A` will be the active fork again
 /// after reverting the snapshot.
 #[derive(Clone, Debug)]
+#[must_use]
 pub struct Backend {
     /// The access point for managing forks
     forks: MultiFork,
@@ -395,14 +396,19 @@ pub struct Backend {
 
 impl Backend {
     /// Creates a new Backend with a spawned multi fork thread.
+    ///
+    /// If `fork` is `Some` this will use a `fork` database, otherwise with an in-memory
+    /// database.
     pub fn spawn(fork: Option<CreateFork>) -> Self {
         Self::new(MultiFork::spawn(), fork)
     }
 
     /// Creates a new instance of `Backend`
     ///
-    /// if `fork` is `Some` this will launch with a `fork` database, otherwise with an in-memory
-    /// database
+    /// If `fork` is `Some` this will use a `fork` database, otherwise with an in-memory
+    /// database.
+    ///
+    /// Prefer using [`spawn`](Self::spawn) instead.
     pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> Self {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
@@ -745,8 +751,8 @@ impl Backend {
         self.set_spec_id(env.handler_cfg.spec_id);
 
         let test_contract = match env.tx.transact_to {
-            TransactTo::Call(to) => to,
-            TransactTo::Create => {
+            TxKind::Call(to) => to,
+            TxKind::Create => {
                 let nonce = self
                     .basic_ref(env.tx.caller)
                     .map(|b| b.unwrap_or_default().nonce)

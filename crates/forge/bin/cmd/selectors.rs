@@ -177,7 +177,7 @@ impl SelectorsSubcommands {
             Self::List { contract, project_paths } => {
                 println!("Listing selectors for contracts in the project...");
                 let build_args = CoreBuildArgs {
-                    project_paths: project_paths.clone(),
+                    project_paths,
                     compiler: CompilerArgs {
                         extra_output: vec![ContractOutputSelection::Abi],
                         ..Default::default()

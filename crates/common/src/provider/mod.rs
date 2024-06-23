@@ -255,7 +255,7 @@ impl ProviderBuilder {
             initial_backoff,
             compute_units_per_second,
         );
-        let transport = RuntimeTransportBuilder::new(url.clone())
+        let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
             .with_jwt(jwt)
@@ -291,7 +291,7 @@ impl ProviderBuilder {
             compute_units_per_second,
         );
 
-        let transport = RuntimeTransportBuilder::new(url.clone())
+        let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
             .with_jwt(jwt)

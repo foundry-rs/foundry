@@ -4,7 +4,7 @@ use foundry_compilers::artifacts::vyper::VyperOptimizationMode;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VyperConfig {
     /// Vyper optimization mode. "gas", "none" or "codesize"
     #[serde(default, skip_serializing_if = "Option::is_none")]

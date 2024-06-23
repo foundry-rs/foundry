@@ -2678,7 +2678,6 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
 }
 
 /// Determines the minimum gas needed for a transaction depending on the transaction kind.
-#[inline]
 fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> u128 {
     match transaction_request_to_typed(request.clone()) {
         Some(request) => match request {
@@ -2739,7 +2738,7 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::OpcodeNotFound |
                 InstructionResult::CallNotAllowedInsideStatic |
                 InstructionResult::StateChangeDuringStaticCall |
-                InstructionResult::InvalidFEOpcode |
+                InstructionResult::InvalidEFOpcode |
                 InstructionResult::InvalidJump |
                 InstructionResult::NotActivated |
                 InstructionResult::StackUnderflow |
@@ -2755,10 +2754,15 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::FatalExternalError |
                 InstructionResult::OutOfFunds |
                 InstructionResult::CallTooDeep => Ok(Self::EvmError(exit)),
+
                 // Handle Revm EOF InstructionResults: Not supported yet
                 InstructionResult::ReturnContractInNotInitEOF |
                 InstructionResult::EOFOpcodeDisabledInLegacy |
-                InstructionResult::EOFFunctionStackOverflow => Ok(Self::EvmError(exit)),
+                InstructionResult::EOFFunctionStackOverflow |
+                InstructionResult::CreateInitCodeStartingEF00 |
+                InstructionResult::InvalidEOFInitCode |
+                InstructionResult::EofAuxDataOverflow |
+                InstructionResult::EofAuxDataTooSmall => Ok(Self::EvmError(exit)),
             },
         }
     }

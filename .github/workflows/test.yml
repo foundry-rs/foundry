@@ -31,9 +31,7 @@ jobs:
       - name: Build documentation
         run: cargo doc --workspace --all-features --no-deps --document-private-items
         env:
-          RUSTDOCFLAGS: --cfg docsrs -D warnings --show-type-layout --generate-link-to-definition -Zunstable-options
-      - name: Doc index page redirection
-        run: echo '<meta http-equiv="refresh" content="1; url=alloy/index.html">' > target/doc/index.html
+          RUSTDOCFLAGS: --cfg docsrs -D warnings --show-type-layout --generate-link-to-definition --enable-index-page -Zunstable-options
       - name: Deploy documentation
         uses: peaceiris/actions-gh-pages@v3
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
