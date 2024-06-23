@@ -33,8 +33,8 @@ use revm::{
         opcode, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
-    primitives::{BlockEnv, CreateScheme},
-    EvmContext, InnerEvmContext, Inspector,
+    primitives::{BlockEnv, CreateScheme, EVMError},
+    EvmContext, InnerEvmContext
 };
 use rustc_hash::FxHashMap;
 use serde_json::Value;

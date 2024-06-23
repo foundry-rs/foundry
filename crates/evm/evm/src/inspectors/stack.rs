@@ -2,7 +2,7 @@ use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Debugger, Fuzzer, LogCollector,
     StackSnapshotType, TracingInspector, TracingInspectorConfig,
 };
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_primitives::{Address, Bytes, Log, TxKind, U256};
 use foundry_cheatcodes::CheatcodesExecutor;
 use foundry_evm_core::{
     backend::{update_state, DatabaseExt},
@@ -21,7 +21,7 @@ use revm::{
         BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult, Output, TransactTo,
     },
     EvmContext, Inspector,
-    DatabaseCommit, EvmContext, Inspector,
+};
 use std::{
     collections::HashMap,
     ops::{Deref, DerefMut},
