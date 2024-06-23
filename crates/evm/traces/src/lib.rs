@@ -92,7 +92,12 @@ pub async fn render_trace_arena(
             let call_left_prefix = left.to_string();
             let call_right_prefix = format!("{child} ");
             trace.lines().enumerate().try_for_each(|(i, line)| {
-                writeln!( s, "{}{}", if i == 0 { &call_left_prefix } else { &call_right_prefix }, line)
+                writeln!(
+                    s,
+                    "{}{}",
+                    if i == 0 { &call_left_prefix } else { &call_right_prefix },
+                    line
+                )
             })?;
 
             // Display logs and subcalls
@@ -203,11 +208,7 @@ pub async fn render_trace(
         };
 
         let color = trace_color(trace);
-        let inputs_padded = if inputs.len() > 0 {
-            format!("\n    {inputs}\n")
-        } else {
-            inputs
-        };
+        let inputs_padded = if !inputs.is_empty() { format!("\n    {inputs}\n") } else { inputs };
         write!(
             &mut s,
             "{addr}::{func_name}{opt_value}({inputs_padded}){action}",
@@ -253,10 +254,11 @@ async fn render_trace_log(
                 .collect::<Vec<String>>()
                 .join(",\n");
 
-            if params.len() > 0 {
-                write!(s, "emit {}(\n{params}\n )", name.clone().cyan())?;
+            let pretty_name = name.cyan();
+            if !params.is_empty() {
+                write!(s, "emit {pretty_name}(\n{params}\n )")?;
             } else {
-                write!(s, "emit {}()", name.clone().cyan())?;
+                write!(s, "emit {pretty_name}()")?;
             }
         }
     }
