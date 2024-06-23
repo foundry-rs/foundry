@@ -54,6 +54,7 @@ impl ListArgs {
             .mnemonic_indexes(Some(vec![0]))
             .trezor(self.trezor || self.all)
             .aws(self.aws || self.all)
+            .gcp(self.gcp || self.all)
             .interactives(0)
             .build()
             .expect("build multi wallet");

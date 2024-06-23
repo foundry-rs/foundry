@@ -242,6 +242,9 @@ impl MultiWalletOpts {
         if let Some(aws_signers) = self.aws_signers().await? {
             signers.extend(aws_signers);
         }
+        if let Some(gcp_signer) = self.gcp_signers().await? {
+            signers.extend(gcp_signer);
+        }
         if let Some((pending_keystores, unlocked)) = self.keystores()? {
             pending.extend(pending_keystores);
             signers.extend(unlocked);
@@ -392,6 +395,34 @@ impl MultiWalletOpts {
                 let aws_signer = WalletSigner::from_aws(key).await?;
                 wallets.push(aws_signer)
             }
+
+            return Ok(Some(wallets));
+        }
+
+        Ok(None)
+    }
+
+    // TODO: Support multiple keys
+    pub async fn gcp_signers(&self) -> Result<Option<Vec<WalletSigner>>> {
+        #[cfg(feature = "gcp-kms")]
+        if self.gcp {
+            let mut wallets = vec![];
+
+            let project_id = std::env::var("GCP_PROJECT_ID")?;
+            let location = std::env::var("GCP_LOCATION")?;
+            let key_ring = std::env::var("GCP_KEY_RING")?;
+            let key_names = std::env::var("GCP_KEY_NAME")?;
+            let key_version = std::env::var("GCP_KEY_VERSION")?;
+
+            let gcp_signer = WalletSigner::from_gcp(
+                project_id,
+                location,
+                key_ring,
+                key_names,
+                key_version.parse()?,
+            )
+            .await?;
+            wallets.push(gcp_signer);
 
             return Ok(Some(wallets));
         }
