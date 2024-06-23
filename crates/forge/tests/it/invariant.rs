@@ -318,7 +318,7 @@ async fn test_shrink_big_sequence() {
     let mut runner = TEST_DATA_DEFAULT.runner();
     runner.test_options.fuzz.seed = Some(U256::from(119u32));
     runner.test_options.invariant.runs = 1;
-    runner.test_options.invariant.depth = 500;
+    runner.test_options.invariant.depth = 1000;
 
     let initial_counterexample = runner
         .test_collect(&filter)
