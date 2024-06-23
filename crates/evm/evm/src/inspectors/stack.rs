@@ -272,9 +272,8 @@ pub struct InnerContextData {
 /// If a call to an inspector returns a value other than [InstructionResult::Continue] (or
 /// equivalent) the remaining inspectors are not called.
 ///
-/// Stack is divided into [Cheatcodes] and [InspectorStackInner]. This is done to allow passing
-/// mutable reference to [InspectorStackInner] into [Cheatcodes] functions to reassemble them into
-/// [InspectorStackRefMut] and allow usage of it as [revm::Inspector].
+/// Stack is divided into [Cheatcodes] and `InspectorStackInner``. This is done to allow assembling
+/// `InspectorStackRefMut` inside [Cheatcodes] to allow usage of it as [revm::Inspector].
 #[derive(Clone, Debug, Default)]
 pub struct InspectorStack {
     pub cheatcodes: Option<Cheatcodes>,
