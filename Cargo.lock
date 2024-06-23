@@ -3961,6 +3961,7 @@ dependencies = [
  "itertools 0.13.0",
  "once_cell",
  "rayon",
+ "revm",
  "revm-inspectors",
  "rustc-hash",
  "serde",

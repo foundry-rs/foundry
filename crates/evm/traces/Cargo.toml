@@ -32,7 +32,7 @@ alloy-primitives = { workspace = true, features = [
 alloy-sol-types.workspace = true
 revm-inspectors.workspace = true
 
-eyre .workspace = true
+eyre.workspace = true
 futures.workspace = true
 hex.workspace = true
 itertools.workspace = true
@@ -45,6 +45,7 @@ rustc-hash.workspace = true
 tempfile.workspace = true
 rayon.workspace = true
 solang-parser.workspace = true
+revm.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

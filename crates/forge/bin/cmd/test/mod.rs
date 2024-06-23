@@ -8,8 +8,9 @@ use forge::{
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
-        identifier::{ContractSources, SignaturesIdentifier},
-        render_trace_arena_with_internals, CallTraceDecoderBuilder, TraceKind,
+        debug::{ContractSources, DebugTraceIdentifier},
+        identifier::SignaturesIdentifier,
+        CallTraceDecoderBuilder, TraceKind,
     },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
@@ -31,7 +32,7 @@ use foundry_config::{
     },
     get_available_profiles, Config,
 };
-use foundry_debugger::{DebugTraceIdentifier, Debugger};
+use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
 use std::{
@@ -348,16 +349,14 @@ impl TestArgs {
             let sources = debug_sources.unwrap();
 
             // Run the debugger.
-            let builder = Debugger::builder()
+            let mut builder = Debugger::builder()
                 .debug_arenas(test_result.debug.as_slice())
-                .identifier(|mut builder| {
-                    if let Some(decoder) = &outcome.last_run_decoder {
-                        builder = builder.decoder(decoder);
-                    }
-
-                    builder.sources(sources)
-                })
+                .sources(sources)
                 .breakpoints(test_result.breakpoints.clone());
+
+            if let Some(decoder) = &outcome.last_run_decoder {
+                builder = builder.decoder(decoder);
+            }
 
             let mut debugger = builder.build();
             debugger.try_run()?;
@@ -427,6 +426,12 @@ impl TestArgs {
                 Config::foundry_cache_dir(),
                 config.offline,
             )?);
+        }
+
+        if self.decode_internal {
+            if let Some(sources) = sources {
+                builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources.clone()));
+            }
         }
         let mut decoder = builder.build();
 
@@ -507,31 +512,7 @@ impl TestArgs {
                     };
 
                     if should_include {
-                        let decoded_internal = if self.decode_internal {
-                            if let Some(sources) = sources {
-                                let decoder = DebugTraceIdentifier::builder()
-                                    .sources(sources.clone())
-                                    .decoder(&decoder)
-                                    .build();
-                                Some(decoder.identify_arena(arena))
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-                        if let Some(decoded_internal) = decoded_internal {
-                            decoded_traces.push(
-                                render_trace_arena_with_internals(
-                                    arena,
-                                    &decoder,
-                                    &decoded_internal,
-                                )
-                                .await?,
-                            );
-                        } else {
-                            decoded_traces.push(render_trace_arena(arena, &decoder).await?);
-                        }
+                        decoded_traces.push(render_trace_arena(arena, &decoder).await?);
                     }
                 }
 

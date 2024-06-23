@@ -32,6 +32,7 @@ use identifier::{LocalTraceIdentifier, TraceIdentifier};
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
+pub mod debug;
 
 use revm_inspectors::tracing::types::TraceMemberOrder;
 pub use revm_inspectors::tracing::{
@@ -81,12 +82,16 @@ const BRANCH: &str = "  ├─ ";
 const CALL: &str = "→ ";
 const RETURN: &str = "← ";
 
-pub async fn render_trace_arena_with_internals<'a>(
+/// Render a collection of call traces.
+///
+/// The traces will be decoded using the given decoder, if possible.
+pub async fn render_trace_arena(
     arena: &CallTraceArena,
     decoder: &CallTraceDecoder,
-    identified_internals: &'a [Vec<DecodedTraceStep>],
 ) -> Result<String, std::fmt::Error> {
     decoder.prefetch_signatures(arena.nodes()).await;
+
+    let identified_internals = &decoder.identify_arena_steps(arena);
 
     fn render_items<'a>(
         arena: &'a [CallTraceNode],
@@ -219,21 +224,6 @@ pub async fn render_trace_arena_with_internals<'a>(
     let mut s = String::new();
     inner(arena.nodes(), decoder, identified_internals, &mut s, 0, "  ", "  ").await?;
     Ok(s)
-}
-
-/// Render a collection of call traces.
-///
-/// The traces will be decoded using the given decoder, if possible.
-pub async fn render_trace_arena(
-    arena: &CallTraceArena,
-    decoder: &CallTraceDecoder,
-) -> Result<String, std::fmt::Error> {
-    render_trace_arena_with_internals(
-        arena,
-        decoder,
-        &std::iter::repeat(Vec::new()).take(arena.nodes().len()).collect::<Vec<_>>(),
-    )
-    .await
 }
 
 /// Render a call trace.

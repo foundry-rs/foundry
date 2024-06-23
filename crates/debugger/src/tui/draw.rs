@@ -4,7 +4,7 @@ use super::context::{BufferKind, DebuggerContext};
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
-use foundry_evm_traces::identifier::SourceData;
+use foundry_evm_traces::debug::SourceData;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -342,11 +342,19 @@ impl DebuggerContext<'_> {
 
     /// Returns source map, source code and source name of the current line.
     fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
-        let Some(contract_name) = self.identified_contracts.get(address) else {
+        let address = self.address();
+        let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
         };
 
-        
+        self.debugger
+            .contracts_sources
+            .find_source_mapping(
+                contract_name,
+                self.current_step().pc,
+                self.debug_call().kind.is_any_create(),
+            )
+            .ok_or_else(|| format!("No source map for contract {contract_name}"))
     }
 
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {

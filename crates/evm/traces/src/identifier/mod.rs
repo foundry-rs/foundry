@@ -14,9 +14,6 @@ pub use etherscan::EtherscanIdentifier;
 mod signatures;
 pub use signatures::{SignaturesIdentifier, SingleSignaturesIdentifier};
 
-mod sources;
-pub use sources::{ContractSources, SourceData};
-
 /// An address identity
 pub struct AddressIdentity<'a> {
     /// The address this identity belongs to

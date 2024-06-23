@@ -493,10 +493,8 @@ impl PreSimulationState {
     pub fn run_debugger(&self) -> Result<()> {
         let mut debugger = Debugger::builder()
             .debug_arenas(self.execution_result.debug.as_deref().unwrap_or_default())
-            .identifier(|b| {
-                b.decoder(&self.execution_artifacts.decoder)
-                    .sources(self.build_data.sources.clone())
-            })
+            .decoder(&self.execution_artifacts.decoder)
+            .sources(self.build_data.sources.clone())
             .breakpoints(self.execution_result.breakpoints.clone())
             .build();
         debugger.try_run()?;

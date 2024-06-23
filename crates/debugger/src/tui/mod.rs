@@ -1,6 +1,6 @@
 //! The TUI implementation.
 
-use crate::DebugTraceIdentifier;
+use alloy_primitives::Address;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
@@ -9,11 +9,13 @@ use crossterm::{
 use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_evm_core::debug::DebugNodeFlat;
+use foundry_evm_traces::debug::ContractSources;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
 };
 use std::{
+    collections::HashMap,
     io,
     ops::ControlFlow,
     sync::{mpsc, Arc},
@@ -41,7 +43,9 @@ pub enum ExitReason {
 /// The TUI debugger.
 pub struct Debugger {
     debug_arena: Vec<DebugNodeFlat>,
-    identifier: DebugTraceIdentifier,
+    identified_contracts: HashMap<Address, String>,
+    /// Source map of contract sources
+    contracts_sources: ContractSources,
     breakpoints: Breakpoints,
 }
 
@@ -55,10 +59,11 @@ impl Debugger {
     /// Creates a new debugger.
     pub fn new(
         debug_arena: Vec<DebugNodeFlat>,
-        identifier: DebugTraceIdentifier,
+        identified_contracts: HashMap<Address, String>,
+        contracts_sources: ContractSources,
         breakpoints: Breakpoints,
     ) -> Self {
-        Self { debug_arena, identifier, breakpoints }
+        Self { debug_arena, identified_contracts, contracts_sources, breakpoints }
     }
 
     /// Starts the debugger TUI. Terminates the current process on failure or user exit.

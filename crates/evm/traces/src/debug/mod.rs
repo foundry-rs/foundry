@@ -1,49 +1,29 @@
-use alloy_primitives::Address;
-use foundry_common::get_contract_name;
-use foundry_compilers::{
-    artifacts::sourcemap::{Jump, SourceElement},
-    multi::MultiCompilerLanguage,
-};
-use foundry_evm_traces::{
-    identifier::{ContractSources, SourceData},
-    CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedTraceStep,
-};
-use revm::interpreter::OpCode;
-use std::collections::HashMap;
+mod sources;
+pub use sources::{ArtifactData, ContractSources, SourceData};
 
+use crate::{CallTraceNode, DecodedTraceStep};
+use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement};
+use revm::interpreter::OpCode;
+
+#[derive(Clone, Debug)]
 pub struct DebugTraceIdentifier {
-    /// Mapping of contract address to identified contract name.
-    identified_contracts: HashMap<Address, String>,
     /// Source map of contract sources
     contracts_sources: ContractSources,
 }
 
 impl DebugTraceIdentifier {
-    pub fn builder() -> DebugTraceIdentifierBuilder {
-        DebugTraceIdentifierBuilder::default()
+    pub fn new(contracts_sources: ContractSources) -> Self {
+        Self { contracts_sources }
     }
 
-    pub fn new(
-        identified_contracts: HashMap<Address, String>,
-        contracts_sources: ContractSources,
-    ) -> Self {
-        Self { identified_contracts, contracts_sources }
-    }
-
-    pub fn identify(
+    /// Identifies internal function invocations in a given [CallTraceNode].
+    ///
+    /// Accepts the node itself and identified name of the contract which node corresponds to.
+    pub fn identify_node_steps(
         &self,
-        address: &Address,
-        pc: usize,
-        init_code: bool,
-    ) -> core::result::Result<(SourceElement, &SourceData), String> {
-        
-    }
-
-    pub fn identify_arena(&self, arena: &CallTraceArena) -> Vec<Vec<DecodedTraceStep>> {
-        arena.nodes().iter().map(move |node| self.identify_node_steps(node)).collect()
-    }
-
-    pub fn identify_node_steps(&self, node: &CallTraceNode) -> Vec<DecodedTraceStep> {
+        node: &CallTraceNode,
+        contract_name: &str,
+    ) -> Vec<DecodedTraceStep> {
         let mut stack = Vec::new();
         let mut identified = Vec::new();
 
@@ -56,20 +36,22 @@ impl DebugTraceIdentifier {
         let mut prev_step = None;
         for (step_idx, step) in node.trace.steps.iter().enumerate() {
             // We are only interested in JUMPs.
-            if step.op != OpCode::JUMP && step.op != OpCode::JUMPI && step.op != OpCode::JUMPDEST {
+            if step.op != OpCode::JUMP && step.op != OpCode::JUMPDEST {
                 prev_step = None;
                 continue;
             }
 
             // Resolve source map if possible.
-            let Ok((source_element, source)) =
-                self.identify(&node.trace.address, step.pc, node.trace.kind.is_any_create())
-            else {
+            let Some((source_element, source)) = self.contracts_sources.find_source_mapping(
+                contract_name,
+                step.pc,
+                node.trace.kind.is_any_create(),
+            ) else {
                 prev_step = None;
                 continue;
             };
 
-            let Some((prev_source_element, prev_source)) = prev_step else {
+            let Some((prev_source_element, _)) = prev_step else {
                 prev_step = Some((source_element, source));
                 continue;
             };
@@ -134,58 +116,6 @@ impl DebugTraceIdentifier {
         identified.sort_by_key(|i| i.start_step_idx);
 
         identified
-    }
-}
-
-/// [DebugTraceIdentifier] builder
-#[derive(Debug, Default)]
-#[must_use = "builders do nothing unless you call `build` on them"]
-pub struct DebugTraceIdentifierBuilder {
-    /// Identified contracts.
-    identified_contracts: HashMap<Address, String>,
-    /// Map of source files.
-    sources: ContractSources,
-}
-
-impl DebugTraceIdentifierBuilder {
-    /// Extends the identified contracts from multiple decoders.
-    #[inline]
-    pub fn decoders(mut self, decoders: &[CallTraceDecoder]) -> Self {
-        for decoder in decoders {
-            self = self.decoder(decoder);
-        }
-        self
-    }
-
-    /// Extends the identified contracts from a decoder.
-    #[inline]
-    pub fn decoder(self, decoder: &CallTraceDecoder) -> Self {
-        let c = decoder.contracts.iter().map(|(k, v)| (*k, get_contract_name(v).to_string()));
-        self.identified_contracts(c)
-    }
-
-    /// Extends the identified contracts.
-    #[inline]
-    pub fn identified_contracts(
-        mut self,
-        identified_contracts: impl IntoIterator<Item = (Address, String)>,
-    ) -> Self {
-        self.identified_contracts.extend(identified_contracts);
-        self
-    }
-
-    /// Sets the sources for the debugger.
-    #[inline]
-    pub fn sources(mut self, sources: ContractSources) -> Self {
-        self.sources = sources;
-        self
-    }
-
-    /// Builds the [DebugTraceIdentifier].
-    #[inline]
-    pub fn build(self) -> DebugTraceIdentifier {
-        let Self { identified_contracts, sources } = self;
-        DebugTraceIdentifier::new(identified_contracts, sources)
     }
 }
 
