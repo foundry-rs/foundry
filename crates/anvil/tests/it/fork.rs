@@ -1228,4 +1228,66 @@ async fn test_arbitrum_fork_transaction_hash() {
     api.mine_one().await;
     let block_number = api.block_number().unwrap().to::<u64>();
     assert_eq!(block_number, 224480117);
+
+    let block = api.block_by_number(BlockNumberOrTag::Number(224480116)).await.unwrap().unwrap();
+    assert_eq!(block.transactions.len(), 7);
+
+    // Validate the transactions preceding the target transaction exist
+    for expected_transactions in [
+        (
+            "0x0274d0c749cd9ef41103370ef46b20861aa43317aebcdc443f160d21a7895c90",
+            address!("00000000000000000000000000000000000a4b05"),
+        ),
+        (
+            "0xefe97eab0ef16ca12d9ebabe713a26670f7990a0d1653a28f218daf81a5bc9aa",
+            address!("e4edb277e41dc89ab076a1f049f4a3efa700bce8"),
+        ),
+        (
+            "0x53382f62959eb7907579cbdf5d3732a2eb0d2f9f597b1f0091ab7f3c31490d5c",
+            address!("f4cbc579caa87b4b6fc708497907cd053e5abb77"),
+        ),
+        (hash.to_string().as_str(), address!("31f9400360b89d96f63528db9d0446302ae64e71")),
+    ] {
+        let tx = api
+            .transaction_by_hash(TxHash::from_str(expected_transactions.0).unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(tx.inner.to.unwrap(), expected_transactions.1);
+    }
+
+    // Validate the transactions following the target transaction don't exist
+    for unexpected_transactions in [
+        "0x51359942287f3bce13aa97543f0f4ade59ce7321f56984da6868367375e51513",
+        "0x545c18ea749f22289fff75cb5e1cd948c8734c279bb7fbcbe84cb545a70bb991",
+    ] {
+        let tx = api
+            .transaction_by_hash(TxHash::from_str(unexpected_transactions).unwrap())
+            .await
+            .unwrap();
+        assert!(tx.is_none());
+    }
+    //let block = api.block_by_number(BlockNumberOrTag::Number(224480117)).await.unwrap().unwrap();
+    //assert_eq!(block.transactions.len(), 4);
+
+    // Validate the order of transactions in the new block
+    for test in [
+        ("0x0274d0c749cd9ef41103370ef46b20861aa43317aebcdc443f160d21a7895c90", 0),
+        ("0xefe97eab0ef16ca12d9ebabe713a26670f7990a0d1653a28f218daf81a5bc9aa", 1),
+        ("0x53382f62959eb7907579cbdf5d3732a2eb0d2f9f597b1f0091ab7f3c31490d5c", 2),
+        ("0x81ab9783151741b03b304f1874063da4f3263d0127c90ba500914d75e46b9c51", 3),
+    ] {
+        println!("Checking transaction: {:?}", test.0);
+        let tx = api
+            //.transaction_by_block_number_and_index(BlockNumberOrTag::Latest, test.1.into())
+            .transaction_by_block_number_and_index(
+                BlockNumberOrTag::Number(224480116),
+                test.1.into(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let tx_hash = TxHash::from_str(test.0).unwrap();
+        assert_eq!(tx.hash, tx_hash);
+    }
 }

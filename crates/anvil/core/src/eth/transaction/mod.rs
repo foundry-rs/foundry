@@ -895,7 +895,7 @@ impl TypedTransaction {
 
 impl From<alloy_rpc_types::Transaction> for TypedTransaction {
     fn from(transaction: alloy_rpc_types::Transaction) -> Self {
-        // TODO(serge): Implement or delete based on feedback
+        // TODO(serge): Implement or delete based on feedback. Below is a hack
         let legacy = TxLegacy {
             nonce: transaction.nonce,
             gas_price: transaction.gas_price.unwrap(),
