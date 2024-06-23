@@ -145,7 +145,7 @@ impl ScriptRunner {
 
         // Optionally call the `setUp` function
         let (success, gas_used, labeled_addresses, transactions, debug) = if !setup {
-            self.executor.backend.set_test_contract(address);
+            self.executor.backend_mut().set_test_contract(address);
             (
                 true,
                 0,
@@ -343,15 +343,15 @@ impl ScriptRunner {
     ) -> Result<u64> {
         let mut gas_used = res.gas_used;
         if matches!(res.exit_reason, return_ok!()) {
-            // store the current gas limit and reset it later
-            let init_gas_limit = self.executor.env.tx.gas_limit;
+            // Store the current gas limit and reset it later.
+            let init_gas_limit = self.executor.env().tx.gas_limit;
 
             let mut highest_gas_limit = gas_used * 3;
             let mut lowest_gas_limit = gas_used;
             let mut last_highest_gas_limit = highest_gas_limit;
             while (highest_gas_limit - lowest_gas_limit) > 1 {
                 let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
-                self.executor.env.tx.gas_limit = mid_gas_limit;
+                self.executor.env_mut().tx.gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
                 match res.exit_reason {
                     InstructionResult::Revert |
@@ -376,8 +376,8 @@ impl ScriptRunner {
                     }
                 }
             }
-            // reset gas limit in the
-            self.executor.env.tx.gas_limit = init_gas_limit;
+            // Reset gas limit in the executor.
+            self.executor.env_mut().tx.gas_limit = init_gas_limit;
         }
         Ok(gas_used)
     }

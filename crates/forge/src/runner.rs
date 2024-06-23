@@ -333,7 +333,8 @@ impl<'a> ContractRunner<'a> {
 
         // Invariant testing requires tracing to figure out what contracts were created.
         let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
-        let tmp_tracing = self.executor.inspector.tracer.is_none() && has_invariants && call_setup;
+        let tmp_tracing =
+            self.executor.inspector().tracer.is_none() && has_invariants && call_setup;
         if tmp_tracing {
             self.executor.set_tracing(true);
         }
@@ -671,12 +672,11 @@ impl<'a> ContractRunner<'a> {
             return test_result.single_skip()
         }
 
-        // if should debug
         if self.debug {
             let mut debug_executor = self.executor.clone();
             // turn the debug traces on
-            debug_executor.inspector.enable_debugger(true);
-            debug_executor.inspector.tracing(true);
+            debug_executor.inspector_mut().enable_debugger(true);
+            debug_executor.inspector_mut().tracing(true);
             let calldata = if let Some(counterexample) = result.counterexample.as_ref() {
                 match counterexample {
                     CounterExample::Single(ce) => ce.calldata.clone(),
