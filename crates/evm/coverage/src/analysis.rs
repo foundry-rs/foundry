@@ -493,7 +493,7 @@ impl<'a> SourceAnalyzer<'a> {
 
                     let is_test = items.iter().any(|item| {
                         if let CoverageItemKind::Function { name } = &item.kind {
-                            name.is_test()
+                            name.is_any_test()
                         } else {
                             false
                         }
