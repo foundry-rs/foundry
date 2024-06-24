@@ -52,8 +52,9 @@ pub const LIBRARY_DEPLOYER: Address = address!("1F95D37F27EA0dEA9C252FC09D5A6eaA
 /// A type that executes all tests of a contract
 #[derive(Clone, Debug)]
 pub struct ContractRunner<'a> {
+    /// The name of the contract.
     pub name: &'a str,
-    /// The data of the contract being ran.
+    /// The data of the contract.
     pub contract: &'a TestContract,
     /// The libraries that need to be deployed before the contract.
     pub libs_to_deploy: &'a Vec<Bytes>,
@@ -61,41 +62,18 @@ pub struct ContractRunner<'a> {
     pub executor: Executor,
     /// Revert decoder. Contains all known errors.
     pub revert_decoder: &'a RevertDecoder,
-    /// The initial balance of the test contract
+    /// The initial balance of the test contract.
     pub initial_balance: U256,
-    /// The address which will be used as the `from` field in all EVM calls
+    /// The address which will be used as the `from` field in all EVM calls.
     pub sender: Address,
-    /// Should generate debug traces
+    /// Whether debug traces should be generated.
     pub debug: bool,
     /// Overall test run progress.
-    progress: Option<&'a TestsProgress>,
-}
-
-impl<'a> ContractRunner<'a> {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        name: &'a str,
-        executor: Executor,
-        contract: &'a TestContract,
-        libs_to_deploy: &'a Vec<Bytes>,
-        initial_balance: U256,
-        sender: Option<Address>,
-        revert_decoder: &'a RevertDecoder,
-        debug: bool,
-        progress: Option<&'a TestsProgress>,
-    ) -> Self {
-        Self {
-            name,
-            executor,
-            contract,
-            libs_to_deploy,
-            initial_balance,
-            sender: sender.unwrap_or_default(),
-            revert_decoder,
-            debug,
-            progress,
-        }
-    }
+    pub progress: Option<&'a TestsProgress>,
+    /// The handle to the tokio runtime.
+    pub tokio_handle: &'a tokio::runtime::Handle,
+    /// The span of the contract.
+    pub span: tracing::Span,
 }
 
 impl<'a> ContractRunner<'a> {
@@ -276,7 +254,6 @@ impl<'a> ContractRunner<'a> {
         filter: &dyn TestFilter,
         test_options: &TestOptions,
         known_contracts: ContractsByArtifact,
-        handle: &tokio::runtime::Handle,
     ) -> SuiteResult {
         let start = Instant::now();
         let mut warnings = Vec::new();
@@ -377,7 +354,13 @@ impl<'a> ContractRunner<'a> {
             .map(|&func| {
                 let start = Instant::now();
 
-                let _guard = handle.enter();
+                let _guard = self.tokio_handle.enter();
+
+                let _guard;
+                let current_span = tracing::Span::current();
+                if current_span.is_none() || current_span.id() != self.span.id() {
+                    _guard = self.span.enter();
+                }
 
                 let sig = func.signature();
                 let kind = func.test_function_kind();
@@ -385,7 +368,7 @@ impl<'a> ContractRunner<'a> {
                 let _guard = debug_span!(
                     "test",
                     %kind,
-                    name = if enabled!(tracing::Level::TRACE) { &sig } else { &func.name },
+                    name = %if enabled!(tracing::Level::TRACE) { &sig } else { &func.name },
                 )
                 .entered();
 
