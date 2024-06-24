@@ -443,12 +443,9 @@ pub async fn print_traces_as_json(
     decoder: &CallTraceDecoder,
     output: &str,
 ) -> Result<()> {
-    if result.traces.is_empty() {
-        panic!("No traces found")
-    }
-
+    let traces = result.traces.as_ref().expect("No traces found");
     let mut jsonl = Vec::new();
-    for (_, arena) in &result.traces {
+    for (_, arena) in traces {
         jsonl.append(&mut render_trace_arena_as_json(arena, decoder).await?);
     }
 

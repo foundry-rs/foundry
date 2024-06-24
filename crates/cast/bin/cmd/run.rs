@@ -6,7 +6,7 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::RpcOpts,
-    utils::{handle_traces, init_progress, TraceResult},
+    utils::{handle_traces, handle_traces_helper, init_progress, TraceResult},
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;

@@ -191,7 +191,7 @@ pub async fn render_trace_arena_as_json(
             // Display logs and subcalls
             for child in &node.ordering {
                 match child {
-                    LogCallOrder::Log(index) => {
+                    TraceMemberOrder::Log(index) => {
                         let event = &node.logs[*index];
                         let decoded_log = match decoder.decode_event(event).await {
                             DecodedCallLog::Decoded(name, params) => Some(json!({
@@ -206,13 +206,15 @@ pub async fn render_trace_arena_as_json(
                                 "kind": "event",
                                 "decoded": decoded_log,
                                 "raw": event,
+                                "depth": trace.depth,
                             }
                         );
                         s.push(serde_json::to_string(&event_json).unwrap());
                     }
-                    LogCallOrder::Call(index) => {
+                    TraceMemberOrder::Call(index) => {
                         inner(arena, decoder, s, node.children[*index]).await?;
                     }
+                    TraceMemberOrder::Step(_) => {}
                 }
             }
 

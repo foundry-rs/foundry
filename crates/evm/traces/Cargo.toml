@@ -37,6 +37,7 @@ hex.workspace = true
 itertools.workspace = true
 once_cell.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
 yansi.workspace = true
