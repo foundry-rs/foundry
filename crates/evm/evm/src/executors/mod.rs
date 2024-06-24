@@ -538,14 +538,15 @@ impl Executor {
         // Check if the bytecode of the contract we're about to call contains the `DSTest::failed`
         // function. If it doesn't, the call would fail and we would just be wasting time.
         {
-            let mut account = state_changeset.get(&address).map(|acc| acc.info.code.as_ref());
-            let tmp;
-            if account.is_none() {
-                let Ok(acc) = self.backend().basic_ref(address) else { return false };
-                tmp = acc.map(|acc| acc.code);
-                account = tmp.as_ref().map(Option::as_ref);
-            }
-            let Some(code) = account else { return true };
+            let code = match state_changeset.get(&address) {
+                Some(account) => account.info.code.as_ref().map(Cow::Borrowed),
+                None => match self.backend().basic_ref(address) {
+                    Ok(Some(acc)) => acc.code.map(Cow::Owned),
+                    // No account exists at address.
+                    Ok(None) => return true,
+                    Err(_) => return false,
+                },
+            };
             if let Some(code) = code {
                 let code = &code.bytecode()[..];
                 // Check only the first 1024 bytes of the code, as that's where the function
