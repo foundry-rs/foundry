@@ -97,12 +97,12 @@ impl DebugTraceIdentifier {
                             node.trace.steps[step_idx].gas_remaining as i64;
 
                         let inputs = maybe_function.as_ref().and_then(|f| {
-                            try_decode_args_from_step(&f, true, &node.trace.steps[start_idx + 1])
+                            try_decode_args_from_step(f, true, &node.trace.steps[start_idx + 1])
                         });
 
                         let outputs = maybe_function
                             .as_ref()
-                            .and_then(|f| try_decode_args_from_step(&f, false, &step));
+                            .and_then(|f| try_decode_args_from_step(f, false, step));
 
                         identified.push(DecodedTraceStep {
                             start_step_idx: start_idx,
@@ -199,7 +199,7 @@ fn try_decode_args_from_step(
 ) -> Option<Vec<String>> {
     let params = if input { &func.inputs } else { &func.outputs };
 
-    if params.len() == 0 {
+    if params.is_empty() {
         return Some(vec![]);
     }
 
@@ -227,14 +227,14 @@ fn try_decode_args_from_step(
                 // read `bytes` and `string` from memory
                 DynSolType::Bytes | DynSolType::String => {
                     let memory_offset = input.to::<usize>();
-                    if step.memory.len() < memory_offset as usize {
+                    if step.memory.len() < memory_offset {
                         None
                     } else {
                         let length = &step.memory.as_bytes()[memory_offset..memory_offset + 32];
                         let length =
                             U256::from_be_bytes::<32>(length.try_into().unwrap()).to::<usize>();
                         let data = &step.memory.as_bytes()
-                            [memory_offset + 32..memory_offset + 32 + length as usize];
+                            [memory_offset + 32..memory_offset + 32 + length];
 
                         match type_ {
                             DynSolType::Bytes => Some(DynSolValue::Bytes(data.to_vec())),
