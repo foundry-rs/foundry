@@ -68,53 +68,17 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         self.apply(ccx.state)
     }
-
-    #[inline]
-    fn apply_traced<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let _span = trace_span_and_call(self);
-        let result = self.apply_full(ccx);
-        trace_return(&result);
-        return result;
-
-        // Separate and non-generic functions to avoid inline and monomorphization bloat.
-        #[inline(never)]
-        fn trace_span_and_call(cheat: &dyn DynCheatcode) -> tracing::span::EnteredSpan {
-            let span = debug_span!(target: "cheatcodes", "apply");
-            if !span.is_disabled() {
-                if enabled!(tracing::Level::TRACE) {
-                    span.record("cheat", tracing::field::debug(cheat.as_debug()));
-                } else {
-                    span.record("id", cheat.cheatcode().func.id);
-                }
-            }
-            let entered = span.entered();
-            trace!(target: "cheatcodes", "applying");
-            entered
-        }
-
-        #[inline(never)]
-        fn trace_return(result: &Result) {
-            trace!(
-                target: "cheatcodes",
-                return = match result {
-                    Ok(b) => hex::encode(b),
-                    Err(e) => e.to_string(),
-                }
-            );
-        }
-    }
 }
 
 pub(crate) trait DynCheatcode {
-    fn cheatcode(&self) -> &'static foundry_cheatcodes_spec::Cheatcode<'static>;
+    fn id(&self) -> &'static str;
     fn as_debug(&self) -> &dyn std::fmt::Debug;
 }
 
 impl<T: Cheatcode> DynCheatcode for T {
-    fn cheatcode(&self) -> &'static foundry_cheatcodes_spec::Cheatcode<'static> {
-        T::CHEATCODE
+    fn id(&self) -> &'static str {
+        T::CHEATCODE.func.id
     }
-
     fn as_debug(&self) -> &dyn std::fmt::Debug {
         self
     }
