@@ -1,5 +1,5 @@
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{Address, Signature, B256};
+use alloy_primitives::{hex, Address, Signature, B256};
 use alloy_signer::Signer;
 use alloy_signer_local::{
     coins_bip39::{English, Entropy, Mnemonic},

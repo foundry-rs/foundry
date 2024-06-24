@@ -31,9 +31,8 @@ alloy-primitives = { workspace = true, features = [
 alloy-sol-types.workspace = true
 revm-inspectors.workspace = true
 
-eyre .workspace = true
+eyre.workspace = true
 futures.workspace = true
-hex.workspace = true
 itertools.workspace = true
 once_cell.workspace = true
 serde.workspace = true

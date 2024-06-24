@@ -1922,7 +1922,6 @@ dependencies = [
  "clap_complete",
  "clap_complete_fig",
  "comfy-table",
- "const-hex",
  "criterion",
  "dunce",
  "evm-disassembler",
@@ -3316,7 +3315,6 @@ dependencies = [
  "clap_complete",
  "clap_complete_fig",
  "comfy-table",
- "const-hex",
  "criterion",
  "dialoguer",
  "dunce",
@@ -3436,7 +3434,6 @@ dependencies = [
  "alloy-transport",
  "async-recursion",
  "clap",
- "const-hex",
  "dialoguer",
  "dunce",
  "eyre",
@@ -3489,7 +3486,6 @@ dependencies = [
  "alloy-rpc-types",
  "async-trait",
  "clap",
- "const-hex",
  "eyre",
  "foundry-block-explorers",
  "foundry-cli",
@@ -3554,7 +3550,6 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-types",
  "base64 0.22.1",
- "const-hex",
  "dialoguer",
  "eyre",
  "foundry-cheatcodes-spec",
@@ -3602,7 +3597,6 @@ dependencies = [
  "alloy-transport",
  "clap",
  "color-eyre",
- "const-hex",
  "dotenvy",
  "eyre",
  "forge-fmt",
@@ -3631,7 +3625,6 @@ dependencies = [
 name = "foundry-common"
 version = "0.2.0"
 dependencies = [
- "alloy-consensus",
  "alloy-contract",
  "alloy-dyn-abi",
  "alloy-json-abi",
@@ -3648,12 +3641,12 @@ dependencies = [
  "alloy-transport-ipc",
  "alloy-transport-ws",
  "async-trait",
- "chrono",
  "clap",
  "comfy-table",
  "dunce",
  "eyre",
  "foundry-block-explorers",
+ "foundry-common-fmt",
  "foundry-compilers",
  "foundry-config",
  "foundry-linking",
@@ -3672,6 +3665,23 @@ dependencies = [
  "tracing",
  "url",
  "walkdir",
+ "yansi",
+]
+
+[[package]]
+name = "foundry-common-fmt"
+version = "0.2.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-dyn-abi",
+ "alloy-primitives",
+ "alloy-rpc-types",
+ "alloy-serde",
+ "chrono",
+ "foundry-macros",
+ "serde",
+ "serde_json",
+ "similar-asserts",
  "yansi",
 ]
 
@@ -3863,6 +3873,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-evm-abi"
+version = "0.2.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "derive_more",
+ "foundry-common-fmt",
+ "foundry-macros",
+ "foundry-test-utils",
+ "itertools 0.13.0",
+ "once_cell",
+ "rustc-hash 2.0.0",
+]
+
+[[package]]
 name = "foundry-evm-core"
 version = "0.2.0"
 dependencies = [
@@ -3877,17 +3902,14 @@ dependencies = [
  "alloy-transport",
  "arrayvec",
  "auto_impl",
- "const-hex",
- "derive_more",
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",
  "foundry-config",
- "foundry-macros",
+ "foundry-evm-abi",
  "foundry-test-utils",
  "futures",
  "itertools 0.13.0",
- "once_cell",
  "parking_lot",
  "revm",
  "revm-inspectors",
@@ -3950,7 +3972,6 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-sol-types",
- "const-hex",
  "eyre",
  "foundry-block-explorers",
  "foundry-common",
@@ -4030,7 +4051,6 @@ dependencies = [
  "aws-config",
  "aws-sdk-kms",
  "clap",
- "const-hex",
  "derive_builder",
  "eyre",
  "foundry-config",

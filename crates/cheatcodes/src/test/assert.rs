@@ -1,10 +1,8 @@
-use std::fmt::{Debug, Display};
-
-use alloy_primitives::{I256, U256};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
+use alloy_primitives::{hex, I256, U256};
 use foundry_evm_core::abi::{format_units_int, format_units_uint};
 use itertools::Itertools;
-
-use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
+use std::fmt::{Debug, Display};
 
 const EQ_REL_DELTA_RESOLUTION: U256 = U256::from_limbs([18, 0, 0, 0]);
 

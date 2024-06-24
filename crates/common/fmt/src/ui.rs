@@ -1,8 +1,7 @@
 //! Helper trait and functions to format Ethereum types.
 
-use crate::TransactionReceiptWithRevertReason;
-use alloy_consensus::{AnyReceiptEnvelope, Receipt, ReceiptWithBloom, TxType};
-use alloy_primitives::*;
+use alloy_consensus::{AnyReceiptEnvelope, Eip658Value, Receipt, ReceiptWithBloom, TxType};
+use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, B256, I256, U256, U64};
 use alloy_rpc_types::{
     AnyTransactionReceipt, Block, BlockTransactions, Log, Transaction, TransactionReceipt,
 };
@@ -17,7 +16,7 @@ const NAME_COLUMN_LEN: usize = 20usize;
 /// # Examples
 ///
 /// ```
-/// use foundry_common::fmt::UIfmt;
+/// use foundry_common_fmt::UIfmt;
 ///
 /// let boolean: bool = true;
 /// let string = boolean.pretty();
@@ -147,8 +146,13 @@ impl UIfmt for [u8] {
     }
 }
 
-pub fn pretty_status(status: bool) -> String {
-    if status { "1 (success)" } else { "0 (failed)" }.to_string()
+impl UIfmt for Eip658Value {
+    fn pretty(&self) -> String {
+        match self {
+            Self::Eip658(status) => if *status { "1 (success)" } else { "0 (failed)" }.to_string(),
+            Self::PostState(state) => state.pretty(),
+        }
+    }
 }
 
 impl UIfmt for AnyTransactionReceipt {
@@ -209,7 +213,7 @@ blobGasUsed             {}",
             serde_json::to_string(&logs).unwrap(),
             logs_bloom.pretty(),
             state_root.pretty(),
-            pretty_status(status.coerce_status()),
+            status.pretty(),
             transaction_hash.pretty(),
             transaction_index.pretty(),
             transaction_type,
@@ -333,21 +337,6 @@ value                {}{}",
     }
 }
 
-impl UIfmt for TransactionReceiptWithRevertReason {
-    fn pretty(&self) -> String {
-        if let Some(revert_reason) = &self.revert_reason {
-            format!(
-                "{}
-revertReason            {}",
-                self.receipt.pretty(),
-                revert_reason
-            )
-        } else {
-            self.receipt.pretty()
-        }
-    }
-}
-
 /// Various numerical ethereum types used for pretty printing
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
@@ -401,38 +390,6 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
             }
             None
         }
-    }
-}
-
-/// Returns the `UiFmt::pretty()` formatted attribute of the transaction receipt
-pub fn get_pretty_tx_receipt_attr(
-    receipt: &TransactionReceiptWithRevertReason,
-    attr: &str,
-) -> Option<String> {
-    match attr {
-        "blockHash" | "block_hash" => Some(receipt.receipt.block_hash.pretty()),
-        "blockNumber" | "block_number" => Some(receipt.receipt.block_number.pretty()),
-        "contractAddress" | "contract_address" => Some(receipt.receipt.contract_address.pretty()),
-        "cumulativeGasUsed" | "cumulative_gas_used" => {
-            Some(receipt.receipt.inner.inner.inner.receipt.cumulative_gas_used.pretty())
-        }
-        "effectiveGasPrice" | "effective_gas_price" => {
-            Some(receipt.receipt.effective_gas_price.to_string())
-        }
-        "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.to_string()),
-        "logs" => Some(receipt.receipt.inner.inner.inner.receipt.logs.as_slice().pretty()),
-        "logsBloom" | "logs_bloom" => Some(receipt.receipt.inner.inner.inner.logs_bloom.pretty()),
-        "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root.pretty()),
-        "status" | "statusCode" | "status_code" => {
-            Some(pretty_status(receipt.receipt.inner.inner.inner.receipt.status.coerce_status()))
-        }
-        "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
-        "transactionIndex" | "transaction_index" => {
-            Some(receipt.receipt.transaction_index.pretty())
-        }
-        "type" | "transaction_type" => Some(receipt.receipt.inner.inner.r#type.to_string()),
-        "revertReason" | "revert_reason" => Some(receipt.revert_reason.pretty()),
-        _ => None,
     }
 }
 

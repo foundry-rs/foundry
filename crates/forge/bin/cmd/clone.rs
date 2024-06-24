@@ -611,9 +611,9 @@ impl EtherscanClient for Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::hex;
     use foundry_compilers::Artifact;
     use foundry_test_utils::rpc::next_etherscan_api_key;
-    use hex::ToHex;
     use std::collections::BTreeMap;
 
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
@@ -631,9 +631,9 @@ mod tests {
                 if name == contract_name {
                     let compiled_creation_code =
                         contract.get_bytecode_object().expect("creation code not found");
-                    let compiled_creation_code: String = compiled_creation_code.encode_hex();
                     assert!(
-                        compiled_creation_code.starts_with(stripped_creation_code),
+                        hex::encode(compiled_creation_code.as_ref())
+                            .starts_with(stripped_creation_code),
                         "inconsistent creation code"
                     );
                 }

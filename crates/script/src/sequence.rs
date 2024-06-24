@@ -3,7 +3,7 @@ use crate::{
     transaction::{AdditionalContract, TransactionWithMetadata},
     verify::VerifyBundle,
 };
-use alloy_primitives::{Address, TxHash};
+use alloy_primitives::{hex, Address, TxHash};
 use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use eyre::{ContextCompat, Result, WrapErr};
