@@ -8,7 +8,7 @@ use crate::{
     InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{b256, keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, uint, Address, B256, U256};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
 use alloy_serde::WithOtherFields;
 use eyre::Context;
@@ -59,10 +59,12 @@ type ForkLookupIndex = usize;
 const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
-/// Slot corresponding to "failed" in bytes on the cheatcodes (HEVM) address.
-/// Not prefixed with 0x.
-const GLOBAL_FAILURE_SLOT: B256 =
-    b256!("6661696c65640000000000000000000000000000000000000000000000000000");
+/// `bytes32("failed")`, as a storage slot key into [`CHEATCODE_ADDRESS`].
+///
+/// Used by all `forge-std` test contracts and newer `DSTest` test contracts as a global marker for
+/// a failed test.
+pub const GLOBAL_FAIL_SLOT: U256 =
+    uint!(0x6661696c65640000000000000000000000000000000000000000000000000000_U256);
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut)]
@@ -537,10 +539,8 @@ impl Backend {
     /// This will also grant cheatcode access to the test account
     pub fn set_test_contract(&mut self, acc: Address) -> &mut Self {
         trace!(?acc, "setting test account");
-
         self.add_persistent_account(acc);
         self.allow_cheatcode_access(acc);
-        self.inner.test_contract_address = Some(acc);
         self
     }
 
@@ -557,11 +557,6 @@ impl Backend {
         trace!(?spec_id, "setting spec ID");
         self.inner.spec_id = spec_id;
         self
-    }
-
-    /// Returns the address of the set `DSTest` contract
-    pub fn test_contract_address(&self) -> Option<Address> {
-        self.inner.test_contract_address
     }
 
     /// Returns the set caller address
@@ -583,80 +578,12 @@ impl Backend {
         self.inner.has_snapshot_failure = has_snapshot_failure
     }
 
-    /// Checks if the test contract associated with this backend failed, See
-    /// [Self::is_failed_test_contract]
-    pub fn is_failed(&self) -> bool {
-        self.has_snapshot_failure() ||
-            self.test_contract_address()
-                .map(|addr| self.is_failed_test_contract(addr))
-                .unwrap_or_default()
-    }
-
-    /// Checks if the given test function failed
-    ///
-    /// DSTest will not revert inside its `assertEq`-like functions which allows
-    /// to test multiple assertions in 1 test function while also preserving logs.
-    /// Instead, it stores whether an `assert` failed in a boolean variable that we can read
-    pub fn is_failed_test_contract(&self, address: Address) -> bool {
-        /*
-        contract DSTest {
-            bool public IS_TEST = true;
-            // slot 0 offset 1 => second byte of slot0
-            bool private _failed;
-        }
-        */
-        let value = self.storage_ref(address, U256::ZERO).unwrap_or_default();
-        value.as_le_bytes()[1] != 0
-    }
-
-    /// Checks if the given test function failed by looking at the present value of the test
-    /// contract's `JournaledState`
-    ///
-    /// See [`Self::is_failed_test_contract()]`
-    ///
-    /// Note: we assume the test contract is either `forge-std/Test` or `DSTest`
-    pub fn is_failed_test_contract_state(
-        &self,
-        address: Address,
-        current_state: &JournaledState,
-    ) -> bool {
-        if let Some(account) = current_state.state.get(&address) {
-            let value = account
-                .storage
-                .get(&revm::primitives::U256::ZERO)
-                .cloned()
-                .unwrap_or_default()
-                .present_value();
-            return value.as_le_bytes()[1] != 0;
-        }
-
-        false
-    }
-
-    /// In addition to the `_failed` variable, `DSTest::fail()` stores a failure
-    /// in "failed"
-    /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
-    pub fn is_global_failure(&self, current_state: &JournaledState) -> bool {
-        if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS) {
-            let slot: U256 = GLOBAL_FAILURE_SLOT.into();
-            let value = account.storage.get(&slot).cloned().unwrap_or_default().present_value();
-            return value == revm::primitives::U256::from(1);
-        }
-
-        false
-    }
-
     /// When creating or switching forks, we update the AccountInfo of the contract
     pub(crate) fn update_fork_db(
         &self,
         active_journaled_state: &mut JournaledState,
         target_fork: &mut Fork,
     ) {
-        debug_assert!(
-            self.inner.test_contract_address.is_some(),
-            "Test contract address must be set"
-        );
-
         self.update_fork_db_contracts(
             self.inner.persistent_accounts.iter().copied(),
             active_journaled_state,
@@ -973,10 +900,17 @@ impl DatabaseExt for Backend {
             if action.is_keep() {
                 self.inner.snapshots.insert_at(snapshot.clone(), id);
             }
-            // need to check whether there's a global failure which means an error occurred either
-            // during the snapshot or even before
-            if self.is_global_failure(current_state) {
-                self.set_snapshot_failure(true);
+
+            // https://github.com/foundry-rs/foundry/issues/3055
+            // Check if an error occurred either during or before the snapshot.
+            // DSTest contracts don't have snapshot functionality, so this slot is enough to check
+            // for failure here.
+            if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS) {
+                if let Some(slot) = account.storage.get(&GLOBAL_FAIL_SLOT) {
+                    if !slot.present_value.is_zero() {
+                        self.set_snapshot_failure(true);
+                    }
+                }
             }
 
             // merge additional logs
@@ -1585,11 +1519,6 @@ pub struct BackendInner {
     /// check if the `_failed` variable is set,
     /// additionally
     pub has_snapshot_failure: bool,
-    /// Tracks the address of a Test contract
-    ///
-    /// This address can be used to inspect the state of the contract when a test is being
-    /// executed. E.g. the `_failed` variable of `DSTest`
-    pub test_contract_address: Option<Address>,
     /// Tracks the caller of the test function
     pub caller: Option<Address>,
     /// Tracks numeric identifiers for forks
@@ -1778,7 +1707,6 @@ impl Default for BackendInner {
             forks: vec![],
             snapshots: Default::default(),
             has_snapshot_failure: false,
-            test_contract_address: None,
             caller: None,
             next_fork_id: Default::default(),
             persistent_accounts: Default::default(),
