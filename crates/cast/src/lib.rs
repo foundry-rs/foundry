@@ -1478,7 +1478,7 @@ impl SimpleCast {
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
-    /// use hex;
+    /// use alloy_primitives::hex;
     ///
     ///     // Passing `input = false` will decode the data as the output type.
     ///     // The input data types and the full function sig are ignored, i.e.
@@ -1521,6 +1521,7 @@ impl SimpleCast {
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
+    /// use alloy_primitives::hex;
     ///
     /// // Passing `input = false` will decode the data as the output type.
     /// // The input data types and the full function sig are ignored, i.e.
