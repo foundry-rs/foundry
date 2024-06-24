@@ -8,7 +8,7 @@ use crate::{
     InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, uint, Address, B256, U256};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
 use alloy_serde::WithOtherFields;
 use eyre::Context;
@@ -58,6 +58,10 @@ type ForkLookupIndex = usize;
 /// All accounts that will have persistent storage across fork swaps.
 const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
+
+/// `bytes32("failed")`. Used by `DSTest` and `forge-std` as a marker for a failed test.
+pub const CHEATCODES_FAILED_SLOT: U256 =
+    uint!(0x6661696c65640000000000000000000000000000000000000000000000000000_U256);
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut)]
@@ -892,6 +896,16 @@ impl DatabaseExt for Backend {
             // Re-insert snapshot to persist it
             if action.is_keep() {
                 self.inner.snapshots.insert_at(snapshot.clone(), id);
+            }
+
+            // An error occurred either during or before the snapshot.
+            // https://github.com/foundry-rs/foundry/issues/3055
+            if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS) {
+                if let Some(slot) = account.storage.get(&CHEATCODES_FAILED_SLOT) {
+                    if !slot.present_value.is_zero() {
+                        self.set_snapshot_failure(true);
+                    }
+                }
             }
 
             // merge additional logs

@@ -11,10 +11,12 @@ use crate::inspectors::{
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{hex, Address, Bytes, Log, U256};
+use alloy_primitives::{Address, Bytes, Log, U256};
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
-    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult},
+    backend::{
+        Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult, CHEATCODES_FAILED_SLOT,
+    },
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE,
@@ -524,23 +526,19 @@ impl Executor {
             return false;
         }
 
-        // Check `vm.load(address(vm), bytes("failed"))` ahead of time.
-        // `DSTest::failed()` will check this slot to see if the test failed.
+        // Check `vm.load(address(vm), bytes("failed")) != 0`.
+        // `DSTest::failed()` checks this slot to see if the test failed.
         // See:
         // - https://github.com/dapphub/ds-test/blob/e282159d5170298eb2455a6c05280ab5a73a4ef0/src/test.sol#L47-L63
         // - https://github.com/foundry-rs/forge-std/blob/19891e6a0b5474b9ea6827ddb90bb9388f7acfc0/src/StdAssertions.sol#L38-L44
-        // We can get away with just checking this slot, skipping the call to `failed` altogether.
-
-        /// `bytes32("failed")`.
-        const FAILED_SLOT: U256 = U256::from_be_bytes(hex!(
-            "6661696c65640000000000000000000000000000000000000000000000000000"
-        ));
+        // Because all calls to `fail()` set this slot to `1`, we can get away with just checking
+        // this slot, skipping the call to `failed` altogether.
         if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
-            if let Some(slot) = acc.storage.get(&FAILED_SLOT) {
+            if let Some(slot) = acc.storage.get(&CHEATCODES_FAILED_SLOT) {
                 return slot.present_value() == U256::ZERO;
             }
         }
-        let Ok(slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, FAILED_SLOT) else {
+        let Ok(slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, CHEATCODES_FAILED_SLOT) else {
             return false
         };
         slot.is_zero()

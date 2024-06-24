@@ -3853,7 +3853,6 @@ dependencies = [
  "foundry-evm-fuzz",
  "foundry-evm-traces",
  "indicatif",
- "memchr",
  "parking_lot",
  "proptest",
  "revm",
