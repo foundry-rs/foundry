@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::U256;
+use alloy_primitives::{hex, U256};
 use alloy_sol_types::SolValue;
 
 // address

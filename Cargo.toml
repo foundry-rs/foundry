@@ -132,9 +132,11 @@ foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
 foundry-common = { path = "crates/common" }
+foundry-common-fmt = { path = "crates/common/fmt" }
 foundry-config = { path = "crates/config" }
 foundry-debugger = { path = "crates/debugger" }
 foundry-evm = { path = "crates/evm/evm" }
+foundry-evm-abi = { path = "crates/evm/abi" }
 foundry-evm-core = { path = "crates/evm/core" }
 foundry-evm-coverage = { path = "crates/evm/coverage" }
 foundry-evm-fuzz = { path = "crates/evm/fuzz" }
@@ -216,7 +218,6 @@ evm-disassembler = "0.5"
 eyre = "0.6"
 figment = "0.10"
 futures = "0.3"
-hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 itertools = "0.13"
 jsonpath_lib = "0.3"
 k256 = "0.13"

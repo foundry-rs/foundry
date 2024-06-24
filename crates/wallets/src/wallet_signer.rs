@@ -2,7 +2,7 @@ use crate::error::WalletSignerError;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
-use alloy_primitives::{Address, ChainId, B256};
+use alloy_primitives::{hex, Address, ChainId, B256};
 use alloy_signer::{Signature, Signer};
 use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
 use alloy_signer_local::{coins_bip39::English, MnemonicBuilder, PrivateKeySigner};

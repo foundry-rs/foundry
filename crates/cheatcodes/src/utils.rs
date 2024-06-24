@@ -311,8 +311,7 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use alloy_primitives::FixedBytes;
-    use hex::FromHex;
+    use alloy_primitives::{hex::FromHex, FixedBytes};
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
     use std::{path::PathBuf, sync::Arc};
 

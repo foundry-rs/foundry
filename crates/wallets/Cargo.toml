@@ -41,7 +41,6 @@ async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 derive_builder = "0.20.0"
 eyre.workspace = true
-hex = { workspace = true, features = ["serde"] }
 rpassword = "7"
 serde.workspace = true
 thiserror.workspace = true

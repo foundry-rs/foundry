@@ -4,7 +4,7 @@ use crate::{
     constants::*,
     utils::{self, EnvExternalities},
 };
-use alloy_primitives::Address;
+use alloy_primitives::{hex, Address};
 use anvil::{spawn, NodeConfig};
 use foundry_compilers::artifacts::{remappings::Remapping, BytecodeHash};
 use foundry_config::Config;

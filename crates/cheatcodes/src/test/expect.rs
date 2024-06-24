@@ -1,5 +1,5 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_primitives::{address, Address, Bytes, LogData as RawLog, U256};
+use alloy_primitives::{address, hex, Address, Bytes, LogData as RawLog, U256};
 use alloy_sol_types::{SolError, SolValue};
 use revm::interpreter::{return_ok, InstructionResult};
 use spec::Vm;
