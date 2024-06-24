@@ -1,5 +1,4 @@
 use crate::{executors::Executor, inspectors::InspectorStackBuilder};
-use alloy_primitives::U256;
 use foundry_evm_core::backend::Backend;
 use revm::primitives::{Env, EnvWithHandlerCfg, SpecId};
 
@@ -16,7 +15,7 @@ pub struct ExecutorBuilder {
     /// The configuration used to build an `InspectorStack`.
     stack: InspectorStackBuilder,
     /// The gas limit.
-    gas_limit: Option<U256>,
+    gas_limit: Option<u64>,
     /// The spec ID.
     spec_id: SpecId,
 }
@@ -54,7 +53,7 @@ impl ExecutorBuilder {
 
     /// Sets the executor gas limit.
     #[inline]
-    pub fn gas_limit(mut self, gas_limit: U256) -> Self {
+    pub fn gas_limit(mut self, gas_limit: u64) -> Self {
         self.gas_limit = Some(gas_limit);
         self
     }
@@ -63,14 +62,14 @@ impl ExecutorBuilder {
     #[inline]
     pub fn build(self, env: Env, db: Backend) -> Executor {
         let Self { mut stack, gas_limit, spec_id } = self;
-        stack.block = Some(env.block.clone());
-        stack.gas_price = Some(env.tx.gas_price);
-        let gas_limit = gas_limit.unwrap_or(env.block.gas_limit);
-        Executor::new(
-            db,
-            EnvWithHandlerCfg::new_with_spec_id(Box::new(env), spec_id),
-            stack.build(),
-            gas_limit,
-        )
+        if stack.block.is_none() {
+            stack.block = Some(env.block.clone());
+        }
+        if stack.gas_price.is_none() {
+            stack.gas_price = Some(env.tx.gas_price);
+        }
+        let gas_limit = gas_limit.unwrap_or_else(|| env.block.gas_limit.saturating_to());
+        let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(env), spec_id);
+        Executor::new(db, env, stack.build(), gas_limit)
     }
 }

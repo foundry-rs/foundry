@@ -67,7 +67,6 @@ impl<T: AsRef<Path>> FoundryPathExt for T {
 }
 
 /// Initializes a tracing Subscriber for logging
-#[allow(dead_code)]
 pub fn subscriber() {
     tracing_subscriber::Registry::default()
         .with(tracing_subscriber::EnvFilter::from_default_env())

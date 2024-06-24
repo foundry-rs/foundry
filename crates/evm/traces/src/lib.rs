@@ -11,6 +11,12 @@ extern crate tracing;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use serde::{Deserialize, Serialize};
 
+pub use revm_inspectors::tracing::{
+    types::{CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData},
+    CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TraceWriter,
+    TracingInspector, TracingInspectorConfig,
+};
+
 /// Call trace address identifiers.
 ///
 /// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
@@ -19,12 +25,6 @@ use identifier::{LocalTraceIdentifier, TraceIdentifier};
 
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
-
-pub use revm_inspectors::tracing::{
-    types::{CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData},
-    CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TraceWriter,
-    TracingInspector, TracingInspectorConfig,
-};
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
