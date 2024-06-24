@@ -102,7 +102,7 @@ impl MultiContractRunner {
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
             .flat_map(|(_, TestContract { abi, .. })| abi.functions())
-            .filter(|func| func.is_test() || func.is_invariant_test())
+            .filter(|func| func.is_any_test())
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
@@ -392,7 +392,7 @@ impl MultiContractRunnerBuilder {
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                abi.functions().any(|func| func.name.is_test() || func.name.is_invariant_test())
+                abi.functions().any(|func| func.name.is_any_test())
             {
                 let Some(bytecode) =
                     contract.get_bytecode_bytes().map(|b| b.into_owned()).filter(|b| !b.is_empty())
@@ -434,5 +434,5 @@ pub fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter)
 
 /// Returns `true` if the function is a test function that matches the given filter.
 pub(crate) fn is_matching_test(func: &Function, filter: &dyn TestFilter) -> bool {
-    (func.is_test() || func.is_invariant_test()) && filter.matches_test(&func.signature())
+    func.is_any_test() && filter.matches_test(&func.signature())
 }

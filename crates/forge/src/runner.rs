@@ -13,7 +13,7 @@ use alloy_primitives::{address, Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
-    TestFunctionExt,
+    TestFunctionExt, TestFunctionKind,
 };
 use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_evm::{
@@ -278,7 +278,6 @@ impl<'a> ContractRunner<'a> {
         known_contracts: ContractsByArtifact,
         handle: &tokio::runtime::Handle,
     ) -> SuiteResult {
-        info!("starting tests");
         let start = Instant::now();
         let mut warnings = Vec::new();
 
@@ -333,7 +332,8 @@ impl<'a> ContractRunner<'a> {
 
         // Invariant testing requires tracing to figure out what contracts were created.
         let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
-        let tmp_tracing = self.executor.inspector.tracer.is_none() && has_invariants && call_setup;
+        let tmp_tracing =
+            self.executor.inspector().tracer.is_none() && has_invariants && call_setup;
         if tmp_tracing {
             self.executor.set_tracing(true);
         }
@@ -380,39 +380,41 @@ impl<'a> ContractRunner<'a> {
                 let _guard = handle.enter();
 
                 let sig = func.signature();
-                let span = debug_span!("test", name = tracing::field::Empty).entered();
-                if !span.is_disabled() {
-                    if enabled!(tracing::Level::TRACE) {
-                        span.record("name", &sig);
-                    } else {
-                        span.record("name", &func.name);
-                    }
-                }
+                let kind = func.test_function_kind();
+
+                let _guard = debug_span!(
+                    "test",
+                    %kind,
+                    name = if enabled!(tracing::Level::TRACE) { &sig } else { &func.name },
+                )
+                .entered();
 
                 let setup = setup.clone();
-                let should_fail = func.is_test_fail();
-                let mut res = if func.is_invariant_test() {
-                    let runner = test_options.invariant_runner(self.name, &func.name);
-                    let invariant_config = test_options.invariant_config(self.name, &func.name);
+                let mut res = match kind {
+                    TestFunctionKind::UnitTest { should_fail } => {
+                        self.run_unit_test(func, should_fail, setup)
+                    }
+                    TestFunctionKind::FuzzTest { should_fail } => {
+                        let runner = test_options.fuzz_runner(self.name, &func.name);
+                        let fuzz_config = test_options.fuzz_config(self.name, &func.name);
 
-                    self.run_invariant_test(
-                        runner,
-                        setup,
-                        invariant_config.clone(),
-                        func,
-                        call_after_invariant,
-                        &known_contracts,
-                        identified_contracts.as_ref().unwrap(),
-                    )
-                } else if func.is_fuzz_test() {
-                    debug_assert!(func.is_test());
-                    let runner = test_options.fuzz_runner(self.name, &func.name);
-                    let fuzz_config = test_options.fuzz_config(self.name, &func.name);
+                        self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
+                    }
+                    TestFunctionKind::InvariantTest => {
+                        let runner = test_options.invariant_runner(self.name, &func.name);
+                        let invariant_config = test_options.invariant_config(self.name, &func.name);
 
-                    self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
-                } else {
-                    debug_assert!(func.is_test());
-                    self.run_test(func, should_fail, setup)
+                        self.run_invariant_test(
+                            runner,
+                            setup,
+                            invariant_config.clone(),
+                            func,
+                            call_after_invariant,
+                            &known_contracts,
+                            identified_contracts.as_ref().unwrap(),
+                        )
+                    }
+                    _ => unreachable!(),
                 };
 
                 res.duration = start.elapsed();
@@ -422,24 +424,21 @@ impl<'a> ContractRunner<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let duration = start.elapsed();
-        let suite_result = SuiteResult::new(duration, test_results, warnings);
-        info!(
-            duration=?suite_result.duration,
-            "done. {}/{} successful",
-            suite_result.passed(),
-            suite_result.test_results.len()
-        );
-        suite_result
+        SuiteResult::new(duration, test_results, warnings)
     }
 
-    /// Runs a single test
+    /// Runs a single unit test.
     ///
     /// Calls the given functions and returns the `TestResult`.
     ///
     /// State modifications are not committed to the evm database but discarded after the call,
     /// similar to `eth_call`.
-    #[instrument(level = "debug", name = "normal", skip_all)]
-    pub fn run_test(&self, func: &Function, should_fail: bool, setup: TestSetup) -> TestResult {
+    pub fn run_unit_test(
+        &self,
+        func: &Function,
+        should_fail: bool,
+        setup: TestSetup,
+    ) -> TestResult {
         let address = setup.address;
         let test_result = TestResult::new(setup);
 
@@ -463,7 +462,6 @@ impl<'a> ContractRunner<'a> {
         test_result.single_result(success, reason, raw_call_result)
     }
 
-    #[instrument(level = "debug", name = "invariant", skip_all)]
     #[allow(clippy::too_many_arguments)]
     pub fn run_invariant_test(
         &self,
@@ -635,7 +633,6 @@ impl<'a> ContractRunner<'a> {
         )
     }
 
-    #[instrument(level = "debug", name = "fuzz", skip_all)]
     pub fn run_fuzz_test(
         &self,
         func: &Function,
@@ -671,12 +668,11 @@ impl<'a> ContractRunner<'a> {
             return test_result.single_skip()
         }
 
-        // if should debug
         if self.debug {
             let mut debug_executor = self.executor.clone();
             // turn the debug traces on
-            debug_executor.inspector.enable_debugger(true);
-            debug_executor.inspector.tracing(true);
+            debug_executor.inspector_mut().enable_debugger(true);
+            debug_executor.inspector_mut().tracing(true);
             let calldata = if let Some(counterexample) = result.counterexample.as_ref() {
                 match counterexample {
                     CounterExample::Single(ce) => ce.calldata.clone(),
