@@ -1,6 +1,6 @@
 use super::{
     call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
-    InvariantFailures, InvariantFuzzError, InvariantRun, InvariantTest,
+    InvariantFailures, InvariantFuzzError, InvariantTest, InvariantTestRun,
 };
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
@@ -92,7 +92,7 @@ pub(crate) fn assert_invariants(
 pub(crate) fn can_continue(
     invariant_contract: &InvariantContract<'_>,
     invariant_test: &InvariantTest,
-    invariant_run: &mut InvariantRun,
+    invariant_run: &mut InvariantTestRun,
     invariant_config: &InvariantConfig,
     call_result: RawCallResult,
     state_changeset: &StateChangeset,
@@ -122,15 +122,15 @@ pub(crate) fn can_continue(
             &invariant_test.targeted_contracts,
             &invariant_run.executor,
             &invariant_run.inputs,
-            &mut invariant_test.failures.borrow_mut(),
+            &mut invariant_test.execution_data.borrow_mut().failures,
         )?;
         if call_results.is_none() {
             return Ok(RichInvariantResults::new(false, None));
         }
     } else {
         // Increase the amount of reverts.
-        let mut failures = invariant_test.failures.borrow_mut();
-        failures.reverts += 1;
+        let mut invariant_data = invariant_test.execution_data.borrow_mut();
+        invariant_data.failures.reverts += 1;
         // If fail on revert is set, we must return immediately.
         if invariant_config.fail_on_revert {
             let case_data = FailedInvariantCaseData::new(
@@ -141,8 +141,8 @@ pub(crate) fn can_continue(
                 call_result,
                 &[],
             );
-            failures.revert_reason = Some(case_data.revert_reason.clone());
-            failures.error = Some(InvariantFuzzError::Revert(case_data));
+            invariant_data.failures.revert_reason = Some(case_data.revert_reason.clone());
+            invariant_data.failures.error = Some(InvariantFuzzError::Revert(case_data));
 
             return Ok(RichInvariantResults::new(false, None));
         }
@@ -155,7 +155,7 @@ pub(crate) fn can_continue(
 pub(crate) fn assert_after_invariant(
     invariant_contract: &InvariantContract<'_>,
     invariant_test: &InvariantTest,
-    invariant_run: &InvariantRun,
+    invariant_run: &InvariantTestRun,
     invariant_config: &InvariantConfig,
 ) -> Result<bool> {
     let (call_result, success) =
@@ -170,8 +170,7 @@ pub(crate) fn assert_after_invariant(
             call_result,
             &[],
         );
-        invariant_test.failures.borrow_mut().error =
-            Some(InvariantFuzzError::BrokenInvariant(case_data));
+        invariant_test.set_error(InvariantFuzzError::BrokenInvariant(case_data));
     }
     Ok(success)
 }
