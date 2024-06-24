@@ -298,7 +298,6 @@ impl CallTraceDecoder {
             node.trace.decoded_label = decoded.label;
             node.trace.decoded_call_data = decoded.func;
             node.trace.decoded_return_data = decoded.return_data;
-            node.trace.decoded_contract_name = decoded.contract;
 
             for log in node.logs.iter_mut() {
                 let decoded = self.decode_event(log).await;
