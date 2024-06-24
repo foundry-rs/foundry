@@ -14,7 +14,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256};
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
-    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult},
+    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE,
@@ -516,6 +516,22 @@ impl Executor {
         // A failure occurred in a reverted snapshot, which is considered a failed test.
         if self.backend().has_snapshot_failure() {
             return false;
+        }
+
+        // Check the global failure slot.
+        // TODO: Wire this up
+        let legacy = true;
+        if !legacy {
+            if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
+                if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
+                    return failed_slot.present_value().is_zero();
+                }
+            }
+            let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            else {
+                return false;
+            };
+            return failed_slot.is_zero();
         }
 
         // Finally, resort to calling `DSTest::failed`.
