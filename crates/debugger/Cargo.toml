@@ -27,4 +27,3 @@ ratatui = { version = "0.26", default-features = false, features = ["crossterm"]
 revm.workspace = true
 tracing.workspace = true
 serde.workspace = true
-hex.workspace = true

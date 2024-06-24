@@ -1,7 +1,7 @@
 //! Debugger context and event handler implementation.
 
 use crate::{DebugNode, Debugger, ExitReason};
-use alloy_primitives::Address;
+use alloy_primitives::{hex, Address};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use revm::interpreter::opcode;
 use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
@@ -361,6 +361,7 @@ fn pretty_opcode(step: &CallTraceStep, next_step: Option<&CallTraceStep>) -> Str
         return step.op.to_string();
     }
 
+    // Get push byte as the top-most stack item on the next step
     if let Some(pushed) = next_step.and_then(|s| s.stack.as_ref()).and_then(|s| s.last()) {
         let bytes = &pushed.to_be_bytes_vec()[32 - push_size..];
         format!("{op}(0x{})", hex::encode(bytes))
