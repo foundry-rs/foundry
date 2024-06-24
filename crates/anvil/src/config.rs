@@ -1070,7 +1070,7 @@ impl NodeConfig {
                         .map(|&hash| TxHash::into(hash))
                         .collect::<Vec<TxHash>>()
                     {
-                        println!("tx: {:?}", hash);
+                        println!("tx: {:?}", hash); // TODO(serge): rm line
                         let tx = provider.get_transaction_by_hash(hash).await.unwrap().unwrap();
                         let typed_transaction = TypedTransaction::from(tx.inner);
                         let pending_transaction =

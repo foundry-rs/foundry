@@ -4,6 +4,7 @@ use crate::eth::pool::{transactions::PoolTransaction, Pool};
 use alloy_primitives::TxHash;
 use futures::{
     channel::mpsc::Receiver,
+    ready,
     stream::{Fuse, Stream, StreamExt},
     task::AtomicWaker,
 };
@@ -26,18 +27,20 @@ pub struct Miner {
     /// This will register the task so we can manually wake it up if the mining mode was changed
     inner: Arc<MinerInner>,
     // TODO(serge): ...
-    //replay_transactions: Option<Vec<Arc<PoolTransaction>>>,
-    replay_transactions: Option<Vec<PoolTransaction>>,
+    /// Transactions included into the pool before any others are.
+    /// Done once on startup.
+    force_include_transactions: Option<Vec<Arc<PoolTransaction>>>,
 }
 
 impl Miner {
     /// Returns a new miner with that operates in the given `mode`
-    pub fn new(mode: MiningMode, replay_transactions: Vec<PoolTransaction>) -> Self {
+    pub fn new(mode: MiningMode, force_include_transactions: Vec<PoolTransaction>) -> Self {
         Self {
             mode: Arc::new(RwLock::new(mode)),
             inner: Default::default(),
-            //replay_transactions: Some(replay_transactions.into_iter().map(Arc::new).collect()),
-            replay_transactions: Some(replay_transactions),
+            force_include_transactions: Some(
+                force_include_transactions.into_iter().map(Arc::new).collect(),
+            ),
         }
     }
 
@@ -75,13 +78,13 @@ impl Miner {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction>>> {
         self.inner.register(cx);
-        // Add replay transactions to the pool
-        if let Some(replay_transactions) = self.replay_transactions.take() {
-            replay_transactions.into_iter().for_each(|tx| {
-                pool.add_transaction(tx).unwrap();
-            });
+        // Include any forced transactions if they exist
+        if let Some(transactions) = self.force_include_transactions.take() {
+            let next = ready!(self.mode.write().poll(pool, cx));
+            Poll::Ready(transactions.into_iter().chain(next).collect())
+        } else {
+            self.mode.write().poll(pool, cx)
         }
-        self.mode.write().poll(pool, cx)
     }
 }
 
