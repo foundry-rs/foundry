@@ -19,7 +19,6 @@ use foundry_evm_core::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE,
     },
-    debug::DebugArena,
     decode::RevertDecoder,
     utils::StateChangeset,
 };
@@ -212,14 +211,8 @@ impl Executor {
     }
 
     #[inline]
-    pub fn set_tracing(&mut self, tracing: bool) -> &mut Self {
-        self.inspector_mut().tracing(tracing);
-        self
-    }
-
-    #[inline]
-    pub fn set_debugger(&mut self, debugger: bool) -> &mut Self {
-        self.inspector_mut().enable_debugger(debugger);
+    pub fn set_tracing(&mut self, tracing: bool, debug: bool) -> &mut Self {
+        self.inspector_mut().tracing(tracing, debug);
         self
     }
 
@@ -697,8 +690,6 @@ pub struct RawCallResult {
     pub traces: Option<CallTraceArena>,
     /// The coverage info collected during the call
     pub coverage: Option<HitMaps>,
-    /// The debug nodes of the call
-    pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
     pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
@@ -727,7 +718,6 @@ impl Default for RawCallResult {
             labels: HashMap::new(),
             traces: None,
             coverage: None,
-            debug: None,
             transactions: None,
             state_changeset: HashMap::default(),
             env: EnvWithHandlerCfg::new_with_spec_id(Box::default(), SpecId::LATEST),
@@ -840,7 +830,7 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData { mut logs, labels, traces, coverage, debug, cheatcodes, chisel_state } =
+    let InspectorData { mut logs, labels, traces, coverage, cheatcodes, chisel_state } =
         inspector.collect();
 
     if logs.is_empty() {
@@ -864,7 +854,6 @@ fn convert_executed_result(
         labels,
         traces,
         coverage,
-        debug,
         transactions,
         state_changeset,
         env,

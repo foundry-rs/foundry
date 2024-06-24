@@ -3,6 +3,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
+use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
     constants::MAGIC_ASSUME,
@@ -80,6 +81,8 @@ impl FuzzedExecutor {
         // Stores coverage information for all fuzz cases
         let coverage: RefCell<Option<HitMaps>> = RefCell::default();
 
+        let breakpoints: RefCell<Option<Breakpoints>> = RefCell::default();
+
         let state = self.build_fuzz_state();
 
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
@@ -110,6 +113,7 @@ impl FuzzedExecutor {
                             traces.borrow_mut().pop();
                         }
                         traces.borrow_mut().push(call_traces);
+                        breakpoints.borrow_mut().replace(case.breakpoints);
                     }
 
                     match &mut *coverage.borrow_mut() {
@@ -140,7 +144,11 @@ impl FuzzedExecutor {
         let (calldata, call) = counterexample.into_inner();
 
         let mut traces = traces.into_inner();
-        let last_run_traces = if run_result.is_ok() { traces.pop() } else { call.traces.clone() };
+        let (last_run_traces, last_run_breakpoints) = if run_result.is_ok() {
+            (traces.pop(), breakpoints.into_inner())
+        } else {
+            (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
+        };
 
         let mut result = FuzzTestResult {
             first_case: first_case.take().unwrap_or_default(),
@@ -152,6 +160,7 @@ impl FuzzedExecutor {
             logs: call.logs,
             labeled_addresses: call.labels,
             traces: last_run_traces,
+            breakpoints: last_run_breakpoints,
             gas_report_traces: traces,
             coverage: coverage.into_inner(),
         };
@@ -219,12 +228,10 @@ impl FuzzedExecutor {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },
                 traces: call.traces,
                 coverage: call.coverage,
-                debug: call.debug,
                 breakpoints,
             }))
         } else {
             Ok(FuzzOutcome::CounterExample(CounterExampleOutcome {
-                debug: call.debug.clone(),
                 exit_reason: call.exit_reason,
                 counterexample: (calldata, call),
                 breakpoints,

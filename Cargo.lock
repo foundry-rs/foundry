@@ -3833,6 +3833,7 @@ name = "foundry-debugger"
 version = "0.2.0"
 dependencies = [
  "alloy-primitives",
+ "const-hex",
  "crossterm",
  "eyre",
  "foundry-common",
@@ -3842,6 +3843,7 @@ dependencies = [
  "ratatui",
  "revm",
  "revm-inspectors",
+ "serde",
  "tracing",
 ]
 
@@ -3853,7 +3855,6 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-sol-types",
- "arrayvec",
  "eyre",
  "foundry-cheatcodes",
  "foundry-common",
@@ -3900,7 +3901,6 @@ dependencies = [
  "alloy-serde",
  "alloy-sol-types",
  "alloy-transport",
- "arrayvec",
  "auto_impl",
  "eyre",
  "foundry-cheatcodes-spec",
@@ -6992,8 +6992,7 @@ dependencies = [
 [[package]]
 name = "revm-inspectors"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b0971cad2f8f1ecb10e270d80646e63bf19daef0dc0a17a45680d24bb346b7c"
+source = "git+https://github.com/klkvr/evm-inspectors?rev=241159b#241159bd7f7149ace8a0f4b6fb4484d49d16d0b0"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",

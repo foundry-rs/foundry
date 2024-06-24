@@ -10,7 +10,7 @@ extern crate tracing;
 
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_primitives::{Address, Bytes, Log};
-use foundry_common::{calc, contracts::ContractsByAddress};
+use foundry_common::{calc, contracts::ContractsByAddress, evm::Breakpoints};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::CallTraceArena;
 use itertools::Itertools;
@@ -181,6 +181,9 @@ pub struct FuzzTestResult {
 
     /// Raw coverage info
     pub coverage: Option<HitMaps>,
+
+    /// Breakpoints for debugger. Correspond to the same fuzz case as `traces`.
+    pub breakpoints: Option<Breakpoints>,
 }
 
 impl FuzzTestResult {

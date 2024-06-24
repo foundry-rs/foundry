@@ -205,7 +205,6 @@ quote = "1.0"
 syn = "2.0"
 prettyplease = "0.2.20"
 ahash = "0.8"
-arrayvec = "0.7"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
@@ -251,3 +250,6 @@ tower = "0.4"
 tower-http = "0.5"
 # soldeer
 soldeer = "0.2.15"
+
+[patch.crates-io]
+revm-inspectors = { git = "https://github.com/klkvr/evm-inspectors", rev = "241159b" }
