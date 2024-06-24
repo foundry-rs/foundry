@@ -492,7 +492,7 @@ impl DebuggerContext<'_> {
             })
             .unwrap_or_default();
 
-        let title = format!("Stack: {}", stack_len);
+        let title = format!("Stack: {stack_len}");
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);

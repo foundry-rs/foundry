@@ -129,7 +129,7 @@ impl<'a> DebuggerContext<'a> {
 
     fn active_buffer(&self) -> &[u8] {
         match self.active_buffer {
-            BufferKind::Memory => &self.current_step().memory.as_bytes(),
+            BufferKind::Memory => self.current_step().memory.as_bytes(),
             BufferKind::Calldata => &self.debug_call().calldata,
             BufferKind::Returndata => &self.current_step().returndata,
         }
@@ -366,6 +366,6 @@ fn pretty_opcode(step: &CallTraceStep, next_step: Option<&CallTraceStep>) -> Str
         let bytes = &pushed.to_be_bytes_vec()[32 - push_size..];
         format!("{op}(0x{})", hex::encode(bytes))
     } else {
-        return op.to_string()
+        op.to_string()
     }
 }
