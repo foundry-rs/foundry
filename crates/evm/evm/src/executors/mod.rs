@@ -435,7 +435,7 @@ impl Executor {
         self.inspector_mut().set_env(&result.env);
     }
 
-    /// Checks if a call to a test contract was successful.
+    /// Returns `true` if a test can be considered successful.
     ///
     /// This is the same as [`Self::is_success`], but will consume the `state_changeset` map to use
     /// internally when calling `failed()`.
@@ -455,7 +455,7 @@ impl Executor {
 
     /// Returns `true` if a test can be considered successful.
     ///
-    /// This is the same as [`Self::is_success`] but intended for outcomes of [`Self::call_raw`].
+    /// This is the same as [`Self::is_success`], but intended for outcomes of [`Self::call_raw`].
     pub fn is_raw_call_success(
         &self,
         address: Address,
