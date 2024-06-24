@@ -115,6 +115,8 @@ pub struct DebugNode {
     pub kind: CallKind,
     /// Depth of the call.
     pub depth: usize,
+    /// Calldata of the call.
+    pub calldata: Bytes,
     /// The debug steps.
     pub steps: Vec<DebugStep>,
 }
@@ -141,12 +143,12 @@ impl DebugNode {
 
     /// Flattens this node into a [`DebugNodeFlat`].
     pub fn flat(&self) -> DebugNodeFlat {
-        DebugNodeFlat { address: self.address, kind: self.kind, steps: self.steps.clone() }
+        DebugNodeFlat { address: self.address, kind: self.kind, steps: self.steps.clone(), calldata: self.calldata.clone() }
     }
 
     /// Flattens this node into a [`DebugNodeFlat`].
     pub fn into_flat(self) -> DebugNodeFlat {
-        DebugNodeFlat { address: self.address, kind: self.kind, steps: self.steps }
+        DebugNodeFlat { address: self.address, kind: self.kind, steps: self.steps, calldata: self.calldata }
     }
 }
 
@@ -159,14 +161,16 @@ pub struct DebugNodeFlat {
     pub address: Address,
     /// The kind of call this is.
     pub kind: CallKind,
+    /// Calldata of the call.
+    pub calldata: Bytes,
     /// The debug steps.
     pub steps: Vec<DebugStep>,
 }
 
 impl DebugNodeFlat {
     /// Creates a new debug node flat.
-    pub fn new(address: Address, kind: CallKind, steps: Vec<DebugStep>) -> Self {
-        Self { address, kind, steps }
+    pub fn new(address: Address, kind: CallKind, steps: Vec<DebugStep>, calldata: Bytes) -> Self {
+        Self { address, kind, steps, calldata }
     }
 }
 
@@ -181,8 +185,6 @@ pub struct DebugStep {
     pub stack: Vec<U256>,
     /// Memory *prior* to running the associated opcode
     pub memory: Bytes,
-    /// Calldata *prior* to running the associated opcode
-    pub calldata: Bytes,
     /// Returndata *prior* to running the associated opcode
     pub returndata: Bytes,
     /// Opcode to be executed
@@ -205,7 +207,6 @@ impl Default for DebugStep {
         Self {
             stack: vec![],
             memory: Default::default(),
-            calldata: Default::default(),
             returndata: Default::default(),
             instruction: revm::interpreter::opcode::INVALID,
             push_bytes: Default::default(),

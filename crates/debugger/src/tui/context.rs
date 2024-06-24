@@ -128,7 +128,7 @@ impl<'a> DebuggerContext<'a> {
     fn active_buffer(&self) -> &[u8] {
         match self.active_buffer {
             BufferKind::Memory => &self.current_step().memory,
-            BufferKind::Calldata => &self.current_step().calldata,
+            BufferKind::Calldata => &self.debug_call().calldata,
             BufferKind::Returndata => &self.current_step().returndata,
         }
     }

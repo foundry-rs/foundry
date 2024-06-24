@@ -1,4 +1,4 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Bytes, Address};
 use arrayvec::ArrayVec;
 use foundry_common::ErrorExt;
 use foundry_evm_core::{
@@ -28,16 +28,16 @@ pub struct Debugger {
 
 impl Debugger {
     /// Enters a new execution context.
-    pub fn enter(&mut self, depth: usize, address: Address, kind: CallKind) {
+    pub fn enter(&mut self, depth: usize, address: Address, kind: CallKind, calldata: Bytes) {
         self.context = address;
-        self.head = self.arena.push_node(DebugNode { depth, address, kind, ..Default::default() });
+        self.head = self.arena.push_node(DebugNode { depth, address, kind, calldata, ..Default::default() });
     }
 
     /// Exits the current execution context, replacing it with the previous one.
     pub fn exit(&mut self) {
         if let Some(parent_id) = self.arena.arena[self.head].parent {
-            let DebugNode { depth, address, kind, .. } = self.arena.arena[parent_id];
-            self.enter(depth, address, kind);
+            let DebugNode { depth, address, kind, calldata, .. } = &self.arena.arena[parent_id];
+            self.enter(*depth, *address, *kind, calldata.clone());
         }
     }
 }
@@ -81,7 +81,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             pc,
             stack: interp.stack().data().clone(),
             memory,
-            calldata: interp.contract().input.clone(),
             returndata: interp.return_data_buffer.clone(),
             instruction: op,
             push_bytes: push_bytes.unwrap_or_default(),
@@ -94,6 +93,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             ecx.journaled_state.depth() as usize,
             inputs.bytecode_address,
             inputs.scheme.into(),
+            inputs.input.clone(),
         );
 
         None
@@ -132,6 +132,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Debugger {
             ecx.journaled_state.depth() as usize,
             inputs.created_address(nonce),
             CallKind::Create,
+            Bytes::new(),
         );
 
         None

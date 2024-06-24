@@ -491,10 +491,11 @@ impl DebuggerContext<'_> {
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
+        let call = self.debug_call();
         let step = self.current_step();
         let buf = match self.active_buffer {
             BufferKind::Memory => step.memory.as_ref(),
-            BufferKind::Calldata => step.calldata.as_ref(),
+            BufferKind::Calldata => call.calldata.as_ref(),
             BufferKind::Returndata => step.returndata.as_ref(),
         };
 
