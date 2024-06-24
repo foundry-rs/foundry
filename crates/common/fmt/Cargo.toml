@@ -15,12 +15,12 @@ workspace = true
 
 [dependencies]
 alloy-primitives.workspace = true
-alloy-dyn-abi.workspace = true
+alloy-dyn-abi = { workspace = true, features = ["eip712"] }
 yansi.workspace = true
 
 # ui
 alloy-consensus.workspace = true
-alloy-rpc-types.workspace = true
+alloy-rpc-types = { workspace = true, features = ["eth"] }
 alloy-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true
