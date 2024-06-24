@@ -14,9 +14,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256};
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
-    backend::{
-        Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult, CHEATCODES_FAILED_SLOT,
-    },
+    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE,
@@ -455,20 +453,9 @@ impl Executor {
         )
     }
 
-    /// Checks if a call to a test contract was successful.
+    /// Returns `true` if a test can be considered successful.
     ///
     /// This is the same as [`Self::is_success`] but intended for outcomes of [`Self::call_raw`].
-    ///
-    /// ## Background
-    ///
-    /// Executing and failure checking `Executor::is_success` are two steps, for ds-test
-    /// legacy reasons failures can be stored in a global variables and needs to be called via a
-    /// solidity call `failed()(bool)`.
-    ///
-    /// Snapshots make this task more complicated because now we also need to keep track of that
-    /// global variable when we revert to a snapshot (because it is stored in state). Now, the
-    /// problem is that the `CowBackend` is dropped after every call, so we need to keep track
-    /// of the snapshot failure in the [`RawCallResult`] instead.
     pub fn is_raw_call_success(
         &self,
         address: Address,
@@ -483,21 +470,27 @@ impl Executor {
         self.is_success(address, call_result.reverted, state_changeset, should_fail)
     }
 
-    /// Check if a call to a test contract was successful.
+    /// Returns `true` if a test can be considered successful.
     ///
-    /// This function checks both the VM status of the call, DSTest's `failed` status and the
-    /// `globalFailed` flag which is stored in `failed` inside the `CHEATCODE_ADDRESS` contract.
+    /// If the call succeeded, we also have to check the global and local failure flags.
     ///
-    /// DSTest will not revert inside its `assertEq`-like functions which allows
-    /// to test multiple assertions in 1 test function while also preserving logs.
+    /// These are set by the test contract itself when an assertion fails, using the internal `fail`
+    /// function. The global flag is located in [`CHEATCODE_ADDRESS`] at slot [`GLOBAL_FAIL_SLOT`],
+    /// and the local flag is located in the test contract at an unspecified slot.
     ///
-    /// If an `assert` is violated, the contract's `failed` variable is set to true, and the
-    /// `globalFailure` flag inside the `CHEATCODE_ADDRESS` is also set to true, this way, failing
-    /// asserts from any contract are tracked as well.
+    /// This behavior is inherited from Dapptools, where initially only a public
+    /// `failed` variable was used to track test failures, and later, a global failure flag was
+    /// introduced to track failures across multiple contracts in
+    /// [ds-test#30](https://github.com/dapphub/ds-test/pull/30).
     ///
-    /// In order to check whether a test failed, we therefore need to evaluate the contract's
-    /// `failed` variable and the `globalFailure` flag, which happens by calling
-    /// `contract.failed()`.
+    /// The assumption is that the test runner calls `failed` on the test contract to determine if
+    /// it failed. However, we want to avoid this as much as possible, as it is relatively
+    /// expensive to set up an EVM call just for checking a single boolean flag.
+    ///
+    /// See:
+    /// - Newer DSTest: <https://github.com/dapphub/ds-test/blob/e282159d5170298eb2455a6c05280ab5a73a4ef0/src/test.sol#L47-L63>
+    /// - Older DSTest: <https://github.com/dapphub/ds-test/blob/9ca4ecd48862b40d7b0197b600713f64d337af12/src/test.sol#L38-L49>
+    /// - forge-std: <https://github.com/foundry-rs/forge-std/blob/19891e6a0b5474b9ea6827ddb90bb9388f7acfc0/src/StdAssertions.sol#L38-L44>
     pub fn is_success(
         &self,
         address: Address,
@@ -512,7 +505,7 @@ impl Executor {
     #[instrument(name = "is_success", level = "debug", skip_all)]
     fn is_success_raw(
         &self,
-        _address: Address,
+        address: Address,
         reverted: bool,
         state_changeset: Cow<'_, StateChangeset>,
     ) -> bool {
@@ -526,22 +519,74 @@ impl Executor {
             return false;
         }
 
-        // Check `vm.load(address(vm), bytes("failed")) != 0`.
-        // `DSTest::failed()` checks this slot to see if the test failed.
-        // See:
-        // - https://github.com/dapphub/ds-test/blob/e282159d5170298eb2455a6c05280ab5a73a4ef0/src/test.sol#L47-L63
-        // - https://github.com/foundry-rs/forge-std/blob/19891e6a0b5474b9ea6827ddb90bb9388f7acfc0/src/StdAssertions.sol#L38-L44
-        // Because all calls to `fail()` set this slot to `1`, we can get away with just checking
-        // this slot, skipping the call to `failed` altogether.
-        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
-            if let Some(slot) = acc.storage.get(&CHEATCODES_FAILED_SLOT) {
-                return slot.present_value() == U256::ZERO;
+        // Check the global failure slot.
+        {
+            if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
+                if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
+                    return failed_slot.present_value().is_zero();
+                }
+            }
+            let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            else {
+                return false;
+            };
+            if !failed_slot.is_zero() {
+                return false;
             }
         }
-        let Ok(slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, CHEATCODES_FAILED_SLOT) else {
-            return false
-        };
-        slot.is_zero()
+
+        // Check if the bytecode of the contract we're about to call contains the `DSTest::failed`
+        // function. If it doesn't, the call would fail and we would just be wasting time.
+        {
+            let mut account = state_changeset.get(&address).map(|acc| acc.info.code.as_ref());
+            let tmp;
+            if account.is_none() {
+                let Ok(acc) = self.backend().basic_ref(address) else { return false };
+                tmp = acc.map(|acc| acc.code);
+                account = tmp.as_ref().map(Option::as_ref);
+            }
+            let Some(code) = account else { return true };
+            if let Some(code) = code {
+                let code = &code.bytecode()[..];
+                // Check only the first 1024 bytes of the code, as that's where the function
+                // selector is most likely to be located, in the function dispatching code.
+                let code = code.get(..1024).unwrap_or(code);
+                if memchr::memmem::find(code, &ITest::failedCall::SELECTOR).is_none() {
+                    return true;
+                }
+            }
+        }
+
+        // Finally, resort to calling `DSTest::failed`.
+        {
+            // Construct a new bare-bones backend to evaluate success.
+            let mut backend = self.backend().clone_empty();
+
+            // We only clone the test contract and cheatcode accounts,
+            // that's all we need to evaluate success.
+            for address in [address, CHEATCODE_ADDRESS] {
+                let Ok(acc) = self.backend().basic_ref(address) else { return false };
+                backend.insert_account_info(address, acc.unwrap_or_default());
+            }
+            // If this test failed any asserts, then this changeset will contain changes
+            // `false -> true` for the contract's `failed` variable and the `globalFailure` flag
+            // in the state of the cheatcode address,
+            // which are both read when we call `"failed()(bool)"` in the next step.
+            backend.commit(state_changeset.into_owned());
+            // Check if a DSTest assertion failed
+            let executor = self.clone_with_backend(backend);
+            let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
+            match call {
+                Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { failed } }) => {
+                    trace!(failed, "DSTest::failed()");
+                    !failed
+                }
+                Err(err) => {
+                    trace!(%err, "failed to call DSTest::failed()");
+                    true
+                }
+            }
+        }
     }
 
     /// Creates the environment to use when executing a transaction in a test context

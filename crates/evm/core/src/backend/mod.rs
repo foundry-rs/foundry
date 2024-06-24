@@ -59,8 +59,11 @@ type ForkLookupIndex = usize;
 const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
     [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
-/// `bytes32("failed")`. Used by `DSTest` and `forge-std` as a marker for a failed test.
-pub const CHEATCODES_FAILED_SLOT: U256 =
+/// `bytes32("failed")`, as a storage slot key into [`CHEATCODE_ADDRESS`].
+///
+/// Used by all `forge-std` test contracts and newer `DSTest` test contracts as a global marker for
+/// a failed test.
+pub const GLOBAL_FAIL_SLOT: U256 =
     uint!(0x6661696c65640000000000000000000000000000000000000000000000000000_U256);
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
@@ -898,10 +901,12 @@ impl DatabaseExt for Backend {
                 self.inner.snapshots.insert_at(snapshot.clone(), id);
             }
 
-            // An error occurred either during or before the snapshot.
+            // Check if an error occurred either during or before the snapshot.
             // https://github.com/foundry-rs/foundry/issues/3055
+            // DSTest contracts don't have snapshot functionality, so this slot is enough to check
+            // for failure here.
             if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS) {
-                if let Some(slot) = account.storage.get(&CHEATCODES_FAILED_SLOT) {
+                if let Some(slot) = account.storage.get(&GLOBAL_FAIL_SLOT) {
                     if !slot.present_value.is_zero() {
                         self.set_snapshot_failure(true);
                     }
