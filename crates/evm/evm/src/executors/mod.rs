@@ -114,6 +114,7 @@ impl Executor {
         Self { backend, env, inspector, gas_limit }
     }
 
+    #[allow(dead_code)]
     fn clone_with_backend(&self, backend: Backend) -> Self {
         let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(self.env().clone()), self.spec_id());
         Self::new(backend, env, self.inspector().clone(), self.gas_limit)
@@ -509,7 +510,7 @@ impl Executor {
     #[instrument(name = "is_success", level = "debug", skip_all)]
     fn is_success_raw(
         &self,
-        address: Address,
+        _address: Address,
         reverted: bool,
         state_changeset: Cow<'_, StateChangeset>,
     ) -> bool {
@@ -524,72 +525,25 @@ impl Executor {
         }
 
         // Check `vm.load(address(vm), bytes("failed"))` ahead of time.
-        // This is one of the things `DSTest::failed()` checks. See:
+        // `DSTest::failed()` will check this slot to see if the test failed.
+        // See:
         // - https://github.com/dapphub/ds-test/blob/e282159d5170298eb2455a6c05280ab5a73a4ef0/src/test.sol#L47-L63
         // - https://github.com/foundry-rs/forge-std/blob/19891e6a0b5474b9ea6827ddb90bb9388f7acfc0/src/StdAssertions.sol#L38-L44
+        // We can get away with just checking this slot, skipping the call to `failed` altogether.
+
+        /// `bytes32("failed")`.
+        const FAILED_SLOT: U256 = U256::from_be_bytes(hex!(
+            "6661696c65640000000000000000000000000000000000000000000000000000"
+        ));
         if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
-            const FAILED_SLOT: U256 = U256::from_be_bytes(hex!(
-                "6661696c65640000000000000000000000000000000000000000000000000000"
-            ));
-            let slot = acc.storage.get(&FAILED_SLOT);
-            return slot.is_none() || slot.is_some_and(|slot| slot.present_value() != U256::ZERO);
-        }
-
-        // Check if the bytecode of the contract we're about to call contains the `DSTest::failed`
-        // function. If it doesn't, the call would fail and we would just be wasting time.
-        {
-            let mut account = state_changeset.get(&address).map(|acc| acc.info.code.as_ref());
-            let tmp;
-            if account.is_none() {
-                let Ok(acc) = self.backend().basic_ref(address) else { return false };
-                tmp = acc.map(|acc| acc.code);
-                account = tmp.as_ref().map(Option::as_ref);
-            }
-            let Some(code) = account else { return true };
-            if let Some(code) = code {
-                let code = code.original_byte_slice();
-                // Check only the first 1024 bytes of the code, as that's where the function
-                // selector is most likely to be located, in the function dispatching code.
-                let code = code.get(..1024).unwrap_or(code);
-                if memchr::memmem::find(code, &ITest::failedCall::SELECTOR).is_none() {
-                    return true;
-                }
+            if let Some(slot) = acc.storage.get(&FAILED_SLOT) {
+                return slot.present_value() == U256::ZERO;
             }
         }
-
-        // Finally, resort to calling `DSTest::failed`.
-        {
-            // Construct a new bare-bones backend to evaluate success.
-            let mut backend = self.backend().clone_empty();
-
-            // We only clone the test contract and cheatcode accounts,
-            // that's all we need to evaluate success.
-            for address in [address, CHEATCODE_ADDRESS] {
-                let Ok(acc) = self.backend().basic_ref(address) else { return false };
-                backend.insert_account_info(address, acc.unwrap_or_default());
-            }
-
-            // If this test failed any asserts, then this changeset will contain changes
-            // `false -> true` for the contract's `failed` variable and the `globalFailure` flag
-            // in the state of the cheatcode address,
-            // which are both read when we call `"failed()(bool)"` in the next step.
-            backend.commit(state_changeset.into_owned());
-
-            // Check if a DSTest assertion failed
-            let executor = self.clone_with_backend(backend);
-            let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
-            match call {
-                Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { failed } }) => {
-                    trace!(failed, "DSTest::failed()");
-                    return !failed;
-                }
-                Err(err) => {
-                    trace!(%err, "failed to call DSTest::failed()");
-                }
-            }
-        }
-
-        true
+        let Ok(slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, FAILED_SLOT) else {
+            return false
+        };
+        slot.is_zero()
     }
 
     /// Creates the environment to use when executing a transaction in a test context
