@@ -18,7 +18,7 @@ use alloy_genesis::Genesis;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{hex, utils::Unit, BlockNumber, TxHash, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockNumberOrTag;
+use alloy_rpc_types::{BlockNumberOrTag, Transaction};
 use alloy_signer::Signer;
 use alloy_signer_local::{
     coins_bip39::{English, Mnemonic},
@@ -1051,37 +1051,38 @@ impl NodeConfig {
                         .unwrap();
                     let transaction_block_number = transaction.block_number.unwrap();
 
-                    // Record all transactions preceding the specified transaction so as to
-                    // allow replay of them
+                    // Get the block pertaining to the fork transaction
                     let transaction_block = provider
-                        .get_block_by_number(transaction_block_number.into(), false)
+                        .get_block_by_number(transaction_block_number.into(), true)
                         .await
                         .unwrap()
                         .unwrap();
-                    // Transactions that precede the specified one will be replayed (inclusive)
-                    // TODO(serge): re-impl this based on feedback
-                    let mut replay_transactions: Vec<PoolTransaction> = Vec::new();
-                    for hash in transaction_block
+
+                    // Filter out transactions that are after the fork transaction
+                    let filtered_transactions: Vec<&Transaction> = transaction_block
                         .transactions
-                        .as_hashes()
+                        .as_transactions()
                         .unwrap()
                         .iter()
-                        .take_while_inclusive(|&hash| hash != transaction_hash.0)
-                        .map(|&hash| TxHash::into(hash))
-                        .collect::<Vec<TxHash>>()
-                    {
-                        println!("tx: {:?}", hash); // TODO(serge): rm line
-                        let tx = provider.get_transaction_by_hash(hash).await.unwrap().unwrap();
-                        let typed_transaction = TypedTransaction::from(tx.inner);
-                        let pending_transaction =
-                            PendingTransaction::new(typed_transaction).unwrap();
-                        replay_transactions.push(PoolTransaction {
-                            pending_transaction,
-                            requires: vec![],
-                            provides: vec![],
-                            priority: TransactionPriority(0),
-                        });
-                    }
+                        .take_while_inclusive(|&transaction| transaction.hash != transaction_hash.0)
+                        .collect();
+
+                    // Convert the transactions to PoolTransactions
+                    let replay_transactions = filtered_transactions
+                        .iter()
+                        .map(|&transaction| {
+                            println!("tx: {:?}", transaction.hash); // TODO(serge): rm line
+                            let typed_transaction = TypedTransaction::from(transaction.clone());
+                            let pending_transaction =
+                                PendingTransaction::new(typed_transaction).unwrap();
+                            PoolTransaction {
+                                pending_transaction,
+                                requires: vec![],
+                                provides: vec![],
+                                priority: TransactionPriority(0),
+                            }
+                        })
+                        .collect();
                     (transaction_block_number.saturating_sub(1), replay_transactions)
                 }
             };
