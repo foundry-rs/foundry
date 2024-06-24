@@ -1,5 +1,6 @@
 use crate::tx::{self, CastTxBuilder};
 use alloy_network::{eip2718::Encodable2718, EthereumWallet, TransactionBuilder};
+use alloy_primitives::hex;
 use alloy_signer::Signer;
 use clap::Parser;
 use eyre::Result;

@@ -17,7 +17,7 @@ workspace = true
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
-foundry-macros.workspace = true
+foundry-evm-abi.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-genesis.workspace = true
@@ -49,12 +49,9 @@ revm-inspectors.workspace = true
 
 arrayvec.workspace = true
 auto_impl.workspace = true
-derive_more.workspace = true
 eyre.workspace = true
 futures.workspace = true
-hex.workspace = true
 itertools.workspace = true
-once_cell.workspace = true
 parking_lot.workspace = true
 rustc-hash.workspace = true
 serde.workspace = true

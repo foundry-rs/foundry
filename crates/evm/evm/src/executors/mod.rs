@@ -44,8 +44,8 @@ pub use fuzz::FuzzedExecutor;
 pub mod invariant;
 pub use invariant::InvariantExecutor;
 
-mod tracing;
-pub use tracing::TracingExecutor;
+mod trace;
+pub use trace::TracingExecutor;
 
 sol! {
     interface ITest {
@@ -256,6 +256,7 @@ impl Executor {
     /// # Panics
     ///
     /// Panics if `env.tx.transact_to` is not `TxKind::Create(_)`.
+    #[instrument(name = "deploy", level = "debug", skip_all)]
     pub fn deploy_with_env(
         &mut self,
         env: EnvWithHandlerCfg,
@@ -289,6 +290,7 @@ impl Executor {
     ///
     /// Ayn changes made during the setup call to env's block environment are persistent, for
     /// example `vm.chainId()` will change the `block.chainId` for all subsequent test calls.
+    #[instrument(name = "setup", level = "debug", skip_all)]
     pub fn setup(
         &mut self,
         from: Option<Address>,
@@ -389,6 +391,7 @@ impl Executor {
     /// Execute the transaction configured in `env.tx`.
     ///
     /// The state after the call is **not** persisted.
+    #[instrument(name = "call", level = "debug", skip_all)]
     pub fn call_with_env(&self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
@@ -397,6 +400,7 @@ impl Executor {
     }
 
     /// Execute the transaction configured in `env.tx`.
+    #[instrument(name = "transact", level = "debug", skip_all)]
     pub fn transact_with_env(&mut self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
         let backend = self.backend_mut();
@@ -411,6 +415,7 @@ impl Executor {
     /// the executed call result.
     ///
     /// This should not be exposed to the user, as it should be called only by `transact*`.
+    #[instrument(name = "commit", level = "debug", skip_all)]
     fn commit(&mut self, result: &mut RawCallResult) {
         // Persist changes to db.
         self.backend_mut().commit(result.state_changeset.clone());
@@ -420,7 +425,6 @@ impl Executor {
         if let Some(cheats) = self.inspector_mut().cheatcodes.as_mut() {
             // Clear broadcastable transactions
             cheats.broadcastable_transactions.clear();
-            debug!(target: "evm::executors", "cleared broadcastable transactions");
 
             // corrected_nonce value is needed outside of this context (setUp), so we don't
             // reset it.
@@ -502,6 +506,7 @@ impl Executor {
         should_fail ^ success
     }
 
+    #[instrument(name = "is_success", level = "debug", skip_all)]
     fn is_success_raw(
         &self,
         address: Address,
@@ -536,11 +541,11 @@ impl Executor {
             let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
             match call {
                 Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { failed } }) => {
-                    debug!(failed, "DSTest::failed()");
+                    trace!(failed, "DSTest::failed()");
                     success = !failed;
                 }
                 Err(err) => {
-                    debug!(%err, "failed to call DSTest::failed()");
+                    trace!(%err, "failed to call DSTest::failed()");
                 }
             }
         }

@@ -15,9 +15,9 @@ use crate::{
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
     Vm::AccountAccess,
 };
-use alloy_primitives::{Address, Bytes, Log, TxKind, B256, U256};
+use alloy_primitives::{hex, Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
-use alloy_sol_types::{SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, SELECTOR_LEN};
 use foundry_config::Config;
 use foundry_evm_core::{
@@ -512,7 +512,7 @@ impl Cheatcodes {
                 let prev = account.info.nonce;
                 account.info.nonce = prev.saturating_sub(1);
 
-                debug!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
+                trace!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
             }
         }
 
@@ -1520,8 +1520,7 @@ impl Cheatcodes {
                             // pointer, which could have been updated to the exclusive upper bound during
                             // execution.
                             let value = try_or_return!(interpreter.stack().peek(1)).to_be_bytes::<32>();
-                            let selector = stopExpectSafeMemoryCall {}.cheatcode().func.selector_bytes;
-                            if value[0..SELECTOR_LEN] == selector {
+                            if value[..SELECTOR_LEN] == stopExpectSafeMemoryCall::SELECTOR {
                                 return
                             }
 
@@ -1589,9 +1588,8 @@ impl Cheatcodes {
                             if to == CHEATCODE_ADDRESS {
                                 let args_offset = try_or_return!(interpreter.stack().peek(3)).saturating_to::<usize>();
                                 let args_size = try_or_return!(interpreter.stack().peek(4)).saturating_to::<usize>();
-                                let selector = stopExpectSafeMemoryCall {}.cheatcode().func.selector_bytes;
                                 let memory_word = interpreter.shared_memory.slice(args_offset, args_size);
-                                if memory_word[0..SELECTOR_LEN] == selector {
+                                if memory_word[..SELECTOR_LEN] == stopExpectSafeMemoryCall::SELECTOR {
                                     return
                                 }
                             }
@@ -1702,22 +1700,6 @@ fn check_if_fixed_gas_limit<DB: DatabaseExt>(
         && call_gas_limit > 2300
 }
 
-/// Dispatches the cheatcode call to the appropriate function.
-fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
-    calls: &Vm::VmCalls,
-    ccx: &mut CheatsCtxt<DB>,
-    executor: &mut E,
-) -> Result {
-    macro_rules! match_ {
-        ($($variant:ident),*) => {
-            match calls {
-                $(Vm::VmCalls::$variant(cheat) => crate::Cheatcode::apply_traced(cheat, ccx, executor),)*
-            }
-        };
-    }
-    vm_calls!(match_)
-}
-
 /// Returns true if the kind of account access is a call.
 fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
@@ -1773,4 +1755,55 @@ fn append_storage_access(
             }
         }
     }
+}
+
+/// Dispatches the cheatcode call to the appropriate function.
+fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
+    calls: &Vm::VmCalls,
+    ccx: &mut CheatsCtxt<DB>,
+    executor: &mut E,
+) -> Result {
+    macro_rules! dispatch {
+        ($($variant:ident),*) => {
+            match calls {
+                $(Vm::VmCalls::$variant(cheat) => crate::Cheatcode::apply_full_with_executor(cheat, ccx, executor),)*
+            }
+        };
+    }
+
+    let _guard = trace_span_and_call(calls);
+    let result = vm_calls!(dispatch);
+    trace_return(&result);
+    result
+}
+
+fn trace_span_and_call(calls: &Vm::VmCalls) -> tracing::span::EnteredSpan {
+    let mut cheat = None;
+    let mut get_cheat = || *cheat.get_or_insert_with(|| calls_as_dyn_cheatcode(calls));
+    let span = debug_span!(target: "cheatcodes", "apply", id = %get_cheat().id());
+    let entered = span.entered();
+    trace!(target: "cheatcodes", cheat = ?get_cheat().as_debug(), "applying");
+    entered
+}
+
+fn trace_return(result: &Result) {
+    trace!(
+        target: "cheatcodes",
+        return = %match result {
+            Ok(b) => hex::encode(b),
+            Err(e) => e.to_string(),
+        }
+    );
+}
+
+#[cold]
+fn calls_as_dyn_cheatcode(calls: &Vm::VmCalls) -> &dyn DynCheatcode {
+    macro_rules! as_dyn {
+        ($($variant:ident),*) => {
+            match calls {
+                $(Vm::VmCalls::$variant(cheat) => cheat,)*
+            }
+        };
+    }
+    vm_calls!(as_dyn)
 }

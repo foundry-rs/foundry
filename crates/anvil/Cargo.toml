@@ -75,7 +75,7 @@ tower.workspace = true
 
 # tracing
 tracing.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 # async
 tokio = { workspace = true, features = ["time"] }

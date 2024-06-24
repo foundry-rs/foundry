@@ -772,6 +772,7 @@ impl Backend {
     ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
+    #[instrument(name = "inspect", level = "debug", skip_all)]
     pub fn inspect<'a, I: InspectorExt<&'a mut Self>>(
         &'a mut self,
         env: &mut EnvWithHandlerCfg,

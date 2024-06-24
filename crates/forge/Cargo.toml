@@ -77,7 +77,6 @@ clap_complete_fig = "4"
 dialoguer = { version = "0.11", default-features = false }
 dunce.workspace = true
 futures.workspace = true
-hex.workspace = true
 indicatif = "0.17"
 itertools.workspace = true
 once_cell.workspace = true
@@ -123,7 +122,7 @@ svm = { package = "svm-rs", version = "0.5", default-features = false, features 
     "rustls",
 ] }
 tempfile.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 alloy-signer-local.workspace = true
 
