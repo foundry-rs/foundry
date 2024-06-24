@@ -26,7 +26,6 @@ pub struct Miner {
     ///
     /// This will register the task so we can manually wake it up if the mining mode was changed
     inner: Arc<MinerInner>,
-    // TODO(serge): ...
     /// Transactions included into the pool before any others are.
     /// Done once on startup.
     force_include_transactions: Option<Vec<Arc<PoolTransaction>>>,
