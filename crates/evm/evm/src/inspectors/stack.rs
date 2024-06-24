@@ -403,8 +403,12 @@ impl InspectorStack {
             self.tracer = Some({
                 TracingInspector::new(TracingInspectorConfig {
                     record_steps: debug,
-                    record_memory_snapshots: false,
-                    record_stack_snapshots: StackSnapshotType::None,
+                    record_memory_snapshots: debug,
+                    record_stack_snapshots: if debug {
+                        StackSnapshotType::Full
+                    } else {
+                        StackSnapshotType::None
+                    },
                     record_state_diff: false,
                     exclude_precompile_calls: false,
                     record_logs: true,

@@ -66,6 +66,8 @@ pub struct DecodedTraceStep {
     pub start_step_idx: usize,
     pub end_step_idx: Option<usize>,
     pub function_name: String,
+    pub inputs: Option<Vec<String>>,
+    pub outputs: Option<Vec<String>>,
     pub gas_used: i64,
 }
 
@@ -134,7 +136,17 @@ pub async fn render_trace_arena(
                             .iter()
                             .find(|d| *step_idx == d.start_step_idx)
                         {
-                            writeln!(s, "{left}[{}] {}", decoded.gas_used, decoded.function_name)?;
+                            writeln!(
+                                s,
+                                "{left}[{}] {}{}",
+                                decoded.gas_used,
+                                decoded.function_name,
+                                decoded
+                                    .inputs
+                                    .as_ref()
+                                    .map(|v| format!("({})", v.join(", ")))
+                                    .unwrap_or_default()
+                            )?;
                             let left_prefix = format!("{right}{BRANCH}");
                             let right_prefix = format!("{right}{PIPE}");
                             ordering_idx = render_items(
@@ -150,7 +162,13 @@ pub async fn render_trace_arena(
                             )
                             .await?;
 
-                            writeln!(s, "{right}{EDGE}{RETURN}")?;
+                            write!(s, "{right}{EDGE}{RETURN}")?;
+
+                            if let Some(outputs) = &decoded.outputs {
+                                write!(s, " {}", outputs.join(", "))?;
+                            }
+
+                            writeln!(s)?;
                         }
                     }
                 }
