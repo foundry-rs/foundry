@@ -51,3 +51,4 @@ proptest = "1"
 thiserror.workspace = true
 tracing.workspace = true
 indicatif = "0.17"
+memchr = "2.7"
