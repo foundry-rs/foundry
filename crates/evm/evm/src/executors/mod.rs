@@ -14,7 +14,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256};
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
-    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult, GLOBAL_FAIL_SLOT},
+    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE,
@@ -114,7 +114,6 @@ impl Executor {
         Self { backend, env, inspector, gas_limit }
     }
 
-    #[allow(dead_code)]
     fn clone_with_backend(&self, backend: Backend) -> Self {
         let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(self.env().clone()), self.spec_id());
         Self::new(backend, env, self.inspector().clone(), self.gas_limit)
@@ -519,45 +518,6 @@ impl Executor {
             return false;
         }
 
-        // Check the global failure slot.
-        {
-            if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
-                if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
-                    return failed_slot.present_value().is_zero();
-                }
-            }
-            let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
-            else {
-                return false;
-            };
-            if !failed_slot.is_zero() {
-                return false;
-            }
-        }
-
-        // Check if the bytecode of the contract we're about to call contains the `DSTest::failed`
-        // function. If it doesn't, the call would fail and we would just be wasting time.
-        {
-            let code = match state_changeset.get(&address) {
-                Some(account) => account.info.code.as_ref().map(Cow::Borrowed),
-                None => match self.backend().basic_ref(address) {
-                    Ok(Some(acc)) => acc.code.map(Cow::Owned),
-                    // No account exists at address.
-                    Ok(None) => return true,
-                    Err(_) => return false,
-                },
-            };
-            if let Some(code) = code {
-                let code = &code.bytecode()[..];
-                // Check only the first 1024 bytes of the code, as that's where the function
-                // selector is most likely to be located, in the function dispatching code.
-                let code = code.get(..1024).unwrap_or(code);
-                if memchr::memmem::find(code, &ITest::failedCall::SELECTOR).is_none() {
-                    return true;
-                }
-            }
-        }
-
         // Finally, resort to calling `DSTest::failed`.
         {
             // Construct a new bare-bones backend to evaluate success.
@@ -569,11 +529,13 @@ impl Executor {
                 let Ok(acc) = self.backend().basic_ref(address) else { return false };
                 backend.insert_account_info(address, acc.unwrap_or_default());
             }
+
             // If this test failed any asserts, then this changeset will contain changes
             // `false -> true` for the contract's `failed` variable and the `globalFailure` flag
             // in the state of the cheatcode address,
             // which are both read when we call `"failed()(bool)"` in the next step.
             backend.commit(state_changeset.into_owned());
+
             // Check if a DSTest assertion failed
             let executor = self.clone_with_backend(backend);
             let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
