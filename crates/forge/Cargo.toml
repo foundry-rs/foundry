@@ -123,7 +123,7 @@ svm = { package = "svm-rs", version = "0.5", default-features = false, features 
     "rustls",
 ] }
 tempfile.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 alloy-signer-local.workspace = true
 

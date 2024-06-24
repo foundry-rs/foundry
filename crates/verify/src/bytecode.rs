@@ -329,7 +329,7 @@ impl VerifyBytecodeArgs {
 
         // State commited using deploy_with_env, now get the runtime bytecode from the db.
         let fork_runtime_code = executor
-            .backend
+            .backend_mut()
             .basic(contract_address)?
             .ok_or_else(|| {
                 eyre::eyre!(

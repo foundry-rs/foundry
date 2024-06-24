@@ -236,7 +236,7 @@ impl<'a> InvariantExecutor<'a> {
                     }
                 } else {
                     // Collect data for fuzzing from the state changeset.
-                    let mut state_changeset = call_result.state_changeset.clone().unwrap();
+                    let mut state_changeset = call_result.state_changeset.clone();
 
                     if !call_result.reverted {
                         collect_data(
@@ -364,7 +364,8 @@ impl<'a> InvariantExecutor<'a> {
             self.select_contracts_and_senders(invariant_contract.address)?;
 
         // Stores fuzz state for use with [fuzz_calldata_from_state].
-        let fuzz_state = EvmFuzzState::new(self.executor.backend.mem_db(), self.config.dictionary);
+        let fuzz_state =
+            EvmFuzzState::new(self.executor.backend().mem_db(), self.config.dictionary);
 
         // Creates the invariant strategy.
         let strat = invariant_strat(
@@ -395,7 +396,7 @@ impl<'a> InvariantExecutor<'a> {
             ));
         }
 
-        self.executor.inspector.fuzzer =
+        self.executor.inspector_mut().fuzzer =
             Some(Fuzzer { call_generator, fuzz_state: fuzz_state.clone(), collect: true });
 
         Ok((fuzz_state, targeted_contracts, strat))

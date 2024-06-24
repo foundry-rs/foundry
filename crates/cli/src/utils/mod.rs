@@ -12,7 +12,6 @@ use std::{
     process::{Command, Output, Stdio},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
 
 mod cmd;
@@ -67,11 +66,9 @@ impl<T: AsRef<Path>> FoundryPathExt for T {
 }
 
 /// Initializes a tracing Subscriber for logging
-#[allow(dead_code)]
 pub fn subscriber() {
     tracing_subscriber::Registry::default()
         .with(tracing_subscriber::EnvFilter::from_default_env())
-        .with(ErrorLayer::default())
         .with(tracing_subscriber::fmt::layer())
         .init()
 }
