@@ -901,8 +901,8 @@ impl DatabaseExt for Backend {
                 self.inner.snapshots.insert_at(snapshot.clone(), id);
             }
 
-            // Check if an error occurred either during or before the snapshot.
             // https://github.com/foundry-rs/foundry/issues/3055
+            // Check if an error occurred either during or before the snapshot.
             // DSTest contracts don't have snapshot functionality, so this slot is enough to check
             // for failure here.
             if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS) {
