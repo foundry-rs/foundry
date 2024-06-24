@@ -6,6 +6,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::Function;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{
+    hex,
     utils::{keccak256, ParseUnits, Unit},
     Address, Keccak256, TxHash, TxKind, B256, I256, U256,
 };
@@ -27,7 +28,7 @@ use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::etherscan_project,
     fmt::*,
-    fs, TransactionReceiptWithRevertReason,
+    fs, get_pretty_tx_receipt_attr, TransactionReceiptWithRevertReason,
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;

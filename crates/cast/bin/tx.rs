@@ -1,7 +1,7 @@
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
-use alloy_primitives::{Address, TxKind};
+use alloy_primitives::{hex, Address, TxKind};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;

@@ -1,14 +1,15 @@
 use alloy_primitives::Selector;
 use alloy_sol_types::sol;
+use foundry_common_fmt::*;
 use foundry_macros::ConsoleFmt;
 use once_cell::sync::Lazy;
-use revm::primitives::HashMap;
+use rustc_hash::FxHashMap;
 
 sol!(
     #[sol(abi)]
     #[derive(ConsoleFmt)]
     HardhatConsole,
-    "src/abi/HardhatConsole.json"
+    "src/HardhatConsole.json"
 );
 
 /// Patches the given Hardhat `console` function selector to its ABI-normalized form.
@@ -38,8 +39,8 @@ pub fn hh_console_selector(input: &[u8]) -> Option<&'static Selector> {
 /// `hardhat/console.log` logs its events manually, and in functions that accept integers they're
 /// encoded as `abi.encodeWithSignature("log(int)", p0)`, which is not the canonical ABI encoding
 /// for `int` that Solc (and [`sol!`]) uses.
-pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<HashMap<[u8; 4], [u8; 4]>> = Lazy::new(|| {
-    HashMap::from([
+pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<FxHashMap<[u8; 4], [u8; 4]>> = Lazy::new(|| {
+    FxHashMap::from_iter([
         // log(bool,uint256,uint256,address)
         ([241, 97, 178, 33], [0, 221, 135, 185]),
         // log(uint256,address,address,string)

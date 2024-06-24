@@ -1,6 +1,7 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
+use alloy_primitives::hex;
 use foundry_compilers::artifacts::{remappings::Remapping, ConfigurableContractArtifact, Metadata};
 use foundry_config::{
     parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,

@@ -1,6 +1,5 @@
 //! Helpers for formatting Ethereum types.
 
-use crate::calc::to_exp_notation;
 use alloy_primitives::{Sign, I256, U256};
 use yansi::Paint;
 
@@ -10,8 +9,11 @@ pub use console::{console_format, ConsoleFmt, FormatSpec};
 mod dynamic;
 pub use dynamic::{format_token, format_token_raw, format_tokens, parse_tokens};
 
+mod exp;
+pub use exp::to_exp_notation;
+
 mod ui;
-pub use ui::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr, UIfmt};
+pub use ui::{get_pretty_block_attr, get_pretty_tx_attr, EthValue, UIfmt};
 
 /// Formats a U256 number to string, adding an exponential notation _hint_ if it
 /// is larger than `10_000`, with a precision of `4` figures, and trimming the

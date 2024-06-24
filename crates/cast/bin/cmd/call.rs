@@ -189,7 +189,7 @@ impl CallArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Address;
+    use alloy_primitives::{hex, Address};
 
     #[test]
     fn can_parse_call_data() {

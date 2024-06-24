@@ -54,7 +54,6 @@ chrono.workspace = true
 evm-disassembler.workspace = true
 eyre.workspace = true
 futures.workspace = true
-hex.workspace = true
 rand.workspace = true
 rayon.workspace = true
 serde_json.workspace = true
