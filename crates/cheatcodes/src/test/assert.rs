@@ -170,12 +170,17 @@ fn handle_assertion_result<E>(
     state: &mut Cheatcodes,
     error_formatter: impl Fn(&E) -> String,
     error_msg: Option<&str>,
+    format_error: bool,
 ) -> Result {
     match result {
         Ok(_) => Ok(Default::default()),
         Err(err) => {
-            let formatted_err = error_formatter(&err);
-            let msg = format!("{}: {}", error_msg.unwrap_or("assertion failed"), formatted_err);
+            let error_msg = error_msg.unwrap_or("assertion failed").to_string();
+            let msg = if format_error {
+                format!("{error_msg}: {}", error_formatter(&err))
+            } else {
+                error_msg
+            };
             if !state.config.legacy_assertions {
                 Err(msg.into())
             } else {
@@ -194,31 +199,34 @@ fn handle_assertion_result<E>(
 ///
 /// Macro also accepts an optional closure that formats the error returned by the assertion.
 macro_rules! impl_assertions {
+    (|$($arg:ident),*| $body:expr, $format_error:literal, $(($no_error:ident, $with_error:ident)),* $(,)?) => {
+        impl_assertions!(@args_tt |($($arg),*)| $body, |e| e.to_string(), $format_error, $(($no_error, $with_error),)*);
+    };
     (|$($arg:ident),*| $body:expr, $(($no_error:ident, $with_error:ident)),* $(,)?) => {
-        impl_assertions!(|$($arg),*| $body, |e| e.to_string(), $(($no_error, $with_error),)*);
+        impl_assertions!(@args_tt |($($arg),*)| $body, |e| e.to_string(), true, $(($no_error, $with_error),)*);
     };
     (|$($arg:ident),*| $body:expr, $error_formatter:expr, $(($no_error:ident, $with_error:ident)),* $(,)?) => {
-        impl_assertions!(@args_tt |($($arg),*)| $body, $error_formatter, $(($no_error, $with_error)),*);
+        impl_assertions!(@args_tt |($($arg),*)| $body, $error_formatter, true, $(($no_error, $with_error)),*);
     };
     // We convert args to `tt` and later expand them back into tuple to allow usage of expanded args inside of
-    // each nested assertion type context.
-    (@args_tt |$args:tt| $body:expr, $error_formatter:expr, $(($no_error:ident, $with_error:ident)),* $(,)?) => {
+    // each assertion type context.
+    (@args_tt |$args:tt| $body:expr, $error_formatter:expr, $format_error:literal, $(($no_error:ident, $with_error:ident)),* $(,)?) => {
         $(
-            impl_assertions!(@impl $no_error, $with_error, $args, $body, $error_formatter);
+            impl_assertions!(@impl $no_error, $with_error, $args, $body, $error_formatter, $format_error);
         )*
     };
-    (@impl $no_error:ident, $with_error:ident, ($($arg:ident),*), $body:expr, $error_formatter:expr) => {
+    (@impl $no_error:ident, $with_error:ident, ($($arg:ident),*), $body:expr, $error_formatter:expr, $format_error:literal) => {
         impl crate::Cheatcode for $no_error {
             fn apply(&self, state: &mut Cheatcodes) -> Result {
                 let Self { $($arg),* } = self;
-                handle_assertion_result($body, state, $error_formatter, None)
+                handle_assertion_result($body, state, $error_formatter, None, $format_error)
             }
         }
 
         impl crate::Cheatcode for $with_error {
             fn apply(&self, state: &mut Cheatcodes) -> Result {
                 let Self { $($arg),*, error} = self;
-                handle_assertion_result($body, state, $error_formatter, Some(error))
+                handle_assertion_result($body, state, $error_formatter, Some(error), $format_error)
             }
         }
     };
@@ -226,11 +234,13 @@ macro_rules! impl_assertions {
 
 impl_assertions! {
     |condition| assert_true(*condition),
+    false,
     (assertTrue_0Call, assertTrue_1Call),
 }
 
 impl_assertions! {
     |condition| assert_false(*condition),
+    false,
     (assertFalse_0Call, assertFalse_1Call),
 }
 
