@@ -148,7 +148,7 @@ impl ContractsByArtifact {
     /// references and immutables.
     pub fn find_by_deployed_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
         // Immediately return None if the code is empty.
-        if code.len() == 0 {
+        if code.is_empty() {
             return None;
         }
 
