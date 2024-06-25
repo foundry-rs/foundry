@@ -370,8 +370,9 @@ impl<'a> InvariantExecutor<'a> {
                         invariant_test.set_last_run_inputs(&current_run.inputs);
                     }
 
+                    // If test cannot continue then stop current run and exit test suite.
                     if !result.can_continue {
-                        break
+                        return Err(TestCaseError::fail("Test cannot continue."))
                     }
 
                     invariant_test.set_last_call_results(result.call_result);
