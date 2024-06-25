@@ -86,9 +86,8 @@ pub(crate) fn assert_invariants(
     Ok(Some(call_result))
 }
 
-/// Verifies that the invariant run execution can continue.
-/// Returns the mapping of (Invariant Function Name -> Call Result, Logs, Traces) if invariants were
-/// asserted.
+/// Returns if invariant test can continue and last successful call result of the invariant test
+/// function (if it can continue).
 pub(crate) fn can_continue(
     invariant_contract: &InvariantContract<'_>,
     invariant_test: &InvariantTest,
