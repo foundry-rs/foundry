@@ -31,14 +31,17 @@ pub struct Miner {
 }
 
 impl Miner {
-    /// Returns a new miner with that operates in the given `mode`
-    pub fn new(mode: MiningMode, force_include_transactions: Vec<PoolTransaction>) -> Self {
+    /// Returns a new miner with that operates in the given `mode`.
+    /// Specifying some force transactions will cause a block to be mined with those transactions
+    /// as soon as the miner is polled.
+    pub fn new(mode: MiningMode, force_transactions: Vec<PoolTransaction>) -> Self {
+        let force_transactions =
+            if force_transactions.is_empty() { None } else { Some(force_transactions) };
         Self {
             mode: Arc::new(RwLock::new(mode)),
             inner: Default::default(),
-            force_transactions: Some(
-                force_include_transactions.into_iter().map(Arc::new).collect(),
-            ),
+            force_transactions: force_transactions
+                .map(|txs| txs.into_iter().map(Arc::new).collect()),
         }
     }
 
