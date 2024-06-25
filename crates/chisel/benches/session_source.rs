@@ -1,6 +1,6 @@
 use chisel::session_source::{SessionSource, SessionSourceConfig};
 use criterion::{criterion_group, Criterion};
-use foundry_compilers::Solc;
+use foundry_compilers::solc::Solc;
 use once_cell::sync::Lazy;
 use semver::Version;
 use std::hint::black_box;

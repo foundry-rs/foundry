@@ -11,8 +11,6 @@ use proptest::test_runner::TestError;
 pub struct InvariantFailures {
     /// Total number of reverts.
     pub reverts: usize,
-    /// How many different invariants have been broken.
-    pub broken_invariants_count: usize,
     /// The latest revert reason of a run.
     pub revert_reason: Option<String>,
     /// Maps a broken invariant to its specific error.
@@ -80,7 +78,7 @@ impl FailedInvariantCaseData {
     ) -> Self {
         // Collect abis of fuzzed and invariant contracts to decode custom error.
         let revert_reason = RevertDecoder::new()
-            .with_abis(targeted_contracts.targets.lock().iter().map(|(_, (_, abi, _))| abi))
+            .with_abis(targeted_contracts.targets.lock().iter().map(|(_, c)| &c.abi))
             .with_abi(invariant_contract.abi)
             .decode(call_result.result.as_ref(), Some(call_result.exit_reason));
 
@@ -88,7 +86,7 @@ impl FailedInvariantCaseData {
         debug_assert!(func.inputs.is_empty());
         let origin = func.name.as_str();
         Self {
-            test_error: proptest::test_runner::TestError::Fail(
+            test_error: TestError::Fail(
                 format!("{origin}, reason: {revert_reason}").into(),
                 calldata.to_vec(),
             ),

@@ -8,29 +8,29 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::LogData;
+use alloy_primitives::{hex, LogData};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use futures::{future::BoxFuture, FutureExt};
+use revm_inspectors::tracing::types::TraceMemberOrder;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use yansi::{Color, Paint};
 
-/// Call trace address identifiers.
-///
-/// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
-pub mod identifier;
-use identifier::LocalTraceIdentifier;
-
-mod decoder;
-pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
-
-use revm_inspectors::tracing::types::LogCallOrder;
 pub use revm_inspectors::tracing::{
     types::{CallKind, CallTrace, CallTraceNode},
     CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TracingInspector,
     TracingInspectorConfig,
 };
+
+/// Call trace address identifiers.
+///
+/// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
+pub mod identifier;
+use identifier::{LocalTraceIdentifier, TraceIdentifier};
+
+mod decoder;
+pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
@@ -94,7 +94,7 @@ pub async fn render_trace_arena(
             let right_prefix = format!("{child}{PIPE}");
             for child in &node.ordering {
                 match child {
-                    LogCallOrder::Log(index) => {
+                    TraceMemberOrder::Log(index) => {
                         let log = render_trace_log(&node.logs[*index], decoder).await?;
 
                         // Prepend our tree structure symbols to each line of the displayed log
@@ -107,7 +107,7 @@ pub async fn render_trace_arena(
                             )
                         })?;
                     }
-                    LogCallOrder::Call(index) => {
+                    TraceMemberOrder::Call(index) => {
                         inner(
                             arena,
                             decoder,
@@ -118,6 +118,7 @@ pub async fn render_trace_arena(
                         )
                         .await?;
                     }
+                    TraceMemberOrder::Step(_) => {}
                 }
             }
 
@@ -242,7 +243,7 @@ async fn render_trace_log(
                 .collect::<Vec<String>>()
                 .join(", ");
 
-            write!(s, "emit {}({params})", name.clone().cyan())?;
+            write!(s, "emit {}({params})", name.cyan())?;
         }
     }
 
@@ -295,21 +296,19 @@ fn trace_color(trace: &CallTrace) -> Color {
 }
 
 /// Given a list of traces and artifacts, it returns a map connecting address to abi
-pub fn load_contracts(traces: Traces, known_contracts: &ContractsByArtifact) -> ContractsByAddress {
+pub fn load_contracts<'a>(
+    traces: impl IntoIterator<Item = &'a CallTraceArena>,
+    known_contracts: &ContractsByArtifact,
+) -> ContractsByAddress {
     let mut local_identifier = LocalTraceIdentifier::new(known_contracts);
-    let mut decoder = CallTraceDecoderBuilder::new().build();
-    for (_, trace) in &traces {
-        decoder.identify(trace, &mut local_identifier);
-    }
-
-    decoder
-        .contracts
-        .iter()
-        .filter_map(|(addr, name)| {
-            if let Ok(Some((_, contract))) = known_contracts.find_by_name_or_identifier(name) {
-                return Some((*addr, (name.clone(), contract.abi.clone())));
+    let decoder = CallTraceDecoder::new();
+    let mut contracts = ContractsByAddress::new();
+    for trace in traces {
+        for address in local_identifier.identify_addresses(decoder.trace_addresses(trace)) {
+            if let (Some(contract), Some(abi)) = (address.contract, address.abi) {
+                contracts.insert(address.address, (contract, abi.into_owned()));
             }
-            None
-        })
-        .collect()
+        }
+    }
+    contracts
 }

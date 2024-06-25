@@ -1,5 +1,6 @@
 use crate::tx::{self, CastTxBuilder};
-use alloy_network::{eip2718::Encodable2718, EthereumSigner, TransactionBuilder};
+use alloy_network::{eip2718::Encodable2718, EthereumWallet, TransactionBuilder};
+use alloy_primitives::hex;
 use alloy_signer::Signer;
 use clap::Parser;
 use eyre::Result;
@@ -90,7 +91,7 @@ impl MakeTxArgs {
             .build(from)
             .await?;
 
-        let tx = tx.build(&EthereumSigner::new(signer)).await?;
+        let tx = tx.build(&EthereumWallet::new(signer)).await?;
 
         let signed_tx = hex::encode(tx.encoded_2718());
         println!("0x{signed_tx}");

@@ -6454,7 +6454,7 @@
     {
       "func": {
         "id": "randomUint_1",
-        "description": "Returns random uin256 value between the provided range (min..=max).",
+        "description": "Returns random uin256 value between the provided range (=min..=max).",
         "declaration": "function randomUint(uint256 min, uint256 max) external returns (uint256);",
         "visibility": "external",
         "mutability": "",

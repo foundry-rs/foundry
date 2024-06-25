@@ -1,6 +1,6 @@
 //! terminal utils
 use foundry_compilers::{
-    remappings::Remapping,
+    artifacts::remappings::Remapping,
     report::{self, BasicStdoutReporter, Reporter},
 };
 use once_cell::sync::Lazy;

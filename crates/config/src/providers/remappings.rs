@@ -3,7 +3,7 @@ use figment::{
     value::{Dict, Map},
     Error, Metadata, Profile, Provider,
 };
-use foundry_compilers::remappings::{RelativeRemapping, Remapping};
+use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use std::{
     borrow::Cow,
     collections::{btree_map::Entry, BTreeMap, HashSet},
@@ -151,7 +151,7 @@ impl<'a> RemappingsProvider<'a> {
         let mut all_remappings = Remappings::new_with_remappings(user_remappings);
 
         // scan all library dirs and autodetect remappings
-        // todo: if a lib specifies contexts for remappings manually, we need to figure out how to
+        // TODO: if a lib specifies contexts for remappings manually, we need to figure out how to
         // resolve that
         if self.auto_detect_remappings {
             let mut lib_remappings = BTreeMap::new();

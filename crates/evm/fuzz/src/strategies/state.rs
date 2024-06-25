@@ -1,8 +1,7 @@
-use crate::invariant::{ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts};
+use crate::invariant::{BasicTxDetails, FuzzRunIdentifiedContracts};
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
-use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
 use indexmap::IndexSet;
@@ -65,10 +64,12 @@ impl EvmFuzzState {
         run_depth: u32,
     ) {
         let mut dict = self.inner.write();
-        fuzzed_contracts.with_fuzzed_artifacts(tx, |target_abi, target_function| {
+        {
+            let targets = fuzzed_contracts.targets.lock();
+            let (target_abi, target_function) = targets.fuzzed_artifacts(tx);
             dict.insert_logs_values(target_abi, logs, run_depth);
             dict.insert_result_values(target_function, result, run_depth);
-        });
+        }
         dict.insert_new_state_values(state_changeset);
     }
 
@@ -380,44 +381,4 @@ impl FuzzDictionary {
             "FuzzDictionary stats",
         );
     }
-}
-
-/// Collects all created contracts from a StateChangeset which haven't been discovered yet. Stores
-/// them at `targeted_contracts` and `created_contracts`.
-pub fn collect_created_contracts(
-    state_changeset: &StateChangeset,
-    project_contracts: &ContractsByArtifact,
-    setup_contracts: &ContractsByAddress,
-    artifact_filters: &ArtifactFilters,
-    targeted_contracts: &FuzzRunIdentifiedContracts,
-    created_contracts: &mut Vec<Address>,
-) -> eyre::Result<()> {
-    let mut writable_targeted = targeted_contracts.targets.lock();
-    for (address, account) in state_changeset {
-        if setup_contracts.contains_key(address) {
-            continue;
-        }
-        if !account.is_touched() {
-            continue;
-        }
-        let Some(code) = &account.info.code else {
-            continue;
-        };
-        if code.is_empty() {
-            continue;
-        }
-        let Some((artifact, contract)) =
-            project_contracts.find_by_deployed_code(code.original_byte_slice())
-        else {
-            continue;
-        };
-        let Some(functions) = artifact_filters.get_targeted_functions(artifact, &contract.abi)?
-        else {
-            continue;
-        };
-        created_contracts.push(*address);
-        writable_targeted
-            .insert(*address, (artifact.name.clone(), contract.abi.clone(), functions));
-    }
-    Ok(())
 }

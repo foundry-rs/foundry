@@ -10,14 +10,15 @@ use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256, U64};
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
-    other::OtherFields, request::TransactionRequest, AccessList, AnyTransactionReceipt,
-    Signature as RpcSignature, Transaction as RpcTransaction, TransactionReceipt, WithOtherFields,
+    request::TransactionRequest, AccessList, AnyTransactionReceipt, Signature as RpcSignature,
+    Transaction as RpcTransaction, TransactionReceipt,
 };
+use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 use revm::{
     interpreter::InstructionResult,
-    primitives::{OptimismFields, TransactTo, TxEnv},
+    primitives::{OptimismFields, TxEnv},
 };
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
@@ -445,10 +446,10 @@ impl PendingTransaction {
     /// Converts the [PendingTransaction] into the [TxEnv] context that [`revm`](foundry_evm)
     /// expects.
     pub fn to_revm_tx_env(&self) -> TxEnv {
-        fn transact_to(kind: &TxKind) -> TransactTo {
+        fn transact_to(kind: &TxKind) -> TxKind {
             match kind {
-                TxKind::Call(c) => TransactTo::Call(*c),
-                TxKind::Create => TransactTo::Create,
+                TxKind::Call(c) => TxKind::Call(*c),
+                TxKind::Create => TxKind::Create,
             }
         }
 
@@ -541,7 +542,7 @@ impl PendingTransaction {
                 } = tx.tx().tx();
                 TxEnv {
                     caller,
-                    transact_to: TransactTo::call(*to),
+                    transact_to: TxKind::Call(*to),
                     data: input.clone(),
                     chain_id: Some(*chain_id),
                     nonce: Some(*nonce),
@@ -593,7 +594,7 @@ impl PendingTransaction {
 }
 
 /// Container type for signed, typed transactions.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypedTransaction {
     /// Legacy transaction type
     Legacy(Signed<TxLegacy>),
@@ -1401,7 +1402,7 @@ mod tests {
         let signature = Signature::from_str("0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b").unwrap();
 
         let tx = TypedTransaction::Legacy(Signed::new_unchecked(
-            tx.clone(),
+            tx,
             signature,
             b256!("a517b206d2223278f860ea017d3626cacad4f52ff51030dc9a96b432f17f8d34"),
         ));

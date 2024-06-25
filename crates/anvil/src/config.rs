@@ -20,9 +20,9 @@ use alloy_primitives::{hex, utils::Unit, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
-use alloy_signer_wallet::{
+use alloy_signer_local::{
     coins_bip39::{English, Mnemonic},
-    LocalWallet, MnemonicBuilder,
+    MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_transport::{Transport, TransportError};
 use anvil_server::ServerConfig;
@@ -99,13 +99,13 @@ pub struct NodeConfig {
     /// The hardfork to use
     pub hardfork: Option<Hardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
-    pub genesis_accounts: Vec<LocalWallet>,
+    pub genesis_accounts: Vec<PrivateKeySigner>,
     /// Native token balance of every genesis account in the genesis block
     pub genesis_balance: U256,
     /// Genesis block timestamp
     pub genesis_timestamp: Option<u64>,
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub signer_accounts: Vec<LocalWallet>,
+    pub signer_accounts: Vec<PrivateKeySigner>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
     pub block_time: Option<Duration>,
     /// Disable auto, interval mining mode uns use `MiningMode::None` instead
@@ -206,7 +206,7 @@ Private Keys
         );
 
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            let hex = hex::encode(wallet.signer().to_bytes());
+            let hex = hex::encode(wallet.credential().to_bytes());
             let _ = write!(config_string, "\n({idx}) 0x{hex}");
         }
 
@@ -312,7 +312,7 @@ Genesis Timestamp
 
         for wallet in &self.genesis_accounts {
             available_accounts.push(format!("{:?}", wallet.address()));
-            private_keys.push(format!("0x{}", hex::encode(wallet.signer().to_bytes())));
+            private_keys.push(format!("0x{}", hex::encode(wallet.credential().to_bytes())));
         }
 
         if let Some(ref gen) = self.account_generator {
@@ -588,14 +588,14 @@ impl NodeConfig {
 
     /// Sets the genesis accounts
     #[must_use]
-    pub fn with_genesis_accounts(mut self, accounts: Vec<LocalWallet>) -> Self {
+    pub fn with_genesis_accounts(mut self, accounts: Vec<PrivateKeySigner>) -> Self {
         self.genesis_accounts = accounts;
         self
     }
 
     /// Sets the signer accounts
     #[must_use]
-    pub fn with_signer_accounts(mut self, accounts: Vec<LocalWallet>) -> Self {
+    pub fn with_signer_accounts(mut self, accounts: Vec<PrivateKeySigner>) -> Self {
         self.signer_accounts = accounts;
         self
     }
@@ -1243,7 +1243,7 @@ impl AccountGenerator {
 }
 
 impl AccountGenerator {
-    pub fn gen(&self) -> Vec<LocalWallet> {
+    pub fn gen(&self) -> Vec<PrivateKeySigner> {
         let builder = MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
 
         // use the derivation path

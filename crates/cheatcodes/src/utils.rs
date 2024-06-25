@@ -3,12 +3,12 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer::{Signer, SignerSync};
-use alloy_signer_wallet::{
+use alloy_signer_local::{
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
     },
-    LocalWallet, MnemonicBuilder,
+    MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
@@ -158,11 +158,12 @@ impl Cheatcode for randomUint_0Call {
 
 impl Cheatcode for randomUint_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { min, max } = self;
+        let Self { min, max } = *self;
+        ensure!(min <= max, "min must be less than or equal to max");
         // Generate random between range min..=max
         let mut rng = rand::thread_rng();
-        let range = *max - *min + U256::from(1);
-        let random_number = rng.gen::<U256>() % range + *min;
+        let range = max - min + U256::from(1);
+        let random_number = rng.gen::<U256>() % range + min;
         Ok(random_number.abi_encode())
     }
 }
@@ -268,8 +269,8 @@ pub(super) fn parse_private_key(private_key: &U256) -> Result<SigningKey> {
     SigningKey::from_bytes((&bytes).into()).map_err(Into::into)
 }
 
-pub(super) fn parse_wallet(private_key: &U256) -> Result<LocalWallet> {
-    parse_private_key(private_key).map(LocalWallet::from)
+pub(super) fn parse_wallet(private_key: &U256) -> Result<PrivateKeySigner> {
+    parse_private_key(private_key).map(PrivateKeySigner::from)
 }
 
 fn derive_key_str(mnemonic: &str, path: &str, index: u32, language: &str) -> Result {
@@ -302,7 +303,7 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
         .phrase(mnemonic)
         .derivation_path(derive_key_path(path, index))?
         .build()?;
-    let private_key = U256::from_be_bytes(wallet.signer().to_bytes().into());
+    let private_key = U256::from_be_bytes(wallet.credential().to_bytes().into());
     Ok(private_key.abi_encode())
 }
 
@@ -310,8 +311,7 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use alloy_primitives::FixedBytes;
-    use hex::FromHex;
+    use alloy_primitives::{hex::FromHex, FixedBytes};
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
     use std::{path::PathBuf, sync::Arc};
 

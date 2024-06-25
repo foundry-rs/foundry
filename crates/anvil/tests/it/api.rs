@@ -2,15 +2,16 @@
 
 use crate::{
     abi::{MulticallContract, SimpleStorage},
-    utils::{connect_pubsub_with_signer, http_provider_with_signer},
+    utils::{connect_pubsub_with_wallet, http_provider_with_signer},
 };
-use alloy_network::{EthereumSigner, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, ChainId, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::TransactionRequest, state::AccountOverride, BlockId, BlockNumberOrTag,
-    BlockTransactions, WithOtherFields,
+    BlockTransactions,
 };
+use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
 use std::{collections::HashMap, time::Duration};
 
@@ -99,7 +100,7 @@ async fn can_get_block_by_number() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
-    let signer: EthereumSigner = accounts[0].clone().into();
+    let signer: EthereumWallet = accounts[0].clone().into();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -129,11 +130,11 @@ async fn can_get_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
-    let signer: EthereumSigner = accounts[0].clone().into();
+    let signer: EthereumWallet = accounts[0].clone().into();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let provider = connect_pubsub_with_signer(&handle.http_endpoint(), signer).await;
+    let provider = connect_pubsub_with_wallet(&handle.http_endpoint(), signer).await;
 
     let block = provider.get_block(BlockId::pending(), false.into()).await.unwrap().unwrap();
     assert_eq!(block.header.number.unwrap(), 1);
@@ -165,7 +166,7 @@ async fn can_call_on_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
     let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = wallet.clone().into();
+    let signer: EthereumWallet = wallet.clone().into();
     let sender = wallet.address();
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
@@ -242,7 +243,7 @@ async fn can_call_on_pending_block() {
 async fn can_call_with_state_override() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = wallet.clone().into();
+    let signer: EthereumWallet = wallet.clone().into();
     let account = wallet.address();
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);

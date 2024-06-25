@@ -1,6 +1,6 @@
-use alloy_primitives::Address;
+use alloy_primitives::{hex, Address};
 use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address};
-use alloy_signer_wallet::LocalWallet;
+use alloy_signer_local::PrivateKeySigner;
 use clap::{builder::TypedValueParser, Parser};
 use eyre::Result;
 use rayon::iter::{self, ParallelIterator};
@@ -63,16 +63,16 @@ struct Wallets {
 }
 
 impl WalletData {
-    pub fn new(wallet: &LocalWallet) -> Self {
+    pub fn new(wallet: &PrivateKeySigner) -> Self {
         Self {
             address: wallet.address().to_checksum(None),
-            private_key: format!("0x{}", hex::encode(wallet.signer().to_bytes())),
+            private_key: format!("0x{}", hex::encode(wallet.credential().to_bytes())),
         }
     }
 }
 
 impl VanityArgs {
-    pub fn run(self) -> Result<LocalWallet> {
+    pub fn run(self) -> Result<PrivateKeySigner> {
         let Self { starts_with, ends_with, nonce, save_path } = self;
         let mut left_exact_hex = None;
         let mut left_regex = None;
@@ -160,7 +160,7 @@ impl VanityArgs {
                 String::new()
             },
             wallet.address().to_checksum(None),
-            hex::encode(wallet.signer().to_bytes()),
+            hex::encode(wallet.credential().to_bytes()),
         );
 
         Ok(wallet)
@@ -170,7 +170,7 @@ impl VanityArgs {
 /// Saves the specified `wallet` to a 'vanity_addresses.json' file at the given `save_path`.
 /// If the file exists, the wallet data is appended to the existing content;
 /// otherwise, a new file is created.
-fn save_wallet_to_file(wallet: &LocalWallet, path: &Path) -> Result<()> {
+fn save_wallet_to_file(wallet: &PrivateKeySigner, path: &Path) -> Result<()> {
     let mut wallets = if path.exists() {
         let data = fs::read_to_string(path)?;
         serde_json::from_str::<Wallets>(&data).unwrap_or_default()
@@ -185,7 +185,7 @@ fn save_wallet_to_file(wallet: &LocalWallet, path: &Path) -> Result<()> {
 }
 
 /// Generates random wallets until `matcher` matches the wallet address, returning the wallet.
-pub fn find_vanity_address<T: VanityMatcher>(matcher: T) -> Option<LocalWallet> {
+pub fn find_vanity_address<T: VanityMatcher>(matcher: T) -> Option<PrivateKeySigner> {
     wallet_generator().find_any(create_matcher(matcher)).map(|(key, _)| key.into())
 }
 
@@ -194,7 +194,7 @@ pub fn find_vanity_address<T: VanityMatcher>(matcher: T) -> Option<LocalWallet> 
 pub fn find_vanity_address_with_nonce<T: VanityMatcher>(
     matcher: T,
     nonce: u64,
-) -> Option<LocalWallet> {
+) -> Option<PrivateKeySigner> {
     wallet_generator().find_any(create_nonce_matcher(matcher, nonce)).map(|(key, _)| key.into())
 }
 

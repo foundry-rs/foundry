@@ -3,6 +3,9 @@ use alloy_sol_types::sol;
 use derive_more::Display;
 use itertools::Itertools;
 
+mod hardhat;
+pub use hardhat::*;
+
 // TODO: Use `UiFmt`
 
 sol! {

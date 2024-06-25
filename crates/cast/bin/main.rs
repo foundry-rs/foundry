@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{keccak256, Address, B256};
+use alloy_primitives::{hex, keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use cast::{Cast, SimpleCast};
@@ -530,17 +530,20 @@ async fn main() -> Result<()> {
         CastSubcommand::RightShift { value, bits, base_in, base_out } => {
             println!("{}", SimpleCast::right_shift(&value, &bits, base_in.as_deref(), &base_out)?);
         }
-        CastSubcommand::EtherscanSource { address, directory, etherscan } => {
+        CastSubcommand::EtherscanSource { address, directory, etherscan, flatten } => {
             let config = Config::from(&etherscan);
             let chain = config.chain.unwrap_or_default();
             let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-            match directory {
-                Some(dir) => {
+            match (directory, flatten) {
+                (Some(dir), false) => {
                     SimpleCast::expand_etherscan_source_to_directory(chain, address, api_key, dir)
                         .await?
                 }
-                None => {
+                (None, false) => {
                     println!("{}", SimpleCast::etherscan_source(chain, address, api_key).await?);
+                }
+                (dir, true) => {
+                    SimpleCast::etherscan_source_flatten(chain, address, api_key, dir).await?;
                 }
             }
         }

@@ -3,7 +3,7 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{p_println, utils::Git};
 use foundry_common::fs;
-use foundry_compilers::remappings::Remapping;
+use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::Config;
 use std::path::{Path, PathBuf};
 use yansi::Paint;

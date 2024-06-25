@@ -144,18 +144,18 @@ pub enum SkipBuildFilter {
 impl SkipBuildFilter {
     fn new(s: &str) -> Self {
         match s {
-            "test" | "tests" => SkipBuildFilter::Tests,
-            "script" | "scripts" => SkipBuildFilter::Scripts,
-            s => SkipBuildFilter::Custom(s.to_string()),
+            "test" | "tests" => Self::Tests,
+            "script" | "scripts" => Self::Scripts,
+            s => Self::Custom(s.to_string()),
         }
     }
 
     /// Returns the pattern to match against a file
     pub fn file_pattern(&self) -> &str {
         match self {
-            SkipBuildFilter::Tests => ".t.sol",
-            SkipBuildFilter::Scripts => ".s.sol",
-            SkipBuildFilter::Custom(s) => s.as_str(),
+            Self::Tests => ".t.sol",
+            Self::Scripts => ".s.sol",
+            Self::Custom(s) => s.as_str(),
         }
     }
 }

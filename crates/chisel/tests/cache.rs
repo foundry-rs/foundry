@@ -1,5 +1,5 @@
 use chisel::session::ChiselSession;
-use foundry_compilers::EvmVersion;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Config, SolcReq};
 use semver::Version;
 use serial_test::serial;

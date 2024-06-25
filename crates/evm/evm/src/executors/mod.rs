@@ -14,7 +14,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256};
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
-    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult},
+    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE,
@@ -30,7 +30,7 @@ use revm::{
     interpreter::{return_ok, InstructionResult},
     primitives::{
         BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output, ResultAndState,
-        SpecId, TransactTo, TxEnv,
+        SpecId, TxEnv, TxKind,
     },
 };
 use std::{borrow::Cow, collections::HashMap};
@@ -44,8 +44,8 @@ pub use fuzz::FuzzedExecutor;
 pub mod invariant;
 pub use invariant::InvariantExecutor;
 
-mod tracing;
-pub use tracing::TracingExecutor;
+mod trace;
+pub use trace::TracingExecutor;
 
 sol! {
     interface ITest {
@@ -72,28 +72,34 @@ pub struct Executor {
     // only interested in the database. REVM's `EVM` is a thin
     // wrapper around spawning a new EVM on every call anyway,
     // so the performance difference should be negligible.
-    pub backend: Backend,
+    backend: Backend,
     /// The EVM environment.
-    pub env: EnvWithHandlerCfg,
+    env: EnvWithHandlerCfg,
     /// The Revm inspector stack.
-    pub inspector: InspectorStack,
+    inspector: InspectorStack,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
     /// the passed in environment, as those limits are used by the EVM for certain opcodes like
     /// `gaslimit`.
-    gas_limit: U256,
+    gas_limit: u64,
 }
 
 impl Executor {
+    /// Creates a new `ExecutorBuilder`.
+    #[inline]
+    pub fn builder() -> ExecutorBuilder {
+        ExecutorBuilder::new()
+    }
+
     /// Creates a new `Executor` with the given arguments.
     #[inline]
     pub fn new(
         mut backend: Backend,
         env: EnvWithHandlerCfg,
         inspector: InspectorStack,
-        gas_limit: U256,
+        gas_limit: u64,
     ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
-        // does not fail
+        // do not fail.
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
             revm::primitives::AccountInfo {
@@ -108,16 +114,51 @@ impl Executor {
         Self { backend, env, inspector, gas_limit }
     }
 
-    /// Returns the spec ID of the executor.
+    fn clone_with_backend(&self, backend: Backend) -> Self {
+        let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(self.env().clone()), self.spec_id());
+        Self::new(backend, env, self.inspector().clone(), self.gas_limit)
+    }
+
+    /// Returns a reference to the EVM backend.
+    pub fn backend(&self) -> &Backend {
+        &self.backend
+    }
+
+    /// Returns a mutable reference to the EVM backend.
+    pub fn backend_mut(&mut self) -> &mut Backend {
+        &mut self.backend
+    }
+
+    /// Returns a reference to the EVM environment.
+    pub fn env(&self) -> &Env {
+        &self.env.env
+    }
+
+    /// Returns a mutable reference to the EVM environment.
+    pub fn env_mut(&mut self) -> &mut Env {
+        &mut self.env.env
+    }
+
+    /// Returns a reference to the EVM inspector.
+    pub fn inspector(&self) -> &InspectorStack {
+        &self.inspector
+    }
+
+    /// Returns a mutable reference to the EVM inspector.
+    pub fn inspector_mut(&mut self) -> &mut InspectorStack {
+        &mut self.inspector
+    }
+
+    /// Returns the EVM spec ID.
     pub fn spec_id(&self) -> SpecId {
-        self.env.handler_cfg.spec_id
+        self.env.spec_id()
     }
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         trace!("deploying local create2 deployer");
         let create2_deployer_account = self
-            .backend
+            .backend()
             .basic_ref(DEFAULT_CREATE2_DEPLOYER)?
             .ok_or_else(|| DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
@@ -139,58 +180,57 @@ impl Executor {
     }
 
     /// Set the balance of an account.
-    pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<&mut Self> {
+    pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<()> {
         trace!(?address, ?amount, "setting account balance");
-        let mut account = self.backend.basic_ref(address)?.unwrap_or_default();
+        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.balance = amount;
-
-        self.backend.insert_account_info(address, account);
-        Ok(self)
+        self.backend_mut().insert_account_info(address, account);
+        Ok(())
     }
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
-        Ok(self.backend.basic_ref(address)?.map(|acc| acc.balance).unwrap_or_default())
+        Ok(self.backend().basic_ref(address)?.map(|acc| acc.balance).unwrap_or_default())
     }
 
     /// Set the nonce of an account.
-    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<&mut Self> {
-        let mut account = self.backend.basic_ref(address)?.unwrap_or_default();
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<()> {
+        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.nonce = nonce;
-        self.backend.insert_account_info(address, account);
-        Ok(self)
+        self.backend_mut().insert_account_info(address, account);
+        Ok(())
     }
 
     /// Returns the nonce of an account.
     pub fn get_nonce(&self, address: Address) -> DatabaseResult<u64> {
-        Ok(self.backend.basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
+        Ok(self.backend().basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
     }
 
     /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> DatabaseResult<bool> {
-        Ok(self.backend.basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
+        Ok(self.backend().basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
     }
 
     #[inline]
     pub fn set_tracing(&mut self, tracing: bool) -> &mut Self {
-        self.inspector.tracing(tracing);
+        self.inspector_mut().tracing(tracing);
         self
     }
 
     #[inline]
     pub fn set_debugger(&mut self, debugger: bool) -> &mut Self {
-        self.inspector.enable_debugger(debugger);
+        self.inspector_mut().enable_debugger(debugger);
         self
     }
 
     #[inline]
     pub fn set_trace_printer(&mut self, trace_printer: bool) -> &mut Self {
-        self.inspector.print(trace_printer);
+        self.inspector_mut().print(trace_printer);
         self
     }
 
     #[inline]
-    pub fn set_gas_limit(&mut self, gas_limit: U256) -> &mut Self {
+    pub fn set_gas_limit(&mut self, gas_limit: u64) -> &mut Self {
         self.gas_limit = gas_limit;
         self
     }
@@ -206,7 +246,7 @@ impl Executor {
         value: U256,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
-        let env = self.build_test_env(from, TransactTo::Create, code, value);
+        let env = self.build_test_env(from, TxKind::Create, code, value);
         self.deploy_with_env(env, rd)
     }
 
@@ -215,14 +255,15 @@ impl Executor {
     ///
     /// # Panics
     ///
-    /// Panics if `env.tx.transact_to` is not `TransactTo::Create(_)`.
+    /// Panics if `env.tx.transact_to` is not `TxKind::Create(_)`.
+    #[instrument(name = "deploy", level = "debug", skip_all)]
     pub fn deploy_with_env(
         &mut self,
         env: EnvWithHandlerCfg,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         assert!(
-            matches!(env.tx.transact_to, TransactTo::Create),
+            matches!(env.tx.transact_to, TxKind::Create),
             "Expected create transaction, got {:?}",
             env.tx.transact_to
         );
@@ -236,7 +277,7 @@ impl Executor {
 
         // also mark this library as persistent, this will ensure that the state of the library is
         // persistent across fork swaps in forking mode
-        self.backend.add_persistent_account(address);
+        self.backend_mut().add_persistent_account(address);
 
         debug!(%address, "deployed contract");
 
@@ -249,6 +290,7 @@ impl Executor {
     ///
     /// Ayn changes made during the setup call to env's block environment are persistent, for
     /// example `vm.chainId()` will change the `block.chainId` for all subsequent test calls.
+    #[instrument(name = "setup", level = "debug", skip_all)]
     pub fn setup(
         &mut self,
         from: Option<Address>,
@@ -258,21 +300,20 @@ impl Executor {
         trace!(?from, ?to, "setting up contract");
 
         let from = from.unwrap_or(CALLER);
-        self.backend.set_test_contract(to).set_caller(from);
+        self.backend_mut().set_test_contract(to).set_caller(from);
         let calldata = Bytes::from_static(&ITest::setUpCall::SELECTOR);
         let mut res = self.transact_raw(from, to, calldata, U256::ZERO)?;
         res = res.into_result(rd)?;
 
         // record any changes made to the block's environment during setup
-        self.env.block = res.env.block.clone();
+        self.env_mut().block = res.env.block.clone();
         // and also the chainid, which can be set manually
-        self.env.cfg.chain_id = res.env.cfg.chain_id;
+        self.env_mut().cfg.chain_id = res.env.cfg.chain_id;
 
-        if let Some(changeset) = &res.state_changeset {
-            let success = self.is_raw_call_success(to, Cow::Borrowed(changeset), &res, false);
-            if !success {
-                return Err(res.into_execution_error("execution error".to_string()).into());
-            }
+        let success =
+            self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res, false);
+        if !success {
+            return Err(res.into_execution_error("execution error".to_string()).into());
         }
 
         Ok(res)
@@ -331,7 +372,7 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
         self.call_with_env(env)
     }
 
@@ -343,24 +384,26 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
         self.transact_with_env(env)
     }
 
     /// Execute the transaction configured in `env.tx`.
     ///
     /// The state after the call is **not** persisted.
+    #[instrument(name = "call", level = "debug", skip_all)]
     pub fn call_with_env(&self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
-        let mut inspector = self.inspector.clone();
-        let mut backend = CowBackend::new(&self.backend);
+        let mut inspector = self.inspector().clone();
+        let mut backend = CowBackend::new_borrowed(self.backend());
         let result = backend.inspect(&mut env, &mut inspector)?;
         convert_executed_result(env, inspector, result, backend.has_snapshot_failure())
     }
 
     /// Execute the transaction configured in `env.tx`.
+    #[instrument(name = "transact", level = "debug", skip_all)]
     pub fn transact_with_env(&mut self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
-        let mut inspector = self.inspector.clone();
-        let backend = &mut self.backend;
+        let mut inspector = self.inspector().clone();
+        let backend = self.backend_mut();
         let result = backend.inspect(&mut env, &mut inspector)?;
         let mut result =
             convert_executed_result(env, inspector, result, backend.has_snapshot_failure())?;
@@ -372,28 +415,26 @@ impl Executor {
     /// the executed call result.
     ///
     /// This should not be exposed to the user, as it should be called only by `transact*`.
+    #[instrument(name = "commit", level = "debug", skip_all)]
     fn commit(&mut self, result: &mut RawCallResult) {
         // Persist changes to db.
-        if let Some(changes) = &result.state_changeset {
-            self.backend.commit(changes.clone());
-        }
+        self.backend_mut().commit(result.state_changeset.clone());
 
         // Persist cheatcode state.
-        self.inspector.cheatcodes = result.cheatcodes.take();
-        if let Some(cheats) = self.inspector.cheatcodes.as_mut() {
+        self.inspector_mut().cheatcodes = result.cheatcodes.take();
+        if let Some(cheats) = self.inspector_mut().cheatcodes.as_mut() {
             // Clear broadcastable transactions
             cheats.broadcastable_transactions.clear();
-            debug!(target: "evm::executors", "cleared broadcastable transactions");
 
             // corrected_nonce value is needed outside of this context (setUp), so we don't
             // reset it.
         }
 
         // Persist the changed environment.
-        self.inspector.set_env(&result.env);
+        self.inspector_mut().set_env(&result.env);
     }
 
-    /// Checks if a call to a test contract was successful.
+    /// Returns `true` if a test can be considered successful.
     ///
     /// This is the same as [`Self::is_success`], but will consume the `state_changeset` map to use
     /// internally when calling `failed()`.
@@ -405,26 +446,15 @@ impl Executor {
     ) -> bool {
         self.is_raw_call_success(
             address,
-            Cow::Owned(call_result.state_changeset.take().unwrap_or_default()),
+            Cow::Owned(std::mem::take(&mut call_result.state_changeset)),
             call_result,
             should_fail,
         )
     }
 
-    /// Checks if a call to a test contract was successful.
+    /// Returns `true` if a test can be considered successful.
     ///
-    /// This is the same as [`Self::is_success`] but intended for outcomes of [`Self::call_raw`].
-    ///
-    /// ## Background
-    ///
-    /// Executing and failure checking `Executor::is_success` are two steps, for ds-test
-    /// legacy reasons failures can be stored in a global variables and needs to be called via a
-    /// solidity call `failed()(bool)`.
-    ///
-    /// Snapshots make this task more complicated because now we also need to keep track of that
-    /// global variable when we revert to a snapshot (because it is stored in state). Now, the
-    /// problem is that the `CowBackend` is dropped after every call, so we need to keep track
-    /// of the snapshot failure in the [`RawCallResult`] instead.
+    /// This is the same as [`Self::is_success`], but intended for outcomes of [`Self::call_raw`].
     pub fn is_raw_call_success(
         &self,
         address: Address,
@@ -439,21 +469,27 @@ impl Executor {
         self.is_success(address, call_result.reverted, state_changeset, should_fail)
     }
 
-    /// Check if a call to a test contract was successful.
+    /// Returns `true` if a test can be considered successful.
     ///
-    /// This function checks both the VM status of the call, DSTest's `failed` status and the
-    /// `globalFailed` flag which is stored in `failed` inside the `CHEATCODE_ADDRESS` contract.
+    /// If the call succeeded, we also have to check the global and local failure flags.
     ///
-    /// DSTest will not revert inside its `assertEq`-like functions which allows
-    /// to test multiple assertions in 1 test function while also preserving logs.
+    /// These are set by the test contract itself when an assertion fails, using the internal `fail`
+    /// function. The global flag is located in [`CHEATCODE_ADDRESS`] at slot [`GLOBAL_FAIL_SLOT`],
+    /// and the local flag is located in the test contract at an unspecified slot.
     ///
-    /// If an `assert` is violated, the contract's `failed` variable is set to true, and the
-    /// `globalFailure` flag inside the `CHEATCODE_ADDRESS` is also set to true, this way, failing
-    /// asserts from any contract are tracked as well.
+    /// This behavior is inherited from Dapptools, where initially only a public
+    /// `failed` variable was used to track test failures, and later, a global failure flag was
+    /// introduced to track failures across multiple contracts in
+    /// [ds-test#30](https://github.com/dapphub/ds-test/pull/30).
     ///
-    /// In order to check whether a test failed, we therefore need to evaluate the contract's
-    /// `failed` variable and the `globalFailure` flag, which happens by calling
-    /// `contract.failed()`.
+    /// The assumption is that the test runner calls `failed` on the test contract to determine if
+    /// it failed. However, we want to avoid this as much as possible, as it is relatively
+    /// expensive to set up an EVM call just for checking a single boolean flag.
+    ///
+    /// See:
+    /// - Newer DSTest: <https://github.com/dapphub/ds-test/blob/e282159d5170298eb2455a6c05280ab5a73a4ef0/src/test.sol#L47-L63>
+    /// - Older DSTest: <https://github.com/dapphub/ds-test/blob/9ca4ecd48862b40d7b0197b600713f64d337af12/src/test.sol#L38-L49>
+    /// - forge-std: <https://github.com/foundry-rs/forge-std/blob/19891e6a0b5474b9ea6827ddb90bb9388f7acfc0/src/StdAssertions.sol#L38-L44>
     pub fn is_success(
         &self,
         address: Address,
@@ -465,26 +501,48 @@ impl Executor {
         should_fail ^ success
     }
 
+    #[instrument(name = "is_success", level = "debug", skip_all)]
     fn is_success_raw(
         &self,
         address: Address,
         reverted: bool,
         state_changeset: Cow<'_, StateChangeset>,
     ) -> bool {
-        if self.backend.has_snapshot_failure() {
-            // a failure occurred in a reverted snapshot, which is considered a failed test
+        // The call reverted.
+        if reverted {
             return false;
         }
 
-        let mut success = !reverted;
-        if success {
+        // A failure occurred in a reverted snapshot, which is considered a failed test.
+        if self.backend().has_snapshot_failure() {
+            return false;
+        }
+
+        // Check the global failure slot.
+        // TODO: Wire this up
+        let legacy = true;
+        if !legacy {
+            if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
+                if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
+                    return failed_slot.present_value().is_zero();
+                }
+            }
+            let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            else {
+                return false;
+            };
+            return failed_slot.is_zero();
+        }
+
+        // Finally, resort to calling `DSTest::failed`.
+        {
             // Construct a new bare-bones backend to evaluate success.
-            let mut backend = self.backend.clone_empty();
+            let mut backend = self.backend().clone_empty();
 
             // We only clone the test contract and cheatcode accounts,
             // that's all we need to evaluate success.
             for address in [address, CHEATCODE_ADDRESS] {
-                let Ok(acc) = self.backend.basic_ref(address) else { return false };
+                let Ok(acc) = self.backend().basic_ref(address) else { return false };
                 backend.insert_account_info(address, acc.unwrap_or_default());
             }
 
@@ -495,20 +553,19 @@ impl Executor {
             backend.commit(state_changeset.into_owned());
 
             // Check if a DSTest assertion failed
-            let executor =
-                Self::new(backend, self.env.clone(), self.inspector.clone(), self.gas_limit);
+            let executor = self.clone_with_backend(backend);
             let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
             match call {
                 Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { failed } }) => {
-                    debug!(failed, "DSTest::failed()");
-                    success = !failed;
+                    trace!(failed, "DSTest::failed()");
+                    !failed
                 }
                 Err(err) => {
-                    debug!(%err, "failed to call DSTest::failed()");
+                    trace!(%err, "failed to call DSTest::failed()");
+                    true
                 }
             }
         }
-        success
     }
 
     /// Creates the environment to use when executing a transaction in a test context
@@ -518,19 +575,19 @@ impl Executor {
     fn build_test_env(
         &self,
         caller: Address,
-        transact_to: TransactTo,
+        transact_to: TxKind,
         data: Bytes,
         value: U256,
     ) -> EnvWithHandlerCfg {
         let env = Env {
-            cfg: self.env.cfg.clone(),
+            cfg: self.env().cfg.clone(),
             // We always set the gas price to 0 so we can execute the transaction regardless of
             // network conditions - the actual gas price is kept in `self.block` and is applied by
             // the cheatcode handler if it is enabled
             block: BlockEnv {
                 basefee: U256::ZERO,
-                gas_limit: self.gas_limit,
-                ..self.env.block.clone()
+                gas_limit: U256::from(self.gas_limit),
+                ..self.env().block.clone()
             },
             tx: TxEnv {
                 caller,
@@ -540,12 +597,12 @@ impl Executor {
                 // As above, we set the gas price to 0.
                 gas_price: U256::ZERO,
                 gas_priority_fee: None,
-                gas_limit: self.gas_limit.to(),
-                ..self.env.tx.clone()
+                gas_limit: self.gas_limit,
+                ..self.env().tx.clone()
             },
         };
 
-        EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.env.handler_cfg.spec_id)
+        EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.spec_id())
     }
 }
 
@@ -661,7 +718,7 @@ pub struct RawCallResult {
     /// Scripted transactions generated from this call
     pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
-    pub state_changeset: Option<StateChangeset>,
+    pub state_changeset: StateChangeset,
     /// The `revm::Env` after the call
     pub env: EnvWithHandlerCfg,
     /// The cheatcode states after execution
@@ -688,7 +745,7 @@ impl Default for RawCallResult {
             coverage: None,
             debug: None,
             transactions: None,
-            state_changeset: None,
+            state_changeset: HashMap::default(),
             env: EnvWithHandlerCfg::new_with_spec_id(Box::default(), SpecId::LATEST),
             cheatcodes: Default::default(),
             out: None,
@@ -772,19 +829,20 @@ impl std::ops::DerefMut for CallResult {
 fn convert_executed_result(
     env: EnvWithHandlerCfg,
     inspector: InspectorStack,
-    result: ResultAndState,
+    ResultAndState { result, state: state_changeset }: ResultAndState,
     has_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult> {
-    let ResultAndState { result: exec_result, state: state_changeset } = result;
-    let (exit_reason, gas_refunded, gas_used, out) = match exec_result {
-        ExecutionResult::Success { reason, gas_used, gas_refunded, output, .. } => {
-            (reason.into(), gas_refunded, gas_used, Some(output))
+    let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
+        ExecutionResult::Success { reason, gas_used, gas_refunded, output, logs, .. } => {
+            (reason.into(), gas_refunded, gas_used, Some(output), logs)
         }
         ExecutionResult::Revert { gas_used, output } => {
             // Need to fetch the unused gas
-            (InstructionResult::Revert, 0_u64, gas_used, Some(Output::Call(output)))
+            (InstructionResult::Revert, 0_u64, gas_used, Some(Output::Call(output)), vec![])
         }
-        ExecutionResult::Halt { reason, gas_used } => (reason.into(), 0_u64, gas_used, None),
+        ExecutionResult::Halt { reason, gas_used } => {
+            (reason.into(), 0_u64, gas_used, None, vec![])
+        }
     };
     let stipend = revm::interpreter::gas::validate_initial_tx_gas(
         env.spec_id(),
@@ -798,15 +856,17 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes, chisel_state } =
+    let InspectorData { mut logs, labels, traces, coverage, debug, cheatcodes, chisel_state } =
         inspector.collect();
 
-    let transactions = match cheatcodes.as_ref() {
-        Some(cheats) if !cheats.broadcastable_transactions.is_empty() => {
-            Some(cheats.broadcastable_transactions.clone())
-        }
-        _ => None,
-    };
+    if logs.is_empty() {
+        logs = exec_logs;
+    }
+
+    let transactions = cheatcodes
+        .as_ref()
+        .map(|c| c.broadcastable_transactions.clone())
+        .filter(|txs| !txs.is_empty());
 
     Ok(RawCallResult {
         exit_reason,
@@ -822,7 +882,7 @@ fn convert_executed_result(
         coverage,
         debug,
         transactions,
-        state_changeset: Some(state_changeset),
+        state_changeset,
         env,
         cheatcodes,
         out,

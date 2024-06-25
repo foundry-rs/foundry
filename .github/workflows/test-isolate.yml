@@ -1,0 +1,14 @@
+# Daily CI job to run tests with isolation mode enabled by default
+
+name: test-isolate
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  nextest:
+    uses: ./.github/workflows/nextest.yml
+    with:
+      profile: isolate

@@ -9,7 +9,7 @@ use foundry_cli::{
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
 use foundry_common::ens::NameOrAddress;
-use foundry_compilers::EvmVersion;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
 use std::str::FromStr;
@@ -189,7 +189,7 @@ impl CallArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Address;
+    use alloy_primitives::{hex, Address};
 
     #[test]
     fn can_parse_call_data() {

@@ -111,6 +111,7 @@ where
                 InvalidHeader::PrevrandaoNotSet => Self::PrevrandaoNotSet,
             },
             EVMError::Database(err) => err.into(),
+            EVMError::Precompile(err) => Self::Message(err),
             EVMError::Custom(err) => Self::Message(err),
         }
     }

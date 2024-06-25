@@ -51,7 +51,7 @@ pub struct CowBackend<'a> {
 
 impl<'a> CowBackend<'a> {
     /// Creates a new `CowBackend` with the given `Backend`.
-    pub fn new(backend: &'a Backend) -> Self {
+    pub fn new_borrowed(backend: &'a Backend) -> Self {
         Self { backend: Cow::Borrowed(backend), is_initialized: false, spec_id: SpecId::LATEST }
     }
 
@@ -59,6 +59,7 @@ impl<'a> CowBackend<'a> {
     ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
+    #[instrument(name = "inspect", level = "debug", skip_all)]
     pub fn inspect<'b, I: InspectorExt<&'b mut Self>>(
         &'b mut self,
         env: &mut EnvWithHandlerCfg,

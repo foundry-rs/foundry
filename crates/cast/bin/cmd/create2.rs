@@ -1,4 +1,4 @@
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{hex, keccak256, Address, B256, U256};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use rand::{rngs::StdRng, RngCore, SeedableRng};

@@ -7,7 +7,7 @@ contract Malicious {
     function world() public {
         // add code so contract is accounted as valid sender
         // see https://github.com/foundry-rs/foundry/issues/4245
-        payable(msg.sender).transfer(1);
+        payable(msg.sender).call("");
     }
 }
 

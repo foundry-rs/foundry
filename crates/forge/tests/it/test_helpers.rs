@@ -6,8 +6,8 @@ use forge::{
     TestOptionsBuilder,
 };
 use foundry_compilers::{
-    artifacts::{Libraries, Settings},
-    EvmVersion, Project, ProjectCompileOutput, SolcConfig,
+    artifacts::{EvmVersion, Libraries, Settings},
+    Project, ProjectCompileOutput, SolcConfig,
 };
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
@@ -229,7 +229,7 @@ impl ForgeTestData {
             .enable_isolation(opts.isolate)
             .sender(sender)
             .with_test_options(self.test_opts.clone())
-            .build(root, output, env, opts.clone())
+            .build(root, output, env, opts)
             .unwrap()
     }
 

@@ -3,7 +3,8 @@
 use crate::abi::MulticallContract;
 use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use alloy_sol_types::{sol, SolCall, SolError};
 use anvil::{
     eth::otterscan::types::{

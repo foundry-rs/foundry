@@ -9,7 +9,8 @@ use foundry_compilers::{
         solc::{SolcCompiler, SolcLanguage, SolcVersionedInput},
         Compiler, CompilerInput,
     },
-    AggregatedCompilerOutput, Solc,
+    solc::Solc,
+    AggregatedCompilerOutput,
 };
 use semver::{BuildMetadata, Version};
 use std::{collections::BTreeMap, path::Path};
@@ -89,7 +90,7 @@ impl EtherscanFlattenedSource {
         let out = SolcCompiler::Specific(solc).compile(&input)?;
         if out.errors.iter().any(|e| e.is_error()) {
             let mut o = AggregatedCompilerOutput::<SolcCompiler>::default();
-            o.extend(version.clone(), RawBuildInfo::new(&input, &out, false)?, out);
+            o.extend(version, RawBuildInfo::new(&input, &out, false)?, out);
             let diags = o.diagnostics(&[], &[], Default::default());
 
             eyre::bail!(

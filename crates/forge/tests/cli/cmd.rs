@@ -1,7 +1,8 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::{artifacts::Metadata, remappings::Remapping, ConfigurableContractArtifact};
+use alloy_primitives::hex;
+use foundry_compilers::artifacts::{remappings::Remapping, ConfigurableContractArtifact, Metadata};
 use foundry_config::{
     parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,
 };
@@ -1696,7 +1697,7 @@ function test_bar() external {}
 
     // Build 2 files within test dir
     prj.clear();
-    cmd.args(["build", "--paths", "test", "--force"]);
+    cmd.args(["build", "test", "--force"]);
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/can_build_path_with_two_files.stdout"),
@@ -1705,7 +1706,7 @@ function test_bar() external {}
     // Build one file within src dir
     prj.clear();
     cmd.forge_fuse();
-    cmd.args(["build", "--paths", "src", "--force"]);
+    cmd.args(["build", "src", "--force"]);
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/can_build_path_with_one_file.stdout"),
@@ -1714,7 +1715,7 @@ function test_bar() external {}
     // Build 3 files from test and src dirs
     prj.clear();
     cmd.forge_fuse();
-    cmd.args(["build", "--paths", "src", "test", "--force"]);
+    cmd.args(["build", "src", "test", "--force"]);
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/can_build_path_with_three_files.stdout"),
@@ -1723,7 +1724,7 @@ function test_bar() external {}
     // Build single test file
     prj.clear();
     cmd.forge_fuse();
-    cmd.args(["build", "--paths", "test/Bar.sol", "--force"]);
+    cmd.args(["build", "test/Bar.sol", "--force"]);
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/can_build_path_with_one_file.stdout"),

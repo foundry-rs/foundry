@@ -3,7 +3,7 @@ use eyre::{Context, Result};
 use forge_fmt::{format_to, parse};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
 use foundry_common::{fs, term::cli_warn};
-use foundry_compilers::{compilers::solc::SolcLanguage, SOLC_EXTENSIONS};
+use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
@@ -202,10 +202,7 @@ impl fmt::Display for Line {
     }
 }
 
-fn format_diff_summary<'a, 'b, 'r>(name: &str, diff: &'r TextDiff<'a, 'b, '_, str>) -> String
-where
-    'r: 'a + 'b,
-{
+fn format_diff_summary<'a>(name: &str, diff: &'a TextDiff<'a, 'a, '_, str>) -> String {
     let cap = 128;
     let mut diff_summary = String::with_capacity(cap);
 

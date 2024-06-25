@@ -10,9 +10,13 @@ use foundry_block_explorers::{
 use foundry_cli::{opts::EtherscanOpts, p_println, utils::Git};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
-    artifacts::{output_selection::ContractOutputSelection, Settings, StorageLayout},
-    remappings::{RelativeRemapping, Remapping},
-    ConfigurableContractArtifact, ProjectCompileOutput, ProjectPathsConfig, Solc,
+    artifacts::{
+        output_selection::ContractOutputSelection,
+        remappings::{RelativeRemapping, Remapping},
+        ConfigurableContractArtifact, Settings, StorageLayout,
+    },
+    compilers::solc::Solc,
+    ProjectCompileOutput, ProjectPathsConfig,
 };
 use foundry_config::{Chain, Config};
 use std::{
@@ -388,9 +392,9 @@ fn update_config_by_metadata(
     }
 
     // apply remapping on libraries
-    let path_config = config.project_paths();
+    let path_config: ProjectPathsConfig = config.project_paths();
     let libraries = libraries
-        .with_applied_remappings(&path_config)
+        .apply(|libs| path_config.apply_lib_remappings(libs))
         .with_stripped_file_prefixes(&path_config.root);
 
     // update libraries
@@ -607,9 +611,9 @@ impl EtherscanClient for Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::hex;
     use foundry_compilers::Artifact;
     use foundry_test_utils::rpc::next_etherscan_api_key;
-    use hex::ToHex;
     use std::collections::BTreeMap;
 
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
@@ -627,9 +631,9 @@ mod tests {
                 if name == contract_name {
                     let compiled_creation_code =
                         contract.get_bytecode_object().expect("creation code not found");
-                    let compiled_creation_code: String = compiled_creation_code.encode_hex();
                     assert!(
-                        compiled_creation_code.starts_with(stripped_creation_code),
+                        hex::encode(compiled_creation_code.as_ref())
+                            .starts_with(stripped_creation_code),
                         "inconsistent creation code"
                     );
                 }

@@ -9,7 +9,7 @@
 extern crate tracing;
 
 use alloy_primitives::{Bytes, B256};
-use foundry_compilers::sourcemap::SourceMap;
+use foundry_compilers::artifacts::sourcemap::SourceMap;
 use semver::Version;
 use std::{
     collections::{BTreeMap, HashMap},

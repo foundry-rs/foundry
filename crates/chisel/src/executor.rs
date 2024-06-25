@@ -417,8 +417,7 @@ fn format_token(token: DynSolValue) -> String {
         DynSolValue::Tuple(tokens) => {
             let displayed_types = tokens
                 .iter()
-                .map(|t| t.sol_type_name().to_owned())
-                .map(|t| t.unwrap_or_default().into_owned())
+                .map(|t| t.sol_type_name().unwrap_or_default())
                 .collect::<Vec<_>>()
                 .join(", ");
             let mut out =
@@ -1392,7 +1391,7 @@ impl<'a> Iterator for InstructionIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::{error::SolcError, Solc};
+    use foundry_compilers::{error::SolcError, solc::Solc};
     use semver::Version;
     use std::sync::Mutex;
 

@@ -1,13 +1,18 @@
 //! Test outcomes.
 
-use crate::gas_report::GasReport;
+use crate::{
+    decode::decode_console_logs,
+    fuzz::{BaseCounterExample, FuzzedCases},
+    gas_report::GasReport,
+};
 use alloy_primitives::{Address, Log};
+use eyre::Report;
 use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
 use foundry_evm::{
     coverage::HitMaps,
     debug::DebugArena,
-    executors::EvmError,
-    fuzz::{CounterExample, FuzzCase, FuzzFixtures},
+    executors::{EvmError, RawCallResult},
+    fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use serde::{Deserialize, Serialize};
@@ -416,8 +421,168 @@ impl fmt::Display for TestResult {
 }
 
 impl TestResult {
+    /// Creates a new test result starting from test setup results.
+    pub fn new(setup: TestSetup) -> Self {
+        Self {
+            labeled_addresses: setup.labeled_addresses,
+            logs: setup.logs,
+            traces: setup.traces,
+            coverage: setup.coverage,
+            ..Default::default()
+        }
+    }
+
+    /// Creates a failed test result with given reason.
     pub fn fail(reason: String) -> Self {
         Self { status: TestStatus::Failure, reason: Some(reason), ..Default::default() }
+    }
+
+    /// Creates a failed test setup result.
+    pub fn setup_fail(setup: TestSetup) -> Self {
+        Self {
+            status: TestStatus::Failure,
+            reason: setup.reason,
+            decoded_logs: decode_console_logs(&setup.logs),
+            logs: setup.logs,
+            traces: setup.traces,
+            coverage: setup.coverage,
+            labeled_addresses: setup.labeled_addresses,
+            ..Default::default()
+        }
+    }
+
+    /// Returns the skipped result for single test (used in skipped fuzz test too).
+    pub fn single_skip(mut self) -> Self {
+        self.status = TestStatus::Skipped;
+        self.decoded_logs = decode_console_logs(&self.logs);
+        self
+    }
+
+    /// Returns the failed result with reason for single test.
+    pub fn single_fail(mut self, err: EvmError) -> Self {
+        self.status = TestStatus::Failure;
+        self.reason = Some(err.to_string());
+        self
+    }
+
+    /// Returns the result for single test. Merges execution results (logs, labeled addresses,
+    /// traces and coverages) in initial setup results.
+    pub fn single_result(
+        mut self,
+        success: bool,
+        reason: Option<String>,
+        raw_call_result: RawCallResult,
+    ) -> Self {
+        self.kind =
+            TestKind::Unit { gas: raw_call_result.gas_used.wrapping_sub(raw_call_result.stipend) };
+
+        // Record logs, labels, traces and merge coverages.
+        self.logs.extend(raw_call_result.logs);
+        self.labeled_addresses.extend(raw_call_result.labels);
+        self.traces.extend(raw_call_result.traces.map(|traces| (TraceKind::Execution, traces)));
+        self.merge_coverages(raw_call_result.coverage);
+
+        self.status = match success {
+            true => TestStatus::Success,
+            false => TestStatus::Failure,
+        };
+        self.reason = reason;
+        self.decoded_logs = decode_console_logs(&self.logs);
+        self.debug = raw_call_result.debug;
+        self.breakpoints = raw_call_result.cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
+        self.duration = Duration::default();
+        self.gas_report_traces = Vec::new();
+        self
+    }
+
+    /// Returns the result for a fuzzed test. Merges fuzz execution results (logs, labeled
+    /// addresses, traces and coverages) in initial setup results.
+    pub fn fuzz_result(mut self, result: FuzzTestResult) -> Self {
+        self.kind = TestKind::Fuzz {
+            median_gas: result.median_gas(false),
+            mean_gas: result.mean_gas(false),
+            first_case: result.first_case,
+            runs: result.gas_by_case.len(),
+        };
+
+        // Record logs, labels, traces and merge coverages.
+        self.logs.extend(result.logs);
+        self.labeled_addresses.extend(result.labeled_addresses);
+        self.traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
+        self.merge_coverages(result.coverage);
+
+        self.status = match result.success {
+            true => TestStatus::Success,
+            false => TestStatus::Failure,
+        };
+        self.reason = result.reason;
+        self.counterexample = result.counterexample;
+        self.decoded_logs = decode_console_logs(&self.logs);
+        self.duration = Duration::default();
+        self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
+        self
+    }
+
+    /// Returns the skipped result for invariant test.
+    pub fn invariant_skip(mut self) -> Self {
+        self.kind = TestKind::Invariant { runs: 1, calls: 1, reverts: 1 };
+        self.status = TestStatus::Skipped;
+        self.decoded_logs = decode_console_logs(&self.logs);
+        self
+    }
+
+    /// Returns the fail result for replayed invariant test.
+    pub fn invariant_replay_fail(
+        mut self,
+        replayed_entirely: bool,
+        invariant_name: &String,
+        call_sequence: Vec<BaseCounterExample>,
+    ) -> Self {
+        self.kind = TestKind::Invariant { runs: 1, calls: 1, reverts: 1 };
+        self.status = TestStatus::Failure;
+        self.reason = if replayed_entirely {
+            Some(format!("{invariant_name} replay failure"))
+        } else {
+            Some(format!("{invariant_name} persisted failure revert"))
+        };
+        self.counterexample = Some(CounterExample::Sequence(call_sequence));
+        self.decoded_logs = decode_console_logs(&self.logs);
+        self
+    }
+
+    /// Returns the fail result for invariant test setup.
+    pub fn invariant_setup_fail(mut self, e: Report) -> Self {
+        self.kind = TestKind::Invariant { runs: 0, calls: 0, reverts: 0 };
+        self.status = TestStatus::Failure;
+        self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
+        self.decoded_logs = decode_console_logs(&self.logs);
+        self
+    }
+
+    /// Returns the invariant test result.
+    pub fn invariant_result(
+        mut self,
+        gas_report_traces: Vec<Vec<CallTraceArena>>,
+        success: bool,
+        reason: Option<String>,
+        counterexample: Option<CounterExample>,
+        cases: Vec<FuzzedCases>,
+        reverts: usize,
+    ) -> Self {
+        self.kind = TestKind::Invariant {
+            runs: cases.len(),
+            calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
+            reverts,
+        };
+        self.status = match success {
+            true => TestStatus::Success,
+            false => TestStatus::Failure,
+        };
+        self.reason = reason;
+        self.counterexample = counterexample;
+        self.decoded_logs = decode_console_logs(&self.logs);
+        self.gas_report_traces = gas_report_traces;
+        self
     }
 
     /// Returns `true` if this is the result of a fuzz test
@@ -428,6 +593,15 @@ impl TestResult {
     /// Formats the test result into a string (for printing).
     pub fn short_result(&self, name: &str) -> String {
         format!("{self} {name} {}", self.kind.report())
+    }
+
+    /// Function to merge given coverage in current test result coverage.
+    fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
+        let old_coverage = std::mem::take(&mut self.coverage);
+        self.coverage = match (old_coverage, other_coverage) {
+            (Some(old_coverage), Some(other)) => Some(old_coverage.merged(other)),
+            (a, b) => a.or(b),
+        };
     }
 }
 

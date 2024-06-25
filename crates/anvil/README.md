@@ -5,7 +5,7 @@ A local Ethereum node, akin to Ganache, designed for development with [**Forge**
 ## Features
 
 -   Network forking: fork any EVM-compatible blockchain, same as in `forge`
--   [Ethereum JSON-RPC](https://eth.wiki/json-rpc/API) support
+-   [Ethereum JSON-RPC](https://ethereum.org/developers/docs/apis/json-rpc/) support
 -   Additional JSON-RPC endpoints, compatible with ganache and hardhat
     -   snapshot/revert state
     -   mining modes: auto, interval, manual, none
@@ -27,9 +27,7 @@ A local Ethereum node, akin to Ganache, designed for development with [**Forge**
 ### Installing from source
 
 ```sh
-git clone https://github.com/foundry-rs/foundry
-cd foundry
-cargo install --path ./crates/anvil --profile local --locked --force
+cargo install --git https://github.com/foundry-rs/foundry --locked --force
 ```
 
 ## Getting started

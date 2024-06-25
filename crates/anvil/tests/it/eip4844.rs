@@ -4,7 +4,8 @@ use alloy_eips::eip4844::{DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use anvil::{spawn, Hardfork, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -20,7 +21,7 @@ async fn can_send_eip4844_transaction() {
     let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
 
-    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice("Hello World".as_bytes());
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Hello World");
 
     let sidecar = sidecar.build().unwrap();
     let tx = TransactionRequest::default()

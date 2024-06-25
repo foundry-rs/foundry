@@ -17,7 +17,7 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{compile::ProjectCompiler, ContractsByArtifact};
-use foundry_compilers::{info::ContractInfo, EvmVersion, Solc};
+use foundry_compilers::{artifacts::EvmVersion, compilers::solc::Solc, info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config, SolcReq};
 use itertools::Itertools;
 use provider::VerificationProviderType;

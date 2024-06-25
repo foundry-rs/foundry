@@ -11,7 +11,7 @@ use revm::{
         return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         Gas, InstructionResult, InterpreterResult,
     },
-    primitives::{CreateScheme, EVMError, SpecId, TransactTo, KECCAK_EMPTY},
+    primitives::{CreateScheme, EVMError, SpecId, TxKind, KECCAK_EMPTY},
     FrameOrResult, FrameResult,
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -95,7 +95,7 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
         .collect();
     env.tx.value = tx.value.to();
     env.tx.data = alloy_primitives::Bytes(tx.input.0.clone());
-    env.tx.transact_to = tx.to.map(TransactTo::Call).unwrap_or_else(TransactTo::create)
+    env.tx.transact_to = tx.to.map(TxKind::Call).unwrap_or(TxKind::Create)
 }
 
 /// Get the gas used, accounting for refunds
@@ -156,11 +156,6 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
                 .borrow_mut()
                 .push((ctx.evm.journaled_state.depth(), call_inputs.clone()));
 
-            // Handle potential inspector override.
-            if let Some(outcome) = outcome {
-                return Ok(FrameOrResult::Result(FrameResult::Call(outcome)));
-            }
-
             // Sanity check that CREATE2 deployer exists.
             let code_hash = ctx.evm.load_account(DEFAULT_CREATE2_DEPLOYER)?.0.info.code_hash;
             if code_hash == KECCAK_EMPTY {
@@ -174,6 +169,11 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
                 })))
             }
 
+            // Handle potential inspector override.
+            if let Some(outcome) = outcome {
+                return Ok(FrameOrResult::Result(FrameResult::Call(outcome)));
+            }
+
             // Create CALL frame for CREATE2 factory invocation.
             let mut frame_or_result = ctx.evm.make_call_frame(&call_inputs);
 
@@ -184,9 +184,8 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
             frame_or_result
         });
 
-    let create2_overrides_inner = create2_overrides.clone();
+    let create2_overrides_inner = create2_overrides;
     let old_handle = handler.execution.insert_call_outcome.clone();
-
     handler.execution.insert_call_outcome =
         Arc::new(move |ctx, frame, shared_memory, mut outcome| {
             // If we are on the depth of the latest override, handle the outcome.

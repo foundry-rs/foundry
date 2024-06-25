@@ -1,4 +1,5 @@
 use alloy_json_abi::{Event, Function};
+use alloy_primitives::hex;
 use foundry_common::{
     abi::{get_event, get_func},
     fs,

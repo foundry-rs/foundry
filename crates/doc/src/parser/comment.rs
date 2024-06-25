@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 /// The natspec comment tag explaining the purpose of the comment.
 /// See: <https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags>.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CommentTag {
     /// A title that should describe the contract/interface
     Title,
@@ -56,7 +56,7 @@ impl CommentTag {
 /// The natspec documentation comment.
 ///
 /// Ref: <https://docs.soliditylang.org/en/v0.8.17/natspec-format.html>
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
     /// The doc comment tag.
     pub tag: CommentTag,

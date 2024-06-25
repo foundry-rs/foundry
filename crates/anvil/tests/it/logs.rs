@@ -4,7 +4,7 @@ use crate::{
     abi::SimpleStorage::{self},
     utils::{http_provider_with_signer, ws_provider_with_signer},
 };
-use alloy_network::EthereumSigner;
+use alloy_network::EthereumWallet;
 use alloy_primitives::B256;
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, Filter};
@@ -17,7 +17,7 @@ async fn get_past_events() {
 
     let wallet = handle.dev_wallets().next().unwrap();
     let account = wallet.address();
-    let signer: EthereumSigner = wallet.into();
+    let signer: EthereumWallet = wallet.into();
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
@@ -86,7 +86,7 @@ async fn get_all_events() {
 
     let wallet = handle.dev_wallets().next().unwrap();
     let account = wallet.address();
-    let signer: EthereumSigner = wallet.into();
+    let signer: EthereumWallet = wallet.into();
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
@@ -153,7 +153,7 @@ async fn watch_events() {
 
     let wallet = handle.dev_wallets().next().unwrap();
     let account = wallet.address();
-    let signer: EthereumSigner = wallet.into();
+    let signer: EthereumWallet = wallet.into();
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer.clone());
 

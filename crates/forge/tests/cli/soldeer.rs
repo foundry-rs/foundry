@@ -171,12 +171,6 @@ forgesoldeer!(login, |prj, cmd| {
 });
 
 fn read_file_to_string(path: &Path) -> String {
-    let contents: String = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => {
-            // Return empty string
-            String::new()
-        }
-    };
+    let contents: String = fs::read_to_string(path).unwrap_or_default();
     contents
 }

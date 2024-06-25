@@ -1,7 +1,6 @@
 use super::{format_int_exp, format_uint_exp};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::hex;
-use eyre::Result;
 use std::fmt;
 
 /// [`DynSolValue`] formatter.
@@ -111,13 +110,8 @@ impl fmt::Display for DynValueDisplay<'_> {
 /// Parses string input as Token against the expected ParamType
 pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a DynSolType, &'a str)>>(
     params: I,
-) -> Result<Vec<DynSolValue>> {
-    let mut tokens = Vec::new();
-    for (param, value) in params {
-        let token = DynSolType::coerce_str(param, value)?;
-        tokens.push(token);
-    }
-    Ok(tokens)
+) -> alloy_dyn_abi::Result<Vec<DynSolValue>> {
+    params.into_iter().map(|(param, value)| DynSolType::coerce_str(param, value)).collect()
 }
 
 /// Pretty-prints a slice of tokens using [`format_token`].
