@@ -1,5 +1,5 @@
 use crate::{Cheatcodes, Result, Vm::*};
-use alloy_primitives::{I256, U256, hex};
+use alloy_primitives::{hex, I256, U256};
 use foundry_evm_core::abi::{format_units_int, format_units_uint};
 use itertools::Itertools;
 use std::fmt::{Debug, Display};
@@ -179,13 +179,20 @@ fn handle_assertion_result<E>(
             if !state.config.legacy_assertions {
                 Err(msg.into())
             } else {
-                println!("{msg}");
                 Ok(Default::default())
             }
         }
     }
 }
 
+/// Implements [crate::Cheatcode] for pairs of cheatcodes.
+///
+/// Accepts a list of pairs of cheatcodes, where the first cheatcode is the one that doesn't contain
+/// a custom error message, and the second one contains it at `error` field.
+///
+/// Passed `args` are the common arguments for both cheatcode structs (excluding `error` field).
+///
+/// Macro also accepts an optional closure that formats the error returned by the assertion.
 macro_rules! impl_assertions {
     (|$($arg:ident),*| $body:expr, $(($no_error:ident, $with_error:ident)),* $(,)?) => {
         impl_assertions!(|$($arg),*| $body, |e| e.to_string(), $(($no_error, $with_error),)*);
@@ -193,6 +200,8 @@ macro_rules! impl_assertions {
     (|$($arg:ident),*| $body:expr, $error_formatter:expr, $(($no_error:ident, $with_error:ident)),* $(,)?) => {
         impl_assertions!(@args_tt |($($arg),*)| $body, $error_formatter, $(($no_error, $with_error)),*);
     };
+    // We convert args to `tt` and later expand them back into tuple to allow usage of expanded args inside of
+    // each nested assertion type context.
     (@args_tt |$args:tt| $body:expr, $error_formatter:expr, $(($no_error:ident, $with_error:ident)),* $(,)?) => {
         $(
             impl_assertions!(@impl $no_error, $with_error, $args, $body, $error_formatter);
@@ -262,14 +271,14 @@ impl_assertions! {
     (assertEq_26Call, assertEq_27Call),
 }
 
-impl_assertions!{
+impl_assertions! {
     |left, right, decimals| assert_eq(left, right),
     |e| e.format_with_decimals(decimals),
     (assertEqDecimal_0Call, assertEqDecimal_1Call),
     (assertEqDecimal_2Call, assertEqDecimal_3Call),
 }
 
-impl_assertions!{
+impl_assertions! {
     |left, right| assert_not_eq(left, right),
     |e| e.format_for_values(),
     (assertNotEq_0Call, assertNotEq_1Call),
@@ -280,13 +289,13 @@ impl_assertions!{
     (assertNotEq_10Call, assertNotEq_11Call),
 }
 
-impl_assertions!{
+impl_assertions! {
     |left, right| assert_not_eq(&hex::encode_prefixed(left), &hex::encode_prefixed(right)),
     |e| e.format_for_values(),
     (assertNotEq_12Call, assertNotEq_13Call),
 }
 
-impl_assertions!{
+impl_assertions! {
     |left, right| assert_not_eq(left, right),
     |e| e.format_for_arrays(),
     (assertNotEq_14Call, assertNotEq_15Call),
@@ -297,7 +306,7 @@ impl_assertions!{
     (assertNotEq_24Call, assertNotEq_25Call),
 }
 
-impl_assertions!{
+impl_assertions! {
     |left, right| assert_not_eq(
         &left.iter().map(hex::encode_prefixed).collect::<Vec<_>>(),
         &right.iter().map(hex::encode_prefixed).collect::<Vec<_>>(),
@@ -306,7 +315,7 @@ impl_assertions!{
     (assertNotEq_26Call, assertNotEq_27Call),
 }
 
-impl_assertions!{
+impl_assertions! {
     |left, right, decimals| assert_not_eq(left, right),
     |e| e.format_with_decimals(decimals),
     (assertNotEqDecimal_0Call, assertNotEqDecimal_1Call),
