@@ -158,7 +158,7 @@ impl InvariantTest {
 
     /// Whether invariant test has errors or not.
     pub fn has_errors(&self) -> bool {
-        self.execution_data.borrow().failures.error.is_none()
+        self.execution_data.borrow().failures.error.is_some()
     }
 
     /// Set invariant test error.
@@ -389,7 +389,7 @@ impl<'a> InvariantExecutor<'a> {
             }
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
-            if invariant_contract.call_after_invariant && invariant_test.has_errors() {
+            if invariant_contract.call_after_invariant && !invariant_test.has_errors() {
                 assert_after_invariant(
                     &invariant_contract,
                     &invariant_test,
@@ -485,6 +485,9 @@ impl<'a> InvariantExecutor<'a> {
             &[],
             &mut failures,
         )?;
+        if let Some(error) = failures.error {
+            return Err(eyre!(error.revert_reason().unwrap_or_default()))
+        }
 
         Ok((
             InvariantTest::new(
