@@ -83,29 +83,6 @@ const BANNER: &str = r"
      \__,_| |_| |_|   \_/   |_| |_|
 ";
 
-/// Fork delimiter used to specify which block or transaction to fork from
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ForkChoice {
-    /// Block number to fork from
-    Block(BlockNumber),
-    /// Transaction hash to fork from
-    Transaction(TxHash),
-}
-
-/// Convert a transaction hash into a ForkChoice
-impl From<TxHash> for ForkChoice {
-    fn from(tx_hash: TxHash) -> Self {
-        Self::Transaction(tx_hash)
-    }
-}
-
-/// Convert a decimal block number into a ForkChoice
-impl From<u64> for ForkChoice {
-    fn from(block: u64) -> Self {
-        Self::Block(block)
-    }
-}
-
 /// Configurations of the EVM node
 #[derive(Clone, Debug)]
 pub struct NodeConfig {
@@ -1253,6 +1230,29 @@ latest block number: {latest_block}"
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
 
         (db, config)
+    }
+}
+
+/// Fork delimiter used to specify which block or transaction to fork from
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForkChoice {
+    /// Block number to fork from
+    Block(BlockNumber),
+    /// Transaction hash to fork from
+    Transaction(TxHash),
+}
+
+/// Convert a transaction hash into a ForkChoice
+impl From<TxHash> for ForkChoice {
+    fn from(tx_hash: TxHash) -> Self {
+        Self::Transaction(tx_hash)
+    }
+}
+
+/// Convert a decimal block number into a ForkChoice
+impl From<u64> for ForkChoice {
+    fn from(block: u64) -> Self {
+        Self::Block(block)
     }
 }
 

@@ -4,7 +4,6 @@ use crate::eth::pool::{transactions::PoolTransaction, Pool};
 use alloy_primitives::TxHash;
 use futures::{
     channel::mpsc::Receiver,
-    ready,
     stream::{Fuse, Stream, StreamExt},
     task::AtomicWaker,
 };
