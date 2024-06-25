@@ -408,4 +408,11 @@ mod tests {
         let a_99 = &b"a".repeat(99)[..];
         assert!(bytecode_diff_score(a_100, a_99) <= 0.01);
     }
+
+    #[test]
+    fn find_by_deployed_code_exact_with_empty_deployed() {
+        let contracts = ContractsByArtifact::new(vec![]);
+
+        assert!(contracts.find_by_deployed_code_exact(&[]).is_none());
+    }
 }
