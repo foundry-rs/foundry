@@ -2189,7 +2189,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_transaction_by_hash(&self, hash: B256) -> Option<WithOtherFields<Transaction>> {
+    pub fn mined_transaction_by_hash(&self, hash: B256) -> Option<WithOtherFields<Transaction>> {
         let (info, block) = {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { info, block_hash, .. } =

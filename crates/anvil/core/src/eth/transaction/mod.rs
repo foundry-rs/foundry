@@ -898,7 +898,8 @@ impl TypedTransaction {
 
 impl From<RpcTransaction> for TypedTransaction {
     fn from(tx: RpcTransaction) -> Self {
-        match tx.transaction_type.unwrap_or_default().try_into().unwrap() {
+        // TODO(sergerad): Handle Arbitrum system transactions?
+        match tx.transaction_type.unwrap().try_into().unwrap() {
             TxType::Legacy => {
                 let legacy = TxLegacy {
                     chain_id: tx.chain_id,
