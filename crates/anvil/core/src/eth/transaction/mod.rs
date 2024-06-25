@@ -906,8 +906,8 @@ impl TryFrom<RpcTransaction> for TypedTransaction {
                     gas_price: tx.gas_price.ok_or(ConversionError::MissingGasPrice)?,
                     gas_limit: tx.gas,
                     value: tx.value,
-                    input: tx.input.into(),
-                    to: tx.to.map_or(TxKind::Create, |to| TxKind::Call(to)),
+                    input: tx.input,
+                    to: tx.to.map_or(TxKind::Create, TxKind::Call),
                 };
                 let signature = tx
                     .signature
@@ -928,8 +928,8 @@ impl TryFrom<RpcTransaction> for TypedTransaction {
                         .ok_or(ConversionError::MissingMaxPriorityFeePerGas)?,
                     gas_limit: tx.gas,
                     value: tx.value,
-                    input: tx.input.into(),
-                    to: tx.to.map_or(TxKind::Create, |to| TxKind::Call(to)),
+                    input: tx.input,
+                    to: tx.to.map_or(TxKind::Create, TxKind::Call),
                     access_list: tx.access_list.ok_or(ConversionError::MissingAccessList)?,
                 };
                 let signature = tx
@@ -946,8 +946,8 @@ impl TryFrom<RpcTransaction> for TypedTransaction {
                     gas_price: tx.gas_price.ok_or(ConversionError::MissingGasPrice)?,
                     gas_limit: tx.gas,
                     value: tx.value,
-                    input: tx.input.into(),
-                    to: tx.to.map_or(TxKind::Create, |to| TxKind::Call(to)),
+                    input: tx.input,
+                    to: tx.to.map_or(TxKind::Create, TxKind::Call),
                     access_list: tx.access_list.ok_or(ConversionError::MissingAccessList)?,
                 };
                 let signature = tx
@@ -975,7 +975,7 @@ impl TryFrom<RpcTransaction> for TypedTransaction {
                     blob_versioned_hashes: tx
                         .blob_versioned_hashes
                         .ok_or(ConversionError::MissingBlobVersionedHashes)?,
-                    input: tx.input.into(),
+                    input: tx.input,
                 };
                 Ok(Self::EIP4844(Signed::new_unchecked(
                     TxEip4844Variant::TxEip4844(eip4844),
