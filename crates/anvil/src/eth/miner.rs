@@ -27,7 +27,7 @@ pub struct Miner {
     inner: Arc<MinerInner>,
     /// Transactions included into the pool before any others are.
     /// Done once on startup.
-    force_include_transactions: Option<Vec<Arc<PoolTransaction>>>,
+    force_transactions: Option<Vec<Arc<PoolTransaction>>>,
 }
 
 impl Miner {
@@ -36,7 +36,7 @@ impl Miner {
         Self {
             mode: Arc::new(RwLock::new(mode)),
             inner: Default::default(),
-            force_include_transactions: Some(
+            force_transactions: Some(
                 force_include_transactions.into_iter().map(Arc::new).collect(),
             ),
         }
@@ -78,14 +78,14 @@ impl Miner {
         self.inner.register(cx);
         match self.mode.write().poll(pool, cx) {
             Poll::Ready(next) => {
-                if let Some(transactions) = self.force_include_transactions.take() {
+                if let Some(transactions) = self.force_transactions.take() {
                     Poll::Ready(transactions.into_iter().chain(next).collect())
                 } else {
                     Poll::Ready(next)
                 }
             }
             Poll::Pending => {
-                if let Some(transactions) = self.force_include_transactions.take() {
+                if let Some(transactions) = self.force_transactions.take() {
                     Poll::Ready(transactions)
                 } else {
                     Poll::Pending

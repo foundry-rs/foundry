@@ -601,8 +601,8 @@ pub struct ClientForkConfig {
     pub compute_units_per_second: u64,
     /// total difficulty of the chain until this block
     pub total_difficulty: U256,
-    /// Transactions to replay on the forked chain
-    pub replay_transactions: Vec<PoolTransaction>,
+    /// Transactions to force include in the forked chain
+    pub force_transactions: Vec<PoolTransaction>,
 }
 
 impl ClientForkConfig {

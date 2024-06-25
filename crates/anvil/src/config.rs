@@ -1014,10 +1014,10 @@ impl NodeConfig {
                 .expect("Failed to establish provider to fork url"),
         );
 
-        let (fork_block_number, fork_chain_id, replay_transactions) = if let Some(fork_choice) =
+        let (fork_block_number, fork_chain_id, force_transactions) = if let Some(fork_choice) =
             &self.fork_choice
         {
-            let (fork_block_number, replay_transactions) = match fork_choice {
+            let (fork_block_number, force_transactions) = match fork_choice {
                 ForkChoice::Block(block_number) => (block_number.to_owned(), Vec::new()),
                 ForkChoice::Transaction(transaction_hash) => {
                     // Determine the block that this transaction was mined in
@@ -1045,7 +1045,7 @@ impl NodeConfig {
                         .collect();
 
                     // Convert the transactions to PoolTransactions
-                    let replay_transactions = filtered_transactions
+                    let force_transactions = filtered_transactions
                         .iter()
                         .map(|&transaction| {
                             let typed_transaction =
@@ -1060,7 +1060,7 @@ impl NodeConfig {
                             }
                         })
                         .collect();
-                    (transaction_block_number.saturating_sub(1), replay_transactions)
+                    (transaction_block_number.saturating_sub(1), force_transactions)
                 }
             };
             let chain_id = if let Some(chain_id) = self.fork_chain_id {
@@ -1080,7 +1080,7 @@ impl NodeConfig {
                 None
             };
 
-            (fork_block_number, chain_id, replay_transactions)
+            (fork_block_number, chain_id, force_transactions)
         } else {
             // pick the last block number but also ensure it's not pending anymore
             let bn =
@@ -1222,7 +1222,7 @@ latest block number: {latest_block}"
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
             blob_gas_used: block.header.blob_gas_used,
             blob_excess_gas_and_price: env.block.blob_excess_gas_and_price.clone(),
-            replay_transactions,
+            force_transactions,
         };
 
         let mut db = ForkedDatabase::new(backend, block_chain_db);

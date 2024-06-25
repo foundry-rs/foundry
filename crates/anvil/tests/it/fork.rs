@@ -14,15 +14,11 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
-use anvil::{
-    eth::{backend::fork, EthApi},
-    spawn, NodeConfig, NodeHandle,
-};
+use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint};
 use futures::StreamExt;
-use revm::interpreter::instructions::arithmetic::exp;
 use std::{sync::Arc, thread::sleep, time::Duration};
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
