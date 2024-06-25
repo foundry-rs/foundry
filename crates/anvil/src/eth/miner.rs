@@ -77,12 +77,12 @@ impl Miner {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction>>> {
         self.inner.register(cx);
-        // Include any forced transactions if they exist
+        let next = ready!(self.mode.write().poll(pool, cx));
         if let Some(transactions) = self.force_include_transactions.take() {
-            let next = ready!(self.mode.write().poll(pool, cx));
+            // Include forced transactions first
             Poll::Ready(transactions.into_iter().chain(next).collect())
         } else {
-            self.mode.write().poll(pool, cx)
+            Poll::Ready(next)
         }
     }
 }
