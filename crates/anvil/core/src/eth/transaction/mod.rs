@@ -3,8 +3,8 @@
 use crate::eth::transaction::optimism::{DepositTransaction, DepositTransactionRequest};
 use alloy_consensus::{
     transaction::eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
-    AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, TxEip1559, TxEip2930,
-    TxEnvelope, TxLegacy, TxReceipt,
+    AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom, SignableTransaction, Signed,
+    TxEip1559, TxEip2930, TxEnvelope, TxLegacy, TxReceipt, TxType,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256, U64};
@@ -21,7 +21,10 @@ use revm::{
     primitives::{OptimismFields, TxEnv},
 };
 use serde::{Deserialize, Serialize};
-use std::ops::{Deref, Mul};
+use std::{
+    any::Any,
+    ops::{Deref, Mul},
+};
 
 pub mod optimism;
 
@@ -893,25 +896,72 @@ impl TypedTransaction {
     }
 }
 
-impl From<alloy_rpc_types::Transaction> for TypedTransaction {
-    fn from(transaction: alloy_rpc_types::Transaction) -> Self {
-        // TODO(serge): Implement or delete based on feedback. Below is a hack
-        let legacy = TxLegacy {
-            nonce: transaction.nonce,
-            gas_price: transaction.gas_price.unwrap(),
-            gas_limit: transaction.gas,
-            value: transaction.value,
-            input: transaction.input,
-            to: TxKind::Call(transaction.to.unwrap()),
-            chain_id: transaction.chain_id,
-        };
-        use std::str::FromStr;
-        Self::Legacy(Signed::new_unchecked(
-            legacy,
-            Signature::from_str("0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b").unwrap(),
-            //transaction.signature.unwrap().try_into().unwrap(),
-            transaction.hash,
-        ))
+impl From<RpcTransaction> for TypedTransaction {
+    fn from(tx: RpcTransaction) -> Self {
+        match tx.transaction_type.unwrap_or_default().try_into().unwrap() {
+            TxType::Legacy => {
+                let legacy = TxLegacy {
+                    chain_id: tx.chain_id,
+                    nonce: tx.nonce,
+                    gas_price: tx.gas_price.unwrap(),
+                    gas_limit: tx.gas,
+                    value: tx.value,
+                    input: tx.input.into(),
+                    to: tx.to.map_or(TxKind::Create, |to| TxKind::Call(to)),
+                };
+                let signature = tx.signature.unwrap().try_into().unwrap();
+                Self::Legacy(Signed::new_unchecked(legacy, signature, tx.hash))
+            }
+            TxType::Eip1559 => {
+                let eip1559 = TxEip1559 {
+                    chain_id: tx.chain_id.unwrap(),
+                    nonce: tx.nonce,
+                    max_fee_per_gas: tx.max_fee_per_gas.unwrap(),
+                    max_priority_fee_per_gas: tx.max_priority_fee_per_gas.unwrap(),
+                    gas_limit: tx.gas,
+                    value: tx.value,
+                    input: tx.input.into(),
+                    to: tx.to.map_or(TxKind::Create, |to| TxKind::Call(to)),
+                    access_list: tx.access_list.unwrap(),
+                };
+                let signature = tx.signature.unwrap().try_into().unwrap();
+                Self::EIP1559(Signed::new_unchecked(eip1559, signature, tx.hash))
+            }
+            TxType::Eip2930 => {
+                let eip2930 = TxEip2930 {
+                    chain_id: tx.chain_id.unwrap(),
+                    nonce: tx.nonce,
+                    gas_price: tx.gas_price.unwrap(),
+                    gas_limit: tx.gas,
+                    value: tx.value,
+                    input: tx.input.into(),
+                    to: tx.to.map_or(TxKind::Create, |to| TxKind::Call(to)),
+                    access_list: tx.access_list.unwrap(),
+                };
+                let signature = tx.signature.unwrap().try_into().unwrap();
+                Self::EIP2930(Signed::new_unchecked(eip2930, signature, tx.hash))
+            }
+            TxType::Eip4844 => {
+                let eip4844 = TxEip4844 {
+                    chain_id: tx.chain_id.unwrap(),
+                    nonce: tx.nonce,
+                    gas_limit: tx.gas,
+                    max_fee_per_gas: tx.gas_price.unwrap(),
+                    max_priority_fee_per_gas: tx.max_priority_fee_per_gas.unwrap(),
+                    max_fee_per_blob_gas: tx.max_fee_per_blob_gas.unwrap(),
+                    to: tx.to.unwrap(),
+                    value: tx.value,
+                    access_list: tx.access_list.unwrap(),
+                    blob_versioned_hashes: tx.blob_versioned_hashes.unwrap(),
+                    input: tx.input.into(),
+                };
+                Self::EIP4844(Signed::new_unchecked(
+                    TxEip4844Variant::TxEip4844(eip4844),
+                    tx.signature.unwrap().try_into().unwrap(),
+                    tx.hash,
+                ))
+            }
+        }
     }
 }
 
