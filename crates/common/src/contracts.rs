@@ -141,6 +141,11 @@ impl ContractsByArtifact {
     /// Finds a contract which deployed bytecode exactly matches the given code. Accounts for link
     /// references and immutables.
     pub fn find_by_deployed_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
+        // Immediately return None if the code is empty.
+        if code.len() == 0 {
+            return None;
+        }
+
         self.iter().find(|(_, contract)| {
             let Some(deployed_bytecode) = &contract.deployed_bytecode else {
                 return false;
