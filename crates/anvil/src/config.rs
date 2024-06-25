@@ -1048,7 +1048,8 @@ impl NodeConfig {
                     let replay_transactions = filtered_transactions
                         .iter()
                         .map(|&transaction| {
-                            let typed_transaction = TypedTransaction::from(transaction.clone());
+                            let typed_transaction =
+                                TypedTransaction::try_from(transaction.clone()).unwrap();
                             let pending_transaction =
                                 PendingTransaction::new(typed_transaction).unwrap();
                             PoolTransaction {
