@@ -430,6 +430,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlobBaseFee() external view returns (uint256 blobBaseFee);
 
+    /// Set blockhash for the current block.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
+
     // -------- Account State --------
 
     /// Sets an address' balance.
@@ -2155,10 +2159,6 @@ interface Vm {
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
     function randomAddress() external returns (address);
-
-    /// Set blockhash for the current block.
-    #[cheatcode(group = Utilities)]
-    function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
 }
 }
 

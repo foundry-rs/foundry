@@ -7407,9 +7407,9 @@
           74
         ]
       },
-      "group": "utilities",
+      "group": "evm",
       "status": "stable",
-      "safety": "safe"
+      "safety": "unsafe"
     },
     {
       "func": {
