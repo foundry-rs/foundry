@@ -1,4 +1,4 @@
-//! Cheatcode EVM [Inspector].
+//! Cheatcode EVM inspector.
 
 use crate::{
     evm::{
@@ -24,6 +24,7 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    utils::new_evm_with_existing_context,
     InspectorExt,
 };
 use itertools::Itertools;
@@ -32,7 +33,7 @@ use revm::{
         opcode, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
-    primitives::{BlockEnv, CreateScheme},
+    primitives::{BlockEnv, CreateScheme, EVMError},
     EvmContext, InnerEvmContext, Inspector,
 };
 use rustc_hash::FxHashMap;
@@ -45,6 +46,85 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+
+/// Helper trait for obtaining complete [revm::Inspector] instance from mutable reference to
+/// [Cheatcodes].
+///
+/// This is needed for cases when inspector itself needs mutable access to [Cheatcodes] state and
+/// allows us to correctly execute arbitrary EVM frames from inside cheatcode implementations.
+pub trait CheatcodesExecutor {
+    /// Core trait method accepting mutable reference to [Cheatcodes] and returning
+    /// [revm::Inspector].
+    fn get_inspector<'a, DB: DatabaseExt>(
+        &'a mut self,
+        cheats: &'a mut Cheatcodes,
+    ) -> impl InspectorExt<DB> + 'a;
+
+    /// Obtains [revm::Inspector] instance and executes the given CREATE frame.
+    fn exec_create<DB: DatabaseExt>(
+        &mut self,
+        inputs: CreateInputs,
+        cheats: &mut Cheatcodes,
+        ecx: &mut InnerEvmContext<DB>,
+    ) -> Result<CreateOutcome, EVMError<DB::Error>> {
+        let inspector = self.get_inspector(cheats);
+        let error = std::mem::replace(&mut ecx.error, Ok(()));
+        let l1_block_info = std::mem::take(&mut ecx.l1_block_info);
+
+        let inner = revm::InnerEvmContext {
+            env: ecx.env.clone(),
+            journaled_state: std::mem::replace(
+                &mut ecx.journaled_state,
+                revm::JournaledState::new(Default::default(), Default::default()),
+            ),
+            db: &mut ecx.db as &mut dyn DatabaseExt,
+            error,
+            l1_block_info,
+        };
+
+        let mut evm = new_evm_with_existing_context(inner, inspector);
+
+        evm.context.evm.inner.journaled_state.depth += 1;
+
+        let first_frame_or_result =
+            evm.handler.execution().create(&mut evm.context, Box::new(inputs))?;
+
+        let mut result = match first_frame_or_result {
+            revm::FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
+            revm::FrameOrResult::Result(result) => result,
+        };
+
+        evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
+
+        let outcome = match result {
+            revm::FrameResult::Call(_) | revm::FrameResult::EOFCreate(_) => unreachable!(),
+            revm::FrameResult::Create(create) => create,
+        };
+
+        evm.context.evm.inner.journaled_state.depth -= 1;
+
+        ecx.journaled_state = evm.context.evm.inner.journaled_state;
+        ecx.env = evm.context.evm.inner.env;
+        ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
+        ecx.error = evm.context.evm.inner.error;
+
+        Ok(outcome)
+    }
+}
+
+/// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an
+/// inspector.
+#[derive(Debug, Default, Clone, Copy)]
+struct TransparentCheatcodesExecutor;
+
+impl CheatcodesExecutor for TransparentCheatcodesExecutor {
+    fn get_inspector<'a, DB: DatabaseExt>(
+        &'a mut self,
+        cheats: &'a mut Cheatcodes,
+    ) -> impl InspectorExt<DB> + 'a {
+        cheats
+    }
+}
 
 macro_rules! try_or_return {
     ($e:expr) => {
@@ -255,10 +335,11 @@ impl Cheatcodes {
     }
 
     /// Decodes the input data and applies the cheatcode.
-    fn apply_cheatcode<DB: DatabaseExt>(
+    fn apply_cheatcode<DB: DatabaseExt, E: CheatcodesExecutor>(
         &mut self,
         ecx: &mut EvmContext<DB>,
         call: &CallInputs,
+        executor: &mut E,
     ) -> Result {
         // decode the cheatcode call
         let decoded = Vm::VmCalls::abi_decode(&call.input, false).map_err(|e| {
@@ -285,8 +366,10 @@ impl Cheatcodes {
                 state: self,
                 ecx: &mut ecx.inner,
                 precompiles: &mut ecx.precompiles,
+                gas_limit: call.gas_limit,
                 caller,
             },
+            executor,
         )
     }
 
@@ -346,67 +429,13 @@ impl Cheatcodes {
             }
         }
     }
-}
 
-impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
-    #[inline]
-    fn initialize_interp(&mut self, _interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
-        // When the first interpreter is initialized we've circumvented the balance and gas checks,
-        // so we apply our actual block data with the correct fees and all.
-        if let Some(block) = self.block.take() {
-            ecx.env.block = block;
-        }
-        if let Some(gas_price) = self.gas_price.take() {
-            ecx.env.tx.gas_price = gas_price;
-        }
-    }
-
-    #[inline]
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
-        self.pc = interpreter.program_counter();
-
-        // `pauseGasMetering`: reset interpreter gas.
-        if self.gas_metering.is_some() {
-            self.meter_gas(interpreter);
-        }
-
-        // `record`: record storage reads and writes.
-        if self.accesses.is_some() {
-            self.record_accesses(interpreter);
-        }
-
-        // `startStateDiffRecording`: record granular ordered storage accesses.
-        if self.recorded_account_diffs_stack.is_some() {
-            self.record_state_diffs(interpreter, ecx);
-        }
-
-        // `expectSafeMemory`: check if the current opcode is allowed to interact with memory.
-        if !self.allowed_mem_writes.is_empty() {
-            self.check_mem_opcodes(interpreter, ecx.journaled_state.depth());
-        }
-
-        // `startMappingRecording`: record SSTORE and KECCAK256.
-        if let Some(mapping_slots) = &mut self.mapping_slots {
-            mapping::step(mapping_slots, interpreter);
-        }
-    }
-
-    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
-        if !self.expected_emits.is_empty() {
-            expect::handle_expect_emit(self, log);
-        }
-
-        // `recordLogs`
-        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
-            storage_recorded_logs.push(Vm::Log {
-                topics: log.data.topics().to_vec(),
-                data: log.data.data.clone(),
-                emitter: log.address,
-            });
-        }
-    }
-
-    fn call(&mut self, ecx: &mut EvmContext<DB>, call: &mut CallInputs) -> Option<CallOutcome> {
+    pub fn call_with_executor<DB: DatabaseExt>(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        call: &mut CallInputs,
+        executor: &mut impl CheatcodesExecutor,
+    ) -> Option<CallOutcome> {
         let gas = Gas::new(call.gas_limit);
 
         // At the root call to test function or script `run()`/`setUp()` functions, we are
@@ -436,7 +465,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         if call.target_address == CHEATCODE_ADDRESS {
-            return match self.apply_cheatcode(ecx, call) {
+            return match self.apply_cheatcode(ecx, call, executor) {
                 Ok(retdata) => Some(CallOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Return,
@@ -657,6 +686,73 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         None
+    }
+}
+
+impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
+    #[inline]
+    fn initialize_interp(&mut self, _interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        // When the first interpreter is initialized we've circumvented the balance and gas checks,
+        // so we apply our actual block data with the correct fees and all.
+        if let Some(block) = self.block.take() {
+            ecx.env.block = block;
+        }
+        if let Some(gas_price) = self.gas_price.take() {
+            ecx.env.tx.gas_price = gas_price;
+        }
+    }
+
+    #[inline]
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        self.pc = interpreter.program_counter();
+
+        // `pauseGasMetering`: reset interpreter gas.
+        if self.gas_metering.is_some() {
+            self.meter_gas(interpreter);
+        }
+
+        // `record`: record storage reads and writes.
+        if self.accesses.is_some() {
+            self.record_accesses(interpreter);
+        }
+
+        // `startStateDiffRecording`: record granular ordered storage accesses.
+        if self.recorded_account_diffs_stack.is_some() {
+            self.record_state_diffs(interpreter, ecx);
+        }
+
+        // `expectSafeMemory`: check if the current opcode is allowed to interact with memory.
+        if !self.allowed_mem_writes.is_empty() {
+            self.check_mem_opcodes(interpreter, ecx.journaled_state.depth());
+        }
+
+        // `startMappingRecording`: record SSTORE and KECCAK256.
+        if let Some(mapping_slots) = &mut self.mapping_slots {
+            mapping::step(mapping_slots, interpreter);
+        }
+    }
+
+    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
+        if !self.expected_emits.is_empty() {
+            expect::handle_expect_emit(self, log);
+        }
+
+        // `recordLogs`
+        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
+            storage_recorded_logs.push(Vm::Log {
+                topics: log.data.topics().to_vec(),
+                data: log.data.data.clone(),
+                emitter: log.address,
+            });
+        }
+    }
+
+    fn call(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        inputs: &mut CallInputs,
+    ) -> Option<CallOutcome> {
+        Self::call_with_executor(self, context, inputs, &mut TransparentCheatcodesExecutor)
     }
 
     fn call_end(
@@ -1679,11 +1775,15 @@ fn append_storage_access(
 }
 
 /// Dispatches the cheatcode call to the appropriate function.
-fn apply_dispatch<DB: DatabaseExt>(calls: &Vm::VmCalls, ccx: &mut CheatsCtxt<DB>) -> Result {
+fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
+    calls: &Vm::VmCalls,
+    ccx: &mut CheatsCtxt<DB>,
+    executor: &mut E,
+) -> Result {
     macro_rules! dispatch {
         ($($variant:ident),*) => {
             match calls {
-                $(Vm::VmCalls::$variant(cheat) => crate::Cheatcode::apply_full(cheat, ccx),)*
+                $(Vm::VmCalls::$variant(cheat) => crate::Cheatcode::apply_full(cheat, ccx, executor),)*
             }
         };
     }

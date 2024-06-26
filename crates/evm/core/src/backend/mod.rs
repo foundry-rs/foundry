@@ -68,7 +68,7 @@ pub const GLOBAL_FAIL_SLOT: U256 =
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut)]
-pub trait DatabaseExt: Database<Error = DatabaseError> {
+pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     /// Creates a new snapshot at the current point of execution.
     ///
     /// A snapshot is associated with a new unique id that's created for the snapshot.
@@ -192,16 +192,14 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     ) -> eyre::Result<()>;
 
     /// Fetches the given transaction for the fork and executes it, committing the state in the DB
-    fn transact<I: InspectorExt<Backend>>(
+    fn transact(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut I,
-    ) -> eyre::Result<()>
-    where
-        Self: Sized;
+        inspector: &mut dyn InspectorExt<Backend>,
+    ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork_id(&self) -> Option<LocalForkId>;
@@ -279,7 +277,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Marks the given account as persistent.
     fn add_persistent_account(&mut self, account: Address) -> bool;
 
-    /// Removes persistent status from all given accounts
+    /// Removes persistent status from all given accounts.
+    #[auto_impl(keep_default_for(&, &mut, Rc, Arc, Box))]
     fn remove_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>)
     where
         Self: Sized,
@@ -290,6 +289,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     }
 
     /// Extends the persistent accounts with the accounts the iterator yields.
+    #[auto_impl(keep_default_for(&, &mut, Rc, Arc, Box))]
     fn extend_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>)
     where
         Self: Sized,
@@ -1183,13 +1183,13 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    fn transact<I: InspectorExt<Self>>(
+    fn transact(
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut I,
+        inspector: &mut dyn InspectorExt<Self>,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -1835,10 +1835,13 @@ fn commit_transaction<I: InspectorExt<Backend>>(
     let res = {
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
+        let depth = journaled_state.depth;
         let db = Backend::new_with_fork(fork_id, fork, journaled_state);
-        crate::utils::new_evm_with_inspector(db, env, inspector)
-            .transact()
-            .wrap_err("backend: failed committing transaction")?
+
+        let mut evm = crate::utils::new_evm_with_inspector(db, env, inspector);
+        // Adjust inner EVM depth to ensure that inspectors receive accurate data.
+        evm.context.evm.inner.journaled_state.depth = depth + 1;
+        evm.transact().wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
