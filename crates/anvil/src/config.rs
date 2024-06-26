@@ -9,7 +9,7 @@ use crate::{
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
-        pool::transactions::{PoolTransaction, TransactionOrder, TransactionPriority},
+        pool::transactions::{PoolTransaction, TransactionOrder},
     },
     mem::{self, in_memory_db::MemDb},
     FeeManager, Hardfork, PrecompileFactory,
@@ -25,10 +25,11 @@ use alloy_signer_local::{
     MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_transport::{Transport, TransportError};
-use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use anvil_server::ServerConfig;
+use eyre::Result;
 use foundry_common::{
-    provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
+    provider::{ProviderBuilder, RetryProvider},
+    ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
 };
 use foundry_config::Config;
 use foundry_evm::{
@@ -1017,52 +1018,10 @@ impl NodeConfig {
         let (fork_block_number, fork_chain_id, force_transactions) = if let Some(fork_choice) =
             &self.fork_choice
         {
-            let (fork_block_number, force_transactions) = match fork_choice {
-                ForkChoice::Block(block_number) => (block_number.to_owned(), Vec::new()),
-                ForkChoice::Transaction(transaction_hash) => {
-                    // Determine the block that this transaction was mined in
-                    let transaction = provider
-                        .get_transaction_by_hash(transaction_hash.0.into())
-                        .await
-                        .expect("Failed to get fork transaction")
-                        .unwrap();
-                    let transaction_block_number = transaction.block_number.unwrap();
-
-                    // Get the block pertaining to the fork transaction
-                    let transaction_block = provider
-                        .get_block_by_number(transaction_block_number.into(), true)
-                        .await
-                        .unwrap()
-                        .unwrap();
-
-                    // Filter out transactions that are after the fork transaction
-                    let filtered_transactions: Vec<&Transaction> = transaction_block
-                        .transactions
-                        .as_transactions()
-                        .unwrap()
-                        .iter()
-                        .take_while_inclusive(|&transaction| transaction.hash != transaction_hash.0)
-                        .collect();
-
-                    // Convert the transactions to PoolTransactions
-                    let force_transactions = filtered_transactions
-                        .iter()
-                        .map(|&transaction| {
-                            let typed_transaction =
-                                TypedTransaction::try_from(transaction.clone()).unwrap();
-                            let pending_transaction =
-                                PendingTransaction::new(typed_transaction).unwrap();
-                            PoolTransaction {
-                                pending_transaction,
-                                requires: vec![],
-                                provides: vec![],
-                                priority: TransactionPriority(0),
-                            }
-                        })
-                        .collect();
-                    (transaction_block_number.saturating_sub(1), force_transactions)
-                }
-            };
+            let (fork_block_number, force_transactions) =
+                derive_block_and_transactions(fork_choice, &provider).await.expect(
+                    "Failed to derive fork block number and force transactions from fork choice",
+                );
             let chain_id = if let Some(chain_id) = self.fork_chain_id {
                 Some(chain_id)
             } else if self.hardfork.is_none() {
@@ -1231,6 +1190,49 @@ latest block number: {latest_block}"
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
 
         (db, config)
+    }
+}
+
+/// If the fork choice is a block number, simply return it with an empty list of transactions.
+/// If the fork choice is a transaction hash, determine the block that the transaction was mined in,
+/// and return the block number before the fork block along with all transactions in the fork block
+/// that are before (and including) the fork transaction.
+async fn derive_block_and_transactions(
+    fork_choice: &ForkChoice,
+    provider: &Arc<RetryProvider>,
+) -> eyre::Result<(BlockNumber, Vec<PoolTransaction>)> {
+    match fork_choice {
+        ForkChoice::Block(block_number) => Ok((block_number.to_owned(), Vec::new())),
+        ForkChoice::Transaction(transaction_hash) => {
+            // Determine the block that this transaction was mined in
+            let transaction = provider
+                .get_transaction_by_hash(transaction_hash.0.into())
+                .await?
+                .ok_or(eyre::eyre!("Failed to get fork transaction by hash"))?;
+            let transaction_block_number = transaction.block_number.unwrap();
+
+            // Get the block pertaining to the fork transaction
+            let transaction_block = provider
+                .get_block_by_number(transaction_block_number.into(), true)
+                .await?
+                .ok_or(eyre::eyre!("Failed to get fork block by number"))?;
+
+            // Filter out transactions that are after the fork transaction
+            let filtered_transactions: Vec<&Transaction> = transaction_block
+                .transactions
+                .as_transactions()
+                .ok_or(eyre::eyre!("Failed to get transactions from full fork block"))?
+                .iter()
+                .take_while_inclusive(|&transaction| transaction.hash != transaction_hash.0)
+                .collect();
+
+            // Convert the transactions to PoolTransactions
+            let force_transactions = filtered_transactions
+                .iter()
+                .map(|&transaction| PoolTransaction::try_from(transaction.clone()))
+                .collect::<Result<_, _>>()?;
+            Ok((transaction_block_number.saturating_sub(1), force_transactions))
+        }
     }
 }
 
