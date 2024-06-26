@@ -722,7 +722,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         );
 
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
-            if let Some(output) = cheatcodes.call(ecx, call, self.inner) {
+            if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner) {
                 if output.result.result != InstructionResult::Continue {
                     return Some(output)
                 }

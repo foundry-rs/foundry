@@ -430,7 +430,7 @@ impl Cheatcodes {
         }
     }
 
-    pub fn call<DB: DatabaseExt>(
+    pub fn call_with_executor<DB: DatabaseExt>(
         &mut self,
         ecx: &mut EvmContext<DB>,
         call: &mut CallInputs,
@@ -752,7 +752,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        Self::call(self, context, inputs, &mut TransparentCheatcodesExecutor)
+        Self::call_with_executor(self, context, inputs, &mut TransparentCheatcodesExecutor)
     }
 
     fn call_end(
