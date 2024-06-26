@@ -265,7 +265,7 @@ impl Cheatcode for getDeployedCodeCall {
 }
 
 impl Cheatcode for deployCode_0Call {
-    fn apply_full_with_executor<DB: DatabaseExt, E: CheatcodesExecutor>(
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
         &self,
         ccx: &mut CheatsCtxt<DB>,
         executor: &mut E,
@@ -291,7 +291,7 @@ impl Cheatcode for deployCode_0Call {
 }
 
 impl Cheatcode for deployCode_1Call {
-    fn apply_full_with_executor<DB: DatabaseExt, E: CheatcodesExecutor>(
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
         &self,
         ccx: &mut CheatsCtxt<DB>,
         executor: &mut E,

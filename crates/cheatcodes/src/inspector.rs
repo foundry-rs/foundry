@@ -1783,7 +1783,7 @@ fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
     macro_rules! dispatch {
         ($($variant:ident),*) => {
             match calls {
-                $(Vm::VmCalls::$variant(cheat) => crate::Cheatcode::apply_full_with_executor(cheat, ccx, executor),)*
+                $(Vm::VmCalls::$variant(cheat) => crate::Cheatcode::apply_full(cheat, ccx, executor),)*
             }
         };
     }

@@ -67,7 +67,7 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     ///
     /// Implement this function if you need access to the EVM data.
     #[inline(always)]
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         self.apply(ccx.state)
     }
 
@@ -75,12 +75,12 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     ///
     /// Implement this function if you need access to the executor.
     #[inline(always)]
-    fn apply_full_with_executor<DB: DatabaseExt, E: CheatcodesExecutor>(
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
         &self,
         ccx: &mut CheatsCtxt<DB>,
         _executor: &mut E,
     ) -> Result {
-        self.apply_full(ccx)
+        self.apply_stateful(ccx)
     }
 }
 
