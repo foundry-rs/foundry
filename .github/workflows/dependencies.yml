@@ -35,7 +35,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
 
       - name: cargo update
-        # Remove first line that always just says "Updating crates.io index"
+        # Remove the first line that always just says "Updating crates.io index"
         run: cargo update --color never 2>&1 | sed '/crates.io index/d' | tee -a cargo_update.log
 
       - name: craft commit message and PR body
