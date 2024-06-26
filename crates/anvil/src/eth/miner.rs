@@ -32,17 +32,25 @@ pub struct Miner {
 
 impl Miner {
     /// Returns a new miner with that operates in the given `mode`.
-    /// Specifying some force transactions will cause a block to be mined with those transactions
-    /// as soon as the miner is polled.
-    pub fn new(mode: MiningMode, force_transactions: Vec<PoolTransaction>) -> Self {
-        let force_transactions =
-            if force_transactions.is_empty() { None } else { Some(force_transactions) };
+    pub fn new(mode: MiningMode) -> Self {
         Self {
             mode: Arc::new(RwLock::new(mode)),
             inner: Default::default(),
-            force_transactions: force_transactions
-                .map(|txs| txs.into_iter().map(Arc::new).collect()),
+            force_transactions: None,
         }
+    }
+
+    /// Provide transactions that will cause a block to be mined with transactions
+    /// as soon as the miner is polled.
+    /// Providing an empty list of transactions will cause the miner to mine an empty block assuming
+    /// there are not other transactions in the pool.
+    pub fn with_forced_transactions(
+        mut self,
+        force_transactions: Option<Vec<PoolTransaction>>,
+    ) -> Self {
+        self.force_transactions =
+            force_transactions.map(|tx| tx.into_iter().map(Arc::new).collect());
+        self
     }
 
     /// Returns the write lock of the mining mode

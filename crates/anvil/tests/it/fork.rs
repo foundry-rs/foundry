@@ -1252,7 +1252,7 @@ async fn test_immutable_fork_transaction_hash() {
             .unwrap(),
         TxHash::from_str("8c0ce5fb9ec2c8e03f7fcc69c7786393c691ce43b58a06d74d6733679308fc01")
             .unwrap(),
-        fork_tx_hash.clone(),
+        fork_tx_hash,
     ];
     for expected in [
         (expected_transactions[0], address!("8C1aB379E7263d37049505626D2F975288F5dF12")),
