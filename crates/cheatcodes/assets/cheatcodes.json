@@ -7393,6 +7393,26 @@
     },
     {
       "func": {
+        "id": "setBlockhash",
+        "description": "Set blockhash for the current block.",
+        "declaration": "function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setBlockhash(uint256,bytes32)",
+        "selector": "0x5314b54a",
+        "selectorBytes": [
+          83,
+          20,
+          181,
+          74
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "setEnv",
         "description": "Sets environment variables.",
         "declaration": "function setEnv(string calldata name, string calldata value) external;",
