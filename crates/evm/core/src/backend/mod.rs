@@ -275,6 +275,28 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     /// Marks the given account as persistent.
     fn add_persistent_account(&mut self, account: Address) -> bool;
 
+    /// Removes persistent status from all given accounts.
+    #[auto_impl(keep_default_for(&, &mut, Rc, Arc, Box))]
+    fn remove_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>)
+    where
+        Self: Sized,
+    {
+        for acc in accounts {
+            self.remove_persistent_account(&acc);
+        }
+    }
+
+    /// Extends the persistent accounts with the accounts the iterator yields.
+    #[auto_impl(keep_default_for(&, &mut, Rc, Arc, Box))]
+    fn extend_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>)
+    where
+        Self: Sized,
+    {
+        for acc in accounts {
+            self.add_persistent_account(acc);
+        }
+    }
+
     /// Grants cheatcode access for the given `account`
     ///
     /// Returns true if the `account` already has access
