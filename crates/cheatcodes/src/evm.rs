@@ -567,12 +567,10 @@ impl Cheatcode for stopAndReturnStateDiffCall {
     }
 }
 
-
-impl Cheatcode for setBlockhashCall{
+impl Cheatcode for setBlockhashCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         todo!()
     }
-
 }
 
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {

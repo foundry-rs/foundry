@@ -8,7 +8,7 @@ use crate::{
     InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{keccak256, uint, Address, B256, U256};
+use alloy_primitives::{keccak256, uint, Address, B256, B64, U256, U64};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
 use alloy_serde::WithOtherFields;
 use eyre::Context;
@@ -330,6 +330,9 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         }
         Ok(())
     }
+
+    /// set the blockhash for the given block number
+    fn set_blockhash(&mut self, block_number: B256, block_hash: B256) -> Result<(), DatabaseError>;
 }
 
 struct _ObjectSafe(dyn DatabaseExt);
@@ -780,7 +783,7 @@ impl Backend {
                 // created account takes precedence: for example contract creation in setups
                 if init_account.is_created() {
                     trace!(?loaded_account, "skipping created account");
-                    continue
+                    continue;
                 }
 
                 // otherwise we need to replace the account's info with the one from the fork's
@@ -855,7 +858,7 @@ impl Backend {
 
                 if tx.hash == tx_hash {
                     // found the target transaction
-                    return Ok(Some(tx))
+                    return Ok(Some(tx));
                 }
                 trace!(tx=?tx.hash, "committing transaction");
 
@@ -1369,6 +1372,17 @@ impl DatabaseExt for Backend {
 
     fn has_cheatcode_access(&self, account: &Address) -> bool {
         self.inner.cheatcode_access_accounts.contains(account)
+    }
+
+    fn set_blockhash(&mut self, block_number: B256, block_hash: B256) -> Result<(), DatabaseError> {
+        match self.mem_db.block_hashes.insert(block_number.into(), block_hash) {
+            Some(_) => Ok(()),
+            None => Err(DatabaseError::Other(format!(
+                "
+            Cannot set blockhash {:?} for block number {:?}",
+                block_hash, block_number
+            ))),
+        }
     }
 }
 
