@@ -46,14 +46,14 @@ impl Cheatcode for createWallet_2Call {
 }
 
 impl Cheatcode for getNonce_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet } = self;
         super::evm::get_nonce(ccx, &wallet.addr)
     }
 }
 
 impl Cheatcode for sign_3Call {
-    fn apply_full<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
         sign(&wallet.privateKey, digest)
     }
@@ -88,7 +88,7 @@ impl Cheatcode for deriveKey_3Call {
 }
 
 impl Cheatcode for rememberKeyCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey } = self;
         let wallet = parse_wallet(privateKey)?;
         let address = wallet.address();
