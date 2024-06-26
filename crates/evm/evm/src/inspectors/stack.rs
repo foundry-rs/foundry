@@ -439,7 +439,7 @@ impl InspectorStack {
         let Self {
             cheatcodes,
             inner:
-                InspectorStackInner { chisel_state, coverage, debugger, log_collector, tracer, .. },
+                InspectorStackInner { chisel_state, coverage, log_collector, tracer, .. },
         } = self;
 
         InspectorData {
