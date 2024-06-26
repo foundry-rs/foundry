@@ -783,7 +783,7 @@ impl Backend {
                 // created account takes precedence: for example contract creation in setups
                 if init_account.is_created() {
                     trace!(?loaded_account, "skipping created account");
-                    continue;
+                    continue
                 }
 
                 // otherwise we need to replace the account's info with the one from the fork's

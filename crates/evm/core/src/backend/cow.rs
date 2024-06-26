@@ -94,7 +94,7 @@ impl<'a> CowBackend<'a> {
             let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), self.spec_id);
             backend.initialize(&env);
             self.is_initialized = true;
-            return backend;
+            return backend
         }
         self.backend.to_mut()
     }
