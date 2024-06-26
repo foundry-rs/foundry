@@ -81,6 +81,7 @@ impl FuzzedExecutor {
         // Stores coverage information for all fuzz cases
         let coverage: RefCell<Option<HitMaps>> = RefCell::default();
 
+        // Stores breakpoints for the last fuzz case.
         let breakpoints: RefCell<Option<Breakpoints>> = RefCell::default();
 
         let state = self.build_fuzz_state();

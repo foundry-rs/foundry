@@ -30,6 +30,10 @@ impl DebugNode {
     }
 }
 
+/// Flattens given [CallTraceArena] into a list of [DebugNode]s.
+///
+/// This is done by recursively traversing the call tree and collecting the steps in-between the
+/// calls.
 pub fn flatten_call_trace(arena: CallTraceArena, out: &mut Vec<DebugNode>) {
     #[derive(Debug, Clone, Copy)]
     struct PendingNode {
