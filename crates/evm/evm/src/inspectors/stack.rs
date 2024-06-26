@@ -273,7 +273,10 @@ pub struct InnerContextData {
 /// equivalent) the remaining inspectors are not called.
 ///
 /// Stack is divided into [Cheatcodes] and `InspectorStackInner`. This is done to allow assembling
-/// `InspectorStackRefMut` inside [Cheatcodes] to allow usage of it as [revm::Inspector].
+/// `InspectorStackRefMut` inside [Cheatcodes] to allow usage of it as [revm::Inspector]. This gives
+/// us ability to create and execute separate EVM frames from inside cheatcodes while still having
+/// access to entire stack of inspectors and correctly handling traces, logs, debugging info
+/// collection, etc.
 #[derive(Clone, Debug, Default)]
 pub struct InspectorStack {
     pub cheatcodes: Option<Cheatcodes>,

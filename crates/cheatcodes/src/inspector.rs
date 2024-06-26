@@ -34,7 +34,7 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
     primitives::{BlockEnv, CreateScheme, EVMError},
-    EvmContext, InnerEvmContext,
+    EvmContext, InnerEvmContext, Inspector,
 };
 use rustc_hash::FxHashMap;
 use serde_json::Value;
@@ -46,6 +46,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+
 /// Helper trait for obtaining complete [revm::Inspector] instance from mutable reference to
 /// [Cheatcodes].
 ///
@@ -108,6 +109,20 @@ pub trait CheatcodesExecutor {
         ecx.error = evm.context.evm.inner.error;
 
         Ok(outcome)
+    }
+}
+
+/// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an
+/// inspector.
+#[derive(Debug, Default, Clone, Copy)]
+struct TransparentCheatcodesExecutor;
+
+impl CheatcodesExecutor for TransparentCheatcodesExecutor {
+    fn get_inspector<'a, DB: DatabaseExt>(
+        &'a mut self,
+        cheats: &'a mut Cheatcodes,
+    ) -> impl InspectorExt<DB> + 'a {
+        cheats
     }
 }
 
@@ -414,73 +429,6 @@ impl Cheatcodes {
             }
         }
     }
-}
-
-impl Cheatcodes {
-    #[inline]
-    pub fn initialize_interp<DB: DatabaseExt>(
-        &mut self,
-        _: &mut Interpreter,
-        ecx: &mut EvmContext<DB>,
-    ) {
-        // When the first interpreter is initialized we've circumvented the balance and gas checks,
-        // so we apply our actual block data with the correct fees and all.
-        if let Some(block) = self.block.take() {
-            ecx.env.block = block;
-        }
-        if let Some(gas_price) = self.gas_price.take() {
-            ecx.env.tx.gas_price = gas_price;
-        }
-    }
-
-    #[inline]
-    pub fn step<DB: DatabaseExt>(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EvmContext<DB>,
-    ) {
-        self.pc = interpreter.program_counter();
-
-        // `pauseGasMetering`: reset interpreter gas.
-        if self.gas_metering.is_some() {
-            self.meter_gas(interpreter);
-        }
-
-        // `record`: record storage reads and writes.
-        if self.accesses.is_some() {
-            self.record_accesses(interpreter);
-        }
-
-        // `startStateDiffRecording`: record granular ordered storage accesses.
-        if self.recorded_account_diffs_stack.is_some() {
-            self.record_state_diffs(interpreter, ecx);
-        }
-
-        // `expectSafeMemory`: check if the current opcode is allowed to interact with memory.
-        if !self.allowed_mem_writes.is_empty() {
-            self.check_mem_opcodes(interpreter, ecx.journaled_state.depth());
-        }
-
-        // `startMappingRecording`: record SSTORE and KECCAK256.
-        if let Some(mapping_slots) = &mut self.mapping_slots {
-            mapping::step(mapping_slots, interpreter);
-        }
-    }
-
-    pub fn log<DB: DatabaseExt>(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
-        if !self.expected_emits.is_empty() {
-            expect::handle_expect_emit(self, log);
-        }
-
-        // `recordLogs`
-        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
-            storage_recorded_logs.push(Vm::Log {
-                topics: log.data.topics().to_vec(),
-                data: log.data.data.clone(),
-                emitter: log.address,
-            });
-        }
-    }
 
     pub fn call<DB: DatabaseExt>(
         &mut self,
@@ -739,8 +687,75 @@ impl Cheatcodes {
 
         None
     }
+}
 
-    pub fn call_end<DB: DatabaseExt>(
+impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
+    #[inline]
+    fn initialize_interp(&mut self, _: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        // When the first interpreter is initialized we've circumvented the balance and gas checks,
+        // so we apply our actual block data with the correct fees and all.
+        if let Some(block) = self.block.take() {
+            ecx.env.block = block;
+        }
+        if let Some(gas_price) = self.gas_price.take() {
+            ecx.env.tx.gas_price = gas_price;
+        }
+    }
+
+    #[inline]
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        self.pc = interpreter.program_counter();
+
+        // `pauseGasMetering`: reset interpreter gas.
+        if self.gas_metering.is_some() {
+            self.meter_gas(interpreter);
+        }
+
+        // `record`: record storage reads and writes.
+        if self.accesses.is_some() {
+            self.record_accesses(interpreter);
+        }
+
+        // `startStateDiffRecording`: record granular ordered storage accesses.
+        if self.recorded_account_diffs_stack.is_some() {
+            self.record_state_diffs(interpreter, ecx);
+        }
+
+        // `expectSafeMemory`: check if the current opcode is allowed to interact with memory.
+        if !self.allowed_mem_writes.is_empty() {
+            self.check_mem_opcodes(interpreter, ecx.journaled_state.depth());
+        }
+
+        // `startMappingRecording`: record SSTORE and KECCAK256.
+        if let Some(mapping_slots) = &mut self.mapping_slots {
+            mapping::step(mapping_slots, interpreter);
+        }
+    }
+
+    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
+        if !self.expected_emits.is_empty() {
+            expect::handle_expect_emit(self, log);
+        }
+
+        // `recordLogs`
+        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
+            storage_recorded_logs.push(Vm::Log {
+                topics: log.data.topics().to_vec(),
+                data: log.data.data.clone(),
+                emitter: log.address,
+            });
+        }
+    }
+
+    fn call(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        inputs: &mut CallInputs,
+    ) -> Option<CallOutcome> {
+        Self::call(self, context, inputs, &mut TransparentCheatcodesExecutor)
+    }
+
+    fn call_end(
         &mut self,
         ecx: &mut EvmContext<DB>,
         call: &CallInputs,
@@ -1019,7 +1034,7 @@ impl Cheatcodes {
         outcome
     }
 
-    pub fn create<DB: DatabaseExt>(
+    fn create(
         &mut self,
         ecx: &mut EvmContext<DB>,
         call: &mut CreateInputs,
@@ -1125,7 +1140,7 @@ impl Cheatcodes {
         None
     }
 
-    pub fn create_end<DB: DatabaseExt>(
+    fn create_end(
         &mut self,
         ecx: &mut EvmContext<DB>,
         _call: &CreateInputs,
@@ -1235,8 +1250,10 @@ impl Cheatcodes {
 
         outcome
     }
+}
 
-    pub fn should_use_create2_factory<DB: DatabaseExt>(
+impl<DB: DatabaseExt> InspectorExt<DB> for Cheatcodes {
+    fn should_use_create2_factory(
         &mut self,
         ecx: &mut EvmContext<DB>,
         inputs: &mut CreateInputs,
