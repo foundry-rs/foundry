@@ -11,8 +11,6 @@ use proptest::test_runner::TestError;
 pub struct InvariantFailures {
     /// Total number of reverts.
     pub reverts: usize,
-    /// How many different invariants have been broken.
-    pub broken_invariants_count: usize,
     /// The latest revert reason of a run.
     pub revert_reason: Option<String>,
     /// Maps a broken invariant to its specific error.
