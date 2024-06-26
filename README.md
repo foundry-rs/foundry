@@ -15,7 +15,7 @@
 | [Developer Docs](./docs/dev/)
 | [Crate Docs](https://foundry-rs.github.io/foundry)
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+**Foundry is a blazingly fast, portable and modular toolkit for Ethereum application development written in Rust.**
 
 Foundry consists of:
 
