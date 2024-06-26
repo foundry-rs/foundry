@@ -10,7 +10,7 @@ $ cargo test
 
 should be enough to get you started!
 
-To learn more about how foundry's tools works, see [./architecture.md](./architecture.md).
+To learn more about how foundry's tools work, see [./architecture.md](./architecture.md).
 It also explains the high-level layout of some aspects of the source code.
 To read more about how to use it, see [📖 Foundry Book][foundry-book]
 Note though, that the internal documentation is very incomplete.
