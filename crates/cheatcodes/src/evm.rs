@@ -569,7 +569,16 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 
 impl Cheatcode for setBlockhashCall {
     fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        todo!()
+        let Self { blockNumber, blockHash } = self;
+        let block_number: U256 = *blockNumber;
+        ensure!(
+            block_number <= ccx.ecx.env.block.number,
+            "block number must be less than or equal to the current block number"
+        );
+
+        ccx.ecx.db.set_blockhash(*blockNumber, *blockHash);
+
+        Ok(Default::default())
     }
 }
 
