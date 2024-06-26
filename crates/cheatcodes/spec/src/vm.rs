@@ -2155,6 +2155,10 @@ interface Vm {
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
     function randomAddress() external returns (address);
+
+    /// Set blockhash for the current block.
+    #[cheatcode(group = Utilities)]
+    function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
 }
 }
 

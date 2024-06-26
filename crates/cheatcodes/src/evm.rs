@@ -567,6 +567,14 @@ impl Cheatcode for stopAndReturnStateDiffCall {
     }
 }
 
+
+impl Cheatcode for setBlockhashCall{
+    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        todo!()
+    }
+
+}
+
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
     let (account, _) = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
     Ok(account.info.nonce.abi_encode())
