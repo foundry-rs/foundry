@@ -136,7 +136,7 @@ contract BroadcastTest is DSTest {
         vm.broadcast(address(0x1337));
         Test test = new Test();
 
-        // This panics because this would cause an additional relinking that isnt conceptually correct
+        // This panics because this would cause an additional relinking that isn't conceptually correct
         // from a solidity standpoint. Basically, this contract `BroadcastTest`, injects the code of
         // `Test` *into* its code. So it isn't reasonable to break solidity to our will of having *two*
         // versions of `Test` based on the sender/linker.
