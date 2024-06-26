@@ -568,7 +568,7 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 }
 
 impl Cheatcode for setBlockhashCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { blockNumber, blockHash } = self;
         let block_number: U256 = *blockNumber;
         ensure!(
