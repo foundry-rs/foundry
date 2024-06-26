@@ -245,22 +245,13 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         self.backend.has_cheatcode_access(account)
     }
 
-    fn set_blockhash(&mut self, block_number: B256, block_hash: B256) -> Result<(), DatabaseError> {
-        match self
-            .backend
+    fn set_blockhash(&mut self, block_number: B256, block_hash: B256) {
+        self.backend
             .to_mut()
             .mem_db()
             .to_owned()
             .block_hashes
-            .insert(block_number.into(), block_hash)
-        {
-            Some(_) => Ok(()),
-            None => Err(DatabaseError::Other(format!(
-                "
-            Cannot set blockhash {:?} for block number {:?}",
-                block_hash, block_number
-            ))),
-        }
+            .insert(block_number.into(), block_hash);
     }
 }
 

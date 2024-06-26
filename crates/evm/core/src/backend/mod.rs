@@ -332,7 +332,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     }
 
     /// set the blockhash for the given block number
-    fn set_blockhash(&mut self, block_number: B256, block_hash: B256) -> Result<(), DatabaseError>;
+    fn set_blockhash(&mut self, block_number: B256, block_hash: B256);
 }
 
 struct _ObjectSafe(dyn DatabaseExt);
@@ -1374,15 +1374,8 @@ impl DatabaseExt for Backend {
         self.inner.cheatcode_access_accounts.contains(account)
     }
 
-    fn set_blockhash(&mut self, block_number: B256, block_hash: B256) -> Result<(), DatabaseError> {
-        match self.mem_db.block_hashes.insert(block_number.into(), block_hash) {
-            Some(_) => Ok(()),
-            None => Err(DatabaseError::Other(format!(
-                "
-            Cannot set blockhash {:?} for block number {:?}",
-                block_hash, block_number
-            ))),
-        }
+    fn set_blockhash(&mut self, block_number: B256, block_hash: B256) {
+        self.mem_db.block_hashes.insert(block_number.into(), block_hash);
     }
 }
 
