@@ -32,7 +32,6 @@ use std::{cell::RefCell, collections::btree_map::Entry, sync::Arc};
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError};
-use foundry_cheatcodes::is_coverage_context;
 use foundry_evm_coverage::HitMaps;
 
 mod replay;
@@ -326,10 +325,8 @@ impl<'a> InvariantExecutor<'a> {
                         TestCaseError::fail(format!("Could not make raw evm call: {e}"))
                     })?;
 
-                // Collect and merge coverage if `forge snapshot` context.
-                if is_coverage_context() {
-                    invariant_test.merge_coverage(call_result.coverage.clone());
-                }
+                // Collect coverage from last fuzzed call.
+                invariant_test.merge_coverage(call_result.coverage.clone());
 
                 if call_result.result.as_ref() == MAGIC_ASSUME {
                     current_run.inputs.pop();
