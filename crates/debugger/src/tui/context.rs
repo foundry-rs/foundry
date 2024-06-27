@@ -1,10 +1,10 @@
 //! Debugger context and event handler implementation.
 
-use crate::{Debugger, ExitReason};
-use alloy_primitives::Address;
+use crate::{DebugNode, Debugger, ExitReason};
+use alloy_primitives::{hex, Address};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use foundry_evm_core::debug::{DebugNodeFlat, DebugStep};
-use revm_inspectors::tracing::types::CallKind;
+use revm::interpreter::opcode;
+use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::ops::ControlFlow;
 
 /// This is currently used to remember last scroll position so screen doesn't wiggle as much.
@@ -84,11 +84,11 @@ impl<'a> DebuggerContext<'a> {
         self.gen_opcode_list();
     }
 
-    pub(crate) fn debug_arena(&self) -> &[DebugNodeFlat] {
+    pub(crate) fn debug_arena(&self) -> &[DebugNode] {
         &self.debugger.debug_arena
     }
 
-    pub(crate) fn debug_call(&self) -> &DebugNodeFlat {
+    pub(crate) fn debug_call(&self) -> &DebugNode {
         &self.debug_arena()[self.draw_memory.inner_call_index]
     }
 
@@ -103,19 +103,21 @@ impl<'a> DebuggerContext<'a> {
     }
 
     /// Returns the current debug steps.
-    pub(crate) fn debug_steps(&self) -> &[DebugStep] {
+    pub(crate) fn debug_steps(&self) -> &[CallTraceStep] {
         &self.debug_call().steps
     }
 
     /// Returns the current debug step.
-    pub(crate) fn current_step(&self) -> &DebugStep {
+    pub(crate) fn current_step(&self) -> &CallTraceStep {
         &self.debug_steps()[self.current_step]
     }
 
     fn gen_opcode_list(&mut self) {
         self.opcode_list.clear();
         let debug_steps = &self.debugger.debug_arena[self.draw_memory.inner_call_index].steps;
-        self.opcode_list.extend(debug_steps.iter().map(DebugStep::pretty_opcode));
+        for (i, step) in debug_steps.iter().enumerate() {
+            self.opcode_list.push(pretty_opcode(step, debug_steps.get(i + 1)));
+        }
     }
 
     fn gen_opcode_list_if_necessary(&mut self) {
@@ -127,8 +129,8 @@ impl<'a> DebuggerContext<'a> {
 
     fn active_buffer(&self) -> &[u8] {
         match self.active_buffer {
-            BufferKind::Memory => &self.current_step().memory,
-            BufferKind::Calldata => &self.current_step().calldata,
+            BufferKind::Memory => self.current_step().memory.as_bytes(),
+            BufferKind::Calldata => &self.debug_call().calldata,
             BufferKind::Returndata => &self.current_step().returndata,
         }
     }
@@ -186,7 +188,8 @@ impl DebuggerContext<'_> {
             }),
             // Scroll down the stack
             KeyCode::Char('J') => self.repeat(|this| {
-                let max_stack = this.current_step().stack.len().saturating_sub(1);
+                let max_stack =
+                    this.current_step().stack.as_ref().map_or(0, |s| s.len()).saturating_sub(1);
                 if this.draw_memory.current_stack_startline < max_stack {
                     this.draw_memory.current_stack_startline += 1;
                 }
@@ -344,4 +347,25 @@ fn buffer_as_number(s: &str) -> usize {
     const MIN: usize = 1;
     const MAX: usize = 100_000;
     s.parse().unwrap_or(MIN).clamp(MIN, MAX)
+}
+
+fn pretty_opcode(step: &CallTraceStep, next_step: Option<&CallTraceStep>) -> String {
+    let op = step.op;
+    let instruction = op.get();
+    let push_size = if (opcode::PUSH1..=opcode::PUSH32).contains(&instruction) {
+        (instruction - opcode::PUSH0) as usize
+    } else {
+        0
+    };
+    if push_size == 0 {
+        return step.op.to_string();
+    }
+
+    // Get push byte as the top-most stack item on the next step
+    if let Some(pushed) = next_step.and_then(|s| s.stack.as_ref()).and_then(|s| s.last()) {
+        let bytes = &pushed.to_be_bytes_vec()[32 - push_size..];
+        format!("{op}(0x{})", hex::encode(bytes))
+    } else {
+        op.to_string()
+    }
 }
