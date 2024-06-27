@@ -702,13 +702,16 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
             ecx
         );
 
+        ecx.journaled_state.depth += self.in_inner_context as usize;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner) {
                 if output.result.result != InstructionResult::Continue {
+                    ecx.journaled_state.depth -= self.in_inner_context as usize;
                     return Some(output)
                 }
             }
         }
+        ecx.journaled_state.depth -= self.in_inner_context as usize;
 
         if self.enable_isolation &&
             call.scheme == CallScheme::Call &&
