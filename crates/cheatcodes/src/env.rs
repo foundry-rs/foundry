@@ -257,6 +257,11 @@ pub fn set_execution_context(context: ForgeContext) {
     let _ = FORGE_CONTEXT.set(context);
 }
 
+/// Returns true if current `forge` execution context is coverage.
+pub fn is_coverage_context() -> bool {
+    FORGE_CONTEXT.get() == Some(&ForgeContext::Coverage)
+}
+
 fn env(key: &str, ty: &DynSolType) -> Result {
     get_env(key).and_then(|val| string::parse(&val, ty).map_err(map_env_err(key, &val)))
 }

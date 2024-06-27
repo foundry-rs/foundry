@@ -3,6 +3,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
+use foundry_cheatcodes::is_coverage_context;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
     constants::MAGIC_ASSUME,
@@ -112,9 +113,12 @@ impl FuzzedExecutor {
                         data.traces.push(call_traces);
                     }
 
-                    match &mut data.coverage {
-                        Some(prev) => prev.merge(case.coverage.unwrap()),
-                        opt => *opt = case.coverage,
+                    // Collect and merge coverage if `forge snapshot` context.
+                    if is_coverage_context() {
+                        match &mut data.coverage {
+                            Some(prev) => prev.merge(case.coverage.unwrap()),
+                            opt => *opt = case.coverage,
+                        }
                     }
 
                     Ok(())

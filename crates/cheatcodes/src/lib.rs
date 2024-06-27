@@ -31,7 +31,7 @@ mod base64;
 mod config;
 
 mod env;
-pub use env::set_execution_context;
+pub use env::{is_coverage_context, set_execution_context};
 
 mod evm;
 
