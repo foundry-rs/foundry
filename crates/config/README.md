@@ -179,6 +179,11 @@ root = "root"
 # following example enables read-write access for the project dir :
 #       `fs_permissions = [{ access = "read-write", path = "./"}]`
 fs_permissions = [{ access = "read", path = "./out"}]
+# whether failed assertions should revert
+# note that this only applies to native (cheatcode) assertions, invoked on Vm contract
+assertions_revert = true
+# whether `failed()` should be invoked to check if the test have failed
+legacy_assertions = false
 [fuzz]
 runs = 256
 max_test_rejects = 65536

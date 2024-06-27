@@ -422,6 +422,8 @@ pub struct Config {
     pub root: RootPath,
 
     /// Whether failed assertions should revert.
+    ///
+    /// Note that this only applies to native (cheatcode) assertions, invoked on Vm contract.
     pub assertions_revert: bool,
 
     /// Whether `failed()` should be invoked to check if the test have failed.
