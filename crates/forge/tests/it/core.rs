@@ -89,6 +89,10 @@ async fn test_core() {
                 "default/core/BadSigAfterInvariant.t.sol:BadSigAfterInvariant",
                 vec![("testShouldPassWithWarning()", true, None, None, None)],
             ),
+            (
+                "default/core/LegacyAssertions.t.sol:LegacyAsserions",
+                vec![("testMultipleAssertFailures()", false, None, None, None)],
+            ),
         ]),
     );
 }
