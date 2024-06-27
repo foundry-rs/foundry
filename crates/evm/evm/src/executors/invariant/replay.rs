@@ -12,7 +12,7 @@ use foundry_evm_fuzz::{
     invariant::{BasicTxDetails, InvariantContract},
     BaseCounterExample,
 };
-use foundry_evm_traces::{load_contracts, TraceKind, Traces};
+use foundry_evm_traces::{load_contracts, TraceKind, TraceMode, Traces};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::test_runner::TestError;
@@ -34,7 +34,7 @@ pub fn replay_run(
 ) -> Result<Vec<BaseCounterExample>> {
     // We want traces for a failed case.
     if executor.inspector().tracer.is_none() {
-        executor.set_tracing(true, false);
+        executor.set_tracing(Some(TraceMode::Call));
     }
 
     let mut counterexample_sequence = vec![];

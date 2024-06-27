@@ -14,7 +14,7 @@ use foundry_compilers::{
 use foundry_config::Config;
 use foundry_evm::{
     backend::Backend, decode::RevertDecoder, executors::ExecutorBuilder, fork::CreateFork,
-    inspectors::CheatsConfig, opts::EvmOpts, revm,
+    inspectors::CheatsConfig, opts::EvmOpts, revm, traces::TraceMode,
 };
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
@@ -61,7 +61,7 @@ pub struct MultiContractRunner {
     /// Whether to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
-    pub trace_steps: bool,
+    pub decode_internal: bool,
     /// Settings related to fuzz and/or invariant tests
     pub test_options: TestOptions,
     /// Whether to enable call isolation
@@ -237,14 +237,22 @@ impl MultiContractRunner {
             None,
             Some(artifact_id.version.clone()),
         );
+        
+        let trace_mode = if self.debug {
+            Some(TraceMode::Debug)
+        } else if self.decode_internal {
+            Some(TraceMode::Jump)
+        } else if self.evm_opts.verbosity >= 3 {
+            Some(TraceMode::Call)
+        } else {
+            None
+        };
 
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack
                     .cheatcodes(Arc::new(cheats_config))
-                    .trace(self.evm_opts.verbosity >= 3 || self.debug || self.trace_steps)
-                    .debug(self.debug)
-                    .debug_trace(self.trace_steps)
+                    .trace_mode(trace_mode)
                     .coverage(self.coverage)
                     .enable_isolation(self.isolation)
             })
@@ -302,7 +310,7 @@ pub struct MultiContractRunnerBuilder {
     /// Whether or not to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
-    pub trace_steps: bool,
+    pub decode_internal: bool,
     /// Whether to enable call isolation
     pub isolation: bool,
     /// Settings related to fuzz and/or invariant tests
@@ -321,7 +329,7 @@ impl MultiContractRunnerBuilder {
             debug: Default::default(),
             isolation: Default::default(),
             test_options: Default::default(),
-            trace_steps: Default::default(),
+            decode_internal: Default::default(),
         }
     }
 
@@ -360,8 +368,8 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn set_trace_steps(mut self, enable: bool) -> Self {
-        self.trace_steps = enable;
+    pub fn set_decode_internal(mut self, enable: bool) -> Self {
+        self.decode_internal = enable;
         self
     }
 
@@ -432,7 +440,7 @@ impl MultiContractRunnerBuilder {
             config: self.config,
             coverage: self.coverage,
             debug: self.debug,
-            trace_steps: self.trace_steps,
+            decode_internal: self.decode_internal,
             test_options: self.test_options.unwrap_or_default(),
             isolation: self.isolation,
             known_contracts,

@@ -12,7 +12,8 @@ use alloy_primitives::{hex, LogData};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use futures::{future::BoxFuture, FutureExt};
-use revm_inspectors::tracing::types::TraceMemberOrder;
+use revm::interpreter::OpCode;
+use revm_inspectors::tracing::{types::TraceMemberOrder, OpcodeFilter};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use yansi::{Color, Paint};
@@ -399,4 +400,55 @@ pub fn load_contracts<'a>(
         }
     }
     contracts
+}
+
+/// Different kinds of traces used by different foundry components.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum TraceMode {
+    /// Simple call trace, no steps tracing required.
+    #[default]
+    Call,
+    /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
+    ///
+    /// Used for internal functions identification.
+    Jump,
+    /// Call trace with complete steps tracing.
+    ///
+    /// Used by debugger.
+    Debug,
+}
+
+impl TraceMode {
+    pub const fn is_call(self) -> bool {
+        matches!(self, Self::Call)
+    }
+
+    pub const fn is_jump(self) -> bool {
+        matches!(self, Self::Jump)
+    }
+
+    pub const fn is_debug(self) -> bool {
+        matches!(self, Self::Debug)
+    }
+}
+
+impl From<TraceMode> for TracingInspectorConfig {
+    fn from(mode: TraceMode) -> Self {
+        TracingInspectorConfig {
+            record_steps: mode.is_debug() || mode.is_jump(),
+            record_memory_snapshots: mode.is_debug() || mode.is_jump(),
+            record_stack_snapshots: if mode.is_debug() || mode.is_jump() {
+                StackSnapshotType::Full
+            } else {
+                StackSnapshotType::None
+            },
+            record_logs: true,
+            record_state_diff: false,
+            record_returndata_snapshots: mode.is_debug(),
+            record_opcodes_filter: mode
+                .is_jump()
+                .then(|| OpcodeFilter::new().enable(OpCode::JUMP).enable(OpCode::JUMPDEST)),
+            exclude_precompile_calls: false,
+        }
+    }
 }

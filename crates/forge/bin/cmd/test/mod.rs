@@ -306,7 +306,7 @@ impl TestArgs {
 
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
-            .set_trace_steps(self.decode_internal)
+            .set_decode_internal(self.decode_internal)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)

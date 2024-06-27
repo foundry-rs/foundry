@@ -43,7 +43,7 @@ use foundry_evm::{
         CheatsConfig,
     },
     opts::EvmOpts,
-    traces::Traces,
+    traces::{TraceMode, Traces},
 };
 use foundry_wallets::MultiWalletOpts;
 use serde::{Deserialize, Serialize};
@@ -574,14 +574,13 @@ impl ScriptConfig {
 
         // We need to enable tracing to decode contract names: local or external.
         let mut builder = ExecutorBuilder::new()
-            .inspectors(|stack| stack.trace(true))
+            .inspectors(|stack| stack.trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call }))
             .spec(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit());
 
         if let Some((known_contracts, script_wallets, target)) = cheats_data {
             builder = builder.inspectors(|stack| {
                 stack
-                    .debug(debug)
                     .cheatcodes(
                         CheatsConfig::new(
                             &self.config,

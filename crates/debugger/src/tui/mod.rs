@@ -7,8 +7,8 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use eyre::Result;
-use foundry_common::{compile::ContractSources, evm::Breakpoints};
-use foundry_evm_core::utils::PcIcMap;
+use foundry_common::evm::Breakpoints;
+use foundry_evm_traces::debug::ContractSources;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,

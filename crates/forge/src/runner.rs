@@ -32,7 +32,7 @@ use foundry_evm::{
         invariant::{CallDetails, InvariantContract},
         CounterExample, FuzzFixtures,
     },
-    traces::{load_contracts, TraceKind},
+    traces::{load_contracts, TraceKind, TraceMode},
 };
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
@@ -312,13 +312,13 @@ impl<'a> ContractRunner<'a> {
         let tmp_tracing =
             self.executor.inspector().tracer.is_none() && has_invariants && call_setup;
         if tmp_tracing {
-            self.executor.set_tracing(true, false);
+            self.executor.set_tracing(Some(TraceMode::Call));
         }
         let setup_time = Instant::now();
         let setup = self.setup(call_setup);
         debug!("finished setting up in {:?}", setup_time.elapsed());
         if tmp_tracing {
-            self.executor.set_tracing(false, false);
+            self.executor.set_tracing(None);
         }
 
         if setup.reason.is_some() {
