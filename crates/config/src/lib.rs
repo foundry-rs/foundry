@@ -421,8 +421,8 @@ pub struct Config {
     #[serde(default, skip_serializing)]
     pub root: RootPath,
 
-    /// Whether to enable legacy (non-reverting) assertions.
-    pub legacy_assertions: bool,
+    /// Whether failed assertions should revert.
+    pub assertions_revert: bool,
 
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
@@ -2121,7 +2121,7 @@ impl Default for Config {
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
             skip: vec![],
             dependencies: Default::default(),
-            legacy_assertions: false,
+            assertions_revert: true,
             warnings: vec![],
             _non_exhaustive: (),
         }

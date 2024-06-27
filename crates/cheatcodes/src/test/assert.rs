@@ -186,7 +186,7 @@ fn handle_assertion_result<DB: DatabaseExt, E: CheatcodesExecutor, ERR>(
             } else {
                 error_msg
             };
-            if !ccx.state.config.legacy_assertions {
+            if ccx.state.config.assertions_revert {
                 Err(msg.into())
             } else {
                 executor.console_log(ccx, msg)?;
