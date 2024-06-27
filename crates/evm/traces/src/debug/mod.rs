@@ -34,6 +34,32 @@ impl DebugTraceIdentifier {
     }
 }
 
+/// Walks through the [CallTraceStep]s attempting to match JUMPs to internal functions.
+///
+/// This is done by looking up jump kinds in the source maps. The structure of internal function
+/// call always looks like this:
+///     - JUMP
+///     - JUMPDEST
+///     ... function steps ...
+///     - JUMP
+///     - JUMPDEST
+///
+/// The assumption we rely on is that first JUMP into function will be marked as [Jump::In] in
+/// source map, and second JUMP out of the function will be marked as [Jump::Out].
+///
+/// Also, we rely on JUMPDEST after first JUMP pointing to the source location of the body of
+/// function which was entered. We pass this source part to [parse_function_from_loc] to extract the
+/// function name.
+///
+/// When we find a [Jump::In] and identify the function name, we push it to the stack.
+///
+/// When we find a [Jump::Out] we try to find a matching [Jump::In] in the stack. A match is found
+/// when source location of the JUMP-in matches the source location of final JUMPDEST (this would be
+/// the location of the function invocation), or when source location of first JUMODEST matches the
+/// source location of the JUMP-out (this would be the location of function body).
+///
+/// When a match is found, all items which were pushed after the matched function are removed. There
+/// is a lot of such items due to source maps getting malformed during optimization.
 struct DebugStepsWalker<'a> {
     node: &'a CallTraceNode,
     current_step: usize,

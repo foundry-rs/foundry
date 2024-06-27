@@ -385,10 +385,7 @@ pub async fn handle_traces(
         } else {
             Default::default()
         };
-
-        let identifier = DebugTraceIdentifier::new(sources);
-
-        decoder.debug_identifier = Some(identifier);
+        decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
     if debug {
