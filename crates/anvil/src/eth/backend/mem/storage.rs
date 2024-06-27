@@ -430,14 +430,14 @@ impl MinedTransaction {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
 
         if let Some(tracer) = tracer {
-            return match tracer {
+            match tracer {
                 GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
                     GethDebugBuiltInTracerType::FourByteTracer => {
                         let inspector = FourByteInspector::default();
                         return Ok(FourByteFrame::from(inspector).into())
                     }
                     GethDebugBuiltInTracerType::CallTracer => {
-                        match tracer_config.into_call_config() {
+                        return match tracer_config.into_call_config() {
                             Ok(call_config) => Ok(GethTraceBuilder::new(
                                 self.info.traces.clone(),
                                 TracingInspectorConfig::from_geth_config(&config),
@@ -448,14 +448,16 @@ impl MinedTransaction {
                             )
                             .into()),
                             Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
-                        }
+                        };
                     }
-                    GethDebugBuiltInTracerType::PreStateTracer => Ok(NoopFrame::default().into()),
-                    GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
-                    GethDebugBuiltInTracerType::MuxTracer => Ok(NoopFrame::default().into()),
+                    GethDebugBuiltInTracerType::PreStateTracer |
+                    GethDebugBuiltInTracerType::NoopTracer |
+                    GethDebugBuiltInTracerType::MuxTracer => {}
                 },
-                GethDebugTracerType::JsTracer(_code) => return Ok(NoopFrame::default().into()),
+                GethDebugTracerType::JsTracer(_code) => {}
             }
+
+            return Ok(NoopFrame::default().into());
         }
 
         // default structlog tracer
@@ -465,7 +467,7 @@ impl MinedTransaction {
         )
         .geth_traces(
             self.receipt.cumulative_gas_used() as u64,
-            self.info.out.clone().unwrap_or_default().0.into(),
+            self.info.out.clone().unwrap_or_default(),
             opts.config,
         )
         .into())
