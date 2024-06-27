@@ -91,7 +91,13 @@ async fn test_core() {
             ),
             (
                 "default/core/LegacyAssertions.t.sol:LegacyAsserions",
-                vec![("testMultipleAssertFailures()", false, None, None, None)],
+                vec![(
+                    "testMultipleAssertFailures()",
+                    false,
+                    Some("assertion failed: 1 != 2".to_string()),
+                    None,
+                    None,
+                )],
             ),
         ]),
     );
