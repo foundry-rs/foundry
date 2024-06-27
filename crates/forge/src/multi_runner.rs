@@ -237,7 +237,7 @@ impl MultiContractRunner {
             None,
             Some(artifact_id.version.clone()),
         );
-        
+
         let trace_mode = if self.debug {
             Some(TraceMode::Debug)
         } else if self.decode_internal {

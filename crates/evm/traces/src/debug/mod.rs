@@ -248,7 +248,7 @@ fn try_decode_args_from_step(args: &Parameters<'_>, step: &CallTraceStep) -> Opt
                 .as_ref()
                 .and_then(|(type_, storage)| {
                     match (type_, storage) {
-                        // HACK: alloy parser treates user-defined types as uint8: https://github.com/alloy-rs/core/pull/386
+                        // HACK: alloy parser treats user-defined types as uint8: https://github.com/alloy-rs/core/pull/386
                         //
                         // filter out `uint8` params which are marked as storage or memory as this
                         // is not possible in Solidity and means that type is user-defined
@@ -271,13 +271,13 @@ fn try_decode_args_from_step(args: &Parameters<'_>, step: &CallTraceStep) -> Opt
 
 /// Decodes given [DynSolType] from memory.
 fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option<DynSolValue> {
-    let first_word = &memory[location..location + 32];
+    let first_word = memory.get(location..location + 32)?;
 
     match ty {
         // For `string` and `bytes` layout is a word with length followed by the data
         DynSolType::String | DynSolType::Bytes => {
             let length = U256::from_be_bytes::<32>(first_word.try_into().unwrap()).to::<usize>();
-            let data = &memory[location + 32..location + 32 + length];
+            let data = memory.get(location + 32..location + 32 + length)?;
 
             match ty {
                 DynSolType::Bytes => Some(DynSolValue::Bytes(data.to_vec())),
@@ -305,8 +305,10 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
                 let location = match inner.as_ref() {
                     // Arrays of variable length types are arrays of pointers to the values
                     DynSolType::String | DynSolType::Bytes | DynSolType::Array(_) => {
-                        U256::from_be_bytes::<32>(memory[offset..offset + 32].try_into().unwrap())
-                            .to()
+                        U256::from_be_bytes::<32>(
+                            memory.get(offset..offset + 32)?.try_into().unwrap(),
+                        )
+                        .to()
                     }
                     _ => offset,
                 };
