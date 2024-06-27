@@ -99,7 +99,7 @@ impl<T: Cheatcode> DynCheatcode for T {
 }
 
 /// The cheatcode context, used in [`Cheatcode`].
-pub(crate) struct CheatsCtxt<'cheats, 'evm, DB: DatabaseExt> {
+pub struct CheatsCtxt<'cheats, 'evm, DB: DatabaseExt> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'cheats mut Cheatcodes,
     /// The EVM data.

@@ -2,7 +2,8 @@ use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{hex, I256, U256};
 use foundry_evm_core::{
     abi::{format_units_int, format_units_uint},
-    backend::DatabaseExt,
+    backend::{DatabaseExt, GLOBAL_FAIL_SLOT},
+    constants::CHEATCODE_ADDRESS,
 };
 use itertools::Itertools;
 use std::fmt::{Debug, Display};
@@ -171,7 +172,7 @@ type ComparisonResult<'a, T> = Result<Vec<u8>, ComparisonAssertionError<'a, T>>;
 fn handle_assertion_result<DB: DatabaseExt, E: CheatcodesExecutor, ERR>(
     result: core::result::Result<Vec<u8>, ERR>,
     ccx: &mut CheatsCtxt<DB>,
-    _executor: &mut E,
+    executor: &mut E,
     error_formatter: impl Fn(&ERR) -> String,
     error_msg: Option<&str>,
     format_error: bool,
@@ -188,6 +189,8 @@ fn handle_assertion_result<DB: DatabaseExt, E: CheatcodesExecutor, ERR>(
             if !ccx.state.config.legacy_assertions {
                 Err(msg.into())
             } else {
+                executor.console_log(ccx, msg)?;
+                ccx.ecx.sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
                 Ok(Default::default())
             }
         }

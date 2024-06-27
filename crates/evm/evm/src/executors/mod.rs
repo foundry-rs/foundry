@@ -519,19 +519,18 @@ impl Executor {
         }
 
         // Check the global failure slot.
-        // TODO: Wire this up
-        let legacy = true;
-        if !legacy {
-            if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
-                if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
-                    return failed_slot.present_value().is_zero();
+        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
+            if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
+                if !failed_slot.present_value().is_zero() {
+                    return false;
                 }
             }
-            let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
-            else {
-                return false;
-            };
-            return failed_slot.is_zero();
+            if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            {
+                if !failed_slot.is_zero() {
+                    return false;
+                }
+            }
         }
 
         // Finally, resort to calling `DSTest::failed`.

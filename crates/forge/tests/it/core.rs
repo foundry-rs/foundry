@@ -740,3 +740,29 @@ async fn test_trace() {
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_legacy_assertions() {
+    let filter = Filter::new(".*", ".*LegacyAsserions", ".*");
+    let mut config = TEST_DATA_DEFAULT.config.clone();
+    config.legacy_assertions = true;
+    let mut runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let results = runner.test_collect(&filter);
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/core/LegacyAssertions.t.sol:LegacyAsserions",
+            vec![(
+                "testMultipleAssertFailures()",
+                false,
+                None,
+                Some(vec![
+                    "assertion failed: 1 != 2".to_string(),
+                    "assertion failed: 5 >= 4".to_string(),
+                ]),
+                None,
+            )],
+        )]),
+    );
+}
