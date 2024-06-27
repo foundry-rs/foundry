@@ -21,9 +21,11 @@ pub struct RpcOpts {
     #[arg(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
     pub url: Option<String>,
 
-    /// Use the Flashbots RPC URL with fast mode (https://rpc.flashbots.net/fast).
+    /// Use the Flashbots RPC URL with fast mode (<https://rpc.flashbots.net/fast>).
+    ///
     /// This shares the transaction privately with all registered builders.
-    /// https://docs.flashbots.net/flashbots-protect/quick-start#faster-transactions
+    ///
+    /// See: <https://docs.flashbots.net/flashbots-protect/quick-start#faster-transactions>
     #[arg(long)]
     pub flashbots: bool,
 

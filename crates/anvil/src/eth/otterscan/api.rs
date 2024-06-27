@@ -9,18 +9,16 @@ use crate::eth::{
 };
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rpc_types::{
-    Block, BlockId, BlockNumberOrTag as BlockNumber, Transaction, WithOtherFields,
-};
-use alloy_rpc_types_trace::parity::{
-    Action, CallAction, CreateAction, CreateOutput, RewardAction, TraceOutput,
+    trace::parity::{Action, CreateAction, CreateOutput, TraceOutput},
+    Block, BlockId, BlockNumberOrTag as BlockNumber,
 };
 use itertools::Itertools;
 
 impl EthApi {
-    /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
-    /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71
+    /// Otterscan currently requires this endpoint, even though it's not part of the `ots_*`.
+    /// Ref: <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
     ///
-    /// As a faster alternative to eth_getBlockByNumber (by excluding uncle block
+    /// As a faster alternative to `eth_getBlockByNumber` (by excluding uncle block
     /// information), which is not relevant in the context of an anvil node
     pub async fn erigon_get_header_by_number(&self, number: BlockNumber) -> Result<Option<Block>> {
         node_info!("ots_getApiLevel");
@@ -28,8 +26,8 @@ impl EthApi {
         self.backend.block_by_number(number).await
     }
 
-    /// As per the latest Otterscan source code, at least version 8 is needed
-    /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/params.ts#L1C2-L1C2
+    /// As per the latest Otterscan source code, at least version 8 is needed.
+    /// Ref: <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/params.ts#L1C2-L1C2>
     pub async fn ots_get_api_level(&self) -> Result<u64> {
         node_info!("ots_getApiLevel");
 
@@ -66,16 +64,16 @@ impl EthApi {
     }
 
     /// Given a transaction hash, returns its raw revert reason.
-    pub async fn ots_get_transaction_error(&self, hash: B256) -> Result<Option<Bytes>> {
+    pub async fn ots_get_transaction_error(&self, hash: B256) -> Result<Bytes> {
         node_info!("ots_getTransactionError");
 
         if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
-            if !receipt.inner.inner.as_receipt_with_bloom().receipt.status {
-                return Ok(receipt.out.map(|b| b.0.into()))
+            if !receipt.inner.inner.as_receipt_with_bloom().receipt.status.coerce_status() {
+                return Ok(receipt.out.map(|b| b.0.into()).unwrap_or(Bytes::default()))
             }
         }
 
-        Ok(Default::default())
+        Ok(Bytes::default())
     }
 
     /// For simplicity purposes, we return the entire block instead of emptying the values that
@@ -136,38 +134,31 @@ impl EthApi {
         let best = self.backend.best_number();
         // we go from given block (defaulting to best) down to first block
         // considering only post-fork
-        let from = if block_number == 0 { best } else { block_number };
+        let from = if block_number == 0 { best } else { block_number - 1 };
         let to = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
 
-        let first_page = from == best;
+        let first_page = from >= best;
         let mut last_page = false;
 
         let mut res: Vec<_> = vec![];
 
         for n in (to..=from).rev() {
-            if n == to {
-                last_page = true;
-            }
-
             if let Some(traces) = self.backend.mined_parity_trace_block(n) {
                 let hashes = traces
                     .into_iter()
                     .rev()
-                    .filter_map(|trace| match trace.trace.action {
-                        Action::Call(CallAction { from, to, .. })
-                            if from == address || to == address =>
-                        {
-                            trace.transaction_hash
-                        }
-                        _ => None,
-                    })
+                    .filter_map(|trace| OtsSearchTransactions::mentions_address(trace, address))
                     .unique();
-
-                res.extend(hashes);
 
                 if res.len() >= page_size {
                     break
                 }
+
+                res.extend(hashes);
+            }
+
+            if n == to {
+                last_page = true;
             }
         }
 
@@ -185,20 +176,17 @@ impl EthApi {
 
         let best = self.backend.best_number();
         // we go from the first post-fork block, up to the tip
-        let from = if block_number == 0 {
-            self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1)
-        } else {
-            block_number
-        };
+        let first_block = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
+        let from = if block_number == 0 { first_block } else { block_number + 1 };
         let to = best;
 
-        let first_page = from == best;
+        let mut first_page = from >= best;
         let mut last_page = false;
 
         let mut res: Vec<_> = vec![];
 
         for n in from..=to {
-            if n == to {
+            if n == first_block {
                 last_page = true;
             }
 
@@ -206,30 +194,23 @@ impl EthApi {
                 let hashes = traces
                     .into_iter()
                     .rev()
-                    .filter_map(|trace| match trace.trace.action {
-                        Action::Call(CallAction { from, to, .. })
-                            if from == address || to == address =>
-                        {
-                            trace.transaction_hash
-                        }
-                        Action::Create(CreateAction { from, .. }) if from == address => {
-                            trace.transaction_hash
-                        }
-                        Action::Reward(RewardAction { author, .. }) if author == address => {
-                            trace.transaction_hash
-                        }
-                        _ => None,
-                    })
+                    .filter_map(|trace| OtsSearchTransactions::mentions_address(trace, address))
                     .unique();
-
-                res.extend(hashes);
 
                 if res.len() >= page_size {
                     break
                 }
+
+                res.extend(hashes);
+            }
+
+            if n == to {
+                first_page = true;
             }
         }
 
+        // Results are always sent in reverse chronological order, according to the Otterscan spec
+        res.reverse();
         OtsSearchTransactions::build(res, &self.backend, first_page, last_page).await
     }
 
@@ -240,7 +221,7 @@ impl EthApi {
         &self,
         address: Address,
         nonce: U256,
-    ) -> Result<Option<WithOtherFields<Transaction>>> {
+    ) -> Result<Option<B256>> {
         node_info!("ots_getTransactionBySenderAndNonce");
 
         let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();
@@ -250,7 +231,7 @@ impl EthApi {
             if let Some(txs) = self.backend.mined_transactions_by_block_number(n.into()).await {
                 for tx in txs {
                     if U256::from(tx.nonce) == nonce && tx.from == address {
-                        return Ok(Some(tx))
+                        return Ok(Some(tx.hash))
                     }
                 }
             }

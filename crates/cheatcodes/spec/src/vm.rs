@@ -102,7 +102,7 @@ interface Vm {
         uint64 gasLimit;
         /// The total gas used.
         uint64 gasTotalUsed;
-        /// The amount of gas used for memory expansion.
+        /// DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>
         uint64 gasMemoryUsed;
         /// The amount of gas refunded.
         int64 gasRefunded;
@@ -375,6 +375,23 @@ interface Vm {
     /// If used on unsupported EVM versions it will revert.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function prevrandao(bytes32 newPrevrandao) external;
+    /// Sets `block.prevrandao`.
+    /// Not available on EVM versions before Paris. Use `difficulty` instead.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function prevrandao(uint256 newPrevrandao) external;
+
+    /// Sets the blobhashes in the transaction.
+    /// Not available on EVM versions before Cancun.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function blobhashes(bytes32[] calldata hashes) external;
+
+    /// Gets the blockhashes from the current transaction.
+    /// Not available on EVM versions before Cancun.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function getBlobhashes() external view returns (bytes32[] memory hashes);
 
     /// Sets `block.height`.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -1457,6 +1474,18 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
 
+    /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionaly accepts abi-encoded constructor arguments.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);
+
     /// Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     #[cheatcode(group = Filesystem)]
@@ -1482,6 +1511,10 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function promptSecret(string calldata promptText) external returns (string memory input);
 
+    /// Prompts the user for hidden uint256 in the terminal (usually pk).
+    #[cheatcode(group = Filesystem)]
+    function promptSecretUint(string calldata promptText) external returns (uint256);
+
     /// Prompts the user for an address in the terminal.
     #[cheatcode(group = Filesystem)]
     function promptAddress(string calldata promptText) external returns (address);
@@ -1495,6 +1528,10 @@ interface Vm {
     /// Sets environment variables.
     #[cheatcode(group = Environment)]
     function setEnv(string calldata name, string calldata value) external;
+
+    /// Gets the environment variable `name` and returns true if it exists, else returns false.
+    #[cheatcode(group = Environment)]
+    function envExists(string calldata name) external view returns (bool result);
 
     /// Gets the environment variable `name` and parses it as `bool`.
     /// Reverts if the variable was not found or could not be parsed.
@@ -1642,7 +1679,7 @@ interface Vm {
 
     /// Returns true if `forge` command was executed in given context.
     #[cheatcode(group = Environment)]
-    function isContext(ForgeContext context) external view returns (bool isContext);
+    function isContext(ForgeContext context) external view returns (bool result);
 
     // ======== Scripts ========
 
@@ -1751,7 +1788,7 @@ interface Vm {
     /// Returns `NOT_FOUND` (i.e. `type(uint256).max`) if the `key` is not found.
     /// Returns 0 in case of an empty `key`.
     #[cheatcode(group = String)]
-    function indexOf(string memory input, string memory key) external pure returns (uint256);
+    function indexOf(string calldata input, string calldata key) external pure returns (uint256);
 
     // ======== JSON Parsing and Manipulation ========
 
@@ -1852,6 +1889,11 @@ interface Vm {
     /// See `serializeJson`.
     #[cheatcode(group = Json)]
     function serializeUint(string calldata objectKey, string calldata valueKey, uint256 value)
+        external
+        returns (string memory json);
+    /// See `serializeJson`.
+    #[cheatcode(group = Json)]
+    function serializeUintToHex(string calldata objectKey, string calldata valueKey, uint256 value)
         external
         returns (string memory json);
     /// See `serializeJson`.
@@ -2109,6 +2151,22 @@ interface Vm {
     /// Encodes a `string` value to a base64url string.
     #[cheatcode(group = Utilities)]
     function toBase64URL(string calldata data) external pure returns (string memory);
+
+    /// Returns ENS namehash for provided string.
+    #[cheatcode(group = Utilities)]
+    function ensNamehash(string calldata name) external pure returns (bytes32);
+
+    /// Returns a random uint256 value.
+    #[cheatcode(group = Utilities)]
+    function randomUint() external returns (uint256);
+
+    /// Returns random uin256 value between the provided range (=min..=max).
+    #[cheatcode(group = Utilities)]
+    function randomUint(uint256 min, uint256 max) external returns (uint256);
+
+    /// Returns a random `address`.
+    #[cheatcode(group = Utilities)]
+    function randomAddress() external returns (address);
 }
 }
 
@@ -2117,23 +2175,19 @@ impl PartialEq for ForgeContext {
     // and script group case (any of dry run, broadcast or resume).
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (_, &ForgeContext::TestGroup) => {
-                self == &ForgeContext::Test ||
-                    self == &ForgeContext::Snapshot ||
-                    self == &ForgeContext::Coverage
+            (_, Self::TestGroup) => {
+                matches!(self, Self::Test | Self::Snapshot | Self::Coverage)
             }
-            (_, &ForgeContext::ScriptGroup) => {
-                self == &ForgeContext::ScriptDryRun ||
-                    self == &ForgeContext::ScriptBroadcast ||
-                    self == &ForgeContext::ScriptResume
+            (_, Self::ScriptGroup) => {
+                matches!(self, Self::ScriptDryRun | Self::ScriptBroadcast | Self::ScriptResume)
             }
-            (&ForgeContext::Test, &ForgeContext::Test) |
-            (&ForgeContext::Snapshot, &ForgeContext::Snapshot) |
-            (&ForgeContext::Coverage, &ForgeContext::Coverage) |
-            (&ForgeContext::ScriptDryRun, &ForgeContext::ScriptDryRun) |
-            (&ForgeContext::ScriptBroadcast, &ForgeContext::ScriptBroadcast) |
-            (&ForgeContext::ScriptResume, &ForgeContext::ScriptResume) |
-            (&ForgeContext::Unknown, &ForgeContext::Unknown) => true,
+            (Self::Test, Self::Test) |
+            (Self::Snapshot, Self::Snapshot) |
+            (Self::Coverage, Self::Coverage) |
+            (Self::ScriptDryRun, Self::ScriptDryRun) |
+            (Self::ScriptBroadcast, Self::ScriptBroadcast) |
+            (Self::ScriptResume, Self::ScriptResume) |
+            (Self::Unknown, Self::Unknown) => true,
             _ => false,
         }
     }

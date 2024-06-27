@@ -3,13 +3,11 @@ use alloy_primitives::{B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
-use eyre::WrapErr;
-use foundry_common::provider::alloy::ProviderBuilder;
-use foundry_compilers::utils::RuntimeOrHandle;
+use foundry_common::provider::ProviderBuilder;
 use foundry_evm_core::fork::CreateFork;
 
 impl Cheatcode for activeForkCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
         ccx.ecx
             .db
@@ -20,50 +18,51 @@ impl Cheatcode for activeForkCall {
 }
 
 impl Cheatcode for createFork_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { urlOrAlias } = self;
         create_fork(ccx, urlOrAlias, None)
     }
 }
 
 impl Cheatcode for createFork_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { urlOrAlias, blockNumber } = self;
         create_fork(ccx, urlOrAlias, Some(blockNumber.saturating_to()))
     }
 }
 
 impl Cheatcode for createFork_2Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { urlOrAlias, txHash } = self;
         create_fork_at_transaction(ccx, urlOrAlias, txHash)
     }
 }
 
 impl Cheatcode for createSelectFork_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { urlOrAlias } = self;
         create_select_fork(ccx, urlOrAlias, None)
     }
 }
 
 impl Cheatcode for createSelectFork_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { urlOrAlias, blockNumber } = self;
         create_select_fork(ccx, urlOrAlias, Some(blockNumber.saturating_to()))
     }
 }
 
 impl Cheatcode for createSelectFork_2Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { urlOrAlias, txHash } = self;
         create_select_fork_at_transaction(ccx, urlOrAlias, txHash)
     }
 }
 
 impl Cheatcode for rollFork_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { blockNumber } = self;
+        persist_caller(ccx);
         ccx.ecx.db.roll_fork(
             None,
             (*blockNumber).to(),
@@ -75,8 +74,9 @@ impl Cheatcode for rollFork_0Call {
 }
 
 impl Cheatcode for rollFork_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { txHash } = self;
+        persist_caller(ccx);
         ccx.ecx.db.roll_fork_to_transaction(
             None,
             *txHash,
@@ -88,8 +88,9 @@ impl Cheatcode for rollFork_1Call {
 }
 
 impl Cheatcode for rollFork_2Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { forkId, blockNumber } = self;
+        persist_caller(ccx);
         ccx.ecx.db.roll_fork(
             Some(*forkId),
             (*blockNumber).to(),
@@ -101,8 +102,9 @@ impl Cheatcode for rollFork_2Call {
 }
 
 impl Cheatcode for rollFork_3Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { forkId, txHash } = self;
+        persist_caller(ccx);
         ccx.ecx.db.roll_fork_to_transaction(
             Some(*forkId),
             *txHash,
@@ -114,13 +116,10 @@ impl Cheatcode for rollFork_3Call {
 }
 
 impl Cheatcode for selectForkCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { forkId } = self;
+        persist_caller(ccx);
         check_broadcast(ccx.state)?;
-
-        // No need to correct since the sender's nonce does not get incremented when selecting a
-        // fork.
-        ccx.state.corrected_nonce = true;
 
         ccx.ecx.db.select_fork(*forkId, &mut ccx.ecx.env, &mut ccx.ecx.journaled_state)?;
         Ok(Default::default())
@@ -128,35 +127,43 @@ impl Cheatcode for selectForkCall {
 }
 
 impl Cheatcode for transact_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let Self { txHash } = *self;
         ccx.ecx.db.transact(
             None,
             txHash,
             &mut ccx.ecx.env,
             &mut ccx.ecx.journaled_state,
-            ccx.state,
+            &mut executor.get_inspector(ccx.state),
         )?;
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for transact_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let Self { forkId, txHash } = *self;
         ccx.ecx.db.transact(
             Some(forkId),
             txHash,
             &mut ccx.ecx.env,
             &mut ccx.ecx.journaled_state,
-            ccx.state,
+            &mut executor.get_inspector(ccx.state),
         )?;
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for allowCheatcodesCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account } = self;
         ccx.ecx.db.allow_cheatcode_access(*account);
         Ok(Default::default())
@@ -164,7 +171,7 @@ impl Cheatcode for allowCheatcodesCall {
 }
 
 impl Cheatcode for makePersistent_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account } = self;
         ccx.ecx.db.add_persistent_account(*account);
         Ok(Default::default())
@@ -172,7 +179,7 @@ impl Cheatcode for makePersistent_0Call {
 }
 
 impl Cheatcode for makePersistent_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account0, account1 } = self;
         ccx.ecx.db.add_persistent_account(*account0);
         ccx.ecx.db.add_persistent_account(*account1);
@@ -181,7 +188,7 @@ impl Cheatcode for makePersistent_1Call {
 }
 
 impl Cheatcode for makePersistent_2Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account0, account1, account2 } = self;
         ccx.ecx.db.add_persistent_account(*account0);
         ccx.ecx.db.add_persistent_account(*account1);
@@ -191,15 +198,17 @@ impl Cheatcode for makePersistent_2Call {
 }
 
 impl Cheatcode for makePersistent_3Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { accounts } = self;
-        ccx.ecx.db.extend_persistent_accounts(accounts.iter().copied());
+        for account in accounts {
+            ccx.ecx.db.add_persistent_account(*account);
+        }
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for revokePersistent_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account } = self;
         ccx.ecx.db.remove_persistent_account(account);
         Ok(Default::default())
@@ -207,31 +216,32 @@ impl Cheatcode for revokePersistent_0Call {
 }
 
 impl Cheatcode for revokePersistent_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { accounts } = self;
-        ccx.ecx.db.remove_persistent_accounts(accounts.iter().copied());
+        for account in accounts {
+            ccx.ecx.db.remove_persistent_account(account);
+        }
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for isPersistentCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account } = self;
         Ok(ccx.ecx.db.is_persistent(account).abi_encode())
     }
 }
 
 impl Cheatcode for rpcCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { method, params } = self;
         let url =
             ccx.ecx.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let provider = ProviderBuilder::new(&url).build()?;
-        let method: &'static str = Box::new(method.clone()).leak();
         let params_json: serde_json::Value = serde_json::from_str(params)?;
-        let result = RuntimeOrHandle::new()
-            .block_on(provider.raw_request(method.into(), params_json))
-            .map_err(|err| fmt_err!("{method:?}: {err}"))?;
+        let result =
+            foundry_common::block_on(provider.raw_request(method.clone().into(), params_json))
+                .map_err(|err| fmt_err!("{method:?}: {err}"))?;
 
         let result_as_tokens = crate::json::json_value_to_token(&result)
             .map_err(|err| fmt_err!("failed to parse result: {err}"))?;
@@ -241,7 +251,7 @@ impl Cheatcode for rpcCall {
 }
 
 impl Cheatcode for eth_getLogsCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { fromBlock, toBlock, target, topics } = self;
         let (Ok(from_block), Ok(to_block)) = (u64::try_from(fromBlock), u64::try_from(toBlock))
         else {
@@ -256,24 +266,12 @@ impl Cheatcode for eth_getLogsCall {
             ccx.ecx.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let provider = ProviderBuilder::new(&url).build()?;
         let mut filter = Filter::new().address(*target).from_block(from_block).to_block(to_block);
-        for (i, topic) in topics.iter().enumerate() {
-            // todo: needed because rust wants to convert FixedBytes<32> to U256 to convert it back
-            // to FixedBytes<32> and then to Topic for some reason removing the
-            // From<U256> impl in alloy does not fix the situation, and it is not possible to impl
-            // From<FixedBytes<32>> either because of a conflicting impl
-            match i {
-                0 => filter = filter.event_signature(*topic),
-                1 => filter = filter.topic1(*topic),
-                2 => filter = filter.topic2(*topic),
-                3 => filter = filter.topic3(*topic),
-                _ => unreachable!(),
-            };
+        for (i, &topic) in topics.iter().enumerate() {
+            filter.topics[i] = topic.into();
         }
 
-        // todo: handle the errors somehow
-        let logs = RuntimeOrHandle::new()
-            .block_on(provider.get_logs(&filter))
-            .wrap_err("failed to get logs")?;
+        let logs = foundry_common::block_on(provider.get_logs(&filter))
+            .map_err(|e| fmt_err!("failed to get logs: {e}"))?;
 
         let eth_logs = logs
             .into_iter()
@@ -302,9 +300,6 @@ fn create_select_fork<DB: DatabaseExt>(
 ) -> Result {
     check_broadcast(ccx.state)?;
 
-    // No need to correct since the sender's nonce does not get incremented when selecting a fork.
-    ccx.state.corrected_nonce = true;
-
     let fork = create_fork_request(ccx, url_or_alias, block)?;
     let id = ccx.ecx.db.create_select_fork(fork, &mut ccx.ecx.env, &mut ccx.ecx.journaled_state)?;
     Ok(id.abi_encode())
@@ -328,9 +323,6 @@ fn create_select_fork_at_transaction<DB: DatabaseExt>(
     transaction: &B256,
 ) -> Result {
     check_broadcast(ccx.state)?;
-
-    // No need to correct since the sender's nonce does not get incremented when selecting a fork.
-    ccx.state.corrected_nonce = true;
 
     let fork = create_fork_request(ccx, url_or_alias, None)?;
     let id = ccx.ecx.db.create_select_fork_at_transaction(
@@ -359,11 +351,14 @@ fn create_fork_request<DB: DatabaseExt>(
     url_or_alias: &str,
     block: Option<u64>,
 ) -> Result<CreateFork> {
+    persist_caller(ccx);
+
     let url = ccx.state.config.rpc_url(url_or_alias)?;
     let mut evm_opts = ccx.state.config.evm_opts.clone();
     evm_opts.fork_block_number = block;
     let fork = CreateFork {
-        enable_caching: ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
+        enable_caching: !ccx.state.config.no_storage_caching &&
+            ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         env: (*ccx.ecx.env).clone(),
         evm_opts,
@@ -378,4 +373,13 @@ fn check_broadcast(state: &Cheatcodes) -> Result<()> {
     } else {
         Err(fmt_err!("cannot select forks during a broadcast"))
     }
+}
+
+// Helper to add the caller of fork cheat code as persistent account (in order to make sure that the
+// state of caller contract is not lost when fork changes).
+// Applies to create, select and roll forks actions.
+// https://github.com/foundry-rs/foundry/issues/8004
+#[inline]
+fn persist_caller<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) {
+    ccx.ecx.db.add_persistent_account(ccx.caller);
 }

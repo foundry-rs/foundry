@@ -1,10 +1,9 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
-use foundry_common::rpc;
-use foundry_test_utils::{util::OutputExt, ScriptOutcome, ScriptTester};
+use foundry_test_utils::{rpc, util::OutputExt, ScriptOutcome, ScriptTester};
 use regex::Regex;
 use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
@@ -32,7 +31,7 @@ contract ContractScript is Script {
             )
             .unwrap();
 
-        let rpc = foundry_common::rpc::next_http_rpc_endpoint();
+        let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
 
         cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
     }
@@ -692,7 +691,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
         std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
     let _run_log = re.replace_all(&run_log, "");
 
-    // pretty_assertions::assert_eq!(fixtures_log, run_log);
+    // similar_asserts::assert_eq!(fixtures_log, run_log);
 
     // Uncomment to recreate the sensitive log
     // std::fs::copy(
@@ -720,7 +719,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     let fixtures_log = re.replace_all(&fixtures_log, "\n");
     let run_log = re.replace_all(&run_log, "\n");
 
-    pretty_assertions::assert_eq!(fixtures_log, run_log);
+    similar_asserts::assert_eq!(fixtures_log, run_log);
 });
 
 forgetest_async!(test_default_sender_balance, |prj, cmd| {
@@ -809,9 +808,8 @@ contract Script0 is Script {
 
     assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
 
-    let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
-        .into_iter()
-        .find(|file| file.ends_with("run-latest.json"))
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
         .expect("No broadcast artifacts");
 
     let content = foundry_common::fs::read_to_string(run_latest).unwrap();
@@ -894,8 +892,7 @@ contract Script0 is Script {
 
     assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
 
-    let run_latest = foundry_common::fs::json_files(prj.root().join("broadcast"))
-        .into_iter()
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
         .find(|file| file.ends_with("run-latest.json"))
         .expect("No broadcast artifacts");
 
@@ -1288,4 +1285,169 @@ contract SimpleScript is Script {
 
     let output = cmd.stdout_lossy();
     assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+});
+
+// https://github.com/foundry-rs/foundry/pull/7742
+forgetest_async!(unlocked_no_sender, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function run() external {
+        vm.startBroadcast(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        address(0).call("");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--unlocked",
+    ]);
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+});
+
+// https://github.com/foundry-rs/foundry/issues/7833
+forgetest_async!(error_no_create2, |prj, cmd| {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo",
+        r#"
+import "forge-std/Script.sol";
+
+contract SimpleContract {}
+
+contract SimpleScript is Script {
+    function run() external {
+        vm.startBroadcast(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        new SimpleContract{salt: bytes32(0)}();
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--unlocked",
+    ]);
+
+    let output = cmd.stderr_lossy();
+    assert!(output.contains("missing CREATE2 deployer"));
+});
+
+forgetest_async!(can_switch_forks_in_setup, |prj, cmd| {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    let url = handle.http_endpoint();
+
+    prj.add_script(
+        "Foo",
+        &r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function setUp() external {
+        uint256 initialFork = vm.activeFork();
+        vm.createSelectFork("<url>");
+        vm.selectFork(initialFork);
+    }
+
+    function run() external {
+        assert(vm.getNonce(msg.sender) == 0);
+    }
+}
+   "#
+        .replace("<url>", &url),
+    )
+    .unwrap();
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &url,
+        "--sender",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    ]);
+
+    cmd.stdout_lossy();
+});
+
+// Asserts that running the same script twice only deploys library once.
+forgetest_async!(can_deploy_library_create2, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("BroadcastTest", "deploy()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 2), (1, 1)])
+        .await;
+
+    tester.clear();
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("BroadcastTest", "deploy()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 1), (1, 1)])
+        .await;
+});
+
+// Asserts that running the same script twice only deploys library once when using different
+// senders.
+forgetest_async!(can_deploy_library_create2_different_sender, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("BroadcastTest", "deploy()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 2), (1, 1)])
+        .await;
+
+    tester.clear();
+
+    // Run different script from the same contract (which requires the same library).
+    tester
+        .load_private_keys(&[2])
+        .await
+        .add_sig("BroadcastTest", "deployNoArgs()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(2, 2)])
+        .await;
 });

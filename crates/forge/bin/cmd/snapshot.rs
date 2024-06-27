@@ -131,7 +131,7 @@ impl FromStr for Format {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "t" | "table" => Ok(Format::Table),
+            "t" | "table" => Ok(Self::Table),
             _ => Err(format!("Unrecognized format `{s}`")),
         }
     }
@@ -211,17 +211,17 @@ impl FromStr for SnapshotEntry {
                 cap.name("file").and_then(|file| {
                     cap.name("sig").and_then(|sig| {
                         if let Some(gas) = cap.name("gas") {
-                            Some(SnapshotEntry {
+                            Some(Self {
                                 contract_name: file.as_str().to_string(),
                                 signature: sig.as_str().to_string(),
-                                gas_used: TestKindReport::Standard {
+                                gas_used: TestKindReport::Unit {
                                     gas: gas.as_str().parse().unwrap(),
                                 },
                             })
                         } else if let Some(runs) = cap.name("runs") {
                             cap.name("avg")
                                 .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
-                                .map(|(runs, avg, med)| SnapshotEntry {
+                                .map(|(runs, avg, med)| Self {
                                     contract_name: file.as_str().to_string(),
                                     signature: sig.as_str().to_string(),
                                     gas_used: TestKindReport::Fuzz {
@@ -237,7 +237,7 @@ impl FromStr for SnapshotEntry {
                                         cap.name("reverts").map(|med| (runs, avg, med))
                                     })
                                 })
-                                .map(|(runs, calls, reverts)| SnapshotEntry {
+                                .map(|(runs, calls, reverts)| Self {
                                     contract_name: file.as_str().to_string(),
                                     signature: sig.as_str().to_string(),
                                     gas_used: TestKindReport::Invariant {
@@ -398,21 +398,21 @@ fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<SnapshotEntry>) -> Result<()> {
 fn fmt_pct_change(change: f64) -> String {
     let change_pct = change * 100.0;
     match change.partial_cmp(&0.0).unwrap_or(Ordering::Equal) {
-        Ordering::Less => Paint::green(format!("{change_pct:.3}%")).to_string(),
+        Ordering::Less => format!("{change_pct:.3}%").green().to_string(),
         Ordering::Equal => {
             format!("{change_pct:.3}%")
         }
-        Ordering::Greater => Paint::red(format!("{change_pct:.3}%")).to_string(),
+        Ordering::Greater => format!("{change_pct:.3}%").red().to_string(),
     }
 }
 
 fn fmt_change(change: i128) -> String {
     match change.cmp(&0) {
-        Ordering::Less => Paint::green(format!("{change}")).to_string(),
+        Ordering::Less => format!("{change}").green().to_string(),
         Ordering::Equal => {
             format!("{change}")
         }
-        Ordering::Greater => Paint::red(format!("{change}")).to_string(),
+        Ordering::Greater => format!("{change}").red().to_string(),
     }
 }
 
@@ -455,7 +455,7 @@ mod tests {
             SnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindReport::Standard { gas: 7222 }
+                gas_used: TestKindReport::Unit { gas: 7222 }
             }
         );
     }

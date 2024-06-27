@@ -1,13 +1,15 @@
 use crate::Config;
-pub use conf_parser::{parse_config_bool, parse_config_u32, validate_profiles, InlineConfigParser};
-pub use error::{InlineConfigError, InlineConfigParserError};
-pub use natspec::NatSpec;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
 mod conf_parser;
+pub use conf_parser::*;
+
 mod error;
+pub use error::*;
+
 mod natspec;
+pub use natspec::*;
 
 pub const INLINE_CONFIG_FUZZ_KEY: &str = "fuzz";
 pub const INLINE_CONFIG_INVARIANT_KEY: &str = "invariant";
@@ -37,7 +39,7 @@ impl<T> InlineConfig<T> {
     }
 
     /// Inserts an inline configuration, for a test function.
-    /// Configuration is identified by the pair "contract", "function".    
+    /// Configuration is identified by the pair "contract", "function".
     pub fn insert<C, F>(&mut self, contract_id: C, fn_name: F, config: T)
     where
         C: Into<String>,

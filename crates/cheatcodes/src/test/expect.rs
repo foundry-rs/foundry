@@ -1,5 +1,5 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_primitives::{address, Address, Bytes, LogData as RawLog, U256};
+use alloy_primitives::{address, hex, Address, Bytes, LogData as RawLog, U256};
 use alloy_sol_types::{SolError, SolValue};
 use revm::interpreter::{return_ok, InstructionResult};
 use spec::Vm;
@@ -197,7 +197,7 @@ impl Cheatcode for expectCallMinGas_1Call {
 }
 
 impl Cheatcode for expectEmit_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
         expect_emit(
             ccx.state,
@@ -209,7 +209,7 @@ impl Cheatcode for expectEmit_0Call {
 }
 
 impl Cheatcode for expectEmit_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
         expect_emit(
             ccx.state,
@@ -221,69 +221,69 @@ impl Cheatcode for expectEmit_1Call {
 }
 
 impl Cheatcode for expectEmit_2Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
         expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 4], None)
     }
 }
 
 impl Cheatcode for expectEmit_3Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { emitter } = *self;
         expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 4], Some(emitter))
     }
 }
 
 impl Cheatcode for expectRevert_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
         expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), false)
     }
 }
 
 impl Cheatcode for expectRevert_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
         expect_revert(ccx.state, Some(revertData.as_ref()), ccx.ecx.journaled_state.depth(), false)
     }
 }
 
 impl Cheatcode for expectRevert_2Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
         expect_revert(ccx.state, Some(revertData), ccx.ecx.journaled_state.depth(), false)
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), true)
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
         expect_revert(ccx.state, Some(revertData.as_ref()), ccx.ecx.journaled_state.depth(), true)
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_2Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
         expect_revert(ccx.state, Some(revertData), ccx.ecx.journaled_state.depth(), true)
     }
 }
 
 impl Cheatcode for expectSafeMemoryCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { min, max } = *self;
         expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth())
     }
 }
 
 impl Cheatcode for stopExpectSafeMemoryCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
         ccx.state.allowed_mem_writes.remove(&ccx.ecx.journaled_state.depth());
         Ok(Default::default())
@@ -291,7 +291,7 @@ impl Cheatcode for stopExpectSafeMemoryCall {
 }
 
 impl Cheatcode for expectSafeMemoryCallCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { min, max } = *self;
         expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth() + 1)
     }
@@ -301,19 +301,18 @@ impl Cheatcode for expectSafeMemoryCallCall {
 ///
 /// It can handle calls in two ways:
 /// - If the cheatcode was used with a `count` argument, it will expect the call to be made exactly
-///   `count` times.
-/// e.g. `vm.expectCall(address(0xc4f3), abi.encodeWithSelector(0xd34db33f), 4)` will expect the
-/// call to address(0xc4f3) with selector `0xd34db33f` to be made exactly 4 times. If the amount of
-/// calls is less or more than 4, the test will fail. Note that the `count` argument cannot be
-/// overwritten with another `vm.expectCall`. If this is attempted, `expectCall` will revert.
+///   `count` times. e.g. `vm.expectCall(address(0xc4f3), abi.encodeWithSelector(0xd34db33f), 4)`
+///   will expect the call to address(0xc4f3) with selector `0xd34db33f` to be made exactly 4 times.
+///   If the amount of calls is less or more than 4, the test will fail. Note that the `count`
+///   argument cannot be overwritten with another `vm.expectCall`. If this is attempted,
+///   `expectCall` will revert.
 /// - If the cheatcode was used without a `count` argument, it will expect the call to be made at
-///   least the amount of times the cheatcode
-/// was called. This means that `vm.expectCall` without a count argument can be called many times,
-/// but cannot be called with a `count` argument after it was called without one. If the latter
-/// happens, `expectCall` will revert. e.g `vm.expectCall(address(0xc4f3),
-/// abi.encodeWithSelector(0xd34db33f))` will expect the call to address(0xc4f3) and selector
-/// `0xd34db33f` to be made at least once. If the amount of calls is 0, the test will fail. If the
-/// call is made more than once, the test will pass.
+///   least the amount of times the cheatcode was called. This means that `vm.expectCall` without a
+///   count argument can be called many times, but cannot be called with a `count` argument after it
+///   was called without one. If the latter happens, `expectCall` will revert. e.g
+///   `vm.expectCall(address(0xc4f3), abi.encodeWithSelector(0xd34db33f))` will expect the call to
+///   address(0xc4f3) and selector `0xd34db33f` to be made at least once. If the amount of calls is
+///   0, the test will fail. If the call is made more than once, the test will pass.
 #[allow(clippy::too_many_arguments)] // It is what it is
 fn expect_call(
     state: &mut Cheatcodes,

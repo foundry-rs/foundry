@@ -39,12 +39,12 @@ impl GenerateTestArgs {
         fs::create_dir_all("test")?;
 
         // Define the test file path
-        let test_file_path = Path::new("test").join(format!("{}.t.sol", contract_name));
+        let test_file_path = Path::new("test").join(format!("{contract_name}.t.sol"));
 
         // Write the test content to the test file.
         fs::write(&test_file_path, test_content)?;
 
-        println!("{} test file: {}", Paint::green("Generated"), test_file_path.to_str().unwrap());
+        println!("{} test file: {}", "Generated".green(), test_file_path.to_str().unwrap());
         Ok(())
     }
 }

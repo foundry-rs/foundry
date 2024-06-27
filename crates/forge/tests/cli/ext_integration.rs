@@ -10,7 +10,13 @@ fn forge_std() {
 
 #[test]
 fn solmate() {
-    ExtTester::new("transmissions11", "solmate", "c892309933b25c03d32b1b0d674df7ae292ba925").run();
+    let tester =
+        ExtTester::new("transmissions11", "solmate", "c892309933b25c03d32b1b0d674df7ae292ba925");
+
+    #[cfg(feature = "isolate-by-default")]
+    let tester = tester.args(["--nmc", "ReentrancyGuardTest"]);
+
+    tester.run();
 }
 
 #[test]
@@ -36,15 +42,22 @@ fn prb_proxy() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn sablier_v2() {
-    ExtTester::new("sablier-labs", "v2-core", "84758a40077bf3ccb1c8f7bb8d00278e672fbfef")
-        // Skip fork tests.
-        .args(["--nmc", "Fork"])
-        // Run tests without optimizations.
-        .env("FOUNDRY_PROFILE", "lite")
-        .install_command(&["bun", "install", "--prefer-offline"])
-        // Try npm if bun fails / is not installed.
-        .install_command(&["npm", "install", "--prefer-offline"])
-        .run();
+    let tester =
+        ExtTester::new("sablier-labs", "v2-core", "84758a40077bf3ccb1c8f7bb8d00278e672fbfef")
+            // Skip fork tests.
+            .args(["--nmc", "Fork"])
+            // Run tests without optimizations.
+            .env("FOUNDRY_PROFILE", "lite")
+            .install_command(&["bun", "install", "--prefer-offline"])
+            // Try npm if bun fails / is not installed.
+            .install_command(&["npm", "install", "--prefer-offline"]);
+
+    // This test reverts due to memory limit without isolation. This revert is not reached with
+    // isolation because memory is divided between separate EVMs created by inner calls.
+    #[cfg(feature = "isolate-by-default")]
+    let tester = tester.args(["--nmt", "test_RevertWhen_LoopCalculationOverflowsBlockGasLimit"]);
+
+    tester.run();
 }
 
 #[test]
@@ -81,7 +94,7 @@ fn lil_web3() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn snekmate() {
-    ExtTester::new("pcaversaccio", "snekmate", "ed49a0454393673cdf9a4250dd7051c28e6ac35f")
+    ExtTester::new("pcaversaccio", "snekmate", "1aa50098720d49e04b257a4aa5138b3d737a0667")
         .install_command(&["pnpm", "install", "--prefer-offline"])
         // Try npm if pnpm fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])

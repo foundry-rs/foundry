@@ -8,16 +8,13 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
 };
-use foundry_common::{
-    compile::{ProjectCompiler, SkipBuildFilter, SkipBuildFilters},
-    provider::alloy::ProviderBuilder,
-};
+use foundry_common::{compile::ProjectCompiler, provider::ProviderBuilder};
 use foundry_compilers::{
-    artifacts::{BytecodeHash, BytecodeObject, CompactContractBytecode},
+    artifacts::{BytecodeHash, BytecodeObject, CompactContractBytecode, EvmVersion},
     info::ContractInfo,
-    Artifact, EvmVersion,
+    Artifact,
 };
-use foundry_config::{figment, impl_figment_convert, Chain, Config};
+use foundry_config::{figment, filter::SkipBuildFilter, impl_figment_convert, Chain, Config};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
@@ -59,7 +56,8 @@ pub struct VerifyBytecodeArgs {
     #[clap(short = 'r', long, value_name = "RPC_URL", env = "ETH_RPC_URL")]
     pub rpc_url: Option<String>,
 
-    /// Verfication Type: `full` or `partial`. Ref: https://docs.sourcify.dev/docs/full-vs-partial-match/
+    /// Verfication Type: `full` or `partial`.
+    /// Ref: <https://docs.sourcify.dev/docs/full-vs-partial-match/>
     #[clap(long, default_value = "full", value_name = "TYPE")]
     pub verification_type: VerificationType,
 
@@ -109,7 +107,7 @@ impl VerifyBytecodeArgs {
         let config = self.load_config_emit_warnings();
         let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
 
-        let code = provider.get_code_at(self.address, BlockId::latest()).await?;
+        let code = provider.get_code_at(self.address).await?;
         if code.is_empty() {
             eyre::bail!("No bytecode found at address {}", self.address);
         }
@@ -117,8 +115,8 @@ impl VerifyBytecodeArgs {
         if !self.json {
             println!(
                 "Verifying bytecode for contract {} at address {}",
-                Paint::green(self.contract.name.clone()),
-                Paint::green(self.address.to_string())
+                self.contract.name.clone().green(),
+                self.address.green()
             );
         }
 
@@ -135,8 +133,12 @@ impl VerifyBytecodeArgs {
         self.etherscan_opts.chain = Some(chain);
         self.etherscan_opts.key =
             config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
-        // Create etherscan client
-        let etherscan = Client::new(chain, self.etherscan_opts.key.clone().unwrap())?;
+
+        // If etherscan key is not set, we can't proceed with etherscan verification
+        let Some(key) = self.etherscan_opts.key.clone() else {
+            eyre::bail!("Etherscan API key is required for verification");
+        };
+        let etherscan = Client::new(chain, key)?;
 
         // Get the constructor args using `source_code` endpoint
         let source_code = etherscan.contract_source_code(self.address).await?;
@@ -170,7 +172,7 @@ impl VerifyBytecodeArgs {
         if provided_constructor_args != constructor_args.to_string() && !self.json {
             println!(
                 "{}",
-                Paint::red("The provider constructor args do not match the constructor args from etherscan. This will result in a mismatch - Using the args from etherscan").bold(),
+                "The provided constructor args do not match the constructor args from etherscan. This will result in a mismatch - Using the args from etherscan".red().bold(),
             );
         }
 
@@ -180,7 +182,10 @@ impl VerifyBytecodeArgs {
         let mut transaction = provider
             .get_transaction_by_hash(creation_data.transaction_hash)
             .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?;
+            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
+            .ok_or_else(|| {
+                eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
+            })?;
         let receipt = provider
             .get_transaction_receipt(creation_data.transaction_hash)
             .await
@@ -217,11 +222,13 @@ impl VerifyBytecodeArgs {
                 (VerificationType::Partial, _) => (VerificationType::Partial, true),
             };
 
+        trace!(?verification_type, has_metadata);
         // Etherscan compilation metadata
         let etherscan_metadata = source_code.items.first().unwrap();
 
         let local_bytecode =
             if let Some(local_bytecode) = self.build_using_cache(etherscan_metadata, &config) {
+                trace!("using cache");
                 local_bytecode
             } else {
                 self.build_project(&config)?
@@ -258,7 +265,9 @@ impl VerifyBytecodeArgs {
                 let provider = utils::get_provider(&config)?;
                 provider
                     .get_transaction_by_hash(creation_data.transaction_hash)
-                    .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
+                    .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
+                        eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
+                    })?
                     .block_number.ok_or_else(|| {
                         eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
                     })?
@@ -277,13 +286,14 @@ impl VerifyBytecodeArgs {
         let mut executor =
             TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false);
         env.block.number = U256::from(simulation_block);
-        let block = provider.get_block(simulation_block.into(), true).await?;
+        let block = provider.get_block(simulation_block.into(), true.into()).await?;
 
         // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
         // block.
-        let prev_block_id = BlockId::Number(BlockNumberOrTag::Number(simulation_block - 1));
+        let prev_block_id = BlockId::number(simulation_block - 1);
         let prev_block_nonce = provider
-            .get_transaction_count(creation_data.contract_creator, Some(prev_block_id))
+            .get_transaction_count(creation_data.contract_creator)
+            .block_id(prev_block_id)
             .await?;
         transaction.nonce = prev_block_nonce;
 
@@ -305,10 +315,10 @@ impl VerifyBytecodeArgs {
             if to != DEFAULT_CREATE2_DEPLOYER {
                 eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
             }
-            let result = executor.commit_tx_with_env(env_with_handler.to_owned())?;
+            let result = executor.transact_with_env(env_with_handler.clone())?;
 
-            if result.result.len() > 20 {
-                eyre::bail!("Failed to deploy contract using commit_tx_with_env on fork at block {} | Err: Call result is greater than 20 bytes, cannot be converted to Address", simulation_block);
+            if result.result.len() != 20 {
+                eyre::bail!("Failed to deploy contract on fork at block {simulation_block}: call result is not exactly 20 bytes");
             }
 
             Address::from_slice(&result.result)
@@ -319,7 +329,7 @@ impl VerifyBytecodeArgs {
 
         // State commited using deploy_with_env, now get the runtime bytecode from the db.
         let fork_runtime_code = executor
-            .backend
+            .backend_mut()
             .basic(contract_address)?
             .ok_or_else(|| {
                 eyre::eyre!(
@@ -335,13 +345,12 @@ impl VerifyBytecodeArgs {
                 )
             })?;
 
-        let onchain_runtime_code = provider
-            .get_code_at(self.address, BlockId::Number(BlockNumberOrTag::Number(simulation_block)))
-            .await?;
+        let onchain_runtime_code =
+            provider.get_code_at(self.address).block_id(BlockId::number(simulation_block)).await?;
 
         // Compare the runtime bytecode with the locally built bytecode
         let (did_match, with_status) = try_match(
-            &fork_runtime_code.bytecode,
+            fork_runtime_code.bytecode(),
             &onchain_runtime_code,
             &constructor_args,
             &verification_type,
@@ -365,13 +374,8 @@ impl VerifyBytecodeArgs {
 
     fn build_project(&self, config: &Config) -> Result<Bytes> {
         let project = config.project()?;
-        let mut compiler = ProjectCompiler::new();
+        let compiler = ProjectCompiler::new();
 
-        if let Some(skip) = &self.skip {
-            if !skip.is_empty() {
-                compiler = compiler.filter(Box::new(SkipBuildFilters::new(skip.to_owned())?));
-            }
-        }
         let output = compiler.compile(&project)?;
 
         let artifact = output
@@ -400,37 +404,44 @@ impl VerifyBytecodeArgs {
         for (key, value) in cached_artifacts {
             let name = self.contract.name.to_owned() + ".sol";
             let version = etherscan_settings.compiler_version.to_owned();
+            // Ignores vyper
             if version.starts_with("vyper:") {
                 return None;
             }
             // Parse etherscan version string
             let version =
                 version.split('+').next().unwrap_or("").trim_start_matches('v').to_string();
+
+            // Check if `out/directory` name matches the contract name
             if key.ends_with(name.as_str()) {
-                if let Some(artifact) = value.into_iter().next() {
+                let artifacts =
+                    value.iter().flat_map(|(_, artifacts)| artifacts.iter()).collect::<Vec<_>>();
+                let name = name.replace(".sol", ".json");
+                for artifact in artifacts {
+                    // Check if ABI file matches the name
+                    if !artifact.file.ends_with(&name) {
+                        continue;
+                    }
+
+                    // Check if Solidity version matches
                     if let Ok(version) = Version::parse(&version) {
-                        if let Some(artifact) = artifact.1.iter().find(|a| {
-                            a.version.major == version.major &&
-                                a.version.minor == version.minor &&
-                                a.version.patch == version.patch
-                        }) {
-                            return artifact
-                                .artifact
-                                .bytecode
-                                .as_ref()
-                                .and_then(|bytes| bytes.bytes().to_owned())
-                                .cloned();
+                        if !(artifact.version.major == version.major &&
+                            artifact.version.minor == version.minor &&
+                            artifact.version.patch == version.patch)
+                        {
+                            continue;
                         }
                     }
-                    let artifact = artifact.1.first().unwrap(); // Get the first artifact
-                    let local_bytecode = if let Some(local_bytecode) = &artifact.artifact.bytecode {
-                        local_bytecode.bytes()
-                    } else {
-                        None
-                    };
 
-                    return local_bytecode.map(|bytes| bytes.to_owned());
+                    return artifact
+                        .artifact
+                        .bytecode
+                        .as_ref()
+                        .and_then(|bytes| bytes.bytes().to_owned())
+                        .cloned();
                 }
+
+                return None
             }
         }
 
@@ -449,8 +460,8 @@ impl VerifyBytecodeArgs {
             if !self.json {
                 println!(
                     "{} with status {}",
-                    Paint::green(format!("{:?} code matched", bytecode_type)).bold(),
-                    Paint::green(res.1.unwrap()).bold()
+                    format!("{bytecode_type:?} code matched").green().bold(),
+                    res.1.unwrap().green().bold()
                 );
             } else {
                 let json_res = JsonResult {
@@ -464,15 +475,15 @@ impl VerifyBytecodeArgs {
         } else if !res.0 && !self.json {
             println!(
                 "{}",
-                Paint::red(format!(
-                    "{:?} code did not match - this may be due to varying compiler settings",
-                    bytecode_type
-                ))
+                format!(
+                    "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
+                )
+                .red()
                 .bold()
             );
             let mismatches = find_mismatch_in_settings(etherscan_config, config);
             for mismatch in mismatches {
-                println!("{}", Paint::red(mismatch).bold());
+                println!("{}", mismatch.red().bold());
             }
         } else if !res.0 && self.json {
             let json_res = JsonResult {
@@ -480,8 +491,7 @@ impl VerifyBytecodeArgs {
                 matched: false,
                 verification_type: self.verification_type,
                 message: Some(format!(
-                    "{:?} code did not match - this may be due to varying compiler settings",
-                    bytecode_type
+                    "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
                 )),
             };
             json_results.push(json_res);
@@ -489,7 +499,8 @@ impl VerifyBytecodeArgs {
     }
 }
 
-/// Enum to represent the type of verification: `full` or `partial`. Ref: https://docs.sourcify.dev/docs/full-vs-partial-match/
+/// Enum to represent the type of verification: `full` or `partial`.
+/// Ref: <https://docs.sourcify.dev/docs/full-vs-partial-match/>
 #[derive(Debug, Clone, clap::ValueEnum, Default, PartialEq, Eq, Serialize, Deserialize, Copy)]
 pub enum VerificationType {
     #[default]
@@ -504,8 +515,8 @@ impl FromStr for VerificationType {
 
     fn from_str(s: &str) -> Result<Self> {
         match s {
-            "full" => Ok(VerificationType::Full),
-            "partial" => Ok(VerificationType::Partial),
+            "full" => Ok(Self::Full),
+            "partial" => Ok(Self::Partial),
             _ => eyre::bail!("Invalid verification type"),
         }
     }
@@ -523,8 +534,8 @@ impl From<VerificationType> for String {
 impl fmt::Display for VerificationType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VerificationType::Full => write!(f, "full"),
-            VerificationType::Partial => write!(f, "partial"),
+            Self::Full => write!(f, "full"),
+            Self::Partial => write!(f, "partial"),
         }
     }
 }
@@ -556,7 +567,7 @@ fn try_match(
     has_metadata: bool,
 ) -> Result<(bool, Option<VerificationType>)> {
     // 1. Try full match
-    if *match_type == VerificationType::Full && local_bytecode.starts_with(bytecode) {
+    if *match_type == VerificationType::Full && local_bytecode == bytecode {
         Ok((true, Some(VerificationType::Full)))
     } else {
         try_partial_match(local_bytecode, bytecode, constructor_args, is_runtime, has_metadata)
@@ -580,7 +591,7 @@ fn try_partial_match(
         }
 
         // Now compare the creation code and bytecode
-        return Ok(local_bytecode.starts_with(bytecode));
+        return Ok(local_bytecode == bytecode);
     }
 
     if is_runtime {
@@ -590,7 +601,7 @@ fn try_partial_match(
         }
 
         // Now compare the local code and bytecode
-        return Ok(local_bytecode.starts_with(bytecode));
+        return Ok(local_bytecode == bytecode);
     }
 
     // If not runtime, extract constructor args from the end of the bytecode
@@ -602,7 +613,7 @@ fn try_partial_match(
         bytecode = extract_metadata_hash(bytecode)?;
     }
 
-    Ok(local_bytecode.starts_with(bytecode))
+    Ok(local_bytecode == bytecode)
 }
 
 /// @dev This assumes that the metadata is at the end of the bytecode

@@ -1,6 +1,5 @@
 use crate::{build::LinkedBuildData, sequence::ScriptSequenceKind, ScriptArgs, ScriptConfig};
-
-use alloy_primitives::Address;
+use alloy_primitives::{hex, Address};
 use eyre::Result;
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathsArgs};
@@ -26,7 +25,7 @@ impl BroadcastedState {
         let verify = VerifyBundle::new(
             &script_config.config.project()?,
             &script_config.config,
-            build_data.get_flattened_contracts(false),
+            build_data.known_contracts,
             args.retry,
             args.verifier,
         );
@@ -77,7 +76,7 @@ impl VerifyBundle {
 
         let via_ir = config.via_ir;
 
-        VerifyBundle {
+        Self {
             num_of_optimizations,
             known_contracts,
             etherscan: Default::default(),
@@ -105,16 +104,19 @@ impl VerifyBundle {
         data: &[u8],
         libraries: &[String],
     ) -> Option<VerifyArgs> {
-        for (artifact, (_contract, bytecode)) in self.known_contracts.iter() {
+        for (artifact, contract) in self.known_contracts.iter() {
+            let Some(bytecode) = contract.bytecode() else { continue };
             // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
             // of the transaction
             if data.split_at(create2_offset).1.starts_with(bytecode) {
                 let constructor_args = data.split_at(create2_offset + bytecode.len()).1.to_vec();
 
+                if artifact.source.extension().map_or(false, |e| e.to_str() == Some("vy")) {
+                    warn!("Skipping verification of Vyper contract: {}", artifact.name);
+                }
+
                 let contract = ContractInfo {
-                    path: Some(
-                        artifact.source.to_str().expect("There should be an artifact.").to_string(),
-                    ),
+                    path: Some(artifact.source.to_string_lossy().to_string()),
                     name: artifact.name.clone(),
                 };
 
@@ -129,7 +131,7 @@ impl VerifyBundle {
 
                 let verify = VerifyArgs {
                     address: contract_address,
-                    contract,
+                    contract: Some(contract),
                     compiler_version: Some(version.to_string()),
                     constructor_args: Some(hex::encode(constructor_args)),
                     constructor_args_path: None,

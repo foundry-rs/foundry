@@ -1,8 +1,11 @@
-//! wrappers for transactions
+//! Wrappers for transactions.
+
 use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_rpc_types::{AnyTransactionReceipt, BlockId, WithOtherFields};
+use alloy_rpc_types::{AnyTransactionReceipt, BlockId};
+use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::Result;
+use foundry_common_fmt::UIfmt;
 use serde::{Deserialize, Serialize};
 
 /// Helper type to carry a transaction along with an optional revert reason
@@ -20,7 +23,7 @@ pub struct TransactionReceiptWithRevertReason {
 impl TransactionReceiptWithRevertReason {
     /// Returns if the status of the transaction is 0 (failure)
     pub fn is_failure(&self) -> bool {
-        !self.receipt.inner.inner.inner.receipt.status
+        !self.receipt.inner.inner.inner.receipt.status.coerce_status()
     }
 
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert
@@ -44,14 +47,13 @@ impl TransactionReceiptWithRevertReason {
         let transaction = provider
             .get_transaction_by_hash(self.receipt.transaction_hash)
             .await
-            .map_err(|_| eyre::eyre!("unable to fetch transaction"))?;
+            .map_err(|err| eyre::eyre!("unable to fetch transaction: {err}"))?
+            .ok_or_else(|| eyre::eyre!("transaction not found"))?;
 
         if let Some(block_hash) = self.receipt.block_hash {
             match provider
-                .call(
-                    &WithOtherFields::new(transaction.inner.into()),
-                    Some(BlockId::Hash(block_hash.into())),
-                )
+                .call(&WithOtherFields::new(transaction.inner.into()))
+                .block(BlockId::Hash(block_hash.into()))
                 .await
             {
                 Err(e) => return Ok(extract_revert_reason(e.to_string())),
@@ -74,12 +76,59 @@ impl From<TransactionReceiptWithRevertReason> for AnyTransactionReceipt {
     }
 }
 
+impl UIfmt for TransactionReceiptWithRevertReason {
+    fn pretty(&self) -> String {
+        if let Some(revert_reason) = &self.revert_reason {
+            format!(
+                "{}
+revertReason            {}",
+                self.receipt.pretty(),
+                revert_reason
+            )
+        } else {
+            self.receipt.pretty()
+        }
+    }
+}
+
 fn extract_revert_reason<S: AsRef<str>>(error_string: S) -> Option<String> {
     let message_substr = "execution reverted: ";
     error_string
         .as_ref()
         .find(message_substr)
         .map(|index| error_string.as_ref().split_at(index + message_substr.len()).1.to_string())
+}
+
+/// Returns the `UiFmt::pretty()` formatted attribute of the transaction receipt
+pub fn get_pretty_tx_receipt_attr(
+    receipt: &TransactionReceiptWithRevertReason,
+    attr: &str,
+) -> Option<String> {
+    match attr {
+        "blockHash" | "block_hash" => Some(receipt.receipt.block_hash.pretty()),
+        "blockNumber" | "block_number" => Some(receipt.receipt.block_number.pretty()),
+        "contractAddress" | "contract_address" => Some(receipt.receipt.contract_address.pretty()),
+        "cumulativeGasUsed" | "cumulative_gas_used" => {
+            Some(receipt.receipt.inner.inner.inner.receipt.cumulative_gas_used.pretty())
+        }
+        "effectiveGasPrice" | "effective_gas_price" => {
+            Some(receipt.receipt.effective_gas_price.to_string())
+        }
+        "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.to_string()),
+        "logs" => Some(receipt.receipt.inner.inner.inner.receipt.logs.as_slice().pretty()),
+        "logsBloom" | "logs_bloom" => Some(receipt.receipt.inner.inner.inner.logs_bloom.pretty()),
+        "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root.pretty()),
+        "status" | "statusCode" | "status_code" => {
+            Some(receipt.receipt.inner.inner.inner.receipt.status.pretty())
+        }
+        "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
+        "transactionIndex" | "transaction_index" => {
+            Some(receipt.receipt.transaction_index.pretty())
+        }
+        "type" | "transaction_type" => Some(receipt.receipt.inner.inner.r#type.to_string()),
+        "revertReason" | "revert_reason" => Some(receipt.revert_reason.pretty()),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

@@ -1,8 +1,8 @@
 use crate::{error::PrivateKeyError, PendingSigner, WalletSigner};
-use alloy_primitives::B256;
+use alloy_primitives::{hex::FromHex, B256};
 use alloy_signer_ledger::HDPath as LedgerHDPath;
+use alloy_signer_local::PrivateKeySigner;
 use alloy_signer_trezor::HDPath as TrezorHDPath;
-use alloy_signer_wallet::LocalWallet;
 use eyre::{Context, Result};
 use foundry_config::Config;
 use std::{
@@ -18,18 +18,15 @@ fn ensure_pk_not_env(pk: &str) -> Result<()> {
 }
 
 /// Validates and sanitizes user inputs, returning configured [WalletSigner].
-pub fn create_private_key_signer(private_key: &str) -> Result<WalletSigner> {
-    let privk = private_key.trim().strip_prefix("0x").unwrap_or(private_key);
-
-    let Ok(private_key) = hex::decode(privk) else {
-        ensure_pk_not_env(privk)?;
+pub fn create_private_key_signer(private_key_str: &str) -> Result<WalletSigner> {
+    let Ok(private_key) = B256::from_hex(private_key_str) else {
+        ensure_pk_not_env(private_key_str)?;
         eyre::bail!("Failed to decode private key")
     };
-
-    match LocalWallet::from_bytes(&B256::from_slice(&private_key)) {
+    match PrivateKeySigner::from_bytes(&private_key) {
         Ok(pk) => Ok(WalletSigner::Local(pk)),
         Err(err) => {
-            ensure_pk_not_env(privk)?;
+            ensure_pk_not_env(private_key_str)?;
             eyre::bail!("Failed to create wallet from private key: {err}")
         }
     }
@@ -143,7 +140,7 @@ pub fn create_keystore_signer(
     }?;
 
     if let Some(password) = password {
-        let wallet = LocalWallet::decrypt_keystore(path, password)
+        let wallet = PrivateKeySigner::decrypt_keystore(path, password)
             .wrap_err_with(|| format!("Failed to decrypt keystore {path:?}"))?;
         Ok((Some(WalletSigner::Local(wallet)), None))
     } else {

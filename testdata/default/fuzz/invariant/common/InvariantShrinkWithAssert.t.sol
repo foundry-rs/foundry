@@ -86,7 +86,7 @@ contract InvariantShrinkWithAssert is DSTest {
     }
 
     function invariant_with_assert() public {
-        assertTrue(counter.number() != 3);
+        assertTrue(counter.number() != 3, "wrong counter");
     }
 }
 

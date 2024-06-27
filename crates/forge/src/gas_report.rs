@@ -12,6 +12,7 @@ use std::{
     collections::{BTreeMap, HashSet},
     fmt::Display,
 };
+use yansi::Paint;
 
 /// Represents the gas report for a set of contracts.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -51,7 +52,7 @@ impl GasReport {
                 // indicating the "double listing".
                 eprintln!(
                     "{}: {} is listed in both 'gas_reports' and 'gas_reports_ignore'.",
-                    yansi::Paint::yellow("warning").bold(),
+                    "warning".yellow().bold(),
                     contract_name
                 );
             }
@@ -105,8 +106,7 @@ impl GasReport {
         } else if let Some(DecodedCallData { signature, .. }) = decoded.func {
             let name = signature.split('(').next().unwrap();
             // ignore any test/setup functions
-            let should_include = !(name.is_test() || name.is_invariant_test() || name.is_setup());
-            if should_include {
+            if !name.test_function_kind().is_known() {
                 trace!(contract_name, signature, "adding gas info");
                 let gas_info = contract_info
                     .functions

@@ -1,10 +1,11 @@
 use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
-use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
-use alloy_primitives::{Address, Bytes};
+use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
+use alloy_primitives::{hex, Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
@@ -15,9 +16,10 @@ use foundry_cli::{
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{
-    compile::ProjectCompiler, fmt::parse_tokens, provider::alloy::estimate_eip1559_fees,
+    compile::{self},
+    fmt::parse_tokens,
 };
-use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
+use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize};
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
 
@@ -84,15 +86,17 @@ impl CreateArgs {
     pub async fn run(mut self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
+
+        let target_path = if let Some(ref mut path) = self.contract.path {
+            canonicalize(project.root().join(path))?
+        } else {
+            project.find_contract_path(&self.contract.name)?
+        };
+
         let mut output =
-            ProjectCompiler::new().quiet_if(self.json || self.opts.silent).compile(&project)?;
+            compile::compile_target(&target_path, &project, self.json || self.opts.silent)?;
 
-        if let Some(ref mut path) = self.contract.path {
-            // paths are absolute in the project's output
-            *path = canonicalized(project.root().join(&path)).to_string_lossy().to_string();
-        }
-
-        let (abi, bin, _) = remove_contract(&mut output, &self.contract)?;
+        let (abi, bin, _) = remove_contract(&mut output, &target_path, &self.contract.name)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
@@ -140,7 +144,7 @@ impl CreateArgs {
             let signer = self.eth.wallet.signer().await?;
             let deployer = signer.address();
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
-                .signer(EthereumSigner::new(signer))
+                .wallet(EthereumWallet::new(signer))
                 .on_provider(provider);
             self.deploy(abi, bin, params, provider, chain_id, deployer).await
         }
@@ -166,7 +170,7 @@ impl CreateArgs {
         // since we don't know the address yet.
         let mut verify = forge_verify::VerifyArgs {
             address: Default::default(),
-            contract: self.contract.clone(),
+            contract: Some(self.contract.clone()),
             compiler_version: None,
             constructor_args,
             constructor_args_path: None,
@@ -181,7 +185,7 @@ impl CreateArgs {
             skip_is_verified_check: true,
             watch: true,
             retry: self.retry,
-            libraries: vec![],
+            libraries: self.opts.libraries.clone(),
             root: None,
             verifier: self.verifier.clone(),
             via_ir: self.opts.via_ir,
@@ -196,7 +200,9 @@ impl CreateArgs {
         verify.etherscan.key =
             config.get_etherscan_config_with_chain(Some(chain.into()))?.map(|c| c.key);
 
-        verify.verification_provider()?.preflight_check(verify).await?;
+        let context = verify.resolve_context().await?;
+
+        verify.verification_provider()?.preflight_check(verify, context).await?;
         Ok(())
     }
 
@@ -229,23 +235,26 @@ impl CreateArgs {
 
         deployer.tx.set_from(deployer_address);
         deployer.tx.set_chain_id(chain);
-
+        // `to` field must be set explicitly, cannot be None.
+        if deployer.tx.to.is_none() {
+            deployer.tx.set_create();
+        }
         deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
             Ok(nonce.to())
         } else {
-            provider.get_transaction_count(deployer_address, None).await
-        }?);
-
-        deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
-            Ok(gas_limit.to())
-        } else {
-            provider.estimate_gas(&deployer.tx, None).await
+            provider.get_transaction_count(deployer_address).await
         }?);
 
         // set tx value if specified
         if let Some(value) = self.tx.value {
             deployer.tx.set_value(value);
         }
+
+        deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
+            Ok(gas_limit.to())
+        } else {
+            provider.estimate_gas(&deployer.tx).await
+        }?);
 
         if is_legacy {
             let gas_price = if let Some(gas_price) = self.tx.gas_price {
@@ -255,9 +264,7 @@ impl CreateArgs {
             };
             deployer.tx.set_gas_price(gas_price);
         } else {
-            let estimate = estimate_eip1559_fees(&provider, Some(chain))
-                .await
-                .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+            let estimate = provider.estimate_eip1559_fees(None).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
             let priority_fee = if let Some(priority_fee) = self.tx.priority_gas_price {
                 priority_fee.to()
             } else {
@@ -314,7 +321,7 @@ impl CreateArgs {
             if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
         let verify = forge_verify::VerifyArgs {
             address,
-            contract: self.contract,
+            contract: Some(self.contract),
             compiler_version: None,
             constructor_args,
             constructor_args_path: None,
@@ -326,7 +333,7 @@ impl CreateArgs {
             skip_is_verified_check: false,
             watch: true,
             retry: self.retry,
-            libraries: vec![],
+            libraries: self.opts.libraries.clone(),
             root: None,
             verifier: self.verifier,
             via_ir: self.opts.via_ir,
@@ -356,7 +363,7 @@ impl CreateArgs {
             params.push((ty, arg));
         }
         let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
-        parse_tokens(params)
+        parse_tokens(params).map_err(Into::into)
     }
 }
 
@@ -388,7 +395,7 @@ where
     B: Clone,
 {
     fn clone(&self) -> Self {
-        ContractDeploymentTx { deployer: self.deployer.clone(), _contract: self._contract }
+        Self { deployer: self.deployer.clone(), _contract: self._contract }
     }
 }
 
@@ -416,7 +423,7 @@ where
     B: Clone,
 {
     fn clone(&self) -> Self {
-        Deployer {
+        Self {
             tx: self.tx.clone(),
             abi: self.abi.clone(),
             client: self.client.clone(),
@@ -506,7 +513,7 @@ where
     B: Clone,
 {
     fn clone(&self) -> Self {
-        DeploymentTxFactory {
+        Self {
             client: self.client.clone(),
             abi: self.abi.clone(),
             bytecode: self.bytecode.clone(),
@@ -553,7 +560,7 @@ where
         };
 
         // create the tx object. Since we're deploying a contract, `to` is `None`
-        let tx = WithOtherFields::new(TransactionRequest::default().input(data.into()).to(None));
+        let tx = WithOtherFields::new(TransactionRequest::default().input(data.into()));
 
         Ok(Deployer {
             client: self.client.clone(),

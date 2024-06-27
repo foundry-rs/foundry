@@ -1,6 +1,6 @@
 use alloy_provider::{utils::Eip1559Estimation, Provider};
 use eyre::{Result, WrapErr};
-use foundry_common::provider::alloy::{get_http_provider, RetryProvider, RpcUrl};
+use foundry_common::provider::{get_http_provider, RetryProvider};
 use foundry_config::Chain;
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -11,7 +11,7 @@ use std::{
 /// Contains a map of RPC urls to single instances of [`ProviderInfo`].
 #[derive(Default)]
 pub struct ProvidersManager {
-    pub inner: HashMap<RpcUrl, ProviderInfo>,
+    pub inner: HashMap<String, ProviderInfo>,
 }
 
 impl ProvidersManager {
@@ -32,7 +32,7 @@ impl ProvidersManager {
 }
 
 impl Deref for ProvidersManager {
-    type Target = HashMap<RpcUrl, ProviderInfo>;
+    type Target = HashMap<String, ProviderInfo>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -55,7 +55,7 @@ pub enum GasPrice {
 }
 
 impl ProviderInfo {
-    pub async fn new(rpc: &str, mut is_legacy: bool) -> Result<ProviderInfo> {
+    pub async fn new(rpc: &str, mut is_legacy: bool) -> Result<Self> {
         let provider = Arc::new(get_http_provider(rpc));
         let chain = provider.get_chain_id().await?;
 
@@ -73,7 +73,7 @@ impl ProviderInfo {
             )
         };
 
-        Ok(ProviderInfo { provider, chain, gas_price })
+        Ok(Self { provider, chain, gas_price })
     }
 
     /// Returns the gas price to use

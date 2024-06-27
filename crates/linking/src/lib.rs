@@ -1,8 +1,13 @@
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+//! # foundry-linking
+//!
+//! EVM bytecode linker.
 
-use alloy_primitives::{Address, Bytes};
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+
+use alloy_primitives::{Address, Bytes, B256};
 use foundry_compilers::{
-    artifacts::{CompactContractBytecode, CompactContractBytecodeCow, Libraries},
+    artifacts::{CompactContractBytecodeCow, Libraries},
     contracts::ArtifactContracts,
     Artifact, ArtifactId,
 };
@@ -22,6 +27,8 @@ pub enum LinkerError {
     MissingTargetArtifact,
     #[error(transparent)]
     InvalidAddress(<Address as std::str::FromStr>::Err),
+    #[error("cyclic dependency found, can't link libraries via CREATE2")]
+    CyclicDependency,
 }
 
 pub struct Linker<'a> {
@@ -45,7 +52,7 @@ impl<'a> Linker<'a> {
     pub fn new(
         root: impl Into<PathBuf>,
         contracts: ArtifactContracts<CompactContractBytecodeCow<'a>>,
-    ) -> Linker<'a> {
+    ) -> Self {
         Linker { root: root.into(), contracts }
     }
 
@@ -136,14 +143,16 @@ impl<'a> Linker<'a> {
         libraries: Libraries,
         sender: Address,
         mut nonce: u64,
-        target: &'a ArtifactId,
+        targets: impl IntoIterator<Item = &'a ArtifactId>,
     ) -> Result<LinkOutput, LinkerError> {
         // Library paths in `link_references` keys are always stripped, so we have to strip
         // user-provided paths to be able to match them correctly.
         let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
 
         let mut needed_libraries = BTreeSet::new();
-        self.collect_dependencies(target, &mut needed_libraries)?;
+        for target in targets {
+            self.collect_dependencies(target, &mut needed_libraries)?;
+        }
 
         let mut libs_to_deploy = Vec::new();
 
@@ -172,12 +181,72 @@ impl<'a> Linker<'a> {
         Ok(LinkOutput { libraries, libs_to_deploy })
     }
 
+    pub fn link_with_create2(
+        &'a self,
+        libraries: Libraries,
+        sender: Address,
+        salt: B256,
+        target: &'a ArtifactId,
+    ) -> Result<LinkOutput, LinkerError> {
+        // Library paths in `link_references` keys are always stripped, so we have to strip
+        // user-provided paths to be able to match them correctly.
+        let mut libraries = libraries.with_stripped_file_prefixes(self.root.as_path());
+
+        let mut needed_libraries = BTreeSet::new();
+        self.collect_dependencies(target, &mut needed_libraries)?;
+
+        let mut needed_libraries = needed_libraries
+            .into_iter()
+            .filter(|id| {
+                // Filter out already provided libraries.
+                let (file, name) = self.convert_artifact_id_to_lib_path(id);
+                !libraries.libs.contains_key(&file) || !libraries.libs[&file].contains_key(&name)
+            })
+            .map(|id| {
+                // Link library with provided libs and extract bytecode object (possibly unlinked).
+                let bytecode = self.link(id, &libraries).unwrap().bytecode.unwrap();
+                (id, bytecode)
+            })
+            .collect::<Vec<_>>();
+
+        let mut libs_to_deploy = Vec::new();
+
+        // Iteratively compute addresses and link libraries until we have no unlinked libraries
+        // left.
+        while !needed_libraries.is_empty() {
+            // Find any library which is fully linked.
+            let deployable = needed_libraries
+                .iter()
+                .enumerate()
+                .find(|(_, (_, bytecode))| !bytecode.object.is_unlinked());
+
+            // If we haven't found any deployable library, it means we have a cyclic dependency.
+            let Some((index, &(id, _))) = deployable else {
+                return Err(LinkerError::CyclicDependency);
+            };
+            let (_, bytecode) = needed_libraries.swap_remove(index);
+            let code = bytecode.bytes().unwrap();
+            let address = sender.create2_from_code(salt, code);
+            libs_to_deploy.push(code.clone());
+
+            let (file, name) = self.convert_artifact_id_to_lib_path(id);
+
+            for (_, bytecode) in &mut needed_libraries {
+                bytecode.to_mut().link(file.to_string_lossy(), name.clone(), address);
+            }
+
+            libraries.libs.entry(file).or_default().insert(name, address.to_checksum(None));
+        }
+
+        Ok(LinkOutput { libraries, libs_to_deploy })
+    }
+
     /// Links given artifact with given libraries.
     pub fn link(
         &self,
         target: &ArtifactId,
         libraries: &Libraries,
-    ) -> Result<CompactContractBytecode, LinkerError> {
+    ) -> Result<CompactContractBytecodeCow<'a>, LinkerError> {
         let mut contract =
             self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?.clone();
         for (file, libs) in &libraries.libs {
@@ -193,12 +262,7 @@ impl<'a> Linker<'a> {
                 }
             }
         }
-
-        Ok(CompactContractBytecode {
-            abi: contract.abi.map(|a| a.into_owned()),
-            bytecode: contract.bytecode.map(|b| b.into_owned()),
-            deployed_bytecode: contract.deployed_bytecode.map(|b| b.into_owned()),
-        })
+        Ok(contract)
     }
 
     pub fn get_linked_artifacts(
@@ -207,11 +271,19 @@ impl<'a> Linker<'a> {
     ) -> Result<ArtifactContracts, LinkerError> {
         self.contracts.keys().map(|id| Ok((id.clone(), self.link(id, libraries)?))).collect()
     }
+
+    pub fn get_linked_artifacts_cow(
+        &self,
+        libraries: &Libraries,
+    ) -> Result<ArtifactContracts<CompactContractBytecodeCow<'a>>, LinkerError> {
+        self.contracts.keys().map(|id| Ok((id.clone(), self.link(id, libraries)?))).collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::fixed_bytes;
     use foundry_compilers::{Project, ProjectCompileOutput, ProjectPathsConfig};
     use std::collections::HashMap;
 
@@ -225,15 +297,19 @@ mod tests {
         fn new(path: impl Into<PathBuf>, strip_prefixes: bool) -> Self {
             let path = path.into();
             let paths = ProjectPathsConfig::builder()
-                .root("../../testdata/linking")
+                .root("../../testdata")
                 .lib("../../testdata/lib")
                 .sources(path.clone())
                 .tests(path)
                 .build()
                 .unwrap();
 
-            let project =
-                Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
+            let project = Project::builder()
+                .paths(paths)
+                .ephemeral()
+                .no_artifacts()
+                .build(Default::default())
+                .unwrap();
 
             let mut output = project.compile().unwrap();
 
@@ -255,7 +331,29 @@ mod tests {
 
         fn test_with_sender_and_nonce(self, sender: Address, initial_nonce: u64) {
             let linker = Linker::new(self.project.root(), self.output.artifact_ids().collect());
-            for id in linker.contracts.keys() {
+            for (id, identifier) in self.iter_linking_targets(&linker) {
+                let output = linker
+                    .link_with_nonce_or_address(Default::default(), sender, initial_nonce, [id])
+                    .expect("Linking failed");
+                self.validate_assertions(identifier, output);
+            }
+        }
+
+        fn test_with_create2(self, sender: Address, salt: B256) {
+            let linker = Linker::new(self.project.root(), self.output.artifact_ids().collect());
+            for (id, identifier) in self.iter_linking_targets(&linker) {
+                let output = linker
+                    .link_with_create2(Default::default(), sender, salt, id)
+                    .expect("Linking failed");
+                self.validate_assertions(identifier, output);
+            }
+        }
+
+        fn iter_linking_targets<'a>(
+            &'a self,
+            linker: &'a Linker<'_>,
+        ) -> impl IntoIterator<Item = (&'a ArtifactId, String)> + 'a {
+            linker.contracts.keys().filter_map(move |id| {
                 // If we didn't strip paths, artifacts will have absolute paths.
                 // That's expected and we want to ensure that only `libraries` object has relative
                 // paths, artifacts should be kept as is.
@@ -269,36 +367,42 @@ mod tests {
                 // Skip ds-test as it always has no dependencies etc. (and the path is outside root
                 // so is not sanitized)
                 if identifier.contains("DSTest") {
-                    continue;
+                    return None;
                 }
 
-                let LinkOutput { libs_to_deploy, libraries, .. } = linker
-                    .link_with_nonce_or_address(Default::default(), sender, initial_nonce, id)
-                    .expect("Linking failed");
+                Some((id, identifier))
+            })
+        }
 
-                let assertions = self
-                    .dependency_assertions
-                    .get(&identifier)
-                    .unwrap_or_else(|| panic!("Unexpected artifact: {identifier}"));
+        fn validate_assertions(&self, identifier: String, output: LinkOutput) {
+            let LinkOutput { libs_to_deploy, libraries } = output;
 
-                assert_eq!(
-                    libs_to_deploy.len(),
-                    assertions.len(),
-                    "artifact {identifier} has more/less dependencies than expected ({} vs {}): {:#?}",
-                    libs_to_deploy.len(),
-                    assertions.len(),
-                    libs_to_deploy
-                );
+            let assertions = self
+                .dependency_assertions
+                .get(&identifier)
+                .unwrap_or_else(|| panic!("Unexpected artifact: {identifier}"));
 
-                for (dep_identifier, address) in assertions {
-                    let (file, name) = dep_identifier.split_once(':').unwrap();
-                    if let Some(lib_address) =
-                        libraries.libs.get(&PathBuf::from(file)).and_then(|libs| libs.get(name))
-                    {
-                        assert_eq!(*lib_address, address.to_string(), "incorrect library address for dependency {dep_identifier} of {identifier}");
-                    } else {
-                        panic!("Library not found")
-                    }
+            assert_eq!(
+                libs_to_deploy.len(),
+                assertions.len(),
+                "artifact {identifier} has more/less dependencies than expected ({} vs {}): {:#?}",
+                libs_to_deploy.len(),
+                assertions.len(),
+                libs_to_deploy
+            );
+
+            for (dep_identifier, address) in assertions {
+                let (file, name) = dep_identifier.split_once(':').unwrap();
+                if let Some(lib_address) =
+                    libraries.libs.get(&PathBuf::from(file)).and_then(|libs| libs.get(name))
+                {
+                    assert_eq!(
+                        *lib_address,
+                        address.to_string(),
+                        "incorrect library address for dependency {dep_identifier} of {identifier}"
+                    );
+                } else {
+                    panic!("Library {dep_identifier} not found");
                 }
             }
         }
@@ -312,20 +416,20 @@ mod tests {
 
     #[test]
     fn link_simple() {
-        link_test("../../testdata/linking/simple", |linker| {
+        link_test("../../testdata/default/linking/simple", |linker| {
             linker
-                .assert_dependencies("simple/Simple.t.sol:Lib".to_string(), vec![])
+                .assert_dependencies("default/linking/simple/Simple.t.sol:Lib".to_string(), vec![])
                 .assert_dependencies(
-                    "simple/Simple.t.sol:LibraryConsumer".to_string(),
+                    "default/linking/simple/Simple.t.sol:LibraryConsumer".to_string(),
                     vec![(
-                        "simple/Simple.t.sol:Lib".to_string(),
+                        "default/linking/simple/Simple.t.sol:Lib".to_string(),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     )],
                 )
                 .assert_dependencies(
-                    "simple/Simple.t.sol:SimpleLibraryLinkingTest".to_string(),
+                    "default/linking/simple/Simple.t.sol:SimpleLibraryLinkingTest".to_string(),
                     vec![(
-                        "simple/Simple.t.sol:Lib".to_string(),
+                        "default/linking/simple/Simple.t.sol:Lib".to_string(),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     )],
                 )
@@ -335,43 +439,43 @@ mod tests {
 
     #[test]
     fn link_nested() {
-        link_test("../../testdata/linking/nested", |linker| {
+        link_test("../../testdata/default/linking/nested", |linker| {
             linker
-                .assert_dependencies("nested/Nested.t.sol:Lib".to_string(), vec![])
+                .assert_dependencies("default/linking/nested/Nested.t.sol:Lib".to_string(), vec![])
                 .assert_dependencies(
-                    "nested/Nested.t.sol:NestedLib".to_string(),
+                    "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                     vec![(
-                        "nested/Nested.t.sol:Lib".to_string(),
+                        "default/linking/nested/Nested.t.sol:Lib".to_string(),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     )],
                 )
                 .assert_dependencies(
-                    "nested/Nested.t.sol:LibraryConsumer".to_string(),
+                    "default/linking/nested/Nested.t.sol:LibraryConsumer".to_string(),
                     vec![
                         // Lib shows up here twice, because the linker sees it twice, but it should
                         // have the same address and nonce.
                         (
-                            "nested/Nested.t.sol:Lib".to_string(),
+                            "default/linking/nested/Nested.t.sol:Lib".to_string(),
                             Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
                                 .unwrap(),
                         ),
                         (
-                            "nested/Nested.t.sol:NestedLib".to_string(),
+                            "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                             Address::from_str("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D")
                                 .unwrap(),
                         ),
                     ],
                 )
                 .assert_dependencies(
-                    "nested/Nested.t.sol:NestedLibraryLinkingTest".to_string(),
+                    "default/linking/nested/Nested.t.sol:NestedLibraryLinkingTest".to_string(),
                     vec![
                         (
-                            "nested/Nested.t.sol:Lib".to_string(),
+                            "default/linking/nested/Nested.t.sol:Lib".to_string(),
                             Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
                                 .unwrap(),
                         ),
                         (
-                            "nested/Nested.t.sol:NestedLib".to_string(),
+                            "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                             Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
                                 .unwrap(),
                         ),
@@ -383,94 +487,101 @@ mod tests {
 
     #[test]
     fn link_duplicate() {
-        link_test("../../testdata/linking/duplicate", |linker| {
+        link_test("../../testdata/default/linking/duplicate", |linker| {
             linker
-                .assert_dependencies("duplicate/Duplicate.t.sol:A".to_string(), vec![])
-                .assert_dependencies("duplicate/Duplicate.t.sol:B".to_string(), vec![])
                 .assert_dependencies(
-                    "duplicate/Duplicate.t.sol:C".to_string(),
+                    "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
+                    vec![],
+                )
+                .assert_dependencies(
+                    "default/linking/duplicate/Duplicate.t.sol:B".to_string(),
+                    vec![],
+                )
+                .assert_dependencies(
+                    "default/linking/duplicate/Duplicate.t.sol:C".to_string(),
                     vec![(
-                        "duplicate/Duplicate.t.sol:A".to_string(),
+                        "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     )],
                 )
                 .assert_dependencies(
-                    "duplicate/Duplicate.t.sol:D".to_string(),
+                    "default/linking/duplicate/Duplicate.t.sol:D".to_string(),
                     vec![(
-                        "duplicate/Duplicate.t.sol:B".to_string(),
+                        "default/linking/duplicate/Duplicate.t.sol:B".to_string(),
                         Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
                     )],
                 )
                 .assert_dependencies(
-                    "duplicate/Duplicate.t.sol:E".to_string(),
+                    "default/linking/duplicate/Duplicate.t.sol:E".to_string(),
                     vec![
                         (
-                            "duplicate/Duplicate.t.sol:A".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
                             Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:C".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:C".to_string(),
                             Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
                                 .unwrap(),
                         ),
                     ],
                 )
                 .assert_dependencies(
-                    "duplicate/Duplicate.t.sol:LibraryConsumer".to_string(),
+                    "default/linking/duplicate/Duplicate.t.sol:LibraryConsumer".to_string(),
                     vec![
                         (
-                            "duplicate/Duplicate.t.sol:A".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
                             Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:B".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:B".to_string(),
                             Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:C".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:C".to_string(),
                             Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:D".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:D".to_string(),
                             Address::from_str("0x47c5e40890bce4a473a49d7501808b9633f29782")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:E".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:E".to_string(),
                             Address::from_str("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f")
                                 .unwrap(),
                         ),
                     ],
                 )
                 .assert_dependencies(
-                    "duplicate/Duplicate.t.sol:DuplicateLibraryLinkingTest".to_string(),
+                    "default/linking/duplicate/Duplicate.t.sol:DuplicateLibraryLinkingTest"
+                        .to_string(),
                     vec![
                         (
-                            "duplicate/Duplicate.t.sol:A".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
                             Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:B".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:B".to_string(),
                             Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:C".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:C".to_string(),
                             Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:D".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:D".to_string(),
                             Address::from_str("0x47c5e40890bce4a473a49d7501808b9633f29782")
                                 .unwrap(),
                         ),
                         (
-                            "duplicate/Duplicate.t.sol:E".to_string(),
+                            "default/linking/duplicate/Duplicate.t.sol:E".to_string(),
                             Address::from_str("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f")
                                 .unwrap(),
                         ),
@@ -482,39 +593,92 @@ mod tests {
 
     #[test]
     fn link_cycle() {
-        link_test("../../testdata/linking/cycle", |linker| {
+        link_test("../../testdata/default/linking/cycle", |linker| {
             linker
                 .assert_dependencies(
-                    "cycle/Cycle.t.sol:Foo".to_string(),
+                    "default/linking/cycle/Cycle.t.sol:Foo".to_string(),
                     vec![
                         (
-                            "cycle/Cycle.t.sol:Foo".to_string(),
+                            "default/linking/cycle/Cycle.t.sol:Foo".to_string(),
                             Address::from_str("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D")
                                 .unwrap(),
                         ),
                         (
-                            "cycle/Cycle.t.sol:Bar".to_string(),
+                            "default/linking/cycle/Cycle.t.sol:Bar".to_string(),
                             Address::from_str("0x5a443704dd4B594B382c22a083e2BD3090A6feF3")
                                 .unwrap(),
                         ),
                     ],
                 )
                 .assert_dependencies(
-                    "cycle/Cycle.t.sol:Bar".to_string(),
+                    "default/linking/cycle/Cycle.t.sol:Bar".to_string(),
                     vec![
                         (
-                            "cycle/Cycle.t.sol:Foo".to_string(),
+                            "default/linking/cycle/Cycle.t.sol:Foo".to_string(),
                             Address::from_str("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D")
                                 .unwrap(),
                         ),
                         (
-                            "cycle/Cycle.t.sol:Bar".to_string(),
+                            "default/linking/cycle/Cycle.t.sol:Bar".to_string(),
                             Address::from_str("0x5a443704dd4B594B382c22a083e2BD3090A6feF3")
                                 .unwrap(),
                         ),
                     ],
                 )
                 .test_with_sender_and_nonce(Address::default(), 1);
+        });
+    }
+
+    #[test]
+    fn link_create2_nested() {
+        link_test("../../testdata/default/linking/nested", |linker| {
+            linker
+                .assert_dependencies("default/linking/nested/Nested.t.sol:Lib".to_string(), vec![])
+                .assert_dependencies(
+                    "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
+                    vec![(
+                        "default/linking/nested/Nested.t.sol:Lib".to_string(),
+                        Address::from_str("0xCD3864eB2D88521a5477691EE589D9994b796834").unwrap(),
+                    )],
+                )
+                .assert_dependencies(
+                    "default/linking/nested/Nested.t.sol:LibraryConsumer".to_string(),
+                    vec![
+                        // Lib shows up here twice, because the linker sees it twice, but it should
+                        // have the same address and nonce.
+                        (
+                            "default/linking/nested/Nested.t.sol:Lib".to_string(),
+                            Address::from_str("0xCD3864eB2D88521a5477691EE589D9994b796834")
+                                .unwrap(),
+                        ),
+                        (
+                            "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
+                            Address::from_str("0x023d9a6bfA39c45997572dC4F87b3E2713b6EBa4")
+                                .unwrap(),
+                        ),
+                    ],
+                )
+                .assert_dependencies(
+                    "default/linking/nested/Nested.t.sol:NestedLibraryLinkingTest".to_string(),
+                    vec![
+                        (
+                            "default/linking/nested/Nested.t.sol:Lib".to_string(),
+                            Address::from_str("0xCD3864eB2D88521a5477691EE589D9994b796834")
+                                .unwrap(),
+                        ),
+                        (
+                            "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
+                            Address::from_str("0x023d9a6bfA39c45997572dC4F87b3E2713b6EBa4")
+                                .unwrap(),
+                        ),
+                    ],
+                )
+                .test_with_create2(
+                    Address::default(),
+                    fixed_bytes!(
+                        "19bf59b7b67ae8edcbc6e53616080f61fa99285c061450ad601b0bc40c9adfc9"
+                    ),
+                );
         });
     }
 }

@@ -1,4 +1,9 @@
+//! # foundry-script
+//!
+//! Smart contract scripting.
+
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -6,7 +11,7 @@ extern crate tracing;
 use self::transaction::AdditionalContract;
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_primitives::{hex, Address, Bytes, Log, TxKind, U256};
 use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
@@ -17,13 +22,10 @@ use forge_verify::RetryArgs;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
     abi::{encode_function_args, get_func},
-    compile::SkipBuildFilter,
-    errors::UnlinkedByteCode,
     evm::{Breakpoints, EvmArgs},
-    provider::alloy::RpcUrl,
-    shell, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
-use foundry_compilers::{artifacts::ContractBytecodeSome, ArtifactId};
+use foundry_compilers::ArtifactId;
 use foundry_config::{
     figment,
     figment::{
@@ -35,7 +37,6 @@ use foundry_config::{
 use foundry_evm::{
     backend::Backend,
     constants::DEFAULT_CREATE2_DEPLOYER,
-    debug::DebugArena,
     executors::ExecutorBuilder,
     inspectors::{
         cheatcodes::{BroadcastableTransactions, ScriptWallets},
@@ -46,14 +47,14 @@ use foundry_evm::{
 };
 use foundry_wallets::MultiWalletOpts;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use yansi::Paint;
 
-mod artifacts;
 mod broadcast;
 mod build;
 mod execute;
 mod multi_sequence;
+mod progress;
 mod providers;
 mod receipts;
 mod runner;
@@ -122,7 +123,6 @@ pub struct ScriptArgs {
     /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
     #[arg(
         long,
-        requires = "sender",
         conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor", "aws"],
     )]
     pub unlocked: bool,
@@ -178,12 +178,6 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
-    /// Skip building files whose names contain the given filter.
-    ///
-    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
-    #[arg(long, num_args(1..))]
-    pub skip: Option<Vec<SkipBuildFilter>>,
-
     #[command(flatten)]
     pub opts: CoreBuildArgs,
 
@@ -199,8 +193,6 @@ pub struct ScriptArgs {
     #[command(flatten)]
     pub retry: RetryArgs,
 }
-
-// === impl ScriptArgs ===
 
 impl ScriptArgs {
     async fn preprocess(self) -> Result<PreprocessedState> {
@@ -232,7 +224,8 @@ impl ScriptArgs {
         } else {
             // Drive state machine to point at which we have everything needed for simulation.
             let pre_simulation = compiled
-                .link()?
+                .link()
+                .await?
                 .prepare_execution()
                 .await?
                 .execute()
@@ -241,7 +234,7 @@ impl ScriptArgs {
                 .await?;
 
             if pre_simulation.args.debug {
-                pre_simulation.run_debugger()?;
+                return pre_simulation.run_debugger()
             }
 
             if pre_simulation.args.json {
@@ -269,7 +262,7 @@ impl ScriptArgs {
 
             pre_simulation.args.check_contract_sizes(
                 &pre_simulation.execution_result,
-                &pre_simulation.build_data.highlevel_known_contracts,
+                &pre_simulation.build_data.known_contracts,
             )?;
 
             pre_simulation.fill_metadata().await?.bundle().await?
@@ -357,25 +350,16 @@ impl ScriptArgs {
     fn check_contract_sizes(
         &self,
         result: &ScriptResult,
-        known_contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
+        known_contracts: &ContractsByArtifact,
     ) -> Result<()> {
         // (name, &init, &deployed)[]
         let mut bytecodes: Vec<(String, &[u8], &[u8])> = vec![];
 
         // From artifacts
-        for (artifact, bytecode) in known_contracts.iter() {
-            if bytecode.bytecode.object.is_unlinked() {
-                return Err(UnlinkedByteCode::Bytecode(artifact.identifier()).into());
-            }
-            let init_code = bytecode.bytecode.object.as_bytes().unwrap();
-            // Ignore abstract contracts
-            if let Some(ref deployed_code) = bytecode.deployed_bytecode.bytecode {
-                if deployed_code.object.is_unlinked() {
-                    return Err(UnlinkedByteCode::DeployedBytecode(artifact.identifier()).into());
-                }
-                let deployed_code = deployed_code.object.as_bytes().unwrap();
-                bytecodes.push((artifact.name.clone(), init_code, deployed_code));
-            }
+        for (artifact, contract) in known_contracts.iter() {
+            let Some(bytecode) = contract.bytecode() else { continue };
+            let Some(deployed_bytecode) = contract.deployed_bytecode() else { continue };
+            bytecodes.push((artifact.name.clone(), bytecode, deployed_bytecode));
         }
 
         // From traces
@@ -412,13 +396,15 @@ impl ScriptArgs {
             let mut offset = 0;
 
             // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
-            if let Some(to) = to {
+            if let Some(TxKind::Call(to)) = to {
                 if to == DEFAULT_CREATE2_DEPLOYER {
                     // Size of the salt prefix.
                     offset = 32;
+                } else {
+                    continue;
                 }
-            } else if to.is_some() {
-                continue;
+            } else if let Some(TxKind::Create) = to {
+                // Pass
             }
 
             // Find artifact with a deployment code same as the data.
@@ -431,9 +417,9 @@ impl ScriptArgs {
                     prompt_user = self.broadcast;
                     shell::println(format!(
                         "{}",
-                        Paint::red(format!(
+                        format!(
                             "`{name}` is above the contract size limit ({deployment_size} > {max_size})."
-                        ))
+                        ).red()
                     ))?;
                 }
             }
@@ -475,7 +461,6 @@ pub struct ScriptResult {
     pub success: bool,
     pub logs: Vec<Log>,
     pub traces: Traces,
-    pub debug: Option<Vec<DebugArena>>,
     pub gas_used: u64,
     pub labeled_addresses: HashMap<Address, String>,
     pub transactions: Option<BroadcastableTransactions>,
@@ -523,7 +508,7 @@ pub struct ScriptConfig {
     pub evm_opts: EvmOpts,
     pub sender_nonce: u64,
     /// Maps a rpc url to a backend
-    pub backends: HashMap<RpcUrl, Backend>,
+    pub backends: HashMap<String, Backend>,
 }
 
 impl ScriptConfig {
@@ -554,17 +539,17 @@ impl ScriptConfig {
 
     async fn get_runner_with_cheatcodes(
         &mut self,
-        artifact_ids: Vec<ArtifactId>,
+        known_contracts: ContractsByArtifact,
         script_wallets: ScriptWallets,
         debug: bool,
         target: ArtifactId,
     ) -> Result<ScriptRunner> {
-        self._get_runner(Some((artifact_ids, script_wallets, target)), debug).await
+        self._get_runner(Some((known_contracts, script_wallets, target)), debug).await
     }
 
     async fn _get_runner(
         &mut self,
-        cheats_data: Option<(Vec<ArtifactId>, ScriptWallets, ArtifactId)>,
+        cheats_data: Option<(ContractsByArtifact, ScriptWallets, ArtifactId)>,
         debug: bool,
     ) -> Result<ScriptRunner> {
         trace!("preparing script runner");
@@ -593,7 +578,7 @@ impl ScriptConfig {
             .spec(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit());
 
-        if let Some((artifact_ids, script_wallets, target)) = cheats_data {
+        if let Some((known_contracts, script_wallets, target)) = cheats_data {
             builder = builder.inspectors(|stack| {
                 stack
                     .debug(debug)
@@ -601,7 +586,7 @@ impl ScriptConfig {
                         CheatsConfig::new(
                             &self.config,
                             self.evm_opts.clone(),
-                            Some(artifact_ids),
+                            Some(known_contracts),
                             Some(script_wallets),
                             Some(target.version),
                         )
@@ -611,11 +596,7 @@ impl ScriptConfig {
             });
         }
 
-        Ok(ScriptRunner::new(
-            builder.build(env, db),
-            self.evm_opts.initial_balance,
-            self.evm_opts.sender,
-        ))
+        Ok(ScriptRunner::new(builder.build(env, db), self.evm_opts.clone()))
     }
 }
 

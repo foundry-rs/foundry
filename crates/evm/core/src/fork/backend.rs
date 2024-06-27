@@ -5,7 +5,8 @@ use crate::{
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_rpc_types::{Block, BlockId, Transaction, WithOtherFields};
+use alloy_rpc_types::{Block, BlockId, Transaction};
+use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;
@@ -22,6 +23,7 @@ use revm::{
 use rustc_hash::FxHashMap;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
+    future::IntoFuture,
     marker::PhantomData,
     pin::Pin,
     sync::{
@@ -134,7 +136,7 @@ where
     /// We always check:
     ///  1. if the requested value is already stored in the cache, then answer the sender
     ///  2. otherwise, fetch it via the provider but check if a request for that value is already in
-    /// progress (e.g. another Sender just requested the same account)
+    ///     progress (e.g. another Sender just requested the same account)
     fn on_request(&mut self, req: BackendRequest) {
         match req {
             BackendRequest::Basic(addr, sender) => {
@@ -187,10 +189,13 @@ where
                 trace!(target: "backendhandler", %address, %idx, "preparing storage request");
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
-                let block_id = self.block_id;
+                let block_id = self.block_id.unwrap_or_default();
                 let fut = Box::pin(async move {
-                    let storage =
-                        provider.get_storage_at(address, idx, block_id).await.map_err(Into::into);
+                    let storage = provider
+                        .get_storage_at(address, idx)
+                        .block_id(block_id)
+                        .await
+                        .map_err(Into::into);
                     (storage, address, idx)
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
@@ -202,11 +207,11 @@ where
     fn get_account_req(&self, address: Address) -> ProviderRequest<eyre::Report> {
         trace!(target: "backendhandler", "preparing account request, address={:?}", address);
         let provider = self.provider.clone();
-        let block_id = self.block_id;
+        let block_id = self.block_id.unwrap_or_default();
         let fut = Box::pin(async move {
-            let balance = provider.get_balance(address, block_id);
-            let nonce = provider.get_transaction_count(address, block_id);
-            let code = provider.get_code_at(address, block_id.unwrap_or_default());
+            let balance = provider.get_balance(address).block_id(block_id).into_future();
+            let nonce = provider.get_transaction_count(address).block_id(block_id).into_future();
+            let code = provider.get_code_at(address).block_id(block_id).into_future();
             let resp = tokio::try_join!(balance, nonce, code).map_err(Into::into);
             (resp, address)
         });
@@ -230,8 +235,10 @@ where
     fn request_full_block(&mut self, number: BlockId, sender: FullBlockSender) {
         let provider = self.provider.clone();
         let fut = Box::pin(async move {
-            let block =
-                provider.get_block(number, true).await.wrap_err("could not fetch block {number:?}");
+            let block = provider
+                .get_block(number, true.into())
+                .await
+                .wrap_err("could not fetch block {number:?}");
             (sender, block, number)
         });
 
@@ -245,7 +252,10 @@ where
             let block = provider
                 .get_transaction_by_hash(tx)
                 .await
-                .wrap_err("could not get transaction {tx}");
+                .wrap_err_with(|| format!("could not get transaction {tx}"))
+                .and_then(|maybe| {
+                    maybe.ok_or_else(|| eyre::eyre!("could not get transaction {tx}"))
+                });
             (sender, block, tx)
         });
 
@@ -355,7 +365,7 @@ where
                             let acc = AccountInfo {
                                 nonce,
                                 balance,
-                                code: Some(Bytecode::new_raw(code).to_checked()),
+                                code: Some(Bytecode::new_raw(code)),
                                 code_hash,
                             };
                             pin.db.accounts().write().insert(addr, acc.clone());
@@ -488,7 +498,7 @@ where
 /// that is used by the `BackendHandler` to send the result of an executed `BackendRequest` back to
 /// `SharedBackend`.
 ///
-/// The `BackendHandler` holds an ethers `Provider` to look up missing accounts or storage slots
+/// The `BackendHandler` holds a `Provider` to look up missing accounts or storage slots
 /// from remote (e.g. infura). It detects duplicate requests from multiple `SharedBackend`s and
 /// bundles them together, so that always only one provider request is executed. For example, there
 /// are two `SharedBackend`s, `A` and `B`, both request the basic account info of account
@@ -698,7 +708,7 @@ mod tests {
         fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
         opts::EvmOpts,
     };
-    use foundry_common::provider::alloy::get_http_provider;
+    use foundry_common::provider::get_http_provider;
     use foundry_config::{Config, NamedChain};
     use std::{collections::BTreeSet, path::PathBuf};
 

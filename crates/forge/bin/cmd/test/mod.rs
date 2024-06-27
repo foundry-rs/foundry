@@ -5,7 +5,6 @@ use eyre::Result;
 use forge::{
     decode::decode_console_logs,
     gas_report::GasReport,
-    inspectors::CheatsConfig,
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{identifier::SignaturesIdentifier, CallTraceDecoderBuilder, TraceKind},
@@ -20,7 +19,11 @@ use foundry_common::{
     evm::EvmArgs,
     shell,
 };
-use foundry_compilers::{artifacts::output_selection::OutputSelection, utils::source_files_iter};
+use foundry_compilers::{
+    artifacts::output_selection::OutputSelection,
+    compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
+    utils::source_files_iter,
+};
 use foundry_config::{
     figment,
     figment::{
@@ -35,7 +38,7 @@ use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
-    sync::mpsc::channel,
+    sync::{mpsc::channel, Arc},
     time::Instant,
 };
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -108,6 +111,11 @@ pub struct TestArgs {
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
 
+    /// Max concurrent threads to use.
+    /// Default value is the number of available CPUs.
+    #[arg(long)]
+    pub max_threads: Option<u64>,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -127,6 +135,10 @@ pub struct TestArgs {
     /// Print detailed test summary table.
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
+
+    /// Show test execution progress.
+    #[arg(long)]
+    pub show_progress: bool,
 }
 
 impl TestArgs {
@@ -150,12 +162,14 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
     ) -> Result<BTreeSet<PathBuf>> {
         let mut project = config.create_project(true, true)?;
-        project.solc_config.settings.output_selection =
-            OutputSelection::common_output_selection(["abi".to_string()]);
+        project.settings.update_output_selection(|selection| {
+            *selection = OutputSelection::common_output_selection(["abi".to_string()]);
+        });
+
         let output = project.compile()?;
 
         if output.has_compiler_errors() {
-            println!("{}", output);
+            println!("{output}");
             eyre::bail!("Compilation failed");
         }
 
@@ -202,7 +216,10 @@ impl TestArgs {
         }
 
         // Always recompile all sources to ensure that `getCode` cheatcode can use any artifact.
-        test_sources.extend(source_files_iter(project.paths.sources));
+        test_sources.extend(source_files_iter(
+            project.paths.sources,
+            MultiCompilerLanguage::FILE_EXTENSIONS,
+        ));
 
         Ok(test_sources)
     }
@@ -214,6 +231,13 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn execute_tests(self) -> Result<TestOutcome> {
+        // Set number of max threads to execute tests.
+        // If not specified then the number of threads determined by rayon will be used.
+        if let Some(test_threads) = self.max_threads {
+            trace!(target: "forge::test", "execute tests with {} max threads", test_threads);
+            rayon::ThreadPoolBuilder::new().num_threads(test_threads as usize).build_global()?;
+        }
+
         // Merge all configs
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -255,8 +279,8 @@ impl TestArgs {
         let profiles = get_available_profiles(toml)?;
 
         let test_options: TestOptions = TestOptionsBuilder::default()
-            .fuzz(config.clone().fuzz)
-            .invariant(config.invariant)
+            .fuzz(config.fuzz.clone())
+            .invariant(config.invariant.clone())
             .profiles(profiles)
             .build(&output, project_root)?;
 
@@ -274,21 +298,14 @@ impl TestArgs {
         // Clone the output only if we actually need it later for the debugger.
         let output_clone = should_debug.then(|| output.clone());
 
-        let artifact_ids = output.artifact_ids().map(|(id, _)| id).collect();
+        let config = Arc::new(config);
 
-        let runner = MultiContractRunnerBuilder::default()
+        let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .with_cheats_config(CheatsConfig::new(
-                &config,
-                evm_opts.clone(),
-                Some(artifact_ids),
-                None,
-                None, // populated separately for each test contract
-            ))
             .with_test_options(test_options)
             .enable_isolation(evm_opts.isolate)
             .build(project_root, output, env, evm_opts)?;
@@ -304,11 +321,12 @@ impl TestArgs {
             *test_pattern = Some(debug_test_pattern.clone());
         }
 
+        let libraries = runner.libraries.clone();
         let outcome = self.run_tests(runner, config, verbosity, &filter).await?;
 
         if should_debug {
             // Get first non-empty suite result. We will have only one such entry
-            let Some((suite_result, test_result)) = outcome
+            let Some((_, test_result)) = outcome
                 .results
                 .iter()
                 .find(|(_, r)| !r.test_results.is_empty())
@@ -320,15 +338,17 @@ impl TestArgs {
             let sources = ContractSources::from_project_output(
                 output_clone.as_ref().unwrap(),
                 project.root(),
-                &suite_result.libraries,
+                Some(&libraries),
             )?;
 
             // Run the debugger.
             let mut builder = Debugger::builder()
-                .debug_arenas(test_result.debug.as_slice())
+                .traces(
+                    test_result.traces.iter().filter(|(t, _)| t.is_execution()).cloned().collect(),
+                )
                 .sources(sources)
                 .breakpoints(test_result.breakpoints.clone());
-            if let Some(decoder) = &outcome.decoder {
+            if let Some(decoder) = &outcome.last_run_decoder {
                 builder = builder.decoder(decoder);
             }
             let mut debugger = builder.build();
@@ -342,7 +362,7 @@ impl TestArgs {
     pub async fn run_tests(
         &self,
         mut runner: MultiContractRunner,
-        config: Config,
+        config: Arc<Config>,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
     ) -> eyre::Result<TestOutcome> {
@@ -367,26 +387,26 @@ impl TestArgs {
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
-        // Set up trace identifiers.
+        let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
         let known_contracts = runner.known_contracts.clone();
-        let remote_chain_id = runner.evm_opts.get_remote_chain_id();
-        let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
-
-        // Avoid using etherscan for gas report as we decode more traces and this will be expensive.
-        if !self.gas_report {
-            identifier = identifier.with_etherscan(&config, remote_chain_id)?;
-        }
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
+        let show_progress = self.show_progress;
         let handle = tokio::task::spawn_blocking({
             let filter = filter.clone();
-            move || runner.test(&filter, tx)
+            move || runner.test(&filter, tx, show_progress)
         });
 
-        let mut gas_report =
-            self.gas_report.then(|| GasReport::new(config.gas_reports, config.gas_reports_ignore));
+        // Set up trace identifiers.
+        let mut identifier = TraceIdentifiers::new().with_local(&known_contracts);
+
+        // Avoid using etherscan for gas report as we decode more traces and this will be
+        // expensive.
+        if !self.gas_report {
+            identifier = identifier.with_etherscan(&config, remote_chain_id)?;
+        }
 
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
@@ -401,8 +421,9 @@ impl TestArgs {
         }
         let mut decoder = builder.build();
 
-        // We identify addresses if we're going to print *any* trace or gas report.
-        let identify_addresses = verbosity >= 3 || self.gas_report || self.debug.is_some();
+        let mut gas_report = self
+            .gas_report
+            .then(|| GasReport::new(config.gas_reports.clone(), config.gas_reports_ignore.clone()));
 
         let mut outcome = TestOutcome::empty(self.allow_failure);
 
@@ -410,10 +431,16 @@ impl TestArgs {
         for (contract_name, suite_result) in rx {
             let tests = &suite_result.test_results;
 
+            // Clear the addresses and labels from previous test.
+            decoder.clear_addresses();
+
+            // We identify addresses if we're going to print *any* trace or gas report.
+            let identify_addresses = verbosity >= 3 || self.gas_report || self.debug.is_some();
+
             // Print suite header.
             println!();
             for warning in suite_result.warnings.iter() {
-                eprintln!("{} {warning}", Paint::yellow("Warning:").bold());
+                eprintln!("{} {warning}", "Warning:".yellow().bold());
             }
             if !tests.is_empty() {
                 let len = tests.len();
@@ -441,10 +468,6 @@ impl TestArgs {
                 // We shouldn't break out of the outer loop directly here so that we finish
                 // processing the remaining tests and print the suite summary.
                 any_test_failed |= result.status == TestStatus::Failure;
-
-                if result.traces.is_empty() {
-                    continue;
-                }
 
                 // Clear the addresses and labels from previous runs.
                 decoder.clear_addresses();
@@ -521,11 +544,10 @@ impl TestArgs {
                 break;
             }
         }
+        outcome.last_run_decoder = Some(decoder);
         let duration = timer.elapsed();
 
         trace!(target: "forge::test", len=outcome.results.len(), %any_test_failed, "done with results");
-
-        outcome.decoder = Some(decoder);
 
         if let Some(gas_report) = gas_report {
             let finalized = gas_report.finalize();
@@ -629,7 +651,7 @@ fn list(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_config::Chain;
+    use foundry_config::{Chain, InvariantConfig};
     use foundry_test_utils::forgetest_async;
 
     #[test]
@@ -666,6 +688,13 @@ mod tests {
     }
 
     forgetest_async!(gas_report_fuzz_invariant, |prj, _cmd| {
+        // speed up test by running with depth of 15
+        let config = Config {
+            invariant: { InvariantConfig { depth: 15, ..Default::default() } },
+            ..Default::default()
+        };
+        prj.write_config(config);
+
         prj.insert_ds_test();
         prj.add_source(
             "Contracts.sol",

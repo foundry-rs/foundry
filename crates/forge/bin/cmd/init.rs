@@ -3,47 +3,47 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{p_println, utils::Git};
 use foundry_common::fs;
-use foundry_compilers::remappings::Remapping;
+use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::Config;
 use std::path::{Path, PathBuf};
 use yansi::Paint;
 
 /// CLI arguments for `forge init`.
-#[derive(Clone, Debug, Parser)]
+#[derive(Clone, Debug, Default, Parser)]
 pub struct InitArgs {
     /// The root directory of the new project.
     #[arg(value_hint = ValueHint::DirPath, default_value = ".", value_name = "PATH")]
-    root: PathBuf,
+    pub root: PathBuf,
 
     /// The template to start from.
     #[arg(long, short)]
-    template: Option<String>,
+    pub template: Option<String>,
 
     /// Branch argument that can only be used with template option.
     /// If not specified, the default branch is used.
     #[arg(long, short, requires = "template")]
-    branch: Option<String>,
+    pub branch: Option<String>,
 
     /// Do not install dependencies from the network.
     #[arg(long, conflicts_with = "template", visible_alias = "no-deps")]
-    offline: bool,
+    pub offline: bool,
 
     /// Create the project even if the specified root directory is not empty.
     #[arg(long, conflicts_with = "template")]
-    force: bool,
+    pub force: bool,
 
     /// Create a .vscode/settings.json file with Solidity settings, and generate a remappings.txt
     /// file.
     #[arg(long, conflicts_with = "template")]
-    vscode: bool,
+    pub vscode: bool,
 
     #[command(flatten)]
-    opts: DependencyInstallOpts,
+    pub opts: DependencyInstallOpts,
 }
 
 impl InitArgs {
     pub fn run(self) -> Result<()> {
-        let InitArgs { root, template, branch, opts, offline, force, vscode } = self;
+        let Self { root, template, branch, opts, offline, force, vscode } = self;
         let DependencyInstallOpts { shallow, no_git, no_commit, quiet } = opts;
 
         // create the root dir if it does not exist
@@ -159,7 +159,7 @@ impl InitArgs {
             }
         }
 
-        p_println!(!quiet => "    {} forge project",  Paint::green("Initialized"));
+        p_println!(!quiet => "    {} forge project",  "Initialized".green());
         Ok(())
     }
 }

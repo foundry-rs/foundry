@@ -109,13 +109,13 @@ where
                     *account,
                     new_account_state
                         .iter()
-                        .map(|(key, value)| ((*key).into(), (*value)))
+                        .map(|(key, value)| ((*key).into(), (*value).into()))
                         .collect(),
                 )?;
             }
             (None, Some(account_state_diff)) => {
                 for (key, value) in account_state_diff.iter() {
-                    cache_db.insert_account_storage(*account, (*key).into(), *value)?;
+                    cache_db.insert_account_storage(*account, (*key).into(), (*value).into())?;
                 }
             }
         };

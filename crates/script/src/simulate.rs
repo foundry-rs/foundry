@@ -1,5 +1,4 @@
 use super::{
-    artifacts::ArtifactInfo,
     multi_sequence::MultiChainSequence,
     providers::ProvidersManager,
     runner::ScriptRunner,
@@ -14,11 +13,11 @@ use crate::{
     ScriptArgs, ScriptConfig, ScriptResult,
 };
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{utils::format_units, Address, U256};
+use alloy_primitives::{utils::format_units, Address, TxKind, U256};
 use eyre::{Context, Result};
 use foundry_cheatcodes::{BroadcastableTransactions, ScriptWallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{get_contract_name, provider::alloy::RpcUrl, shell, ContractsByArtifact};
+use foundry_common::{get_contract_name, shell, ContractData};
 use foundry_evm::traces::render_trace_arena;
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
@@ -27,11 +26,11 @@ use std::{
     sync::Arc,
 };
 
-/// Same as [ExecutedState], but also contains [ExecutionArtifacts] which are obtained from
-/// [ScriptResult].
+/// Same as [ExecutedState](crate::execute::ExecutedState), but also contains [ExecutionArtifacts]
+/// which are obtained from [ScriptResult].
 ///
-/// Can be either converted directly to [BundledState] via [PreSimulationState::resume] or driven to
-/// it through [FilledTransactionsState].
+/// Can be either converted directly to [BundledState] or driven to it through
+/// [FilledTransactionsState].
 pub struct PreSimulationState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
@@ -88,9 +87,7 @@ impl PreSimulationState {
                 .collect::<HashMap<_, _>>(),
         );
 
-        let contracts = self.build_data.get_flattened_contracts(false);
-        let address_to_abi: BTreeMap<Address, ArtifactInfo> =
-            self.build_address_to_abi_map(&contracts);
+        let address_to_abi = self.build_address_to_abi_map();
 
         let mut final_txs = VecDeque::new();
 
@@ -102,11 +99,12 @@ impl PreSimulationState {
                 let mut runner = runners.get(&rpc).expect("invalid rpc url").write();
 
                 let mut tx = transaction.transaction;
+                let to = if let Some(TxKind::Call(to)) = tx.to { Some(to) } else { None };
                 let result = runner
                     .simulate(
                         tx.from
                             .expect("transaction doesn't have a `from` address at execution time"),
-                        tx.to,
+                        to,
                         tx.input.clone().into_input(),
                         tx.value,
                     )
@@ -120,7 +118,7 @@ impl PreSimulationState {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    runner.executor.env.block.number += U256::from(1);
+                    runner.executor.env_mut().block.number += U256::from(1);
                 }
 
                 let is_fixed_gas_limit = tx.gas.is_some();
@@ -183,21 +181,17 @@ impl PreSimulationState {
     }
 
     /// Build mapping from contract address to its ABI, code and contract name.
-    fn build_address_to_abi_map<'a>(
-        &self,
-        contracts: &'a ContractsByArtifact,
-    ) -> BTreeMap<Address, ArtifactInfo<'a>> {
+    fn build_address_to_abi_map(&self) -> BTreeMap<Address, &ContractData> {
         self.execution_artifacts
             .decoder
             .contracts
             .iter()
             .filter_map(move |(addr, contract_id)| {
                 let contract_name = get_contract_name(contract_id);
-                if let Ok(Some((_, (abi, code)))) =
-                    contracts.find_by_name_or_identifier(contract_name)
+                if let Ok(Some((_, data))) =
+                    self.build_data.known_contracts.find_by_name_or_identifier(contract_name)
                 {
-                    let info = ArtifactInfo { contract_name: contract_name.to_string(), abi, code };
-                    return Some((*addr, info));
+                    return Some((*addr, data));
                 }
                 None
             })
@@ -205,7 +199,7 @@ impl PreSimulationState {
     }
 
     /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
-    async fn build_runners(&self) -> Result<Vec<(RpcUrl, ScriptRunner)>> {
+    async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner)>> {
         let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
         if !shell::verbosity().is_silent() {
             let n = rpcs.len();
@@ -264,7 +258,7 @@ impl FilledTransactionsState {
             eyre::bail!("Multi-chain deployment is not supported with libraries.");
         }
 
-        let mut total_gas_per_rpc: HashMap<RpcUrl, u128> = HashMap::new();
+        let mut total_gas_per_rpc: HashMap<String, u128> = HashMap::new();
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();
@@ -408,7 +402,7 @@ impl FilledTransactionsState {
             )?)
         };
 
-        let commit = get_commit_hash(&self.script_config.config.__root.0);
+        let commit = get_commit_hash(&self.script_config.config.root.0);
 
         let libraries = self
             .build_data

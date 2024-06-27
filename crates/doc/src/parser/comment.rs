@@ -3,8 +3,8 @@ use solang_parser::doccomment::DocCommentTag;
 use std::collections::HashMap;
 
 /// The natspec comment tag explaining the purpose of the comment.
-/// See: https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags.
-#[derive(Clone, Debug, PartialEq)]
+/// See: <https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags>.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CommentTag {
     /// A title that should describe the contract/interface
     Title,
@@ -28,20 +28,20 @@ impl CommentTag {
     fn from_str(s: &str) -> Option<Self> {
         let trimmed = s.trim();
         let tag = match trimmed {
-            "title" => CommentTag::Title,
-            "author" => CommentTag::Author,
-            "notice" => CommentTag::Notice,
-            "dev" => CommentTag::Dev,
-            "param" => CommentTag::Param,
-            "return" => CommentTag::Return,
-            "inheritdoc" => CommentTag::Inheritdoc,
+            "title" => Self::Title,
+            "author" => Self::Author,
+            "notice" => Self::Notice,
+            "dev" => Self::Dev,
+            "param" => Self::Param,
+            "return" => Self::Return,
+            "inheritdoc" => Self::Inheritdoc,
             _ if trimmed.starts_with("custom:") => {
                 // `@custom:param` tag will be parsed as `CommentTag::Param` due to a limitation
                 // on specifying parameter docs for unnamed function arguments.
                 let custom_tag = trimmed.trim_start_matches("custom:").trim();
                 match custom_tag {
-                    "param" => CommentTag::Param,
-                    _ => CommentTag::Custom(custom_tag.to_owned()),
+                    "param" => Self::Param,
+                    _ => Self::Custom(custom_tag.to_owned()),
                 }
             }
             _ => {
@@ -54,8 +54,9 @@ impl CommentTag {
 }
 
 /// The natspec documentation comment.
-/// https://docs.soliditylang.org/en/v0.8.17/natspec-format.html
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Ref: <https://docs.soliditylang.org/en/v0.8.17/natspec-format.html>
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
     /// The doc comment tag.
     pub tag: CommentTag,
@@ -126,9 +127,9 @@ impl Comments {
     pub fn merge_inheritdoc(
         &self,
         ident: &str,
-        inheritdocs: Option<HashMap<String, Comments>>,
-    ) -> Comments {
-        let mut result = Comments(Vec::from_iter(self.iter().cloned()));
+        inheritdocs: Option<HashMap<String, Self>>,
+    ) -> Self {
+        let mut result = Self(Vec::from_iter(self.iter().cloned()));
 
         if let (Some(inheritdocs), Some(base)) = (inheritdocs, self.find_inheritdoc_base()) {
             let key = format!("{base}.{ident}");
@@ -157,18 +158,18 @@ pub struct CommentsRef<'a>(Vec<&'a Comment>);
 
 impl<'a> CommentsRef<'a> {
     /// Filter a collection of comments and return only those that match a provided tag
-    pub fn include_tag(&self, tag: CommentTag) -> CommentsRef<'a> {
+    pub fn include_tag(&self, tag: CommentTag) -> Self {
         self.include_tags(&[tag])
     }
 
     /// Filter a collection of comments and return only those that match provided tags
-    pub fn include_tags(&self, tags: &[CommentTag]) -> CommentsRef<'a> {
+    pub fn include_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
         CommentsRef(self.iter().cloned().filter(|c| tags.contains(&c.tag)).collect())
     }
 
     /// Filter a collection of comments and return  only those that do not match provided tags
-    pub fn exclude_tags(&self, tags: &[CommentTag]) -> CommentsRef<'a> {
+    pub fn exclude_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
         CommentsRef(self.iter().cloned().filter(|c| !tags.contains(&c.tag)).collect())
     }

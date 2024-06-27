@@ -37,7 +37,7 @@ pub struct InspectArgs {
 
 impl InspectArgs {
     pub fn run(self) -> Result<()> {
-        let InspectArgs { mut contract, field, build, pretty } = self;
+        let Self { mut contract, field, build, pretty } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
@@ -48,7 +48,7 @@ impl InspectArgs {
         }
 
         // Run Optimized?
-        let optimized = if let ContractArtifactField::AssemblyOptimized = field {
+        let optimized = if field == ContractArtifactField::AssemblyOptimized {
             true
         } else {
             build.compiler.optimize

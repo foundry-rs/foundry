@@ -20,6 +20,7 @@ use foundry_evm_core::{
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
+use rustc_hash::FxHashMap;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 
 mod precompiles;
@@ -56,8 +57,8 @@ impl CallTraceDecoderBuilder {
     #[inline]
     pub fn with_known_contracts(mut self, contracts: &ContractsByArtifact) -> Self {
         trace!(target: "evm::traces", len=contracts.len(), "collecting known contract ABIs");
-        for (abi, _) in contracts.values() {
-            self.decoder.collect_abi(abi, None);
+        for contract in contracts.values() {
+            self.decoder.collect_abi(&contract.abi, None);
         }
         self
     }
@@ -108,7 +109,7 @@ pub struct CallTraceDecoder {
     pub receive_contracts: Vec<Address>,
 
     /// All known functions.
-    pub functions: HashMap<Selector, Vec<Function>>,
+    pub functions: FxHashMap<Selector, Vec<Function>>,
     /// All known events.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// Revert decoder. Contains all known custom errors.
@@ -199,7 +200,7 @@ impl CallTraceDecoder {
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
     pub fn identify(&mut self, trace: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
-        self.collect_identities(identifier.identify_addresses(self.addresses(trace)));
+        self.collect_identities(identifier.identify_addresses(self.trace_addresses(trace)));
     }
 
     /// Adds a single event to the decoder.
@@ -229,7 +230,8 @@ impl CallTraceDecoder {
         self.revert_decoder.push_error(error);
     }
 
-    fn addresses<'a>(
+    /// Returns an iterator over the trace addresses.
+    pub fn trace_addresses<'a>(
         &'a self,
         arena: &'a CallTraceArena,
     ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>)> + Clone + 'a {
@@ -242,8 +244,8 @@ impl CallTraceDecoder {
                     node.trace.kind.is_any_create().then_some(&node.trace.output[..]),
                 )
             })
-            .filter(|(address, _)| {
-                !self.labels.contains_key(*address) || !self.contracts.contains_key(*address)
+            .filter(|&(address, _)| {
+                !self.labels.contains_key(address) || !self.contracts.contains_key(address)
             })
     }
 
@@ -310,7 +312,8 @@ impl CallTraceDecoder {
         if trace.address == DEFAULT_CREATE2_DEPLOYER {
             return DecodedCallTrace {
                 label,
-                return_data: None,
+                return_data: (!trace.status.is_ok())
+                    .then(|| self.revert_decoder.decode(&trace.output, Some(trace.status))),
                 contract,
                 func: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
             };
@@ -441,6 +444,7 @@ impl CallTraceDecoder {
             "keyExistsJson" |
             "serializeBool" |
             "serializeUint" |
+            "serializeUintToHex" |
             "serializeInt" |
             "serializeAddress" |
             "serializeBytes32" |
@@ -520,7 +524,7 @@ impl CallTraceDecoder {
         match func.name.as_str() {
             s if s.starts_with("env") => Some("<env var value>"),
             "createWallet" | "deriveKey" => Some("<pk>"),
-            "promptSecret" => Some("<secret>"),
+            "promptSecret" | "promptSecretUint" => Some("<secret>"),
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
             _ => None,
@@ -695,13 +699,13 @@ mod tests {
         for (function_signature, data, expected) in cheatcode_input_test_cases {
             let function = Function::parse(function_signature).unwrap();
             let result = decoder.decode_cheatcode_inputs(&function, &data);
-            assert_eq!(result, expected, "Input case failed for: {}", function_signature);
+            assert_eq!(result, expected, "Input case failed for: {function_signature}");
         }
 
         for (function_signature, expected) in cheatcode_output_test_cases {
             let function = Function::parse(function_signature).unwrap();
             let result = Some(decoder.decode_cheatcode_outputs(&function).unwrap_or_default());
-            assert_eq!(result, expected, "Output case failed for: {}", function_signature);
+            assert_eq!(result, expected, "Output case failed for: {function_signature}");
         }
     }
 }

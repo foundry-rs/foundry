@@ -1,8 +1,8 @@
-//! Utility functions for Ethereum adapted from https://github.dev/rust-blockchain/ethereum/blob/755dffaa4903fbec1269f50cde9863cf86269a14/src/util.rs
-use std::collections::BTreeMap;
+//! Utility functions for Ethereum adapted from <https://github.com/rust-blockchain/ethereum/blob/755dffaa4903fbec1269f50cde9863cf86269a14/src/util.rs>
 
 use alloy_primitives::{fixed_bytes, B256};
 use alloy_trie::{HashBuilder, Nibbles};
+use std::collections::BTreeMap;
 
 /// The KECCAK of the RLP encoding of empty data.
 pub const KECCAK_NULL_RLP: B256 =

@@ -11,6 +11,9 @@ homepage.workspace = true
 repository.workspace = true
 exclude.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-macros.workspace = true
 alloy-sol-types = { workspace = true, features = ["json"] }

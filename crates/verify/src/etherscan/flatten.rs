@@ -1,9 +1,16 @@
 use super::{EtherscanSourceProvider, VerifyArgs};
+use crate::provider::VerificationContext;
 use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
 use foundry_compilers::{
     artifacts::{BytecodeHash, Source},
-    AggregatedCompilerOutput, CompilerInput, Project, Solc,
+    buildinfo::RawBuildInfo,
+    compilers::{
+        solc::{SolcCompiler, SolcLanguage, SolcVersionedInput},
+        Compiler, CompilerInput,
+    },
+    solc::Solc,
+    AggregatedCompilerOutput,
 };
 use semver::{BuildMetadata, Version};
 use std::{collections::BTreeMap, path::Path};
@@ -14,11 +21,9 @@ impl EtherscanSourceProvider for EtherscanFlattenedSource {
     fn source(
         &self,
         args: &VerifyArgs,
-        project: &Project,
-        target: &Path,
-        version: &Version,
+        context: &VerificationContext,
     ) -> Result<(String, String, CodeFormat)> {
-        let metadata = project.solc_config.settings.metadata.as_ref();
+        let metadata = context.project.settings.solc.metadata.as_ref();
         let bch = metadata.and_then(|m| m.bytecode_hash).unwrap_or_default();
 
         eyre::ensure!(
@@ -27,11 +32,18 @@ impl EtherscanSourceProvider for EtherscanFlattenedSource {
             bch,
         );
 
-        let source = project.flatten(target).wrap_err("Failed to flatten contract")?;
+        let source = context
+            .project
+            .paths
+            .clone()
+            .with_language::<SolcLanguage>()
+            .flatten(&context.target_path)
+            .wrap_err("Failed to flatten contract")?;
 
         if !args.force {
             // solc dry run of flattened code
-            self.check_flattened(source.clone(), version, target).map_err(|err| {
+            self.check_flattened(source.clone(), &context.compiler_version, &context.target_path)
+                .map_err(|err| {
                 eyre::eyre!(
                     "Failed to compile the flattened code locally: `{}`\
             To skip this solc dry, have a look at the `--force` flag of this command.",
@@ -40,15 +52,14 @@ impl EtherscanSourceProvider for EtherscanFlattenedSource {
             })?;
         }
 
-        let name = args.contract.name.clone();
-        Ok((source, name, CodeFormat::SingleFile))
+        Ok((source, context.target_name.clone(), CodeFormat::SingleFile))
     }
 }
 
 impl EtherscanFlattenedSource {
     /// Attempts to compile the flattened content locally with the compiler version.
     ///
-    /// This expects the completely flattened `content´ and will try to compile it using the
+    /// This expects the completely flattened content and will try to compile it using the
     /// provided compiler. If the compiler is missing it will be installed.
     ///
     /// # Errors
@@ -67,19 +78,19 @@ impl EtherscanFlattenedSource {
         contract_path: &Path,
     ) -> Result<()> {
         let version = strip_build_meta(version.clone());
-        let solc = Solc::find_svm_installed_version(version.to_string())?
-            .unwrap_or(Solc::blocking_install(&version)?);
+        let solc = Solc::find_or_install(&version)?;
 
-        let input = CompilerInput {
-            language: "Solidity".to_string(),
-            sources: BTreeMap::from([("contract.sol".into(), Source::new(content))]),
-            settings: Default::default(),
-        };
+        let input = SolcVersionedInput::build(
+            BTreeMap::from([("contract.sol".into(), Source::new(content))]),
+            Default::default(),
+            SolcLanguage::Solidity,
+            version.clone(),
+        );
 
-        let out = solc.compile(&input)?;
-        if out.has_error() {
-            let mut o = AggregatedCompilerOutput::default();
-            o.extend(version, out);
+        let out = SolcCompiler::Specific(solc).compile(&input)?;
+        if out.errors.iter().any(|e| e.is_error()) {
+            let mut o = AggregatedCompilerOutput::<SolcCompiler>::default();
+            o.extend(version, RawBuildInfo::new(&input, &out, false)?, out);
             let diags = o.diagnostics(&[], &[], Default::default());
 
             eyre::bail!(

@@ -1,6 +1,7 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, Specifier};
 use alloy_json_abi::Event;
-use alloy_primitives::{Address, B256};
+use alloy_network::AnyNetwork;
+use alloy_primitives::{hex::FromHex, Address, B256};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Topic};
 use cast::Cast;
 use clap::Parser;
@@ -8,7 +9,6 @@ use eyre::Result;
 use foundry_cli::{opts::EthereumOpts, utils};
 use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
-use hex::FromHex;
 use itertools::Itertools;
 use std::{io, str::FromStr};
 
@@ -59,7 +59,7 @@ pub struct LogsArgs {
 
 impl LogsArgs {
     pub async fn run(self) -> Result<()> {
-        let LogsArgs {
+        let Self {
             from_block,
             to_block,
             address,
@@ -80,19 +80,29 @@ impl LogsArgs {
             None => None,
         };
 
-        let from_block = cast.convert_block_number(from_block).await?;
-        let to_block = cast.convert_block_number(to_block).await?;
+        let from_block =
+            cast.convert_block_number(Some(from_block.unwrap_or_else(BlockId::earliest))).await?;
+        let to_block =
+            cast.convert_block_number(Some(to_block.unwrap_or_else(BlockId::latest))).await?;
 
         let filter = build_filter(from_block, to_block, address, sig_or_topic, topics_or_args)?;
 
         if !subscribe {
             let logs = cast.filter_logs(filter, json).await?;
 
-            println!("{}", logs);
+            println!("{logs}");
 
             return Ok(())
         }
 
+        // FIXME: this is a hotfix for <https://github.com/foundry-rs/foundry/issues/7682>
+        //  currently the alloy `eth_subscribe` impl does not work with all transports, so we use
+        // the builtin transport here for now
+        let url = config.get_rpc_url_or_localhost_http()?;
+        let provider = alloy_provider::ProviderBuilder::<_, _, AnyNetwork>::default()
+            .on_builtin(url.as_ref())
+            .await?;
+        let cast = Cast::new(&provider);
         let mut stdout = io::stdout();
         cast.subscribe(filter, &mut stdout, json).await?;
 
@@ -210,7 +220,7 @@ fn build_filter_topics(topics: Vec<String>) -> Result<Filter, eyre::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U160, U256 as rU256};
+    use alloy_primitives::{U160, U256};
     use alloy_rpc_types::ValueOrArray;
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
@@ -275,7 +285,7 @@ mod tests {
     #[test]
     fn test_build_filter_sig_with_arguments() {
         let addr = Address::from_str(ADDRESS).unwrap();
-        let addr = rU256::from(U160::from_be_bytes(addr.0 .0));
+        let addr = U256::from(U160::from_be_bytes(addr.0 .0));
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
             address: vec![].into(),
@@ -300,7 +310,7 @@ mod tests {
     #[test]
     fn test_build_filter_sig_with_skipped_arguments() {
         let addr = Address::from_str(ADDRESS).unwrap();
-        let addr = rU256::from(U160::from_be_bytes(addr.0 .0));
+        let addr = U256::from(U160::from_be_bytes(addr.0 .0));
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
             address: vec![].into(),

@@ -1,4 +1,4 @@
-//! Implementations of [`Environment`](crate::Group::Environment) cheatcodes.
+//! Implementations of [`Environment`](spec::Group::Environment) cheatcodes.
 
 use crate::{string, Cheatcode, Cheatcodes, Error, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
@@ -23,6 +23,13 @@ impl Cheatcode for setEnvCall {
             env::set_var(key, value);
             Ok(Default::default())
         }
+    }
+}
+
+impl Cheatcode for envExistsCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { name } = self;
+        Ok(env::var(name).is_ok().abi_encode())
     }
 }
 

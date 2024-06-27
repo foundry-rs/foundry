@@ -49,12 +49,13 @@ fn main() -> Result<()> {
             if cmd.is_watch() {
                 utils::block_on(watch::watch_build(cmd))
             } else {
-                cmd.run().map(|_| ())
+                cmd.run().map(drop)
             }
         }
         ForgeSubcommand::Debug(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::VerifyContract(args) => utils::block_on(args.run()),
         ForgeSubcommand::VerifyCheck(args) => utils::block_on(args.run()),
+        ForgeSubcommand::Clone(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Cache(cmd) => match cmd.sub {
             CacheSubcommands::Clean(cmd) => cmd.run(),
             CacheSubcommands::Ls(cmd) => cmd.run(),
@@ -80,7 +81,8 @@ fn main() -> Result<()> {
         }
         ForgeSubcommand::Clean { root } => {
             let config = utils::load_config_with_root(root);
-            config.project()?.cleanup()?;
+            let project = config.project()?;
+            config.cleanup(&project)?;
             Ok(())
         }
         ForgeSubcommand::Snapshot(cmd) => {
@@ -109,6 +111,7 @@ fn main() -> Result<()> {
             GenerateSubcommands::Test(cmd) => cmd.run(),
         },
         ForgeSubcommand::VerifyBytecode(cmd) => utils::block_on(cmd.run()),
+        ForgeSubcommand::Soldeer(cmd) => cmd.run(),
     }
 }
 

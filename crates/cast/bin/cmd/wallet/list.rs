@@ -22,7 +22,7 @@ pub struct ListArgs {
     trezor: bool,
 
     /// List accounts from AWS KMS.
-    #[arg(long)]
+    #[arg(long, hide = !cfg!(feature = "aws-kms"))]
     aws: bool,
 
     /// List all configured accounts.
@@ -91,17 +91,17 @@ impl ListArgs {
             dunce::canonicalize(keystore_path)?
         };
 
-        // list files within keystore dir
-        std::fs::read_dir(keystore_dir)?.flatten().for_each(|entry| {
-            let path = entry.path();
-            if path.is_file() && path.extension().is_none() {
+        // List all files within the keystore directory.
+        for entry in std::fs::read_dir(keystore_dir)? {
+            let path = entry?.path();
+            if path.is_file() {
                 if let Some(file_name) = path.file_name() {
                     if let Some(name) = file_name.to_str() {
-                        println!("{} (Local)", name);
+                        println!("{name} (Local)");
                     }
                 }
             }
-        });
+        }
 
         Ok(())
     }

@@ -19,7 +19,12 @@ use foundry_common::{
     ens::NameOrAddress,
 };
 use foundry_compilers::{
-    artifacts::StorageLayout, Artifact, ConfigurableContractArtifact, Project, Solc,
+    artifacts::{ConfigurableContractArtifact, StorageLayout},
+    compilers::{
+        solc::{Solc, SolcCompiler},
+        Compiler, CompilerSettings,
+    },
+    Artifact, Project,
 };
 use foundry_config::{
     figment::{self, value::Dict, Metadata, Profile},
@@ -93,7 +98,8 @@ impl StorageArgs {
 
         // No slot was provided
         // Get deployed bytecode at given address
-        let address_code = provider.get_code_at(address, block.unwrap_or_default()).await?;
+        let address_code =
+            provider.get_code_at(address).block_id(block.unwrap_or_default()).await?;
         if address_code.is_empty() {
             eyre::bail!("Provided address has no deployed code and thus no storage");
         }
@@ -138,7 +144,12 @@ impl StorageArgs {
         let root_path = root.path();
         let mut project = etherscan_project(metadata, root_path)?;
         add_storage_layout_output(&mut project);
-        project.auto_detect = auto_detect;
+
+        project.compiler = if auto_detect {
+            SolcCompiler::AutoDetect
+        } else {
+            SolcCompiler::Specific(Solc::find_or_install(&version)?)
+        };
 
         // Compile
         let mut out = ProjectCompiler::new().quiet(true).compile(&project)?;
@@ -151,9 +162,8 @@ impl StorageArgs {
             if is_storage_layout_empty(&artifact.storage_layout) && auto_detect {
                 // try recompiling with the minimum version
                 eprintln!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.");
-                let solc = Solc::find_or_install_svm_version(MIN_SOLC.to_string())?;
-                project.solc = solc;
-                project.auto_detect = false;
+                let solc = Solc::find_or_install(&MIN_SOLC)?;
+                project.compiler = SolcCompiler::Specific(solc);
                 if let Ok(output) = ProjectCompiler::new().quiet(true).compile(&project) {
                     out = output;
                     let (_, new_artifact) = out
@@ -230,7 +240,10 @@ async fn fetch_storage_slots<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
 ) -> Result<Vec<StorageValue>> {
     let requests = layout.storage.iter().map(|storage_slot| async {
         let slot = B256::from(U256::from_str(&storage_slot.slot)?);
-        let raw_slot_value = provider.get_storage_at(address, slot.into(), block).await?;
+        let raw_slot_value = provider
+            .get_storage_at(address, slot.into())
+            .block_id(block.unwrap_or_default())
+            .await?;
 
         let value = StorageValue { slot, raw_slot_value: raw_slot_value.into() };
 
@@ -273,10 +286,15 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool)
     Ok(())
 }
 
-fn add_storage_layout_output(project: &mut Project) {
+fn add_storage_layout_output<C: Compiler>(project: &mut Project<C>) {
     project.artifacts.additional_values.storage_layout = true;
-    let output_selection = project.artifacts.output_selection();
-    project.solc_config.settings.push_all(output_selection);
+    project.settings.update_output_selection(|selection| {
+        selection.0.values_mut().for_each(|contract_selection| {
+            contract_selection
+                .values_mut()
+                .for_each(|selection| selection.push("storageLayout".to_string()))
+        });
+    })
 }
 
 fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {

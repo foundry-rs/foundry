@@ -1,3 +1,6 @@
+#![doc = include_str!("../README.md")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+
 #[macro_use]
 extern crate tracing;
 
@@ -12,17 +15,19 @@ use crate::{
     },
     filter::Filters,
     logging::{LoggingManager, NodeLogLayer},
+    server::error::{NodeError, NodeResult},
     service::NodeService,
     shutdown::Signal,
     tasks::TaskManager,
 };
 use alloy_primitives::{Address, U256};
-use alloy_signer_wallet::LocalWallet;
+use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
-use foundry_common::provider::alloy::{ProviderBuilder, RetryProvider};
+use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
+use server::try_spawn_ipc;
 use std::{
     future::Future,
     io,
@@ -41,11 +46,8 @@ mod service;
 
 mod config;
 pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
+
 mod hardfork;
-use crate::server::{
-    error::{NodeError, NodeResult},
-    spawn_ipc,
-};
 pub use hardfork::Hardfork;
 
 /// ethereum related implementations
@@ -70,26 +72,56 @@ mod tasks;
 #[cfg(feature = "cmd")]
 pub mod cmd;
 
-/// Creates the node and runs the server
+/// Creates the node and runs the server.
 ///
 /// Returns the [EthApi] that can be used to interact with the node and the [JoinHandle] of the
 /// task.
 ///
-/// # Example
+/// # Panics
 ///
-/// ```rust
+/// Panics if any error occurs. For a non-panicking version, use [`try_spawn`].
+///
+///
+/// # Examples
+///
+/// ```no_run
 /// # use anvil::NodeConfig;
-/// # async fn spawn() {
+/// # async fn spawn() -> eyre::Result<()> {
 /// let config = NodeConfig::default();
 /// let (api, handle) = anvil::spawn(config).await;
 ///
 /// // use api
 ///
 /// // wait forever
-/// handle.await.unwrap();
+/// handle.await.unwrap().unwrap();
+/// # Ok(())
 /// # }
 /// ```
-pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
+pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
+    try_spawn(config).await.expect("failed to spawn node")
+}
+
+/// Creates the node and runs the server
+///
+/// Returns the [EthApi] that can be used to interact with the node and the [JoinHandle] of the
+/// task.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anvil::NodeConfig;
+/// # async fn spawn() -> eyre::Result<()> {
+/// let config = NodeConfig::default();
+/// let (api, handle) = anvil::try_spawn(config).await?;
+///
+/// // use api
+///
+/// // wait forever
+/// handle.await??;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle)> {
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
     logger.set_enabled(!config.silent);
 
@@ -133,7 +165,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
             .alloc
             .values()
             .filter_map(|acc| acc.private_key)
-            .flat_map(|k| LocalWallet::from_bytes(&k))
+            .flat_map(|k| PrivateKeySigner::from_bytes(&k))
             .collect::<Vec<_>>();
         if !genesis_signers.is_empty() {
             signers.push(Box::new(DevSigner::new(genesis_signers)));
@@ -174,25 +206,27 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let node_service =
         tokio::task::spawn(NodeService::new(pool, backend, miner, fee_history_service, filters));
 
-    let mut servers = Vec::new();
-    let mut addresses = Vec::new();
+    let mut servers = Vec::with_capacity(config.host.len());
+    let mut addresses = Vec::with_capacity(config.host.len());
 
-    for addr in config.host.iter() {
-        let sock_addr = SocketAddr::new(addr.to_owned(), port);
-        let srv = server::serve(sock_addr, api.clone(), server_config.clone());
+    for addr in &config.host {
+        let sock_addr = SocketAddr::new(*addr, port);
 
-        addresses.push(srv.local_addr());
+        // Create a TCP listener.
+        let tcp_listener = tokio::net::TcpListener::bind(sock_addr).await?;
+        addresses.push(tcp_listener.local_addr()?);
 
-        // spawn the server on a new task
-        let srv = tokio::task::spawn(srv.map_err(NodeError::from));
-        servers.push(srv);
+        // Spawn the server future on a new task.
+        let srv = server::serve_on(tcp_listener, api.clone(), server_config.clone());
+        servers.push(tokio::task::spawn(srv.map_err(Into::into)));
     }
 
     let tokio_handle = Handle::current();
     let (signal, on_shutdown) = shutdown::signal();
     let task_manager = TaskManager::new(tokio_handle, on_shutdown);
 
-    let ipc_task = config.get_ipc_path().map(|path| spawn_ipc(api.clone(), path));
+    let ipc_task =
+        config.get_ipc_path().map(|path| try_spawn_ipc(api.clone(), path)).transpose()?;
 
     let handle = NodeHandle {
         config,
@@ -206,10 +240,10 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
 
     handle.print(fork.as_ref());
 
-    (api, handle)
+    Ok((api, handle))
 }
 
-type IpcTask = JoinHandle<io::Result<()>>;
+type IpcTask = JoinHandle<()>;
 
 /// A handle to the spawned node and server tasks
 ///
@@ -241,7 +275,7 @@ impl NodeHandle {
         self.config.print(fork);
         if !self.config.silent {
             if let Some(ipc_path) = self.ipc_path() {
-                println!("IPC path: {}", ipc_path);
+                println!("IPC path: {ipc_path}");
             }
             println!(
                 "Listening on {}",
@@ -280,7 +314,6 @@ impl NodeHandle {
     /// Constructs a [`RetryProvider`] for this handle's HTTP endpoint.
     pub fn http_provider(&self) -> RetryProvider {
         ProviderBuilder::new(&self.http_endpoint()).build().expect("failed to build HTTP provider")
-        // .interval(Duration::from_millis(500))
     }
 
     /// Constructs a [`RetryProvider`] for this handle's WS endpoint.
@@ -299,7 +332,7 @@ impl NodeHandle {
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub fn dev_wallets(&self) -> impl Iterator<Item = LocalWallet> + '_ {
+    pub fn dev_wallets(&self) -> impl Iterator<Item = PrivateKeySigner> + '_ {
         self.config.signer_accounts.iter().cloned()
     }
 
@@ -359,7 +392,7 @@ impl Future for NodeHandle {
         // poll the ipc task
         if let Some(mut ipc) = pin.ipc_task.take() {
             if let Poll::Ready(res) = ipc.poll_unpin(cx) {
-                return Poll::Ready(res.map(|res| res.map_err(NodeError::from)));
+                return Poll::Ready(res.map(|()| Ok(())));
             } else {
                 pin.ipc_task = Some(ipc);
             }
