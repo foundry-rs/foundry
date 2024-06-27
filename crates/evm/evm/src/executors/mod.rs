@@ -81,6 +81,8 @@ pub struct Executor {
     /// the passed in environment, as those limits are used by the EVM for certain opcodes like
     /// `gaslimit`.
     gas_limit: u64,
+    /// Whether `failed()` should be called on the test contract to determine if the test failed.
+    legacy_assertions: bool,
 }
 
 impl Executor {
@@ -97,6 +99,7 @@ impl Executor {
         env: EnvWithHandlerCfg,
         inspector: InspectorStack,
         gas_limit: u64,
+        legacy_assertions: bool,
     ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // do not fail.
@@ -111,12 +114,12 @@ impl Executor {
             },
         );
 
-        Self { backend, env, inspector, gas_limit }
+        Self { backend, env, inspector, gas_limit, legacy_assertions }
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
         let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(self.env().clone()), self.spec_id());
-        Self::new(backend, env, self.inspector().clone(), self.gas_limit)
+        Self::new(backend, env, self.inspector().clone(), self.gas_limit, self.legacy_assertions)
     }
 
     /// Returns a reference to the EVM backend.
@@ -525,12 +528,15 @@ impl Executor {
                     return false;
                 }
             }
-            if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
-            {
-                if !failed_slot.is_zero() {
-                    return false;
-                }
+        }
+        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT) {
+            if !failed_slot.is_zero() {
+                return false;
             }
+        }
+
+        if !self.legacy_assertions {
+            return true;
         }
 
         // Finally, resort to calling `DSTest::failed`.

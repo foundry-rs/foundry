@@ -424,6 +424,9 @@ pub struct Config {
     /// Whether failed assertions should revert.
     pub assertions_revert: bool,
 
+    /// Whether `failed()` should be invoked to check if the test have failed.
+    pub legacy_assertions: bool,
+
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
@@ -2122,6 +2125,7 @@ impl Default for Config {
             skip: vec![],
             dependencies: Default::default(),
             assertions_revert: true,
+            legacy_assertions: false,
             warnings: vec![],
             _non_exhaustive: (),
         }

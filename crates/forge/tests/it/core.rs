@@ -90,7 +90,7 @@ async fn test_core() {
                 vec![("testShouldPassWithWarning()", true, None, None, None)],
             ),
             (
-                "default/core/LegacyAssertions.t.sol:LegacyAsserions",
+                "default/core/LegacyAssertions.t.sol:NoAssertionsRevertTest",
                 vec![(
                     "testMultipleAssertFailures()",
                     false,
@@ -98,6 +98,13 @@ async fn test_core() {
                     None,
                     None,
                 )],
+            ),
+            (
+                "default/core/LegacyAssertions.t.sol:LegacyAssertionsTest",
+                vec![
+                    ("testFlagNotSetSuccess()", true, None, None, None),
+                    ("testFlagSetFailure()", true, None, None, None),
+                ],
             ),
         ]),
     );
@@ -753,7 +760,7 @@ async fn test_trace() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_assertions_revert_false() {
-    let filter = Filter::new(".*", ".*LegacyAsserions", ".*");
+    let filter = Filter::new(".*", ".*NoAssertionsRevertTest", ".*");
     let mut config = TEST_DATA_DEFAULT.config.clone();
     config.assertions_revert = false;
     let mut runner = TEST_DATA_DEFAULT.runner_with_config(config);
@@ -762,7 +769,7 @@ async fn test_assertions_revert_false() {
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "default/core/LegacyAssertions.t.sol:LegacyAsserions",
+            "default/core/LegacyAssertions.t.sol:NoAssertionsRevertTest",
             vec![(
                 "testMultipleAssertFailures()",
                 false,
@@ -773,6 +780,26 @@ async fn test_assertions_revert_false() {
                 ]),
                 None,
             )],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_legacy_assertions() {
+    let filter = Filter::new(".*", ".*LegacyAssertions", ".*");
+    let mut config = TEST_DATA_DEFAULT.config.clone();
+    config.legacy_assertions = true;
+    let mut runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let results = runner.test_collect(&filter);
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/core/LegacyAssertions.t.sol:LegacyAssertionsTest",
+            vec![
+                ("testFlagNotSetSuccess()", true, None, None, None),
+                ("testFlagSetFailure()", false, None, None, None),
+            ],
         )]),
     );
 }

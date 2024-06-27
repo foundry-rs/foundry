@@ -18,12 +18,18 @@ pub struct ExecutorBuilder {
     gas_limit: Option<u64>,
     /// The spec ID.
     spec_id: SpecId,
+    legacy_assertions: bool,
 }
 
 impl Default for ExecutorBuilder {
     #[inline]
     fn default() -> Self {
-        Self { stack: InspectorStackBuilder::new(), gas_limit: None, spec_id: SpecId::LATEST }
+        Self {
+            stack: InspectorStackBuilder::new(),
+            gas_limit: None,
+            spec_id: SpecId::LATEST,
+            legacy_assertions: false,
+        }
     }
 }
 
@@ -58,10 +64,17 @@ impl ExecutorBuilder {
         self
     }
 
+    /// Sets the `legacy_assertions` flag.
+    #[inline]
+    pub fn legacy_assertions(mut self, legacy_assertions: bool) -> Self {
+        self.legacy_assertions = legacy_assertions;
+        self
+    }
+
     /// Builds the executor as configured.
     #[inline]
     pub fn build(self, env: Env, db: Backend) -> Executor {
-        let Self { mut stack, gas_limit, spec_id } = self;
+        let Self { mut stack, gas_limit, spec_id, legacy_assertions } = self;
         if stack.block.is_none() {
             stack.block = Some(env.block.clone());
         }
@@ -70,6 +83,6 @@ impl ExecutorBuilder {
         }
         let gas_limit = gas_limit.unwrap_or_else(|| env.block.gas_limit.saturating_to());
         let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(env), spec_id);
-        Executor::new(db, env, stack.build(), gas_limit)
+        Executor::new(db, env, stack.build(), gas_limit, legacy_assertions)
     }
 }
