@@ -434,7 +434,7 @@ impl TraceMode {
 
 impl From<TraceMode> for TracingInspectorConfig {
     fn from(mode: TraceMode) -> Self {
-        TracingInspectorConfig {
+        Self {
             record_steps: mode.is_debug() || mode.is_jump(),
             record_memory_snapshots: mode.is_debug() || mode.is_jump(),
             record_stack_snapshots: if mode.is_debug() || mode.is_jump() {
