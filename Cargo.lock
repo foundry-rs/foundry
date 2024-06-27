@@ -3842,6 +3842,7 @@ dependencies = [
  "ratatui",
  "revm",
  "revm-inspectors",
+ "serde",
  "tracing",
 ]
 
@@ -3853,7 +3854,6 @@ dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-sol-types",
- "arrayvec",
  "eyre",
  "foundry-cheatcodes",
  "foundry-common",
@@ -3900,7 +3900,6 @@ dependencies = [
  "alloy-serde",
  "alloy-sol-types",
  "alloy-transport",
- "arrayvec",
  "auto_impl",
  "eyre",
  "foundry-cheatcodes-spec",
@@ -6991,9 +6990,9 @@ dependencies = [
 
 [[package]]
 name = "revm-inspectors"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b0971cad2f8f1ecb10e270d80646e63bf19daef0dc0a17a45680d24bb346b7c"
+checksum = "f3e260c899e462b4e189a3bfcf5a947bc3506f8bd89183859604bca009b57530"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",

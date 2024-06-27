@@ -20,7 +20,7 @@ use foundry_evm::{
     constants::CALLER,
     decode::RevertDecoder,
     executors::{
-        fuzz::{CaseOutcome, CounterExampleOutcome, FuzzOutcome, FuzzedExecutor},
+        fuzz::FuzzedExecutor,
         invariant::{
             check_sequence, replay_error, replay_run, InvariantExecutor, InvariantFuzzError,
         },
@@ -311,13 +311,13 @@ impl<'a> ContractRunner<'a> {
         let tmp_tracing =
             self.executor.inspector().tracer.is_none() && has_invariants && call_setup;
         if tmp_tracing {
-            self.executor.set_tracing(true);
+            self.executor.set_tracing(true, false);
         }
         let setup_time = Instant::now();
         let setup = self.setup(call_setup);
         debug!("finished setting up in {:?}", setup_time.elapsed());
         if tmp_tracing {
-            self.executor.set_tracing(false);
+            self.executor.set_tracing(false, false);
         }
 
         if setup.reason.is_some() {
@@ -627,16 +627,12 @@ impl<'a> ContractRunner<'a> {
     ) -> TestResult {
         let address = setup.address;
         let fuzz_fixtures = setup.fuzz_fixtures.clone();
-        let mut test_result = TestResult::new(setup);
+        let test_result = TestResult::new(setup);
 
         // Run fuzz test
         let progress = start_fuzz_progress(self.progress, self.name, &func.name, fuzz_config.runs);
-        let fuzzed_executor = FuzzedExecutor::new(
-            self.executor.clone(),
-            runner.clone(),
-            self.sender,
-            fuzz_config.clone(),
-        );
+        let fuzzed_executor =
+            FuzzedExecutor::new(self.executor.clone(), runner, self.sender, fuzz_config);
         let result = fuzzed_executor.fuzz(
             func,
             &fuzz_fixtures,
@@ -652,41 +648,6 @@ impl<'a> ContractRunner<'a> {
             return test_result.single_skip()
         }
 
-        if self.debug {
-            let mut debug_executor = self.executor.clone();
-            // turn the debug traces on
-            debug_executor.inspector_mut().enable_debugger(true);
-            debug_executor.inspector_mut().tracing(true);
-            let calldata = if let Some(counterexample) = result.counterexample.as_ref() {
-                match counterexample {
-                    CounterExample::Single(ce) => ce.calldata.clone(),
-                    _ => unimplemented!(),
-                }
-            } else {
-                result.first_case.calldata.clone()
-            };
-            // rerun the last relevant test with traces
-            let debug_result =
-                FuzzedExecutor::new(debug_executor, runner, self.sender, fuzz_config).single_fuzz(
-                    address,
-                    should_fail,
-                    calldata,
-                );
-
-            (test_result.debug, test_result.breakpoints) = match debug_result {
-                Ok(fuzz_outcome) => match fuzz_outcome {
-                    FuzzOutcome::Case(CaseOutcome { debug, breakpoints, .. }) => {
-                        (debug, breakpoints)
-                    }
-                    FuzzOutcome::CounterExample(CounterExampleOutcome {
-                        debug,
-                        breakpoints,
-                        ..
-                    }) => (debug, breakpoints),
-                },
-                Err(_) => (Default::default(), Default::default()),
-            };
-        }
         test_result.fuzz_result(result)
     }
 }

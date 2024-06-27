@@ -47,7 +47,6 @@ revm = { workspace = true, features = [
 ] }
 revm-inspectors.workspace = true
 
-arrayvec.workspace = true
 auto_impl.workspace = true
 eyre.workspace = true
 futures.workspace = true

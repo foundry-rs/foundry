@@ -4,6 +4,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_cheatcodes::is_coverage_context;
+use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
     constants::MAGIC_ASSUME,
@@ -33,6 +34,8 @@ pub struct FuzzTestData {
     pub counterexample: (Bytes, RawCallResult),
     // Stores up to `max_traces_to_collect` traces.
     pub traces: Vec<CallTraceArena>,
+    // Stores breakpoints for the last fuzz case.
+    pub breakpoints: Option<Breakpoints>,
     // Stores coverage information for all fuzz cases.
     pub coverage: Option<HitMaps>,
 }
@@ -78,15 +81,14 @@ impl FuzzedExecutor {
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
     ) -> FuzzTestResult {
+        // Stores the fuzz test execution data.
         let execution_data = RefCell::new(FuzzTestData::default());
         let state = self.build_fuzz_state();
-
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strat = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
         ];
-
         // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
 
@@ -111,6 +113,7 @@ impl FuzzedExecutor {
                             data.traces.pop();
                         }
                         data.traces.push(call_traces);
+                        data.breakpoints.replace(case.breakpoints);
                     }
 
                     // Collect and merge coverage if `forge snapshot` context.
@@ -143,8 +146,13 @@ impl FuzzedExecutor {
 
         let fuzz_result = execution_data.into_inner();
         let (calldata, call) = fuzz_result.counterexample;
+
         let mut traces = fuzz_result.traces;
-        let last_run_traces = if run_result.is_ok() { traces.pop() } else { call.traces.clone() };
+        let (last_run_traces, last_run_breakpoints) = if run_result.is_ok() {
+            (traces.pop(), fuzz_result.breakpoints)
+        } else {
+            (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
+        };
 
         let mut result = FuzzTestResult {
             first_case: fuzz_result.first_case.unwrap_or_default(),
@@ -156,6 +164,7 @@ impl FuzzedExecutor {
             logs: call.logs,
             labeled_addresses: call.labels,
             traces: last_run_traces,
+            breakpoints: last_run_breakpoints,
             gas_report_traces: traces,
             coverage: fuzz_result.coverage,
         };
@@ -223,12 +232,10 @@ impl FuzzedExecutor {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },
                 traces: call.traces,
                 coverage: call.coverage,
-                debug: call.debug,
                 breakpoints,
             }))
         } else {
             Ok(FuzzOutcome::CounterExample(CounterExampleOutcome {
-                debug: call.debug.clone(),
                 exit_reason: call.exit_reason,
                 counterexample: (calldata, call),
                 breakpoints,
