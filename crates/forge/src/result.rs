@@ -596,7 +596,7 @@ impl TestResult {
     }
 
     /// Function to merge given coverage in current test result coverage.
-    fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
+    pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
         let old_coverage = std::mem::take(&mut self.coverage);
         self.coverage = match (old_coverage, other_coverage) {
             (Some(old_coverage), Some(other)) => Some(old_coverage.merged(other)),
