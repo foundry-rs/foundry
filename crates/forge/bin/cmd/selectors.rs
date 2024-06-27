@@ -1,3 +1,4 @@
+use alloy_primitives::hex;
 use clap::Parser;
 use comfy_table::Table;
 use eyre::Result;

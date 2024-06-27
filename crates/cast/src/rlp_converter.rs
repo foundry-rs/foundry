@@ -1,3 +1,4 @@
+use alloy_primitives::hex;
 use alloy_rlp::{Buf, Decodable, Encodable, Header};
 use serde_json::Value;
 use std::fmt;

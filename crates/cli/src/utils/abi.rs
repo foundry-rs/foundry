@@ -1,6 +1,6 @@
 use alloy_chains::Chain;
 use alloy_json_abi::Function;
-use alloy_primitives::Address;
+use alloy_primitives::{hex, Address};
 use alloy_provider::{network::AnyNetwork, Provider};
 use alloy_transport::Transport;
 use eyre::{OptionExt, Result};

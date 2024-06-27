@@ -37,7 +37,6 @@ alloy-signer-local = { workspace = true, features = [
 parking_lot.workspace = true
 
 eyre.workspace = true
-hex.workspace = true
 itertools.workspace = true
 jsonpath_lib.workspace = true
 revm.workspace = true

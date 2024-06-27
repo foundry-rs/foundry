@@ -1,7 +1,7 @@
 pub use crate::ic::*;
 use crate::{constants::DEFAULT_CREATE2_DEPLOYER, InspectorExt};
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Selector, U256};
+use alloy_primitives::{Address, Selector, TxKind, U256};
 use alloy_rpc_types::{Block, Transaction};
 use foundry_config::NamedChain;
 use revm::{
@@ -11,7 +11,7 @@ use revm::{
         return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         Gas, InstructionResult, InterpreterResult,
     },
-    primitives::{CreateScheme, EVMError, SpecId, TxKind, KECCAK_EMPTY},
+    primitives::{CreateScheme, EVMError, HandlerCfg, SpecId, KECCAK_EMPTY},
     FrameOrResult, FrameResult,
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -265,6 +265,23 @@ where
     I: InspectorExt<WrapDatabaseRef<DB>>,
 {
     new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
+}
+
+pub fn new_evm_with_existing_context<'a, DB, I>(
+    inner: revm::InnerEvmContext<DB>,
+    inspector: I,
+) -> revm::Evm<'a, I, DB>
+where
+    DB: revm::Database,
+    I: InspectorExt<DB>,
+{
+    let handler_cfg = HandlerCfg::new(inner.spec_id());
+    let context =
+        revm::Context::new(revm::EvmContext { inner, precompiles: Default::default() }, inspector);
+    let mut handler = revm::Handler::new(handler_cfg);
+    handler.append_handler_register_plain(revm::inspector_handle_register);
+    handler.append_handler_register_plain(create2_handler_register);
+    revm::Evm::new(context, handler)
 }
 
 #[cfg(test)]

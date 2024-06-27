@@ -11,7 +11,6 @@ use foundry_compilers::{
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
-    debug::DebugArena,
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
@@ -316,20 +315,14 @@ pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> Result<Vec<
 pub struct TraceResult {
     pub success: bool,
     pub traces: Option<Traces>,
-    pub debug: Option<DebugArena>,
     pub gas_used: u64,
 }
 
 impl TraceResult {
     /// Create a new [`TraceResult`] from a [`RawCallResult`].
     pub fn from_raw(raw: RawCallResult, trace_kind: TraceKind) -> Self {
-        let RawCallResult { gas_used, traces, reverted, debug, .. } = raw;
-        Self {
-            success: !reverted,
-            traces: traces.map(|arena| vec![(trace_kind, arena)]),
-            debug,
-            gas_used,
-        }
+        let RawCallResult { gas_used, traces, reverted, .. } = raw;
+        Self { success: !reverted, traces: traces.map(|arena| vec![(trace_kind, arena)]), gas_used }
     }
 }
 
@@ -405,7 +398,7 @@ pub async fn handle_traces(
             Default::default()
         };
         let mut debugger = Debugger::builder()
-            .debug_arena(result.debug.as_ref().expect("missing debug arena"))
+            .traces(result.traces.expect("missing traces"))
             .decoder(&decoder)
             .sources(sources)
             .build();

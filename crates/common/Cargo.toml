@@ -14,10 +14,10 @@ workspace = true
 
 [dependencies]
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
+foundry-common-fmt.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 
-alloy-consensus.workspace = true
 alloy-contract.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
@@ -49,8 +49,10 @@ clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 comfy-table = "7"
 dunce.workspace = true
 eyre.workspace = true
+num-format.workspace = true
 once_cell.workspace = true
 reqwest.workspace = true
+rustc-hash.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 serde.workspace = true
@@ -60,9 +62,6 @@ tracing.workspace = true
 url.workspace = true
 walkdir.workspace = true
 yansi.workspace = true
-rustc-hash.workspace = true
-num-format.workspace = true
-chrono.workspace = true
 
 [dev-dependencies]
 foundry-macros.workspace = true

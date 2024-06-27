@@ -44,7 +44,6 @@ revm = { workspace = true, default-features = false, features = [
 ] }
 revm-inspectors.workspace = true
 
-arrayvec.workspace = true
 eyre.workspace = true
 parking_lot.workspace = true
 proptest = "1"

@@ -47,7 +47,7 @@ impl Cheatcode for clearMockedCallsCall {
 }
 
 impl Cheatcode for mockCall_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { callee, data, returnData } = self;
         let (acc, _) = ccx.ecx.load_account(*callee)?;
 
@@ -65,7 +65,7 @@ impl Cheatcode for mockCall_0Call {
 }
 
 impl Cheatcode for mockCall_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         ccx.ecx.load_account(*callee)?;
         mock_call(ccx.state, callee, data, Some(msgValue), returnData, InstructionResult::Return);

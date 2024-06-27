@@ -350,7 +350,9 @@ impl TestArgs {
 
             // Run the debugger.
             let mut builder = Debugger::builder()
-                .debug_arenas(test_result.debug.as_slice())
+                .traces(
+                    test_result.traces.iter().filter(|(t, _)| t.is_execution()).cloned().collect(),
+                )
                 .sources(sources)
                 .breakpoints(test_result.breakpoints.clone());
 

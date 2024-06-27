@@ -12,12 +12,15 @@ use revm_inspectors::access_list::AccessListInspector;
 #[macro_use]
 extern crate tracing;
 
+pub mod abi {
+    pub use foundry_cheatcodes_spec::Vm;
+    pub use foundry_evm_abi::*;
+}
+
 mod ic;
 
-pub mod abi;
 pub mod backend;
 pub mod constants;
-pub mod debug;
 pub mod decode;
 pub mod fork;
 pub mod opcodes;

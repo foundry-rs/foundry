@@ -379,7 +379,7 @@ impl DebuggerContext<'_> {
             "Address: {} | PC: {} | Gas used in call: {}",
             self.address(),
             self.current_step().pc,
-            self.current_step().total_gas_used,
+            self.current_step().gas_used,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)
@@ -393,58 +393,67 @@ impl DebuggerContext<'_> {
 
     fn draw_stack(&self, f: &mut Frame<'_>, area: Rect) {
         let step = self.current_step();
-        let stack = &step.stack;
+        let stack = step.stack.as_ref();
+        let stack_len = stack.map_or(0, |s| s.len());
 
-        let min_len = decimal_digits(stack.len()).max(2);
+        let min_len = decimal_digits(stack_len).max(2);
 
-        let params = OpcodeParam::of(step.instruction);
+        let params = OpcodeParam::of(step.op.get());
 
         let text: Vec<Line<'_>> = stack
-            .iter()
-            .rev()
-            .enumerate()
-            .skip(self.draw_memory.current_stack_startline)
-            .map(|(i, stack_item)| {
-                let param = params.iter().find(|param| param.index == i);
+            .map(|stack| {
+                stack
+                    .iter()
+                    .rev()
+                    .enumerate()
+                    .skip(self.draw_memory.current_stack_startline)
+                    .map(|(i, stack_item)| {
+                        let param = params.iter().find(|param| param.index == i);
 
-                let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
+                        let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
 
-                // Stack index.
-                spans.push(Span::styled(format!("{i:0min_len$}| "), Style::new().fg(Color::White)));
+                        // Stack index.
+                        spans.push(Span::styled(
+                            format!("{i:0min_len$}| "),
+                            Style::new().fg(Color::White),
+                        ));
 
-                // Item hex bytes.
-                hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| {
-                    if param.is_some() {
-                        Style::new().fg(Color::Cyan)
-                    } else {
-                        Style::new().fg(Color::White)
-                    }
-                });
+                        // Item hex bytes.
+                        hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| {
+                            if param.is_some() {
+                                Style::new().fg(Color::Cyan)
+                            } else {
+                                Style::new().fg(Color::White)
+                            }
+                        });
 
-                if self.stack_labels {
-                    if let Some(param) = param {
-                        spans.push(Span::raw("| "));
-                        spans.push(Span::raw(param.name));
-                    }
-                }
+                        if self.stack_labels {
+                            if let Some(param) = param {
+                                spans.push(Span::raw("| "));
+                                spans.push(Span::raw(param.name));
+                            }
+                        }
 
-                spans.push(Span::raw("\n"));
+                        spans.push(Span::raw("\n"));
 
-                Line::from(spans)
+                        Line::from(spans)
+                    })
+                    .collect()
             })
-            .collect();
+            .unwrap_or_default();
 
-        let title = format!("Stack: {}", stack.len());
+        let title = format!("Stack: {stack_len}");
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
+        let call = self.debug_call();
         let step = self.current_step();
         let buf = match self.active_buffer {
             BufferKind::Memory => step.memory.as_ref(),
-            BufferKind::Calldata => step.calldata.as_ref(),
+            BufferKind::Calldata => call.calldata.as_ref(),
             BufferKind::Returndata => step.returndata.as_ref(),
         };
 
@@ -456,18 +465,20 @@ impl DebuggerContext<'_> {
         let mut write_offset = None;
         let mut write_size = None;
         let mut color = None;
-        let stack_len = step.stack.len();
+        let stack_len = step.stack.as_ref().map_or(0, |s| s.len());
         if stack_len > 0 {
-            if let Some(accesses) = get_buffer_accesses(step.instruction, &step.stack) {
-                if let Some(read_access) = accesses.read {
-                    offset = Some(read_access.1.offset);
-                    size = Some(read_access.1.size);
-                    color = Some(Color::Cyan);
-                }
-                if let Some(write_access) = accesses.write {
-                    if self.active_buffer == BufferKind::Memory {
-                        write_offset = Some(write_access.offset);
-                        write_size = Some(write_access.size);
+            if let Some(stack) = step.stack.as_ref() {
+                if let Some(accesses) = get_buffer_accesses(step.op.get(), stack) {
+                    if let Some(read_access) = accesses.read {
+                        offset = Some(read_access.1.offset);
+                        size = Some(read_access.1.size);
+                        color = Some(Color::Cyan);
+                    }
+                    if let Some(write_access) = accesses.write {
+                        if self.active_buffer == BufferKind::Memory {
+                            write_offset = Some(write_access.offset);
+                            write_size = Some(write_access.size);
+                        }
                     }
                 }
             }
@@ -480,13 +491,15 @@ impl DebuggerContext<'_> {
         if self.current_step > 0 {
             let prev_step = self.current_step - 1;
             let prev_step = &self.debug_steps()[prev_step];
-            if let Some(write_access) =
-                get_buffer_accesses(prev_step.instruction, &prev_step.stack).and_then(|a| a.write)
-            {
-                if self.active_buffer == BufferKind::Memory {
-                    offset = Some(write_access.offset);
-                    size = Some(write_access.size);
-                    color = Some(Color::Green);
+            if let Some(stack) = prev_step.stack.as_ref() {
+                if let Some(write_access) =
+                    get_buffer_accesses(prev_step.op.get(), stack).and_then(|a| a.write)
+                {
+                    if self.active_buffer == BufferKind::Memory {
+                        offset = Some(write_access.offset);
+                        size = Some(write_access.size);
+                        color = Some(Color::Green);
+                    }
                 }
             }
         }

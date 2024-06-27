@@ -8,7 +8,7 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::LogData;
+use alloy_primitives::{hex, LogData};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use futures::{future::BoxFuture, FutureExt};

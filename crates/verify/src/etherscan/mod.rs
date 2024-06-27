@@ -1,6 +1,7 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
 use crate::{provider::VerificationContext, retry::RETRY_CHECK_ON_VERIFY};
 use alloy_json_abi::Function;
+use alloy_primitives::hex;
 use alloy_provider::Provider;
 use eyre::{eyre, Context, OptionExt, Result};
 use foundry_block_explorers::{

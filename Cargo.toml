@@ -132,9 +132,11 @@ foundry-cheatcodes = { path = "crates/cheatcodes" }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
 foundry-common = { path = "crates/common" }
+foundry-common-fmt = { path = "crates/common/fmt" }
 foundry-config = { path = "crates/config" }
 foundry-debugger = { path = "crates/debugger" }
 foundry-evm = { path = "crates/evm/evm" }
+foundry-evm-abi = { path = "crates/evm/abi" }
 foundry-evm-core = { path = "crates/evm/core" }
 foundry-evm-coverage = { path = "crates/evm/coverage" }
 foundry-evm-fuzz = { path = "crates/evm/fuzz" }
@@ -153,7 +155,7 @@ solang-parser = "=0.3.3"
 # no default features to avoid c-kzg
 revm = { version = "10.0.0", default-features = false }
 revm-primitives = { version = "5.0.0", default-features = false }
-revm-inspectors = { version = "0.1.2", features = ["serde"] }
+revm-inspectors = { version = "0.2", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
@@ -203,7 +205,6 @@ quote = "1.0"
 syn = "2.0"
 prettyplease = "0.2.20"
 ahash = "0.8"
-arrayvec = "0.7"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
@@ -216,7 +217,6 @@ evm-disassembler = "0.5"
 eyre = "0.6"
 figment = "0.10"
 futures = "0.3"
-hex = { package = "const-hex", version = "1.6", features = ["hex"] }
 itertools = "0.13"
 jsonpath_lib = "0.3"
 k256 = "0.13"

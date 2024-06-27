@@ -24,7 +24,6 @@ foundry-cheatcodes.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
 
-hex.workspace = true
 serde.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
