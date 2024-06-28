@@ -331,7 +331,20 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         Ok(())
     }
 
-    /// Set the blockhash for the given block number
+    /// Set the blockhash for a given block number.
+    ///
+    /// # Arguments
+    ///
+    /// * `number` - The block number to set the blockhash for
+    /// * `hash` - The blockhash to set
+    ///
+    /// # Note
+    ///
+    /// This function mimics the EVM limits of the `blockhash` operation:
+    /// - It sets the blockhash for blocks where `block.number - 256 <= number < block.number`
+    /// - Setting a blockhash for the current block (number == block.number) has no effect
+    /// - Setting a blockhash for future blocks (number > block.number) has no effect
+    /// - Setting a blockhash for blocks older than `block.number - 256` has no effect
     fn set_blockhash(&mut self, block_number: U256, block_hash: B256);
 }
 
