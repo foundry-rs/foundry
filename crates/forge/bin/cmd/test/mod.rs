@@ -519,9 +519,9 @@ impl TestArgs {
 
                         // Re-execute setup and deployment traces to collect identities created in
                         // setUp and constructor.
-                        for (kind, arena) in &mut result.traces.clone() {
+                        for (kind, arena) in &result.traces {
                             if !matches!(kind, TraceKind::Execution) {
-                                decoder.identify(arena, &mut identifier);
+                                decoder.identify(&arena, &mut identifier);
                             }
                         }
 
