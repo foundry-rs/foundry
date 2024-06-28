@@ -4,14 +4,14 @@ use crate::eth::transaction::optimism::{DepositTransaction, DepositTransactionRe
 use alloy_consensus::{
     transaction::eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
     AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, TxEip1559, TxEip2930,
-    TxEnvelope, TxLegacy, TxReceipt,
+    TxEnvelope, TxLegacy, TxReceipt, TxType,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256, U64};
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
-    request::TransactionRequest, AccessList, AnyTransactionReceipt, Signature as RpcSignature,
-    Transaction as RpcTransaction, TransactionReceipt,
+    request::TransactionRequest, AccessList, AnyTransactionReceipt, ConversionError,
+    Signature as RpcSignature, Transaction as RpcTransaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
@@ -889,6 +889,103 @@ impl TypedTransaction {
                 false,
             )
             .unwrap(),
+        }
+    }
+}
+
+impl TryFrom<RpcTransaction> for TypedTransaction {
+    type Error = ConversionError;
+
+    fn try_from(tx: RpcTransaction) -> Result<Self, Self::Error> {
+        // TODO(sergerad): Handle Arbitrum system transactions?
+        match tx.transaction_type.unwrap_or_default().try_into()? {
+            TxType::Legacy => {
+                let legacy = TxLegacy {
+                    chain_id: tx.chain_id,
+                    nonce: tx.nonce,
+                    gas_price: tx.gas_price.ok_or(ConversionError::MissingGasPrice)?,
+                    gas_limit: tx.gas,
+                    value: tx.value,
+                    input: tx.input,
+                    to: tx.to.map_or(TxKind::Create, TxKind::Call),
+                };
+                let signature = tx
+                    .signature
+                    .ok_or(ConversionError::MissingSignature)?
+                    .try_into()
+                    .map_err(ConversionError::SignatureError)?;
+                Ok(Self::Legacy(Signed::new_unchecked(legacy, signature, tx.hash)))
+            }
+            TxType::Eip1559 => {
+                let eip1559 = TxEip1559 {
+                    chain_id: tx.chain_id.ok_or(ConversionError::MissingChainId)?,
+                    nonce: tx.nonce,
+                    max_fee_per_gas: tx
+                        .max_fee_per_gas
+                        .ok_or(ConversionError::MissingMaxFeePerGas)?,
+                    max_priority_fee_per_gas: tx
+                        .max_priority_fee_per_gas
+                        .ok_or(ConversionError::MissingMaxPriorityFeePerGas)?,
+                    gas_limit: tx.gas,
+                    value: tx.value,
+                    input: tx.input,
+                    to: tx.to.map_or(TxKind::Create, TxKind::Call),
+                    access_list: tx.access_list.ok_or(ConversionError::MissingAccessList)?,
+                };
+                let signature = tx
+                    .signature
+                    .ok_or(ConversionError::MissingSignature)?
+                    .try_into()
+                    .map_err(ConversionError::SignatureError)?;
+                Ok(Self::EIP1559(Signed::new_unchecked(eip1559, signature, tx.hash)))
+            }
+            TxType::Eip2930 => {
+                let eip2930 = TxEip2930 {
+                    chain_id: tx.chain_id.ok_or(ConversionError::MissingChainId)?,
+                    nonce: tx.nonce,
+                    gas_price: tx.gas_price.ok_or(ConversionError::MissingGasPrice)?,
+                    gas_limit: tx.gas,
+                    value: tx.value,
+                    input: tx.input,
+                    to: tx.to.map_or(TxKind::Create, TxKind::Call),
+                    access_list: tx.access_list.ok_or(ConversionError::MissingAccessList)?,
+                };
+                let signature = tx
+                    .signature
+                    .ok_or(ConversionError::MissingSignature)?
+                    .try_into()
+                    .map_err(ConversionError::SignatureError)?;
+                Ok(Self::EIP2930(Signed::new_unchecked(eip2930, signature, tx.hash)))
+            }
+            TxType::Eip4844 => {
+                let eip4844 = TxEip4844 {
+                    chain_id: tx.chain_id.ok_or(ConversionError::MissingChainId)?,
+                    nonce: tx.nonce,
+                    gas_limit: tx.gas,
+                    max_fee_per_gas: tx.gas_price.ok_or(ConversionError::MissingGasPrice)?,
+                    max_priority_fee_per_gas: tx
+                        .max_priority_fee_per_gas
+                        .ok_or(ConversionError::MissingMaxPriorityFeePerGas)?,
+                    max_fee_per_blob_gas: tx
+                        .max_fee_per_blob_gas
+                        .ok_or(ConversionError::MissingMaxFeePerBlobGas)?,
+                    to: tx.to.ok_or(ConversionError::MissingTo)?,
+                    value: tx.value,
+                    access_list: tx.access_list.ok_or(ConversionError::MissingAccessList)?,
+                    blob_versioned_hashes: tx
+                        .blob_versioned_hashes
+                        .ok_or(ConversionError::MissingBlobVersionedHashes)?,
+                    input: tx.input,
+                };
+                Ok(Self::EIP4844(Signed::new_unchecked(
+                    TxEip4844Variant::TxEip4844(eip4844),
+                    tx.signature
+                        .ok_or(ConversionError::MissingSignature)?
+                        .try_into()
+                        .map_err(ConversionError::SignatureError)?,
+                    tx.hash,
+                )))
+            }
         }
     }
 }

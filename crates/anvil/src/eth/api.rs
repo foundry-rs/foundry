@@ -91,7 +91,7 @@ pub struct EthApi {
     pool: Arc<Pool>,
     /// Holds all blockchain related data
     /// In-Memory only for now
-    pub(super) backend: Arc<backend::mem::Backend>,
+    pub backend: Arc<backend::mem::Backend>,
     /// Whether this node is mining
     is_mining: bool,
     /// available signers
