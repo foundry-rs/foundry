@@ -67,7 +67,9 @@ impl InspectArgs {
         let mut compiler = ProjectCompiler::new().quiet(true);
         if let Some(contract_path) = &mut contract.path {
             let target_path = canonicalize(&*contract_path)?;
-            *contract_path = target_path.to_string_lossy().to_string();
+            let target_path =
+                target_path.strip_prefix(project.root()).unwrap_or(&target_path).to_path_buf();
+            *contract_path = target_path.to_string_lossy().into_owned();
             compiler = compiler.files([target_path]);
         }
         let output = compiler.compile(&project)?;
