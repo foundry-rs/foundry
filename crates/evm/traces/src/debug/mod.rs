@@ -279,9 +279,11 @@ fn try_decode_args_from_step(args: &Parameters<'_>, step: &CallTraceStep) -> Opt
                         // filter out `uint8` params which are marked as storage or memory as this
                         // is not possible in Solidity and means that type is user-defined
                         (DynSolType::Uint(8), Some(Storage::Memory | Storage::Storage)) => None,
-                        (_, Some(Storage::Memory)) => {
-                            decode_from_memory(type_, step.memory.as_bytes(), input.to::<usize>())
-                        }
+                        (_, Some(Storage::Memory)) => decode_from_memory(
+                            type_,
+                            step.memory.as_bytes(),
+                            input.try_into().ok()?,
+                        ),
                         // Read other types from stack
                         _ => type_.abi_decode(&input.to_be_bytes::<32>()).ok(),
                     }
@@ -302,7 +304,7 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
     match ty {
         // For `string` and `bytes` layout is a word with length followed by the data
         DynSolType::String | DynSolType::Bytes => {
-            let length = U256::from_be_bytes::<32>(first_word.try_into().unwrap()).to::<usize>();
+            let length: usize = U256::from_be_slice(first_word).try_into().ok()?;
             let data = memory.get(location + 32..location + 32 + length)?;
 
             match ty {
@@ -318,10 +320,9 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
         DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
             let (length, start) = match ty {
                 DynSolType::FixedArray(_, length) => (*length, location),
-                DynSolType::Array(_) => (
-                    U256::from_be_bytes::<32>(first_word.try_into().unwrap()).to::<usize>(),
-                    location + 32,
-                ),
+                DynSolType::Array(_) => {
+                    (U256::from_be_slice(first_word).try_into().ok()?, location + 32)
+                }
                 _ => unreachable!(),
             };
             let mut decoded = Vec::with_capacity(length);
@@ -331,10 +332,7 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
                 let location = match inner.as_ref() {
                     // Arrays of variable length types are arrays of pointers to the values
                     DynSolType::String | DynSolType::Bytes | DynSolType::Array(_) => {
-                        U256::from_be_bytes::<32>(
-                            memory.get(offset..offset + 32)?.try_into().unwrap(),
-                        )
-                        .to()
+                        U256::from_be_slice(memory.get(offset..offset + 32)?).try_into().ok()?
                     }
                     _ => offset,
                 };
