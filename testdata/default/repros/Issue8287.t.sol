@@ -8,8 +8,8 @@ import "cheats/Vm.sol";
 contract Issue8287Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function testSelectFork() public {
-        uint256 f2 = vm.createFork("rpcAlias", 10);
+    function testRpcBalance() public {
+        uint256 f2 = vm.createSelectFork("rpcAlias", 10);
         bytes memory data = vm.rpc("eth_getBalance", "[\"0x551e7784778ef8e048e495df49f2614f84a4f1dc\",\"0x0\"]");
         // rpc response returns encoded bytes
         bytes memory b = abi.decode(data, (bytes));
