@@ -312,7 +312,7 @@ impl<'a> ContractRunner<'a> {
         let tmp_tracing =
             self.executor.inspector().tracer.is_none() && has_invariants && call_setup;
         if tmp_tracing {
-            self.executor.set_tracing(Some(TraceMode::Call));
+            self.executor.set_tracing(TraceMode::Call);
         }
         let setup_time = Instant::now();
         let setup = self.setup(call_setup);

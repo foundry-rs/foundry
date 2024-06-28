@@ -34,7 +34,7 @@ pub fn replay_run(
 ) -> Result<Vec<BaseCounterExample>> {
     // We want traces for a failed case.
     if executor.inspector().tracer.is_none() {
-        executor.set_tracing(Some(TraceMode::Call));
+        executor.set_tracing(TraceMode::Call);
     }
 
     let mut counterexample_sequence = vec![];
