@@ -102,7 +102,7 @@ impl<'a> CowBackend<'a> {
     /// Returns a mutable instance of the Backend if it is initialized.
     fn initialized_backend_mut(&mut self) -> Option<&mut Backend> {
         if self.is_initialized {
-            return Some(self.backend.to_mut());
+            return Some(self.backend.to_mut())
         }
         None
     }
@@ -246,12 +246,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
     }
 
     fn set_blockhash(&mut self, block_number: U256, block_hash: B256) {
-        self.backend
-            .to_mut()
-            .mem_db()
-            .to_owned()
-            .block_hashes
-            .insert(block_number, block_hash);
+        self.backend.to_mut().mem_db().to_owned().block_hashes.insert(block_number, block_hash);
     }
 }
 
