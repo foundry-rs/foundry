@@ -3,7 +3,10 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
 use eyre::{OptionExt, Result};
-use foundry_block_explorers::{contract::Metadata, Client};
+use foundry_block_explorers::{
+    contract::{ContractCreationData, ContractMetadata, Metadata},
+    Client,
+};
 use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
@@ -21,7 +24,7 @@ use foundry_evm::{
 use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::{fmt, path::PathBuf, str::FromStr};
+use std::{fmt, ops::Add, path::PathBuf, str::FromStr};
 use yansi::Paint;
 
 impl_figment_convert!(VerifyBytecodeArgs);
@@ -189,7 +192,7 @@ impl VerifyBytecodeArgs {
         let receipt = provider
             .get_transaction_receipt(creation_data.transaction_hash)
             .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transacrion receipt from RPC: {:?}", e))?;
+            .or_else(|e| eyre::bail!("Couldn't fetch transaction receipt from RPC: {:?}", e))?;
 
         let receipt = if let Some(receipt) = receipt {
             receipt
@@ -199,10 +202,13 @@ impl VerifyBytecodeArgs {
                 creation_data.transaction_hash
             );
         };
+
         // Extract creation code
-        let maybe_creation_code = if receipt.contract_address == Some(self.address) {
+        let maybe_creation_code = if receipt.to == Some(Address::ZERO) &&
+            receipt.contract_address == Some(self.address)
+        {
             &transaction.input
-        } else if transaction.to == Some(DEFAULT_CREATE2_DEPLOYER) {
+        } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
             &transaction.input[32..]
         } else {
             eyre::bail!(
@@ -583,37 +589,30 @@ fn try_partial_match(
     has_metadata: bool,
 ) -> Result<bool> {
     // 1. Check length of constructor args
-    if constructor_args.is_empty() {
+    if constructor_args.is_empty() || is_runtime {
         // Assume metadata is at the end of the bytecode
-        if has_metadata {
-            local_bytecode = extract_metadata_hash(local_bytecode)?;
-            bytecode = extract_metadata_hash(bytecode)?;
-        }
-
-        // Now compare the creation code and bytecode
-        return Ok(local_bytecode == bytecode);
-    }
-
-    if is_runtime {
-        if has_metadata {
-            local_bytecode = extract_metadata_hash(local_bytecode)?;
-            bytecode = extract_metadata_hash(bytecode)?;
-        }
-
-        // Now compare the local code and bytecode
-        return Ok(local_bytecode == bytecode);
+        return try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
     }
 
     // If not runtime, extract constructor args from the end of the bytecode
     bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
     local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
 
+    return try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
+}
+
+fn try_extract_and_compare_bytecode(
+    mut local_bytecode: &[u8],
+    mut bytecode: &[u8],
+    has_metadata: bool,
+) -> Result<bool> {
     if has_metadata {
         local_bytecode = extract_metadata_hash(local_bytecode)?;
         bytecode = extract_metadata_hash(bytecode)?;
     }
 
-    Ok(local_bytecode == bytecode)
+    // Now compare the local code and bytecode
+    return Ok(local_bytecode == bytecode);
 }
 
 /// @dev This assumes that the metadata is at the end of the bytecode
