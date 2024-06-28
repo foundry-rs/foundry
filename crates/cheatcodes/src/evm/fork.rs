@@ -251,6 +251,7 @@ impl Cheatcode for rpcCall {
                 // converted fixed bytes to bytes to prevent evm encoding issues: <https://github.com/foundry-rs/foundry/issues/8287>
                 DynSolValue::Bytes(bytes.as_slice()[..size].to_vec())
             }
+            DynSolValue::Address(addr) => DynSolValue::Bytes(addr.to_vec()),
             val => val,
         };
 
