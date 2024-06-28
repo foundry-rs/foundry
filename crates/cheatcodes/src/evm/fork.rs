@@ -1,4 +1,5 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
+use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
@@ -246,7 +247,8 @@ impl Cheatcode for rpcCall {
         let result_as_tokens = crate::json::json_value_to_token(&result)
             .map_err(|err| fmt_err!("failed to parse result: {err}"))?;
 
-        Ok(result_as_tokens.abi_encode())
+        // the cheatcode expects bytes so we need to ensure the result is encoded as bytes
+        Ok(DynSolValue::Bytes(result_as_tokens.abi_encode()).abi_encode())
     }
 }
 
