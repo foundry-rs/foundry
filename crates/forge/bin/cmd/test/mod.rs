@@ -7,7 +7,9 @@ use forge::{
     gas_report::GasReport,
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
-    traces::{identifier::SignaturesIdentifier, CallTraceDecoderBuilder, TraceKind},
+    traces::{
+        identifier::SignaturesIdentifier, render_trace_arena, CallTraceDecoderBuilder, TraceKind,
+    },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
 use foundry_cli::{
@@ -49,7 +51,6 @@ mod summary;
 use summary::TestSummaryReporter;
 
 pub use filter::FilterArgs;
-use forge::traces::render_trace_arena;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);

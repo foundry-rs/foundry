@@ -292,7 +292,7 @@ impl CallTraceDecoder {
         }
     }
 
-    /// Extends traces with decoded data by mutating the
+    /// Extends the traces with decoded data by mutating the
     /// [CallTrace] in place. See [CallTraceDecoder::decode_function] and
     /// [CallTraceDecoder::decode_event] for more details.
     pub async fn extend_traces(&self, traces: &mut CallTraceArena) {
