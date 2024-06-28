@@ -405,8 +405,10 @@ pub fn load_contracts<'a>(
 /// Different kinds of traces used by different foundry components.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum TraceMode {
-    /// Simple call trace, no steps tracing required.
+    /// Disabled tracing.
     #[default]
+    None,
+    /// Simple call trace, no steps tracing required.
     Call,
     /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
     ///
@@ -419,6 +421,10 @@ pub enum TraceMode {
 }
 
 impl TraceMode {
+    pub const fn is_none(self) -> bool {
+        matches!(self, Self::None)
+    }
+
     pub const fn is_call(self) -> bool {
         matches!(self, Self::Call)
     }
@@ -430,25 +436,27 @@ impl TraceMode {
     pub const fn is_debug(self) -> bool {
         matches!(self, Self::Debug)
     }
-}
 
-impl From<TraceMode> for TracingInspectorConfig {
-    fn from(mode: TraceMode) -> Self {
-        Self {
-            record_steps: mode.is_debug() || mode.is_jump(),
-            record_memory_snapshots: mode.is_debug() || mode.is_jump(),
-            record_stack_snapshots: if mode.is_debug() || mode.is_jump() {
-                StackSnapshotType::Full
-            } else {
-                StackSnapshotType::None
-            },
-            record_logs: true,
-            record_state_diff: false,
-            record_returndata_snapshots: mode.is_debug(),
-            record_opcodes_filter: mode
-                .is_jump()
-                .then(|| OpcodeFilter::new().enable(OpCode::JUMP).enable(OpCode::JUMPDEST)),
-            exclude_precompile_calls: false,
+    pub fn into_config(self) -> Option<TracingInspectorConfig> {
+        if self.is_none() {
+            None
+        } else {
+            TracingInspectorConfig {
+                record_steps: self.is_debug() || self.is_jump(),
+                record_memory_snapshots: self.is_debug() || self.is_jump(),
+                record_stack_snapshots: if self.is_debug() || self.is_jump() {
+                    StackSnapshotType::Full
+                } else {
+                    StackSnapshotType::None
+                },
+                record_logs: true,
+                record_state_diff: false,
+                record_returndata_snapshots: self.is_debug(),
+                record_opcodes_filter: self
+                    .is_jump()
+                    .then(|| OpcodeFilter::new().enable(OpCode::JUMP).enable(OpCode::JUMPDEST)),
+                exclude_precompile_calls: false,
+            }.into()
         }
     }
 }

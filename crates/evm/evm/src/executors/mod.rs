@@ -211,8 +211,8 @@ impl Executor {
     }
 
     #[inline]
-    pub fn set_tracing(&mut self, mode: impl Into<Option<TraceMode>>) -> &mut Self {
-        self.inspector_mut().tracing(mode.into());
+    pub fn set_tracing(&mut self, mode: TraceMode) -> &mut Self {
+        self.inspector_mut().tracing(mode);
         self
     }
 

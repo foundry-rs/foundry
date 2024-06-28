@@ -239,13 +239,13 @@ impl MultiContractRunner {
         );
 
         let trace_mode = if self.debug {
-            Some(TraceMode::Debug)
+            TraceMode::Debug
         } else if self.decode_internal {
-            Some(TraceMode::Jump)
+            TraceMode::Jump
         } else if self.evm_opts.verbosity >= 3 {
-            Some(TraceMode::Call)
+            TraceMode::Call
         } else {
-            None
+            TraceMode::None
         };
 
         let executor = ExecutorBuilder::new()

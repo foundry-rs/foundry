@@ -45,7 +45,7 @@ pub struct InspectorStackBuilder {
     /// The fuzzer inspector and its state, if it exists.
     pub fuzzer: Option<Fuzzer>,
     /// Whether to enable tracing.
-    pub trace_mode: Option<TraceMode>,
+    pub trace_mode: TraceMode,
     /// Whether logs should be collected.
     pub logs: Option<bool>,
     /// Whether coverage info should be collected.
@@ -125,15 +125,9 @@ impl InspectorStackBuilder {
 
     /// Set whether to enable the tracer.
     #[inline]
-    pub fn trace_mode(mut self, mode: impl Into<Option<TraceMode>>) -> Self {
-        if let Some(mode) = mode.into() {
-            if let Some(current) = self.trace_mode.as_mut() {
-                if *current <= mode {
-                    *current = mode;
-                }
-            } else {
-                self.trace_mode = Some(mode);
-            }
+    pub fn trace_mode(mut self, mode: TraceMode) -> Self {
+        if self.trace_mode < mode {
+            self.trace_mode = mode
         }
         self
     }
@@ -412,8 +406,8 @@ impl InspectorStack {
 
     /// Set whether to enable the tracer.
     #[inline]
-    pub fn tracing(&mut self, mode: Option<TraceMode>) {
-        self.tracer = mode.map(|mode| TracingInspector::new(mode.into()));
+    pub fn tracing(&mut self, mode: TraceMode) {
+        self.tracer = mode.into_config().map(TracingInspector::new);
     }
 
     /// Collects all the data gathered during inspection into a single struct.

@@ -318,7 +318,7 @@ impl<'a> ContractRunner<'a> {
         let setup = self.setup(call_setup);
         debug!("finished setting up in {:?}", setup_time.elapsed());
         if tmp_tracing {
-            self.executor.set_tracing(None);
+            self.executor.set_tracing(TraceMode::None);
         }
 
         if setup.reason.is_some() {
