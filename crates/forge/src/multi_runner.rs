@@ -365,11 +365,10 @@ impl MultiContractRunnerBuilder {
     pub fn build<C: Compiler>(
         self,
         root: &Path,
-        output: ProjectCompileOutput<C>,
+        output: &ProjectCompileOutput<C>,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
-        let output = output.with_stripped_file_prefixes(root);
         let linker = Linker::new(root, output.artifact_ids().collect());
 
         // Build revert decoder from ABIs of all artifacts.
