@@ -478,7 +478,8 @@ impl TestArgs {
 
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
-                for (kind, mut arena) in result.traces.clone() {
+
+                for (kind, arena) in &mut result.traces.clone() {
                     if identify_addresses {
                         decoder.identify(&arena, &mut identifier);
                     }
@@ -499,7 +500,7 @@ impl TestArgs {
                     };
 
                     if should_include {
-                        decoded_traces.push(render_trace_arena(&mut arena, &decoder).await?);
+                        decoded_traces.push(render_trace_arena(arena, &decoder).await?);
                     }
                 }
 
