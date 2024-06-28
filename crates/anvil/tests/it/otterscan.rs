@@ -123,9 +123,7 @@ async fn ots_get_internal_operations_contract_create2() {
     );
 }
 
-// TODO: This is currently not supported by revm-inspectors
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
 async fn ots_get_internal_operations_contract_selfdestruct_london() {
     ots_get_internal_operations_contract_selfdestruct(Hardfork::London).await;
 }
