@@ -18,7 +18,7 @@ pub type GeneratedWallet = (SigningKey, Address);
 /// CLI arguments for `cast wallet vanity`.
 #[derive(Clone, Debug, Parser)]
 pub struct VanityArgs {
-    /// Prefix for the vanity address.
+    /// Prefix regex pattern or hex string.
     #[arg(
         long,
         required_unless_present = "ends_with",
@@ -27,7 +27,7 @@ pub struct VanityArgs {
     )]
     pub starts_with: Option<String>,
 
-    /// Suffix for the vanity address.
+    /// Suffix regex pattern or hex string.
     #[arg(long, value_parser = HexAddressValidator, value_name = "HEX")]
     pub ends_with: Option<String>,
 
@@ -151,8 +151,8 @@ impl VanityArgs {
         }
 
         println!(
-            "Successfully found vanity address in {} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
-            timer.elapsed().as_secs(),
+            "Successfully found vanity address in {:.3} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
+            timer.elapsed().as_secs_f64(),
             if nonce.is_some() { "\nContract address: " } else { "" },
             if nonce.is_some() {
                 wallet.address().create(nonce.unwrap()).to_checksum(None)
