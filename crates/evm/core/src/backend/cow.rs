@@ -59,6 +59,7 @@ impl<'a> CowBackend<'a> {
     ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
+    #[instrument(name = "inspect", level = "debug", skip_all)]
     pub fn inspect<'b, I: InspectorExt<&'b mut Self>>(
         &'b mut self,
         env: &mut EnvWithHandlerCfg,
@@ -177,13 +178,13 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         self.backend_mut(env).roll_fork_to_transaction(id, transaction, env, journaled_state)
     }
 
-    fn transact<I: InspectorExt<Backend>>(
+    fn transact(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut I,
+        inspector: &mut dyn InspectorExt<Backend>,
     ) -> eyre::Result<()> {
         self.backend_mut(env).transact(id, transaction, env, journaled_state, inspector)
     }

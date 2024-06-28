@@ -295,17 +295,17 @@ impl CallTraceDecoder {
     pub async fn extend_traces(&self, traces: &mut CallTraceArena) {
         for node in traces.nodes_mut() {
             let decoded = self.decode_function(&node.trace).await;
-            node.trace.decoded_label = decoded.label;
-            node.trace.decoded_call_data = decoded.func;
-            node.trace.decoded_return_data = decoded.return_data;
+            node.trace.decoded.label = decoded.label;
+            node.trace.decoded.call_data = decoded.func;
+            node.trace.decoded.return_data = decoded.return_data;
 
             for log in node.logs.iter_mut() {
                 let decoded = self.decode_event(log).await;
 
                 match decoded {
                     DecodedCallLog::Decoded(name, params) => {
-                        log.decoded_name = Some(name);
-                        log.decoded_params = Some(params);
+                        log.decoded.name = Some(name);
+                        log.decoded.params = Some(params);
                     }
                     DecodedCallLog::Raw(_) => {}
                 }

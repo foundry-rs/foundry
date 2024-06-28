@@ -1,4 +1,4 @@
-//! Cheatcode EVM [Inspector].
+//! Cheatcode EVM inspector.
 
 use crate::{
     evm::{
@@ -15,15 +15,16 @@ use crate::{
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
     Vm::AccountAccess,
 };
-use alloy_primitives::{Address, Bytes, Log, TxKind, B256, U256};
+use alloy_primitives::{hex, Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
-use alloy_sol_types::{SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, SELECTOR_LEN};
 use foundry_config::Config;
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    utils::new_evm_with_existing_context,
     InspectorExt,
 };
 use itertools::Itertools;
@@ -32,7 +33,7 @@ use revm::{
         opcode, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
-    primitives::{BlockEnv, CreateScheme},
+    primitives::{BlockEnv, CreateScheme, EVMError},
     EvmContext, InnerEvmContext, Inspector,
 };
 use rustc_hash::FxHashMap;
@@ -45,6 +46,85 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+
+/// Helper trait for obtaining complete [revm::Inspector] instance from mutable reference to
+/// [Cheatcodes].
+///
+/// This is needed for cases when inspector itself needs mutable access to [Cheatcodes] state and
+/// allows us to correctly execute arbitrary EVM frames from inside cheatcode implementations.
+pub trait CheatcodesExecutor {
+    /// Core trait method accepting mutable reference to [Cheatcodes] and returning
+    /// [revm::Inspector].
+    fn get_inspector<'a, DB: DatabaseExt>(
+        &'a mut self,
+        cheats: &'a mut Cheatcodes,
+    ) -> impl InspectorExt<DB> + 'a;
+
+    /// Obtains [revm::Inspector] instance and executes the given CREATE frame.
+    fn exec_create<DB: DatabaseExt>(
+        &mut self,
+        inputs: CreateInputs,
+        cheats: &mut Cheatcodes,
+        ecx: &mut InnerEvmContext<DB>,
+    ) -> Result<CreateOutcome, EVMError<DB::Error>> {
+        let inspector = self.get_inspector(cheats);
+        let error = std::mem::replace(&mut ecx.error, Ok(()));
+        let l1_block_info = std::mem::take(&mut ecx.l1_block_info);
+
+        let inner = revm::InnerEvmContext {
+            env: ecx.env.clone(),
+            journaled_state: std::mem::replace(
+                &mut ecx.journaled_state,
+                revm::JournaledState::new(Default::default(), Default::default()),
+            ),
+            db: &mut ecx.db as &mut dyn DatabaseExt,
+            error,
+            l1_block_info,
+        };
+
+        let mut evm = new_evm_with_existing_context(inner, inspector);
+
+        evm.context.evm.inner.journaled_state.depth += 1;
+
+        let first_frame_or_result =
+            evm.handler.execution().create(&mut evm.context, Box::new(inputs))?;
+
+        let mut result = match first_frame_or_result {
+            revm::FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
+            revm::FrameOrResult::Result(result) => result,
+        };
+
+        evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
+
+        let outcome = match result {
+            revm::FrameResult::Call(_) | revm::FrameResult::EOFCreate(_) => unreachable!(),
+            revm::FrameResult::Create(create) => create,
+        };
+
+        evm.context.evm.inner.journaled_state.depth -= 1;
+
+        ecx.journaled_state = evm.context.evm.inner.journaled_state;
+        ecx.env = evm.context.evm.inner.env;
+        ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
+        ecx.error = evm.context.evm.inner.error;
+
+        Ok(outcome)
+    }
+}
+
+/// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an
+/// inspector.
+#[derive(Debug, Default, Clone, Copy)]
+struct TransparentCheatcodesExecutor;
+
+impl CheatcodesExecutor for TransparentCheatcodesExecutor {
+    fn get_inspector<'a, DB: DatabaseExt>(
+        &'a mut self,
+        cheats: &'a mut Cheatcodes,
+    ) -> impl InspectorExt<DB> + 'a {
+        cheats
+    }
+}
 
 macro_rules! try_or_return {
     ($e:expr) => {
@@ -255,10 +335,11 @@ impl Cheatcodes {
     }
 
     /// Decodes the input data and applies the cheatcode.
-    fn apply_cheatcode<DB: DatabaseExt>(
+    fn apply_cheatcode<DB: DatabaseExt, E: CheatcodesExecutor>(
         &mut self,
         ecx: &mut EvmContext<DB>,
         call: &CallInputs,
+        executor: &mut E,
     ) -> Result {
         // decode the cheatcode call
         let decoded = Vm::VmCalls::abi_decode(&call.input, false).map_err(|e| {
@@ -285,8 +366,10 @@ impl Cheatcodes {
                 state: self,
                 ecx: &mut ecx.inner,
                 precompiles: &mut ecx.precompiles,
+                gas_limit: call.gas_limit,
                 caller,
             },
+            executor,
         )
     }
 
@@ -346,67 +429,13 @@ impl Cheatcodes {
             }
         }
     }
-}
 
-impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
-    #[inline]
-    fn initialize_interp(&mut self, _interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
-        // When the first interpreter is initialized we've circumvented the balance and gas checks,
-        // so we apply our actual block data with the correct fees and all.
-        if let Some(block) = self.block.take() {
-            ecx.env.block = block;
-        }
-        if let Some(gas_price) = self.gas_price.take() {
-            ecx.env.tx.gas_price = gas_price;
-        }
-    }
-
-    #[inline]
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
-        self.pc = interpreter.program_counter();
-
-        // `pauseGasMetering`: reset interpreter gas.
-        if self.gas_metering.is_some() {
-            self.meter_gas(interpreter);
-        }
-
-        // `record`: record storage reads and writes.
-        if self.accesses.is_some() {
-            self.record_accesses(interpreter);
-        }
-
-        // `startStateDiffRecording`: record granular ordered storage accesses.
-        if self.recorded_account_diffs_stack.is_some() {
-            self.record_state_diffs(interpreter, ecx);
-        }
-
-        // `expectSafeMemory`: check if the current opcode is allowed to interact with memory.
-        if !self.allowed_mem_writes.is_empty() {
-            self.check_mem_opcodes(interpreter, ecx.journaled_state.depth());
-        }
-
-        // `startMappingRecording`: record SSTORE and KECCAK256.
-        if let Some(mapping_slots) = &mut self.mapping_slots {
-            mapping::step(mapping_slots, interpreter);
-        }
-    }
-
-    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
-        if !self.expected_emits.is_empty() {
-            expect::handle_expect_emit(self, log);
-        }
-
-        // `recordLogs`
-        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
-            storage_recorded_logs.push(Vm::Log {
-                topics: log.data.topics().to_vec(),
-                data: log.data.data.clone(),
-                emitter: log.address,
-            });
-        }
-    }
-
-    fn call(&mut self, ecx: &mut EvmContext<DB>, call: &mut CallInputs) -> Option<CallOutcome> {
+    pub fn call_with_executor<DB: DatabaseExt>(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        call: &mut CallInputs,
+        executor: &mut impl CheatcodesExecutor,
+    ) -> Option<CallOutcome> {
         let gas = Gas::new(call.gas_limit);
 
         // At the root call to test function or script `run()`/`setUp()` functions, we are
@@ -431,12 +460,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 let prev = account.info.nonce;
                 account.info.nonce = prev.saturating_sub(1);
 
-                debug!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
+                trace!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
             }
         }
 
         if call.target_address == CHEATCODE_ADDRESS {
-            return match self.apply_cheatcode(ecx, call) {
+            return match self.apply_cheatcode(ecx, call, executor) {
                 Ok(retdata) => Some(CallOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Return,
@@ -657,6 +686,73 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         None
+    }
+}
+
+impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
+    #[inline]
+    fn initialize_interp(&mut self, _interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        // When the first interpreter is initialized we've circumvented the balance and gas checks,
+        // so we apply our actual block data with the correct fees and all.
+        if let Some(block) = self.block.take() {
+            ecx.env.block = block;
+        }
+        if let Some(gas_price) = self.gas_price.take() {
+            ecx.env.tx.gas_price = gas_price;
+        }
+    }
+
+    #[inline]
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        self.pc = interpreter.program_counter();
+
+        // `pauseGasMetering`: reset interpreter gas.
+        if self.gas_metering.is_some() {
+            self.meter_gas(interpreter);
+        }
+
+        // `record`: record storage reads and writes.
+        if self.accesses.is_some() {
+            self.record_accesses(interpreter);
+        }
+
+        // `startStateDiffRecording`: record granular ordered storage accesses.
+        if self.recorded_account_diffs_stack.is_some() {
+            self.record_state_diffs(interpreter, ecx);
+        }
+
+        // `expectSafeMemory`: check if the current opcode is allowed to interact with memory.
+        if !self.allowed_mem_writes.is_empty() {
+            self.check_mem_opcodes(interpreter, ecx.journaled_state.depth());
+        }
+
+        // `startMappingRecording`: record SSTORE and KECCAK256.
+        if let Some(mapping_slots) = &mut self.mapping_slots {
+            mapping::step(mapping_slots, interpreter);
+        }
+    }
+
+    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
+        if !self.expected_emits.is_empty() {
+            expect::handle_expect_emit(self, log);
+        }
+
+        // `recordLogs`
+        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
+            storage_recorded_logs.push(Vm::Log {
+                topics: log.data.topics().to_vec(),
+                data: log.data.data.clone(),
+                emitter: log.address,
+            });
+        }
+    }
+
+    fn call(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        inputs: &mut CallInputs,
+    ) -> Option<CallOutcome> {
+        Self::call_with_executor(self, context, inputs, &mut TransparentCheatcodesExecutor)
     }
 
     fn call_end(
@@ -1441,8 +1537,7 @@ impl Cheatcodes {
                             // pointer, which could have been updated to the exclusive upper bound during
                             // execution.
                             let value = try_or_return!(interpreter.stack().peek(1)).to_be_bytes::<32>();
-                            let selector = stopExpectSafeMemoryCall {}.cheatcode().func.selector_bytes;
-                            if value[0..SELECTOR_LEN] == selector {
+                            if value[..SELECTOR_LEN] == stopExpectSafeMemoryCall::SELECTOR {
                                 return
                             }
 
@@ -1510,9 +1605,8 @@ impl Cheatcodes {
                             if to == CHEATCODE_ADDRESS {
                                 let args_offset = try_or_return!(interpreter.stack().peek(3)).saturating_to::<usize>();
                                 let args_size = try_or_return!(interpreter.stack().peek(4)).saturating_to::<usize>();
-                                let selector = stopExpectSafeMemoryCall {}.cheatcode().func.selector_bytes;
                                 let memory_word = interpreter.shared_memory.slice(args_offset, args_size);
-                                if memory_word[0..SELECTOR_LEN] == selector {
+                                if memory_word[..SELECTOR_LEN] == stopExpectSafeMemoryCall::SELECTOR {
                                     return
                                 }
                             }
@@ -1623,18 +1717,6 @@ fn check_if_fixed_gas_limit<DB: DatabaseExt>(
         && call_gas_limit > 2300
 }
 
-/// Dispatches the cheatcode call to the appropriate function.
-fn apply_dispatch<DB: DatabaseExt>(calls: &Vm::VmCalls, ccx: &mut CheatsCtxt<DB>) -> Result {
-    macro_rules! match_ {
-        ($($variant:ident),*) => {
-            match calls {
-                $(Vm::VmCalls::$variant(cheat) => crate::Cheatcode::apply_traced(cheat, ccx),)*
-            }
-        };
-    }
-    vm_calls!(match_)
-}
-
 /// Returns true if the kind of account access is a call.
 fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
@@ -1690,4 +1772,55 @@ fn append_storage_access(
             }
         }
     }
+}
+
+/// Dispatches the cheatcode call to the appropriate function.
+fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
+    calls: &Vm::VmCalls,
+    ccx: &mut CheatsCtxt<DB>,
+    executor: &mut E,
+) -> Result {
+    macro_rules! dispatch {
+        ($($variant:ident),*) => {
+            match calls {
+                $(Vm::VmCalls::$variant(cheat) => crate::Cheatcode::apply_full(cheat, ccx, executor),)*
+            }
+        };
+    }
+
+    let _guard = trace_span_and_call(calls);
+    let result = vm_calls!(dispatch);
+    trace_return(&result);
+    result
+}
+
+fn trace_span_and_call(calls: &Vm::VmCalls) -> tracing::span::EnteredSpan {
+    let mut cheat = None;
+    let mut get_cheat = || *cheat.get_or_insert_with(|| calls_as_dyn_cheatcode(calls));
+    let span = debug_span!(target: "cheatcodes", "apply", id = %get_cheat().id());
+    let entered = span.entered();
+    trace!(target: "cheatcodes", cheat = ?get_cheat().as_debug(), "applying");
+    entered
+}
+
+fn trace_return(result: &Result) {
+    trace!(
+        target: "cheatcodes",
+        return = %match result {
+            Ok(b) => hex::encode(b),
+            Err(e) => e.to_string(),
+        }
+    );
+}
+
+#[cold]
+fn calls_as_dyn_cheatcode(calls: &Vm::VmCalls) -> &dyn DynCheatcode {
+    macro_rules! as_dyn {
+        ($($variant:ident),*) => {
+            match calls {
+                $(Vm::VmCalls::$variant(cheat) => cheat,)*
+            }
+        };
+    }
+    vm_calls!(as_dyn)
 }

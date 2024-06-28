@@ -12,7 +12,6 @@ use std::{
     process::{Command, Output, Stdio},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
 
 mod cmd;
@@ -68,11 +67,11 @@ impl<T: AsRef<Path>> FoundryPathExt for T {
 
 /// Initializes a tracing Subscriber for logging
 pub fn subscriber() {
-    tracing_subscriber::Registry::default()
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .with(ErrorLayer::default())
-        .with(tracing_subscriber::fmt::layer())
-        .init()
+    let registry = tracing_subscriber::Registry::default()
+        .with(tracing_subscriber::EnvFilter::from_default_env());
+    #[cfg(feature = "tracy")]
+    let registry = registry.with(tracing_tracy::TracyLayer::default());
+    registry.with(tracing_subscriber::fmt::layer()).init()
 }
 
 pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {

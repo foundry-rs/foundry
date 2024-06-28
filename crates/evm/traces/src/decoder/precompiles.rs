@@ -1,5 +1,5 @@
 use crate::{CallTrace, DecodedCallData};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{hex, B256, U256};
 use alloy_sol_types::{abi, sol, SolCall};
 use itertools::Itertools;
 

@@ -1385,7 +1385,7 @@ impl Backend {
                 to_on_fork = fork.block_number();
             }
 
-            if fork.predates_fork(from) {
+            if fork.predates_fork_inclusive(from) {
                 // this data is only available on the forked client
                 let filter = filter.clone().from_block(from).to_block(to_on_fork);
                 all_logs = fork.logs(&filter).await?;
@@ -1921,8 +1921,8 @@ impl Backend {
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
-        if let Some(traces) = self.mined_geth_trace_transaction(hash, opts.clone()) {
-            return Ok(GethTrace::Default(traces));
+        if let Some(trace) = self.mined_geth_trace_transaction(hash, opts.clone()) {
+            return trace;
         }
 
         if let Some(fork) = self.get_fork() {
@@ -1936,8 +1936,8 @@ impl Backend {
         &self,
         hash: B256,
         opts: GethDebugTracingOptions,
-    ) -> Option<DefaultFrame> {
-        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts.config))
+    ) -> Option<Result<GethTrace, BlockchainError>> {
+        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts))
     }
 
     /// Returns the traces for the given block
@@ -2150,7 +2150,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_transaction_by_block_hash_and_index(
+    pub fn mined_transaction_by_block_hash_and_index(
         &self,
         block_hash: B256,
         index: Index,
@@ -2189,7 +2189,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_transaction_by_hash(&self, hash: B256) -> Option<WithOtherFields<Transaction>> {
+    pub fn mined_transaction_by_hash(&self, hash: B256) -> Option<WithOtherFields<Transaction>> {
         let (info, block) = {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { info, block_hash, .. } =

@@ -20,10 +20,9 @@ use foundry_evm::{
     constants::CALLER,
     decode::RevertDecoder,
     executors::{
-        fuzz::{CaseOutcome, CounterExampleOutcome, FuzzOutcome, FuzzedExecutor},
+        fuzz::FuzzedExecutor,
         invariant::{
             check_sequence, replay_error, replay_run, InvariantExecutor, InvariantFuzzError,
-            InvariantFuzzTestResult,
         },
         CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
     },
@@ -52,8 +51,9 @@ pub const LIBRARY_DEPLOYER: Address = address!("1F95D37F27EA0dEA9C252FC09D5A6eaA
 /// A type that executes all tests of a contract
 #[derive(Clone, Debug)]
 pub struct ContractRunner<'a> {
+    /// The name of the contract.
     pub name: &'a str,
-    /// The data of the contract being ran.
+    /// The data of the contract.
     pub contract: &'a TestContract,
     /// The libraries that need to be deployed before the contract.
     pub libs_to_deploy: &'a Vec<Bytes>,
@@ -61,41 +61,18 @@ pub struct ContractRunner<'a> {
     pub executor: Executor,
     /// Revert decoder. Contains all known errors.
     pub revert_decoder: &'a RevertDecoder,
-    /// The initial balance of the test contract
+    /// The initial balance of the test contract.
     pub initial_balance: U256,
-    /// The address which will be used as the `from` field in all EVM calls
+    /// The address which will be used as the `from` field in all EVM calls.
     pub sender: Address,
-    /// Should generate debug traces
+    /// Whether debug traces should be generated.
     pub debug: bool,
     /// Overall test run progress.
-    progress: Option<&'a TestsProgress>,
-}
-
-impl<'a> ContractRunner<'a> {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        name: &'a str,
-        executor: Executor,
-        contract: &'a TestContract,
-        libs_to_deploy: &'a Vec<Bytes>,
-        initial_balance: U256,
-        sender: Option<Address>,
-        revert_decoder: &'a RevertDecoder,
-        debug: bool,
-        progress: Option<&'a TestsProgress>,
-    ) -> Self {
-        Self {
-            name,
-            executor,
-            contract,
-            libs_to_deploy,
-            initial_balance,
-            sender: sender.unwrap_or_default(),
-            revert_decoder,
-            debug,
-            progress,
-        }
-    }
+    pub progress: Option<&'a TestsProgress>,
+    /// The handle to the tokio runtime.
+    pub tokio_handle: &'a tokio::runtime::Handle,
+    /// The span of the contract.
+    pub span: tracing::Span,
 }
 
 impl<'a> ContractRunner<'a> {
@@ -276,7 +253,6 @@ impl<'a> ContractRunner<'a> {
         filter: &dyn TestFilter,
         test_options: &TestOptions,
         known_contracts: ContractsByArtifact,
-        handle: &tokio::runtime::Handle,
     ) -> SuiteResult {
         let start = Instant::now();
         let mut warnings = Vec::new();
@@ -335,13 +311,13 @@ impl<'a> ContractRunner<'a> {
         let tmp_tracing =
             self.executor.inspector().tracer.is_none() && has_invariants && call_setup;
         if tmp_tracing {
-            self.executor.set_tracing(true);
+            self.executor.set_tracing(true, false);
         }
         let setup_time = Instant::now();
         let setup = self.setup(call_setup);
         debug!("finished setting up in {:?}", setup_time.elapsed());
         if tmp_tracing {
-            self.executor.set_tracing(false);
+            self.executor.set_tracing(false, false);
         }
 
         if setup.reason.is_some() {
@@ -377,7 +353,13 @@ impl<'a> ContractRunner<'a> {
             .map(|&func| {
                 let start = Instant::now();
 
-                let _guard = handle.enter();
+                let _guard = self.tokio_handle.enter();
+
+                let _guard;
+                let current_span = tracing::Span::current();
+                if current_span.is_none() || current_span.id() != self.span.id() {
+                    _guard = self.span.enter();
+                }
 
                 let sig = func.signature();
                 let kind = func.test_function_kind();
@@ -385,7 +367,7 @@ impl<'a> ContractRunner<'a> {
                 let _guard = debug_span!(
                     "test",
                     %kind,
-                    name = if enabled!(tracing::Level::TRACE) { &sig } else { &func.name },
+                    name = %if enabled!(tracing::Level::TRACE) { &sig } else { &func.name },
                 )
                 .entered();
 
@@ -554,18 +536,20 @@ impl<'a> ContractRunner<'a> {
 
         let progress =
             start_fuzz_progress(self.progress, self.name, &func.name, invariant_config.runs);
-        let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs, gas_report_traces } =
+        let invariant_result =
             match evm.invariant_fuzz(invariant_contract.clone(), &fuzz_fixtures, progress.as_ref())
             {
                 Ok(x) => x,
                 Err(e) => return test_result.invariant_setup_fail(e),
             };
+        // Merge coverage collected during invariant run with test setup coverage.
+        test_result.merge_coverages(invariant_result.coverage);
 
         let mut counterexample = None;
-        let success = error.is_none();
-        let reason = error.as_ref().and_then(|err| err.revert_reason());
+        let success = invariant_result.error.is_none();
+        let reason = invariant_result.error.as_ref().and_then(|err| err.revert_reason());
 
-        match error {
+        match invariant_result.error {
             // If invariants were broken, replay the error to collect logs and traces
             Some(error) => match error {
                 InvariantFuzzError::BrokenInvariant(case_data) |
@@ -616,7 +600,7 @@ impl<'a> ContractRunner<'a> {
                     &mut test_result.logs,
                     &mut test_result.traces,
                     &mut test_result.coverage,
-                    &last_run_inputs,
+                    &invariant_result.last_run_inputs,
                 ) {
                     error!(%err, "Failed to replay last invariant run");
                 }
@@ -624,12 +608,12 @@ impl<'a> ContractRunner<'a> {
         }
 
         test_result.invariant_result(
-            gas_report_traces,
+            invariant_result.gas_report_traces,
             success,
             reason,
             counterexample,
-            cases,
-            reverts,
+            invariant_result.cases,
+            invariant_result.reverts,
         )
     }
 
@@ -643,16 +627,12 @@ impl<'a> ContractRunner<'a> {
     ) -> TestResult {
         let address = setup.address;
         let fuzz_fixtures = setup.fuzz_fixtures.clone();
-        let mut test_result = TestResult::new(setup);
+        let test_result = TestResult::new(setup);
 
         // Run fuzz test
         let progress = start_fuzz_progress(self.progress, self.name, &func.name, fuzz_config.runs);
-        let fuzzed_executor = FuzzedExecutor::new(
-            self.executor.clone(),
-            runner.clone(),
-            self.sender,
-            fuzz_config.clone(),
-        );
+        let fuzzed_executor =
+            FuzzedExecutor::new(self.executor.clone(), runner, self.sender, fuzz_config);
         let result = fuzzed_executor.fuzz(
             func,
             &fuzz_fixtures,
@@ -668,41 +648,6 @@ impl<'a> ContractRunner<'a> {
             return test_result.single_skip()
         }
 
-        if self.debug {
-            let mut debug_executor = self.executor.clone();
-            // turn the debug traces on
-            debug_executor.inspector_mut().enable_debugger(true);
-            debug_executor.inspector_mut().tracing(true);
-            let calldata = if let Some(counterexample) = result.counterexample.as_ref() {
-                match counterexample {
-                    CounterExample::Single(ce) => ce.calldata.clone(),
-                    _ => unimplemented!(),
-                }
-            } else {
-                result.first_case.calldata.clone()
-            };
-            // rerun the last relevant test with traces
-            let debug_result =
-                FuzzedExecutor::new(debug_executor, runner, self.sender, fuzz_config).single_fuzz(
-                    address,
-                    should_fail,
-                    calldata,
-                );
-
-            (test_result.debug, test_result.breakpoints) = match debug_result {
-                Ok(fuzz_outcome) => match fuzz_outcome {
-                    FuzzOutcome::Case(CaseOutcome { debug, breakpoints, .. }) => {
-                        (debug, breakpoints)
-                    }
-                    FuzzOutcome::CounterExample(CounterExampleOutcome {
-                        debug,
-                        breakpoints,
-                        ..
-                    }) => (debug, breakpoints),
-                },
-                Err(_) => (Default::default(), Default::default()),
-            };
-        }
         test_result.fuzz_result(result)
     }
 }

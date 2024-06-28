@@ -52,6 +52,8 @@ pub struct CheatsConfig {
     pub available_artifacts: Option<ContractsByArtifact>,
     /// Version of the script/test contract which is currently running.
     pub running_version: Option<Version>,
+    /// Whether to enable legacy (non-reverting) assertions.
+    pub legacy_assertions: bool,
 }
 
 impl CheatsConfig {
@@ -90,6 +92,7 @@ impl CheatsConfig {
             script_wallets,
             available_artifacts,
             running_version,
+            legacy_assertions: config.legacy_assertions,
         }
     }
 
@@ -217,6 +220,7 @@ impl Default for CheatsConfig {
             script_wallets: None,
             available_artifacts: Default::default(),
             running_version: Default::default(),
+            legacy_assertions: Default::default(),
         }
     }
 }

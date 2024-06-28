@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{keccak256, Address, B256};
+use alloy_primitives::{hex, keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use cast::{Cast, SimpleCast};

@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 
 pub use revm_inspectors::tracing::{
     types::{CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData},
-    CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TraceWriter,
-    TracingInspector, TracingInspectorConfig,
+    CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
+    TraceWriter, TracingInspector, TracingInspectorConfig,
 };
 
 /// Call trace address identifiers.

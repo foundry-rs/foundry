@@ -2,7 +2,7 @@ use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{hex, Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -363,7 +363,7 @@ impl CreateArgs {
             params.push((ty, arg));
         }
         let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
-        parse_tokens(params)
+        parse_tokens(params).map_err(Into::into)
     }
 }
 

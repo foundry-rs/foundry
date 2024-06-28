@@ -61,16 +61,10 @@ impl OpenChainClient {
             .get(url)
             .send()
             .await
-            .map_err(|err| {
-                self.on_reqwest_err(&err);
-                err
-            })?
+            .inspect_err(|err| self.on_reqwest_err(err))?
             .text()
             .await
-            .map_err(|err| {
-                self.on_reqwest_err(&err);
-                err
-            })
+            .inspect_err(|err| self.on_reqwest_err(err))
     }
 
     /// Sends a new post request
@@ -85,16 +79,10 @@ impl OpenChainClient {
             .json(body)
             .send()
             .await
-            .map_err(|err| {
-                self.on_reqwest_err(&err);
-                err
-            })?
+            .inspect_err(|err| self.on_reqwest_err(err))?
             .json()
             .await
-            .map_err(|err| {
-                self.on_reqwest_err(&err);
-                err
-            })
+            .inspect_err(|err| self.on_reqwest_err(err))
     }
 
     fn on_reqwest_err(&self, err: &reqwest::Error) {

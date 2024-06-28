@@ -46,14 +46,14 @@ impl Cheatcode for createWallet_2Call {
 }
 
 impl Cheatcode for getNonce_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet } = self;
         super::evm::get_nonce(ccx, &wallet.addr)
     }
 }
 
 impl Cheatcode for sign_3Call {
-    fn apply_full<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
         sign(&wallet.privateKey, digest)
     }
@@ -88,7 +88,7 @@ impl Cheatcode for deriveKey_3Call {
 }
 
 impl Cheatcode for rememberKeyCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey } = self;
         let wallet = parse_wallet(privateKey)?;
         let address = wallet.address();
@@ -158,11 +158,12 @@ impl Cheatcode for randomUint_0Call {
 
 impl Cheatcode for randomUint_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { min, max } = self;
+        let Self { min, max } = *self;
+        ensure!(min <= max, "min must be less than or equal to max");
         // Generate random between range min..=max
         let mut rng = rand::thread_rng();
-        let range = *max - *min + U256::from(1);
-        let random_number = rng.gen::<U256>() % range + *min;
+        let range = max - min + U256::from(1);
+        let random_number = rng.gen::<U256>() % range + min;
         Ok(random_number.abi_encode())
     }
 }
@@ -310,8 +311,7 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use alloy_primitives::FixedBytes;
-    use hex::FromHex;
+    use alloy_primitives::{hex::FromHex, FixedBytes};
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
     use std::{path::PathBuf, sync::Arc};
 
