@@ -292,6 +292,9 @@ impl CallTraceDecoder {
         }
     }
 
+    /// Extends traces with decoded data by mutating the
+    /// [CallTrace] in place. See [CallTraceDecoder::decode_function] and
+    /// [CallTraceDecoder::decode_event] for more details.
     pub async fn extend_traces(&self, traces: &mut CallTraceArena) {
         for node in traces.nodes_mut() {
             let decoded = self.decode_function(&node.trace).await;
@@ -313,6 +316,7 @@ impl CallTraceDecoder {
         }
     }
 
+    /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
         // Decode precompile
         if let Some((label, func)) = precompiles::decode(trace, 1) {
