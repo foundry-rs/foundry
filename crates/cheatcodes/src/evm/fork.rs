@@ -1,4 +1,5 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
+use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
@@ -243,8 +244,16 @@ impl Cheatcode for rpcCall {
             foundry_common::block_on(provider.raw_request(method.clone().into(), params_json))
                 .map_err(|err| fmt_err!("{method:?}: {err}"))?;
 
-        let result_as_tokens = crate::json::json_value_to_token(&result)
-            .map_err(|err| fmt_err!("failed to parse result: {err}"))?;
+        let result_as_tokens = match crate::json::json_value_to_token(&result)
+            .map_err(|err| fmt_err!("failed to parse result: {err}"))?
+        {
+            DynSolValue::FixedBytes(bytes, size) => {
+                // converted fixed bytes to bytes to prevent evm encoding issues: <https://github.com/foundry-rs/foundry/issues/8287>
+                DynSolValue::Bytes(bytes.as_slice()[..size].to_vec())
+            }
+            DynSolValue::Address(addr) => DynSolValue::Bytes(addr.to_vec()),
+            val => val,
+        };
 
         Ok(result_as_tokens.abi_encode())
     }
