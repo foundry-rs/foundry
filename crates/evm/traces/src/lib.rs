@@ -456,7 +456,8 @@ impl TraceMode {
                     .is_jump()
                     .then(|| OpcodeFilter::new().enable(OpCode::JUMP).enable(OpCode::JUMPDEST)),
                 exclude_precompile_calls: false,
-            }.into()
+            }
+            .into()
         }
     }
 }
