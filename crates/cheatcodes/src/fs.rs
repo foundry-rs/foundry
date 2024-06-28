@@ -1,7 +1,7 @@
 //! Implementations of [`Filesystem`](spec::Group::Filesystem) cheatcodes.
 
 use super::string::parse;
-use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
 use alloy_primitives::{hex, Bytes, U256};
@@ -9,6 +9,8 @@ use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
+use foundry_evm_core::backend::DatabaseExt;
+use revm::interpreter::CreateInputs;
 use semver::Version;
 use std::{
     collections::hash_map::Entry,
@@ -259,6 +261,59 @@ impl Cheatcode for getDeployedCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { artifactPath: path } = self;
         Ok(get_artifact_code(state, path, true)?.abi_encode())
+    }
+}
+
+impl Cheatcode for deployCode_0Call {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
+        let Self { artifactPath: path } = self;
+        let bytecode = get_artifact_code(ccx.state, path, false)?;
+        let output = executor
+            .exec_create(
+                CreateInputs {
+                    caller: ccx.caller,
+                    scheme: revm::primitives::CreateScheme::Create,
+                    value: U256::ZERO,
+                    init_code: bytecode,
+                    gas_limit: ccx.gas_limit,
+                },
+                ccx.state,
+                ccx.ecx,
+            )
+            .unwrap();
+
+        Ok(output.address.unwrap().abi_encode())
+    }
+}
+
+impl Cheatcode for deployCode_1Call {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
+        let Self { artifactPath: path, constructorArgs } = self;
+        let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+        bytecode.extend_from_slice(constructorArgs);
+        let output = executor
+            .exec_create(
+                CreateInputs {
+                    caller: ccx.caller,
+                    scheme: revm::primitives::CreateScheme::Create,
+                    value: U256::ZERO,
+                    init_code: bytecode.into(),
+                    gas_limit: ccx.gas_limit,
+                },
+                ccx.state,
+                ccx.ecx,
+            )
+            .unwrap();
+
+        Ok(output.address.unwrap().abi_encode())
     }
 }
 

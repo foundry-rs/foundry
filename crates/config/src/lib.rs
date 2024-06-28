@@ -294,7 +294,7 @@ pub struct Config {
     pub block_difficulty: u64,
     /// Before merge the `block.max_hash`, after merge it is `block.prevrandao`.
     pub block_prevrandao: B256,
-    /// the `block.gaslimit` value during EVM execution
+    /// The `block.gaslimit` value during EVM execution.
     pub block_gas_limit: Option<GasLimit>,
     /// The memory limit per EVM execution in bytes.
     /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
@@ -420,6 +420,9 @@ pub struct Config {
     // override it.
     #[serde(default, skip_serializing)]
     pub root: RootPath,
+
+    /// Whether to enable legacy (non-reverting) assertions.
+    pub legacy_assertions: bool,
 
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
@@ -2118,6 +2121,7 @@ impl Default for Config {
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
             skip: vec![],
             dependencies: Default::default(),
+            legacy_assertions: false,
             warnings: vec![],
             _non_exhaustive: (),
         }

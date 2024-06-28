@@ -7,6 +7,7 @@ use alloy_dyn_abi::JsonAbiExt;
 use eyre::Result;
 use foundry_config::InvariantConfig;
 use foundry_evm_core::utils::StateChangeset;
+use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract},
     FuzzedCases,
@@ -27,6 +28,8 @@ pub struct InvariantFuzzTestResult {
     pub last_run_inputs: Vec<BasicTxDetails>,
     /// Additional traces used for gas report construction.
     pub gas_report_traces: Vec<Vec<CallTraceArena>>,
+    /// The coverage info collected during the invariant test runs.
+    pub coverage: Option<HitMaps>,
 }
 
 /// Enriched results of an invariant run check.

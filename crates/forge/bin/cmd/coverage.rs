@@ -252,6 +252,8 @@ impl CoverageArgs {
             .run_tests(runner, config.clone(), verbosity, &self.test.filter(&config))
             .await?;
 
+        outcome.ensure_ok()?;
+
         // Add hit data to the coverage report
         let data = outcome.results.iter().flat_map(|(_, suite)| {
             let mut hits = Vec::new();

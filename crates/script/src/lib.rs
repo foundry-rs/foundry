@@ -37,7 +37,6 @@ use foundry_config::{
 use foundry_evm::{
     backend::Backend,
     constants::DEFAULT_CREATE2_DEPLOYER,
-    debug::DebugArena,
     executors::ExecutorBuilder,
     inspectors::{
         cheatcodes::{BroadcastableTransactions, ScriptWallets},
@@ -235,7 +234,7 @@ impl ScriptArgs {
                 .await?;
 
             if pre_simulation.args.debug {
-                pre_simulation.run_debugger()?;
+                return pre_simulation.run_debugger()
             }
 
             if pre_simulation.args.json {
@@ -462,7 +461,6 @@ pub struct ScriptResult {
     pub success: bool,
     pub logs: Vec<Log>,
     pub traces: Traces,
-    pub debug: Option<Vec<DebugArena>>,
     pub gas_used: u64,
     pub labeled_addresses: HashMap<Address, String>,
     pub transactions: Option<BroadcastableTransactions>,
