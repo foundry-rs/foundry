@@ -21,7 +21,7 @@ use foundry_evm::{
 use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::{fmt, ops::Add, path::PathBuf, str::FromStr};
+use std::{fmt, path::PathBuf, str::FromStr};
 use yansi::Paint;
 
 impl_figment_convert!(VerifyBytecodeArgs);
