@@ -38,7 +38,7 @@ use inflector::Inflector;
 use regex::Regex;
 use revm_primitives::{FixedBytes, SpecId};
 use semver::Version;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -2075,11 +2075,11 @@ impl Default for Config {
             prompt_timeout: 120,
             sender: Self::DEFAULT_SENDER,
             tx_origin: Self::DEFAULT_SENDER,
-            initial_balance: U256::from(0xffffffffffffffffffffffffu128),
+            initial_balance: U256::from((1u128 << 96) - 1),
             block_number: 1,
             fork_block_number: None,
             chain: None,
-            gas_limit: i64::MAX.into(),
+            gas_limit: (1u64 << 30).into(), // ~1B
             code_size_limit: None,
             gas_price: None,
             block_base_fee_per_gas: 0,
@@ -2138,27 +2138,12 @@ impl Default for Config {
 ///
 /// Due to this limitation this type will be serialized/deserialized as String if it's larger than
 /// `i64`
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GasLimit(pub u64);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+pub struct GasLimit(#[serde(deserialize_with = "crate::deserialize_u64_or_max")] pub u64);
 
 impl From<u64> for GasLimit {
     fn from(gas: u64) -> Self {
         Self(gas)
-    }
-}
-impl From<i64> for GasLimit {
-    fn from(gas: i64) -> Self {
-        Self(gas as u64)
-    }
-}
-impl From<i32> for GasLimit {
-    fn from(gas: i32) -> Self {
-        Self(gas as u64)
-    }
-}
-impl From<u32> for GasLimit {
-    fn from(gas: u32) -> Self {
-        Self(gas as u64)
     }
 }
 
@@ -2173,37 +2158,13 @@ impl Serialize for GasLimit {
     where
         S: Serializer,
     {
-        if self.0 > i64::MAX as u64 {
+        if self.0 == u64::MAX {
+            serializer.serialize_str("max")
+        } else if self.0 > i64::MAX as u64 {
             serializer.serialize_str(&self.0.to_string())
         } else {
             serializer.serialize_u64(self.0)
         }
-    }
-}
-
-impl<'de> Deserialize<'de> for GasLimit {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::Error;
-
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Gas {
-            Number(u64),
-            Text(String),
-        }
-
-        let gas = match Gas::deserialize(deserializer)? {
-            Gas::Number(num) => Self(num),
-            Gas::Text(s) => match s.as_str() {
-                "max" | "MAX" | "Max" | "u64::MAX" | "u64::Max" => Self(u64::MAX),
-                s => Self(s.parse().map_err(D::Error::custom)?),
-            },
-        };
-
-        Ok(gas)
     }
 }
 

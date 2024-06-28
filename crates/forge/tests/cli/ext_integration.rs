@@ -10,11 +10,12 @@ fn forge_std() {
 
 #[test]
 fn solmate() {
-    let tester =
+    let mut tester =
         ExtTester::new("transmissions11", "solmate", "c892309933b25c03d32b1b0d674df7ae292ba925");
 
-    #[cfg(feature = "isolate-by-default")]
-    let tester = tester.args(["--nmc", "ReentrancyGuardTest"]);
+    if cfg!(feature = "isolate-by-default") {
+        tester = tester.args(["--nmc", "ReentrancyGuardTest"]);
+    }
 
     tester.run();
 }
@@ -42,10 +43,12 @@ fn prb_proxy() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn sablier_v2() {
-    let tester =
+    let mut tester =
         ExtTester::new("sablier-labs", "v2-core", "84758a40077bf3ccb1c8f7bb8d00278e672fbfef")
             // Skip fork tests.
             .args(["--nmc", "Fork"])
+            // Increase the gas limit: https://github.com/sablier-labs/v2-core/issues/956
+            .args(["--gas-limit", u64::MAX.to_string().as_str()])
             // Run tests without optimizations.
             .env("FOUNDRY_PROFILE", "lite")
             .install_command(&["bun", "install", "--prefer-offline"])
@@ -54,8 +57,9 @@ fn sablier_v2() {
 
     // This test reverts due to memory limit without isolation. This revert is not reached with
     // isolation because memory is divided between separate EVMs created by inner calls.
-    #[cfg(feature = "isolate-by-default")]
-    let tester = tester.args(["--nmt", "test_RevertWhen_LoopCalculationOverflowsBlockGasLimit"]);
+    if cfg!(feature = "isolate-by-default") {
+        tester = tester.args(["--nmt", "test_RevertWhen_LoopCalculationOverflowsBlockGasLimit"]);
+    }
 
     tester.run();
 }

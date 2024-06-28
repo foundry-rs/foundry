@@ -926,6 +926,16 @@ impl<'a, DB: DatabaseExt> InspectorExt<DB> for InspectorStackRefMut<'a> {
 }
 
 impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
+    #[inline]
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        self.as_mut().step(interpreter, ecx)
+    }
+
+    #[inline]
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        self.as_mut().step_end(interpreter, ecx)
+    }
+
     fn call(
         &mut self,
         context: &mut EvmContext<DB>,
@@ -970,14 +980,6 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         Inspector::<DB>::selfdestruct(&mut self.as_mut(), contract, target, value)
-    }
-
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
-        self.as_mut().step(interpreter, ecx)
-    }
-
-    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
-        self.as_mut().step_end(interpreter, ecx)
     }
 }
 
