@@ -389,6 +389,7 @@ impl TestArgs {
 
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
         let known_contracts = runner.known_contracts.clone();
+        let is_coverage = runner.coverage;
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -531,13 +532,30 @@ impl TestArgs {
                         }
                     }
                 }
+
+                // Add coverage hit map to test outcome.
+                if is_coverage {
+                    let Some(hit_maps) = result.coverage.as_ref() else { continue };
+                    for map in hit_maps.0.values() {
+                        if let Some((id, _)) = known_contracts.find_by_deployed_code(&map.bytecode)
+                        {
+                            outcome.coverage.push((id.clone(), map.clone(), true));
+                        } else if let Some((id, _)) =
+                            known_contracts.find_by_creation_code(&map.bytecode)
+                        {
+                            outcome.coverage.push((id.clone(), map.clone(), false));
+                        }
+                    }
+                }
             }
 
             // Print suite summary.
             shell::println(suite_result.summary())?;
 
-            // Add the suite result to the outcome.
-            outcome.results.insert(contract_name, suite_result);
+            // Add the suite result to the outcome (only if it is not coverage).
+            if !is_coverage {
+                outcome.results.insert(contract_name, suite_result);
+            }
 
             // Stop processing the remaining suites if any test failed and `fail_fast` is set.
             if self.fail_fast && any_test_failed {
@@ -547,7 +565,11 @@ impl TestArgs {
         outcome.last_run_decoder = Some(decoder);
         let duration = timer.elapsed();
 
-        trace!(target: "forge::test", len=outcome.results.len(), %any_test_failed, "done with results");
+        if is_coverage {
+            trace!(target: "forge::coverage", len=outcome.coverage.len(), %any_test_failed, "done with results");
+        } else {
+            trace!(target: "forge::test", len=outcome.results.len(), %any_test_failed, "done with results");
+        }
 
         if let Some(gas_report) = gas_report {
             let finalized = gas_report.finalize();

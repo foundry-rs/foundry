@@ -1,6 +1,7 @@
 //! Test outcomes.
 
 use crate::{
+    coverage::HitMap,
     decode::decode_console_logs,
     fuzz::{BaseCounterExample, FuzzedCases},
     gas_report::GasReport,
@@ -8,6 +9,7 @@ use crate::{
 use alloy_primitives::{Address, Log};
 use eyre::Report;
 use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
+use foundry_compilers::ArtifactId;
 use foundry_evm::{
     coverage::HitMaps,
     executors::{EvmError, RawCallResult},
@@ -39,12 +41,14 @@ pub struct TestOutcome {
     pub last_run_decoder: Option<CallTraceDecoder>,
     /// The gas report, if requested.
     pub gas_report: Option<GasReport>,
+    /// The coverage hits, if requested (artifact id, coverage hit map, is deployed code).
+    pub coverage: Vec<(ArtifactId, HitMap, bool)>,
 }
 
 impl TestOutcome {
     /// Creates a new test outcome with the given results.
     pub fn new(results: BTreeMap<String, SuiteResult>, allow_failure: bool) -> Self {
-        Self { results, allow_failure, last_run_decoder: None, gas_report: None }
+        Self { results, allow_failure, last_run_decoder: None, gas_report: None, coverage: vec![] }
     }
 
     /// Creates a new empty test outcome.
