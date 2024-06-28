@@ -830,7 +830,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
 
     fn eofcreate(
         &mut self,
-        ecx: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<DB>,
         create: &mut EOFCreateInputs,
     ) -> Option<CreateOutcome> {
         if self.in_inner_context && ecx.journaled_state.depth == 0 {
@@ -839,7 +839,8 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         }
 
         call_inspectors_adjust_depth!(
-            [&mut self.debugger, &mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
+            #[ret]
+            [&mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
             |inspector| inspector.eofcreate(ecx, create).map(Some),
             self,
             ecx
@@ -867,7 +868,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
 
     fn eofcreate_end(
         &mut self,
-        ecx: &mut EvmContext<&mut DB>,
+        ecx: &mut EvmContext<DB>,
         call: &EOFCreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
@@ -880,7 +881,8 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         let result = outcome.result.result;
 
         call_inspectors_adjust_depth!(
-            [&mut self.debugger, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
+            #[ret]
+            [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
                 let new_outcome = inspector.eofcreate_end(ecx, call, outcome.clone());
 
