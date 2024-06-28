@@ -144,6 +144,7 @@ impl ProjectCompiler {
 
             foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?
                 .compile()
+                .map(|out| out.with_stripped_file_prefixes(project.root()))
                 .map_err(Into::into)
         })
     }
