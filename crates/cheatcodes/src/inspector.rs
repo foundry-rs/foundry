@@ -48,6 +48,8 @@ use std::{
     sync::Arc,
 };
 
+mod utils;
+
 /// Helper trait for obtaining complete [revm::Inspector] instance from mutable reference to
 /// [Cheatcodes].
 ///
