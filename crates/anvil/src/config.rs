@@ -1044,7 +1044,7 @@ impl NodeConfig {
             // pick the last block number but also ensure it's not pending anymore
             let bn =
                 find_latest_fork_block(&provider).await.expect("Failed to get fork block number");
-            (bn, None, Vec::new())
+            (bn, None, None)
         };
 
         let block = provider
@@ -1200,9 +1200,9 @@ latest block number: {latest_block}"
 async fn derive_block_and_transactions(
     fork_choice: &ForkChoice,
     provider: &Arc<RetryProvider>,
-) -> eyre::Result<(BlockNumber, Vec<PoolTransaction>)> {
+) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction>>)> {
     match fork_choice {
-        ForkChoice::Block(block_number) => Ok((block_number.to_owned(), Vec::new())),
+        ForkChoice::Block(block_number) => Ok((block_number.to_owned(), None)),
         ForkChoice::Transaction(transaction_hash) => {
             // Determine the block that this transaction was mined in
             let transaction = provider
@@ -1230,8 +1230,8 @@ async fn derive_block_and_transactions(
             let force_transactions = filtered_transactions
                 .iter()
                 .map(|&transaction| PoolTransaction::try_from(transaction.clone()))
-                .collect::<Result<_, _>>()?;
-            Ok((transaction_block_number.saturating_sub(1), force_transactions))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((transaction_block_number.saturating_sub(1), Some(force_transactions)))
         }
     }
 }

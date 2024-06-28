@@ -158,8 +158,9 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
     };
 
     let miner = match &fork {
-        Some(fork) if !fork.config.read().force_transactions.is_empty() => Miner::new(mode)
-            .with_forced_transactions(Some(fork.config.read().force_transactions.clone())),
+        Some(fork) => {
+            Miner::new(mode).with_forced_transactions(fork.config.read().force_transactions.clone())
+        }
         _ => Miner::new(mode),
     };
 

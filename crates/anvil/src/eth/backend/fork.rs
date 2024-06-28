@@ -602,7 +602,7 @@ pub struct ClientForkConfig {
     /// total difficulty of the chain until this block
     pub total_difficulty: U256,
     /// Transactions to force include in the forked chain
-    pub force_transactions: Vec<PoolTransaction>,
+    pub force_transactions: Option<Vec<PoolTransaction>>,
 }
 
 impl ClientForkConfig {
