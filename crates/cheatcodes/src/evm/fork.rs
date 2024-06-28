@@ -247,9 +247,9 @@ impl Cheatcode for rpcCall {
         let result_as_tokens = match crate::json::json_value_to_token(&result)
             .map_err(|err| fmt_err!("failed to parse result: {err}"))?
         {
-            DynSolValue::FixedBytes(bytes, _) => {
+            DynSolValue::FixedBytes(bytes, size) => {
                 // converted fixed bytes to bytes to prevent evm encoding issues: <https://github.com/foundry-rs/foundry/issues/8287>
-                DynSolValue::Bytes(bytes.to_vec())
+                DynSolValue::Bytes(bytes.as_slice()[..size].to_vec())
             }
             val => val,
         };
