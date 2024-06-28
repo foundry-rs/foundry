@@ -246,7 +246,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
     }
 
     fn set_blockhash(&mut self, block_number: U256, block_hash: B256) {
-        self.backend.to_mut().mem_db().to_owned().block_hashes.insert(block_number, block_hash);
+        self.backend.to_mut().set_blockhash(block_number, block_hash);
     }
 }
 

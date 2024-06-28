@@ -9,8 +9,8 @@ contract SetBlockhash is DSTest {
 
     function testSetBlockhash() public {
         bytes32 blockHash = 0x1234567890123456789012345678901234567890123456789012345678901234;
-        vm.setBlockhash(1, blockHash);
-        bytes32 expected = blockhash(1);
+        vm.setBlockhash(block.number - 1, blockHash);
+        bytes32 expected = blockhash(block.number - 1);
         assertEq(blockHash, expected);
     }
 }

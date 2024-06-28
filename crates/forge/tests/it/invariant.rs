@@ -391,7 +391,7 @@ async fn test_shrink_fail_on_revert() {
     runner.test_options.fuzz.seed = Some(U256::from(119u32));
     runner.test_options.invariant.fail_on_revert = true;
     runner.test_options.invariant.runs = 1;
-    runner.test_options.invariant.depth = 100;
+    runner.test_options.invariant.depth = 1000;
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),

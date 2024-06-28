@@ -331,7 +331,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         Ok(())
     }
 
-    /// set the blockhash for the given block number
+    /// Set the blockhash for the given block number
     fn set_blockhash(&mut self, block_number: U256, block_hash: B256);
 }
 
@@ -1375,7 +1375,11 @@ impl DatabaseExt for Backend {
     }
 
     fn set_blockhash(&mut self, block_number: U256, block_hash: B256) {
-        self.mem_db.block_hashes.insert(block_number, block_hash);
+        if let Some(db) = self.active_fork_db_mut() {
+            db.block_hashes.insert(block_number, block_hash);
+        } else {
+            self.mem_db.block_hashes.insert(block_number, block_hash);
+        }
     }
 }
 
