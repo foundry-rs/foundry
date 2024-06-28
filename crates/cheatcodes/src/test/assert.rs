@@ -1,6 +1,10 @@
-use crate::{Cheatcodes, Result, Vm::*};
+use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{hex, I256, U256};
-use foundry_evm_core::abi::{format_units_int, format_units_uint};
+use foundry_evm_core::{
+    abi::{format_units_int, format_units_uint},
+    backend::{DatabaseExt, GLOBAL_FAIL_SLOT},
+    constants::CHEATCODE_ADDRESS,
+};
 use itertools::Itertools;
 use std::fmt::{Debug, Display};
 
@@ -165,10 +169,11 @@ impl EqRelAssertionError<I256> {
 
 type ComparisonResult<'a, T> = Result<Vec<u8>, ComparisonAssertionError<'a, T>>;
 
-fn handle_assertion_result<E>(
-    result: core::result::Result<Vec<u8>, E>,
-    state: &mut Cheatcodes,
-    error_formatter: impl Fn(&E) -> String,
+fn handle_assertion_result<DB: DatabaseExt, E: CheatcodesExecutor, ERR>(
+    result: core::result::Result<Vec<u8>, ERR>,
+    ccx: &mut CheatsCtxt<DB>,
+    executor: &mut E,
+    error_formatter: impl Fn(&ERR) -> String,
     error_msg: Option<&str>,
     format_error: bool,
 ) -> Result {
@@ -181,9 +186,11 @@ fn handle_assertion_result<E>(
             } else {
                 error_msg
             };
-            if !state.config.legacy_assertions {
+            if ccx.state.config.assertions_revert {
                 Err(msg.into())
             } else {
+                executor.console_log(ccx, msg)?;
+                ccx.ecx.sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
                 Ok(Default::default())
             }
         }
@@ -217,16 +224,24 @@ macro_rules! impl_assertions {
     };
     (@impl $no_error:ident, $with_error:ident, ($($arg:ident),*), $body:expr, $error_formatter:expr, $format_error:literal) => {
         impl crate::Cheatcode for $no_error {
-            fn apply(&self, state: &mut Cheatcodes) -> Result {
+            fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+                &self,
+                ccx: &mut CheatsCtxt<DB>,
+                executor: &mut E,
+            ) -> Result {
                 let Self { $($arg),* } = self;
-                handle_assertion_result($body, state, $error_formatter, None, $format_error)
+                handle_assertion_result($body, ccx, executor, $error_formatter, None, $format_error)
             }
         }
 
         impl crate::Cheatcode for $with_error {
-            fn apply(&self, state: &mut Cheatcodes) -> Result {
+            fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+                &self,
+                ccx: &mut CheatsCtxt<DB>,
+                executor: &mut E,
+            ) -> Result {
                 let Self { $($arg),*, error} = self;
-                handle_assertion_result($body, state, $error_formatter, Some(error), $format_error)
+                handle_assertion_result($body, ccx, executor, $error_formatter, Some(error), $format_error)
             }
         }
     };

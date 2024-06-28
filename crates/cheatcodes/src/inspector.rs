@@ -21,6 +21,7 @@ use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, SELECTOR_LEN};
 use foundry_config::Config;
+use foundry_evm_abi::Console;
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseExt, RevertDiagnostic},
@@ -63,55 +64,91 @@ pub trait CheatcodesExecutor {
         cheats: &'a mut Cheatcodes,
     ) -> impl InspectorExt<DB> + 'a;
 
-    /// Obtains [revm::Inspector] instance and executes the given CREATE frame.
-    fn exec_create<DB: DatabaseExt>(
+    /// Constructs [revm::Evm] and runs a given closure with it.
+    fn with_evm<DB: DatabaseExt, F, O>(
         &mut self,
-        inputs: CreateInputs,
-        cheats: &mut Cheatcodes,
-        ecx: &mut InnerEvmContext<DB>,
-    ) -> Result<CreateOutcome, EVMError<DB::Error>> {
-        let inspector = self.get_inspector(cheats);
-        let error = std::mem::replace(&mut ecx.error, Ok(()));
-        let l1_block_info = std::mem::take(&mut ecx.l1_block_info);
+        ccx: &mut CheatsCtxt<DB>,
+        f: F,
+    ) -> Result<O, EVMError<DB::Error>>
+    where
+        F: for<'a, 'b> FnOnce(
+            &mut revm::Evm<
+                '_,
+                &'b mut dyn InspectorExt<&'a mut dyn DatabaseExt>,
+                &'a mut dyn DatabaseExt,
+            >,
+        ) -> Result<O, EVMError<DB::Error>>,
+    {
+        let mut inspector = self.get_inspector(ccx.state);
+        let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
+        let l1_block_info = std::mem::take(&mut ccx.ecx.l1_block_info);
 
         let inner = revm::InnerEvmContext {
-            env: ecx.env.clone(),
+            env: ccx.ecx.env.clone(),
             journaled_state: std::mem::replace(
-                &mut ecx.journaled_state,
+                &mut ccx.ecx.journaled_state,
                 revm::JournaledState::new(Default::default(), Default::default()),
             ),
-            db: &mut ecx.db as &mut dyn DatabaseExt,
+            db: &mut ccx.ecx.db as &mut dyn DatabaseExt,
             error,
             l1_block_info,
         };
 
-        let mut evm = new_evm_with_existing_context(inner, inspector);
+        let mut evm = new_evm_with_existing_context(inner, &mut inspector as _);
 
-        evm.context.evm.inner.journaled_state.depth += 1;
+        let res = f(&mut evm)?;
 
-        let first_frame_or_result =
-            evm.handler.execution().create(&mut evm.context, Box::new(inputs))?;
+        ccx.ecx.journaled_state = evm.context.evm.inner.journaled_state;
+        ccx.ecx.env = evm.context.evm.inner.env;
+        ccx.ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
+        ccx.ecx.error = evm.context.evm.inner.error;
 
-        let mut result = match first_frame_or_result {
-            revm::FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
-            revm::FrameOrResult::Result(result) => result,
-        };
+        Ok(res)
+    }
 
-        evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
+    /// Obtains [revm::Evm] instance and executes the given CREATE frame.
+    fn exec_create<DB: DatabaseExt>(
+        &mut self,
+        inputs: CreateInputs,
+        ccx: &mut CheatsCtxt<DB>,
+    ) -> Result<CreateOutcome, EVMError<DB::Error>> {
+        self.with_evm(ccx, |evm| {
+            evm.context.evm.inner.journaled_state.depth += 1;
 
-        let outcome = match result {
-            revm::FrameResult::Call(_) | revm::FrameResult::EOFCreate(_) => unreachable!(),
-            revm::FrameResult::Create(create) => create,
-        };
+            let first_frame_or_result =
+                evm.handler.execution().create(&mut evm.context, Box::new(inputs))?;
 
-        evm.context.evm.inner.journaled_state.depth -= 1;
+            let mut result = match first_frame_or_result {
+                revm::FrameOrResult::Frame(first_frame) => evm.run_the_loop(first_frame)?,
+                revm::FrameOrResult::Result(result) => result,
+            };
 
-        ecx.journaled_state = evm.context.evm.inner.journaled_state;
-        ecx.env = evm.context.evm.inner.env;
-        ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
-        ecx.error = evm.context.evm.inner.error;
+            evm.handler.execution().last_frame_return(&mut evm.context, &mut result)?;
 
-        Ok(outcome)
+            let outcome = match result {
+                revm::FrameResult::Call(_) | revm::FrameResult::EOFCreate(_) => unreachable!(),
+                revm::FrameResult::Create(create) => create,
+            };
+
+            evm.context.evm.inner.journaled_state.depth -= 1;
+
+            Ok(outcome)
+        })
+    }
+
+    fn console_log<DB: DatabaseExt>(
+        &mut self,
+        ccx: &mut CheatsCtxt<DB>,
+        message: String,
+    ) -> Result<(), EVMError<DB::Error>> {
+        self.with_evm(ccx, |evm| {
+            let log =
+                Log { address: CHEATCODE_ADDRESS, data: (&Console::log { val: message }).into() };
+
+            evm.context.external.log(&mut evm.context.evm, &log);
+
+            Ok(())
+        })
     }
 }
 

@@ -421,7 +421,12 @@ pub struct Config {
     #[serde(default, skip_serializing)]
     pub root: RootPath,
 
-    /// Whether to enable legacy (non-reverting) assertions.
+    /// Whether failed assertions should revert.
+    ///
+    /// Note that this only applies to native (cheatcode) assertions, invoked on Vm contract.
+    pub assertions_revert: bool,
+
+    /// Whether `failed()` should be invoked to check if the test have failed.
     pub legacy_assertions: bool,
 
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
@@ -2121,6 +2126,7 @@ impl Default for Config {
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
             skip: vec![],
             dependencies: Default::default(),
+            assertions_revert: true,
             legacy_assertions: false,
             warnings: vec![],
             _non_exhaustive: (),

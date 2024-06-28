@@ -69,6 +69,7 @@ fn solady() {
 #[cfg_attr(windows, ignore = "weird git fail")]
 fn geb() {
     ExtTester::new("reflexer-labs", "geb", "1a59f16a377386c49f520006ed0f7fd9d128cb09")
+        .env("FOUNDRY_LEGACY_ASSERTIONS", "true")
         .args(["--chain-id", "99", "--sender", "0x00a329c0648769A73afAc7F9381E08FB43dBEA72"])
         .run();
 }
@@ -117,6 +118,7 @@ fn mds1_multicall() {
 fn drai() {
     ExtTester::new("mds1", "drai", "f31ce4fb15bbb06c94eefea2a3a43384c75b95cf")
         .args(["--chain-id", "99", "--sender", "0x00a329c0648769A73afAc7F9381E08FB43dBEA72"])
+        .env("FOUNDRY_LEGACY_ASSERTIONS", "true")
         .fork_block(13633752)
         .run();
 }

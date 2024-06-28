@@ -247,6 +247,7 @@ impl MultiContractRunner {
             })
             .spec(self.evm_spec)
             .gas_limit(self.evm_opts.gas_limit())
+            .legacy_assertions(self.config.legacy_assertions)
             .build(self.env.clone(), db);
 
         if !enabled!(tracing::Level::TRACE) {
