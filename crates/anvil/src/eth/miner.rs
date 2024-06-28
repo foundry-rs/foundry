@@ -124,6 +124,17 @@ impl MiningMode {
         Self::FixedBlockTime(FixedBlockTimeMiner::new(duration))
     }
 
+    pub fn mixed(max_transactions: usize, listener: Receiver<TxHash>, duration: Duration) -> Self {
+        Self::Mixed(
+            ReadyTransactionMiner {
+                max_transactions,
+                has_pending_txs: None,
+                rx: listener.fuse(),
+            },
+            FixedBlockTimeMiner::new(duration),
+        )
+    }
+
     /// polls the [Pool] and returns those transactions that should be put in a block, if any.
     pub fn poll(
         &mut self,
