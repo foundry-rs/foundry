@@ -293,6 +293,9 @@ async fn test_set_next_timestamp() {
     assert_eq!(block.header.number.unwrap(), 1);
     assert_eq!(block.header.timestamp, next_timestamp.as_secs());
 
+    // Sleep for 1s
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
     api.evm_mine(None).await.unwrap();
 
     let next = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
@@ -318,6 +321,11 @@ async fn test_evm_set_time() {
     let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
     assert!(block.header.timestamp >= timestamp.as_secs());
+
+    // Sleep for 1s
+    // This needs to be added as we removed the if condition in TimeManager wherein
+    // next_timestamp==last_timesatmp => next_timestamp + 1;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     api.evm_mine(None).await.unwrap();
     let next = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
@@ -351,7 +359,7 @@ async fn test_timestamp_interval() {
     let provider = handle.http_provider();
 
     api.evm_mine(None).await.unwrap();
-    let interval = 10;
+    let interval: f64 = 1.0; // 1s
 
     for _ in 0..5 {
         let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
@@ -363,7 +371,7 @@ async fn test_timestamp_interval() {
         let new_block =
             provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
-        assert_eq!(new_block.header.timestamp, block.header.timestamp + interval);
+        assert_eq!(new_block.header.timestamp, block.header.timestamp + interval as u64);
     }
 
     let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
@@ -379,7 +387,7 @@ async fn test_timestamp_interval() {
 
     let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
     // interval also works after setting the next timestamp manually
-    assert_eq!(block.header.timestamp, next_timestamp + interval);
+    assert_eq!(block.header.timestamp, next_timestamp + interval as u64);
 
     assert!(api.evm_remove_block_timestamp_interval().unwrap());
 
@@ -393,7 +401,7 @@ async fn test_timestamp_interval() {
     let another_block =
         provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
     // check interval is disabled
-    assert!(another_block.header.timestamp - new_block.header.timestamp < interval);
+    assert!(another_block.header.timestamp - new_block.header.timestamp <= interval as u64);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2341>
@@ -588,6 +596,9 @@ async fn test_fork_revert_next_block_timestamp() {
     api.evm_revert(snapshot_id).await.unwrap();
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block, latest_block);
+
+    // Sleep for 1s
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     api.mine_one().await;
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
