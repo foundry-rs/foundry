@@ -481,7 +481,7 @@ impl TestArgs {
 
                 for (kind, arena) in &mut result.traces.clone() {
                     if identify_addresses {
-                        decoder.identify(&arena, &mut identifier);
+                        decoder.identify(arena, &mut identifier);
                     }
 
                     // verbosity:
@@ -523,7 +523,7 @@ impl TestArgs {
                         // setUp and constructor.
                         for (kind, arena) in &result.traces {
                             if !matches!(kind, TraceKind::Execution) {
-                                decoder.identify(&arena, &mut identifier);
+                                decoder.identify(arena, &mut identifier);
                             }
                         }
 
