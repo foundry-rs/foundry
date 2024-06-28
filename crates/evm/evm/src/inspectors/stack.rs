@@ -1,12 +1,11 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Debugger, Fuzzer, LogCollector,
+    Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Fuzzer, LogCollector,
     StackSnapshotType, TracingInspector, TracingInspectorConfig,
 };
 use alloy_primitives::{Address, Bytes, Log, TxKind, U256};
 use foundry_cheatcodes::CheatcodesExecutor;
 use foundry_evm_core::{
     backend::{update_state, DatabaseExt},
-    debug::DebugArena,
     InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
@@ -14,8 +13,8 @@ use foundry_evm_traces::CallTraceArena;
 use revm::{
     inspectors::CustomPrintTracer,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
-        Interpreter, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
+        EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
     primitives::{
         BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult, Output, TransactTo,
@@ -47,7 +46,7 @@ pub struct InspectorStackBuilder {
     pub fuzzer: Option<Fuzzer>,
     /// Whether to enable tracing.
     pub trace: Option<bool>,
-    /// Whether to enable the debugger.
+    /// Whether to enable debug traces.
     pub debug: Option<bool>,
     /// Whether logs should be collected.
     pub logs: Option<bool>,
@@ -177,9 +176,8 @@ impl InspectorStackBuilder {
         }
         stack.collect_coverage(coverage.unwrap_or(false));
         stack.collect_logs(logs.unwrap_or(true));
-        stack.enable_debugger(debug.unwrap_or(false));
         stack.print(print.unwrap_or(false));
-        stack.tracing(trace.unwrap_or(false));
+        stack.tracing(trace.unwrap_or(false), debug.unwrap_or(false));
 
         stack.enable_isolation(enable_isolation);
 
@@ -243,7 +241,6 @@ pub struct InspectorData {
     pub logs: Vec<Log>,
     pub labels: HashMap<Address, String>,
     pub traces: Option<CallTraceArena>,
-    pub debug: Option<DebugArena>,
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
@@ -290,7 +287,6 @@ pub struct InspectorStack {
 pub struct InspectorStackInner {
     pub chisel_state: Option<ChiselState>,
     pub coverage: Option<CoverageCollector>,
-    pub debugger: Option<Debugger>,
     pub fuzzer: Option<Fuzzer>,
     pub log_collector: Option<LogCollector>,
     pub printer: Option<CustomPrintTracer>,
@@ -343,7 +339,7 @@ impl InspectorStack {
                     )*
                 };
             }
-            push!(cheatcodes, chisel_state, coverage, debugger, fuzzer, log_collector, printer, tracer);
+            push!(cheatcodes, chisel_state, coverage, fuzzer, log_collector, printer, tracer);
             if self.enable_isolation {
                 enabled.push("isolation");
             }
@@ -398,12 +394,6 @@ impl InspectorStack {
         self.coverage = yes.then(Default::default);
     }
 
-    /// Set whether to enable the debugger.
-    #[inline]
-    pub fn enable_debugger(&mut self, yes: bool) {
-        self.debugger = yes.then(Default::default);
-    }
-
     /// Set whether to enable call isolation.
     #[inline]
     pub fn enable_isolation(&mut self, yes: bool) {
@@ -424,15 +414,21 @@ impl InspectorStack {
 
     /// Set whether to enable the tracer.
     #[inline]
-    pub fn tracing(&mut self, yes: bool) {
+    pub fn tracing(&mut self, yes: bool, debug: bool) {
         self.tracer = yes.then(|| {
             TracingInspector::new(TracingInspectorConfig {
-                record_steps: false,
-                record_memory_snapshots: false,
-                record_stack_snapshots: StackSnapshotType::None,
+                record_steps: debug,
+                record_memory_snapshots: debug,
+                record_stack_snapshots: if debug {
+                    StackSnapshotType::Full
+                } else {
+                    StackSnapshotType::None
+                },
                 record_state_diff: false,
                 exclude_precompile_calls: false,
                 record_logs: true,
+                record_opcodes_filter: None,
+                record_returndata_snapshots: debug,
             })
         });
     }
@@ -442,8 +438,7 @@ impl InspectorStack {
     pub fn collect(self) -> InspectorData {
         let Self {
             cheatcodes,
-            inner:
-                InspectorStackInner { chisel_state, coverage, debugger, log_collector, tracer, .. },
+            inner: InspectorStackInner { chisel_state, coverage, log_collector, tracer, .. },
         } = self;
 
         InspectorData {
@@ -453,7 +448,6 @@ impl InspectorStack {
                 .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
             traces: tracer.map(|tracer| tracer.get_traces().clone()),
-            debug: debugger.map(|debugger| debugger.arena),
             coverage: coverage.map(|coverage| coverage.maps),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
@@ -493,13 +487,7 @@ impl<'a> InspectorStackRefMut<'a> {
         let result = outcome.result.result;
         call_inspectors_adjust_depth!(
             #[ret]
-            [
-                &mut self.fuzzer,
-                &mut self.debugger,
-                &mut self.tracer,
-                &mut self.cheatcodes,
-                &mut self.printer,
-            ],
+            [&mut self.fuzzer, &mut self.tracer, &mut self.cheatcodes, &mut self.printer,],
             |inspector| {
                 let new_outcome = inspector.call_end(ecx, inputs, outcome.clone());
 
@@ -663,7 +651,6 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         call_inspectors_adjust_depth!(
             [
                 &mut self.fuzzer,
-                &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.cheatcodes,
@@ -701,13 +688,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
 
         call_inspectors_adjust_depth!(
             #[ret]
-            [
-                &mut self.fuzzer,
-                &mut self.debugger,
-                &mut self.tracer,
-                &mut self.log_collector,
-                &mut self.printer,
-            ],
+            [&mut self.fuzzer, &mut self.tracer, &mut self.log_collector, &mut self.printer,],
             |inspector| {
                 let mut out = None;
                 if let Some(output) = inspector.call(ecx, call) {
@@ -721,13 +702,16 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
             ecx
         );
 
+        ecx.journaled_state.depth += self.in_inner_context as usize;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner) {
                 if output.result.result != InstructionResult::Continue {
+                    ecx.journaled_state.depth -= self.in_inner_context as usize;
                     return Some(output)
                 }
             }
         }
+        ecx.journaled_state.depth -= self.in_inner_context as usize;
 
         if self.enable_isolation &&
             call.scheme == CallScheme::Call &&
@@ -785,7 +769,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
 
         call_inspectors_adjust_depth!(
             #[ret]
-            [&mut self.debugger, &mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
             |inspector| inspector.create(ecx, create).map(Some),
             self,
             ecx
@@ -826,9 +810,81 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
 
         call_inspectors_adjust_depth!(
             #[ret]
-            [&mut self.debugger, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
+            [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
                 let new_outcome = inspector.create_end(ecx, call, outcome.clone());
+
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                let different = new_outcome.result.result != result ||
+                    (new_outcome.result.result == InstructionResult::Revert &&
+                        new_outcome.output() != outcome.output());
+                different.then_some(new_outcome)
+            },
+            self,
+            ecx
+        );
+
+        outcome
+    }
+
+    fn eofcreate(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        create: &mut EOFCreateInputs,
+    ) -> Option<CreateOutcome> {
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
+            self.adjust_evm_data_for_inner_context(ecx);
+            return None;
+        }
+
+        call_inspectors_adjust_depth!(
+            #[ret]
+            [&mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
+            |inspector| inspector.eofcreate(ecx, create).map(Some),
+            self,
+            ecx
+        );
+
+        if self.enable_isolation && !self.in_inner_context && ecx.journaled_state.depth == 1 {
+            let init_code = match &create.kind {
+                EOFCreateKind::Tx { initdata } => initdata.clone(),
+                EOFCreateKind::Opcode { initcode, .. } => initcode.raw.clone(),
+            };
+
+            let (result, address) = self.transact_inner(
+                ecx,
+                TxKind::Create,
+                create.caller,
+                init_code,
+                create.gas_limit,
+                create.value,
+            );
+            return Some(CreateOutcome { result, address })
+        }
+
+        None
+    }
+
+    fn eofcreate_end(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        call: &EOFCreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
+        // Avoid processing twice.
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
+            return outcome
+        }
+
+        let result = outcome.result.result;
+
+        call_inspectors_adjust_depth!(
+            #[ret]
+            [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
+            |inspector| {
+                let new_outcome = inspector.eofcreate_end(ecx, call, outcome.clone());
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something

@@ -155,7 +155,7 @@ solang-parser = "=0.3.3"
 # no default features to avoid c-kzg
 revm = { version = "10.0.0", default-features = false }
 revm-primitives = { version = "5.0.0", default-features = false }
-revm-inspectors = { version = "0.1.2", features = ["serde"] }
+revm-inspectors = { version = "0.2", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
@@ -205,7 +205,6 @@ quote = "1.0"
 syn = "2.0"
 prettyplease = "0.2.20"
 ahash = "0.8"
-arrayvec = "0.7"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [
     "clock",

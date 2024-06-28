@@ -294,7 +294,7 @@ pub struct Config {
     pub block_difficulty: u64,
     /// Before merge the `block.max_hash`, after merge it is `block.prevrandao`.
     pub block_prevrandao: B256,
-    /// the `block.gaslimit` value during EVM execution
+    /// The `block.gaslimit` value during EVM execution.
     pub block_gas_limit: Option<GasLimit>,
     /// The memory limit per EVM execution in bytes.
     /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
