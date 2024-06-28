@@ -3,10 +3,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
 use eyre::{OptionExt, Result};
-use foundry_block_explorers::{
-    contract::{ContractCreationData, ContractMetadata, Metadata},
-    Client,
-};
+use foundry_block_explorers::{contract::Metadata, Client};
 use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
