@@ -87,7 +87,18 @@ pub async fn render_trace_arena(
 
             // Display trace header
             let (trace, return_data) = render_trace(&node.trace, decoder).await?;
-            writeln!(s, "{left}{trace}")?;
+
+            // Prepend our tree structure symbols to each line of the displayed trace
+            let call_left_prefix = left.to_string();
+            let call_right_prefix = format!("{child} ");
+            trace.lines().enumerate().try_for_each(|(i, line)| {
+                writeln!(
+                    s,
+                    "{}{}",
+                    if i == 0 { &call_left_prefix } else { &call_right_prefix },
+                    line
+                )
+            })?;
 
             // Display logs and subcalls
             let left_prefix = format!("{child}{BRANCH}");
@@ -175,7 +186,7 @@ pub async fn render_trace(
         let (func_name, inputs) = match &decoded.func {
             Some(DecodedCallData { signature, args }) => {
                 let name = signature.split('(').next().unwrap();
-                (name.to_string(), args.join(", "))
+                (name.to_string(), args.join(",\n    "))
             }
             None => {
                 debug!(target: "evm::traces", trace=?trace, "unhandled raw calldata");
@@ -198,9 +209,10 @@ pub async fn render_trace(
         };
 
         let color = trace_color(trace);
+        let inputs_padded = if !inputs.is_empty() { format!("\n    {inputs}\n") } else { inputs };
         write!(
             &mut s,
-            "{addr}::{func_name}{opt_value}({inputs}){action}",
+            "{addr}::{func_name}{opt_value}({inputs_padded}){action}",
             addr = decoded.label.as_deref().unwrap_or(&address).fg(color),
             func_name = func_name.fg(color),
             opt_value = if trace.value.is_zero() {
@@ -228,22 +240,27 @@ async fn render_trace_log(
             for (i, topic) in log.topics().iter().enumerate() {
                 writeln!(
                     s,
-                    "{:>13}: {}",
-                    if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
+                    "{}: {}",
+                    if i == 0 { "emit topic 0".to_string() } else { format!("      topic {i}") },
                     format!("{topic:?}").cyan()
                 )?;
             }
 
-            write!(s, "          data: {}", hex::encode_prefixed(&log.data).cyan())?;
+            write!(s, "         data: {}", hex::encode_prefixed(&log.data).cyan())?;
         }
         DecodedCallLog::Decoded(name, params) => {
             let params = params
                 .iter()
-                .map(|(name, value)| format!("{name}: {value}"))
+                .map(|(name, value)| format!("     {name}: {value}"))
                 .collect::<Vec<String>>()
-                .join(", ");
+                .join(",\n");
 
-            write!(s, "emit {}({params})", name.cyan())?;
+            let pretty_name = name.cyan();
+            if !params.is_empty() {
+                write!(s, "emit {pretty_name}(\n{params}\n )")?;
+            } else {
+                write!(s, "emit {pretty_name}()")?;
+            }
         }
     }
 

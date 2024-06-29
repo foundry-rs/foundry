@@ -11,7 +11,9 @@ Traces:
 [PASS] testEvent() (gas: 1312)
 Traces:
   [1312] CustomTypesTest::testEvent()
-    ├─ emit MyEvent(a: 100)
+    ├─ emit MyEvent(
+    │      a: 100
+    │  )
     └─ ← [Stop] 
 
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; finished in 3.88ms
