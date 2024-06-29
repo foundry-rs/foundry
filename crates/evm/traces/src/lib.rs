@@ -95,7 +95,7 @@ pub async fn render_trace_arena(
             for child in &node.ordering {
                 match child {
                     TraceMemberOrder::Log(index) => {
-                        let log = render_trace_log(&node.logs[*index], decoder).await?;
+                        let log = render_trace_log(&node.logs[*index].raw_log, decoder).await?;
 
                         // Prepend our tree structure symbols to each line of the displayed log
                         log.lines().enumerate().try_for_each(|(i, line)| {
