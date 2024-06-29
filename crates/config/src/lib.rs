@@ -1313,6 +1313,7 @@ impl Config {
                 "evm.bytecode".to_string(),
                 "evm.deployedBytecode".to_string(),
             ]),
+            search_paths: None,
         })
     }
 
