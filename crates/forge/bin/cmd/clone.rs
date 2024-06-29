@@ -190,7 +190,7 @@ impl CloneArgs {
         // compile the cloned contract
         let compile_output = compile_project(root, quiet)?;
         let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
-        let main_file = main_file.strip_prefix(root).unwrap_or(&main_file).to_path_buf();
+        let main_file = main_file.strip_prefix(root)?.to_path_buf();
         let storage_layout =
             main_artifact.storage_layout.to_owned().expect("storage layout not found");
 

@@ -369,7 +369,17 @@ impl MultiContractRunnerBuilder {
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
-        let linker = Linker::new(root, output.artifact_ids().collect());
+        let contracts = output
+            .artifact_ids()
+            .map(|(mut id, v)| {
+                // TODO: Use ArtifactId::with_stripped_file_prefixes
+                if let Ok(stripped) = id.source.strip_prefix(root) {
+                    id.source = stripped.to_path_buf();
+                }
+                (id, v)
+            })
+            .collect();
+        let linker = Linker::new(root, contracts);
 
         // Build revert decoder from ABIs of all artifacts.
         let abis = linker
