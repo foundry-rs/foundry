@@ -1171,7 +1171,7 @@ impl Backend {
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
         };
 
-        if env.block.basefee == revm::primitives::U256::ZERO {
+        if env.block.basefee.is_zero() {
             // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
             // 0 is only possible if it's manually set
             env.cfg.disable_base_fee = true;
