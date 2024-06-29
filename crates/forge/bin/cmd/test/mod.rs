@@ -217,7 +217,7 @@ impl TestArgs {
 
         // Always recompile all sources to ensure that `getCode` cheatcode can use any artifact.
         test_sources.extend(source_files_iter(
-            project.paths.sources,
+            &project.paths.sources,
             MultiCompilerLanguage::FILE_EXTENSIONS,
         ));
 
