@@ -309,10 +309,8 @@ impl<'a> ContractRunner<'a> {
         // Invariant testing requires tracing to figure out what contracts were created.
         // We also want to disable `debug` for setup since we won't be using those traces.
         let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
-        let trace_setup =
-            self.executor.inspector().tracer.is_some() || (has_invariants && call_setup);
-        let prev_tracer = std::mem::take(&mut self.executor.inspector_mut().tracer);
-        self.executor.set_tracing(trace_setup, false);
+        let prev_tracer = self.executor.inspector_mut().tracer.take();
+        self.executor.set_tracing(prev_tracer.is_some() || has_invariants, false);
 
         let setup_time = Instant::now();
         let setup = self.setup(call_setup);
