@@ -415,8 +415,12 @@ impl InspectorStack {
     /// Set whether to enable the tracer.
     #[inline]
     pub fn tracing(&mut self, yes: bool, debug: bool) {
-        self.tracer = yes.then(|| {
-            TracingInspector::new(TracingInspectorConfig {
+        if !yes {
+            self.tracer = None;
+            return;
+        }
+        if let Some(tracer) = &mut self.tracer {
+            *tracer.config_mut() = TracingInspectorConfig {
                 record_steps: debug,
                 record_memory_snapshots: debug,
                 record_stack_snapshots: if debug {
@@ -429,8 +433,8 @@ impl InspectorStack {
                 record_logs: true,
                 record_opcodes_filter: None,
                 record_returndata_snapshots: debug,
-            })
-        });
+            };
+        }
     }
 
     /// Collects all the data gathered during inspection into a single struct.
