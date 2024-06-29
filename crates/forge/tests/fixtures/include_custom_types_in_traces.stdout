@@ -20,6 +20,6 @@ Ran 1 test suite: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/Contract.t.sol:CustomTypesTest
-[FAIL. Reason: PoolNotInitialized()] testErr() (gas: 231)
+[FAIL. Reason: PoolNotInitialized()] testErr() (gas: 254)
 
 Encountered a total of 1 failing tests, 1 tests succeeded
