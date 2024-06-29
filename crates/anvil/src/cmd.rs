@@ -208,9 +208,9 @@ impl NodeArgs {
                 match (self.evm_opts.fork_block_number, self.evm_opts.fork_transaction_hash) {
                     (Some(block), None) => Some(ForkChoice::Block(block)),
                     (None, Some(hash)) => Some(ForkChoice::Transaction(hash)),
-                    _ => Some(ForkChoice::Block(
-                        self.evm_opts.fork_url.as_ref().and_then(|f| f.block).unwrap(),
-                    )),
+                    _ => {
+                        self.evm_opts.fork_url.as_ref().and_then(|f| f.block).map(ForkChoice::Block)
+                    }
                 },
             )
             .with_fork_headers(self.evm_opts.fork_headers)
