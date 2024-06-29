@@ -3556,6 +3556,7 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
+ "foundry-evm-abi",
  "foundry-evm-core",
  "foundry-wallets",
  "itertools 0.13.0",

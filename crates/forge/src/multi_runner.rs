@@ -247,6 +247,7 @@ impl MultiContractRunner {
             })
             .spec(self.evm_spec)
             .gas_limit(self.evm_opts.gas_limit())
+            .legacy_assertions(self.config.legacy_assertions)
             .build(self.env.clone(), db);
 
         if !enabled!(tracing::Level::TRACE) {
@@ -364,12 +365,21 @@ impl MultiContractRunnerBuilder {
     pub fn build<C: Compiler>(
         self,
         root: &Path,
-        output: ProjectCompileOutput<C>,
+        output: &ProjectCompileOutput<C>,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
-        let output = output.with_stripped_file_prefixes(root);
-        let linker = Linker::new(root, output.artifact_ids().collect());
+        let contracts = output
+            .artifact_ids()
+            .map(|(mut id, v)| {
+                // TODO: Use ArtifactId::with_stripped_file_prefixes
+                if let Ok(stripped) = id.source.strip_prefix(root) {
+                    id.source = stripped.to_path_buf();
+                }
+                (id, v)
+            })
+            .collect();
+        let linker = Linker::new(root, contracts);
 
         // Build revert decoder from ABIs of all artifacts.
         let abis = linker
