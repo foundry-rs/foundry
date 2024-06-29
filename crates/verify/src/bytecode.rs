@@ -201,18 +201,17 @@ impl VerifyBytecodeArgs {
         };
 
         // Extract creation code
-        let maybe_creation_code = if receipt.to == Some(Address::ZERO) &&
-            receipt.contract_address == Some(self.address)
-        {
-            &transaction.input
-        } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
-            &transaction.input[32..]
-        } else {
-            eyre::bail!(
-                "Could not extract the creation code for contract at address {}",
-                self.address
-            );
-        };
+        let maybe_creation_code =
+            if receipt.to.is_none() && receipt.contract_address == Some(self.address) {
+                &transaction.input
+            } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
+                &transaction.input[32..]
+            } else {
+                eyre::bail!(
+                    "Could not extract the creation code for contract at address {}",
+                    self.address
+                );
+            };
 
         // If bytecode_hash is disabled then its always partial verification
         let (verification_type, has_metadata) =
