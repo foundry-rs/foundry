@@ -595,7 +595,7 @@ fn try_partial_match(
     bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
     local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
 
-    return try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
+    try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
 }
 
 fn try_extract_and_compare_bytecode(
@@ -609,7 +609,7 @@ fn try_extract_and_compare_bytecode(
     }
 
     // Now compare the local code and bytecode
-    return Ok(local_bytecode == bytecode);
+    Ok(local_bytecode == bytecode)
 }
 
 /// @dev This assumes that the metadata is at the end of the bytecode
