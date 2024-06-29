@@ -419,22 +419,20 @@ impl InspectorStack {
             self.tracer = None;
             return;
         }
-        if let Some(tracer) = &mut self.tracer {
-            *tracer.config_mut() = TracingInspectorConfig {
-                record_steps: debug,
-                record_memory_snapshots: debug,
-                record_stack_snapshots: if debug {
-                    StackSnapshotType::Full
-                } else {
-                    StackSnapshotType::None
-                },
-                record_state_diff: false,
-                exclude_precompile_calls: false,
-                record_logs: true,
-                record_opcodes_filter: None,
-                record_returndata_snapshots: debug,
-            };
-        }
+        *self.tracer.get_or_insert_with(Default::default).config_mut() = TracingInspectorConfig {
+            record_steps: debug,
+            record_memory_snapshots: debug,
+            record_stack_snapshots: if debug {
+                StackSnapshotType::Full
+            } else {
+                StackSnapshotType::None
+            },
+            record_state_diff: false,
+            exclude_precompile_calls: false,
+            record_logs: true,
+            record_opcodes_filter: None,
+            record_returndata_snapshots: debug,
+        };
     }
 
     /// Collects all the data gathered during inspection into a single struct.
