@@ -281,8 +281,7 @@ impl Cheatcode for deployCode_0Call {
                     init_code: bytecode,
                     gas_limit: ccx.gas_limit,
                 },
-                ccx.state,
-                ccx.ecx,
+                ccx,
             )
             .unwrap();
 
@@ -308,8 +307,7 @@ impl Cheatcode for deployCode_1Call {
                     init_code: bytecode.into(),
                     gas_limit: ccx.gas_limit,
                 },
-                ccx.state,
-                ccx.ecx,
+                ccx,
             )
             .unwrap();
 

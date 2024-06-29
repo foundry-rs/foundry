@@ -23,7 +23,6 @@ use foundry_evm::{
         fuzz::FuzzedExecutor,
         invariant::{
             check_sequence, replay_error, replay_run, InvariantExecutor, InvariantFuzzError,
-            InvariantFuzzTestResult,
         },
         CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
     },
@@ -537,18 +536,20 @@ impl<'a> ContractRunner<'a> {
 
         let progress =
             start_fuzz_progress(self.progress, self.name, &func.name, invariant_config.runs);
-        let InvariantFuzzTestResult { error, cases, reverts, last_run_inputs, gas_report_traces } =
+        let invariant_result =
             match evm.invariant_fuzz(invariant_contract.clone(), &fuzz_fixtures, progress.as_ref())
             {
                 Ok(x) => x,
                 Err(e) => return test_result.invariant_setup_fail(e),
             };
+        // Merge coverage collected during invariant run with test setup coverage.
+        test_result.merge_coverages(invariant_result.coverage);
 
         let mut counterexample = None;
-        let success = error.is_none();
-        let reason = error.as_ref().and_then(|err| err.revert_reason());
+        let success = invariant_result.error.is_none();
+        let reason = invariant_result.error.as_ref().and_then(|err| err.revert_reason());
 
-        match error {
+        match invariant_result.error {
             // If invariants were broken, replay the error to collect logs and traces
             Some(error) => match error {
                 InvariantFuzzError::BrokenInvariant(case_data) |
@@ -599,7 +600,7 @@ impl<'a> ContractRunner<'a> {
                     &mut test_result.logs,
                     &mut test_result.traces,
                     &mut test_result.coverage,
-                    &last_run_inputs,
+                    &invariant_result.last_run_inputs,
                 ) {
                     error!(%err, "Failed to replay last invariant run");
                 }
@@ -607,12 +608,12 @@ impl<'a> ContractRunner<'a> {
         }
 
         test_result.invariant_result(
-            gas_report_traces,
+            invariant_result.gas_report_traces,
             success,
             reason,
             counterexample,
-            cases,
-            reverts,
+            invariant_result.cases,
+            invariant_result.reverts,
         )
     }
 

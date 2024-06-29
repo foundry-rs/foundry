@@ -571,7 +571,7 @@ pub fn find_main_contract<'a>(
             rv = Some((PathBuf::from(f), a));
         }
     }
-    rv.ok_or(eyre::eyre!("contract not found"))
+    rv.ok_or_else(|| eyre::eyre!("contract not found"))
 }
 
 #[cfg(test)]

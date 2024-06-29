@@ -139,6 +139,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         skip: vec![],
         dependencies: Default::default(),
         warnings: vec![],
+        assertions_revert: true,
         legacy_assertions: false,
         _non_exhaustive: (),
     };

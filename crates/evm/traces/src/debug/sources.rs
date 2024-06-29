@@ -125,9 +125,7 @@ impl ContractSources {
         libraries: Option<&Libraries>,
     ) -> Result<Self> {
         let mut sources = Self::default();
-
         sources.insert(output, root, libraries)?;
-
         Ok(sources)
     }
 

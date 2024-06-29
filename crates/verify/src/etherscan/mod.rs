@@ -401,7 +401,7 @@ impl EtherscanVerificationProvider {
 
         let output = context.project.compile_file(&context.target_path)?;
         let artifact = output
-            .find(context.target_path.to_string_lossy(), &context.target_name)
+            .find(&context.target_path, &context.target_name)
             .ok_or_eyre("Contract artifact wasn't found locally")?;
         let bytecode = artifact
             .get_bytecode_object()

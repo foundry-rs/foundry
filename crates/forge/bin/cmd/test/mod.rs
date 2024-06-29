@@ -23,6 +23,7 @@ use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
     utils::source_files_iter,
+    ProjectCompileOutput,
 };
 use foundry_config::{
     figment,
@@ -221,7 +222,7 @@ impl TestArgs {
 
         // Always recompile all sources to ensure that `getCode` cheatcode can use any artifact.
         test_sources.extend(source_files_iter(
-            project.paths.sources,
+            &project.paths.sources,
             MultiCompilerLanguage::FILE_EXTENSIONS,
         ));
 
@@ -298,12 +299,7 @@ impl TestArgs {
 
         // Prepare the test builder
         let should_debug = self.debug.is_some();
-
-        // Clone the output only if we actually need it later for the debugger.
-        let output_clone = (should_debug || self.decode_internal).then(|| output.clone());
-
         let config = Arc::new(config);
-
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(self.decode_internal)
@@ -313,13 +309,7 @@ impl TestArgs {
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_test_options(test_options)
             .enable_isolation(evm_opts.isolate)
-            .build(project_root, output, env, evm_opts)?;
-
-        let debug_sources = output_clone
-            .map(|output| {
-                ContractSources::from_project_output(&output, project_root, Some(&runner.libraries))
-            })
-            .transpose()?;
+            .build(project_root, &output, env, evm_opts)?;
 
         if let Some(debug_test_pattern) = &self.debug {
             let test_pattern = &mut filter.args_mut().test_pattern;
@@ -332,8 +322,8 @@ impl TestArgs {
             *test_pattern = Some(debug_test_pattern.clone());
         }
 
-        let outcome =
-            self.run_tests(runner, config, verbosity, &filter, debug_sources.as_ref()).await?;
+        let libraries = runner.libraries.clone();
+        let outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
 
         if should_debug {
             // Get first non-empty suite result. We will have only one such entry
@@ -346,7 +336,8 @@ impl TestArgs {
                 return Err(eyre::eyre!("no tests were executed"));
             };
 
-            let sources = debug_sources.unwrap();
+            let sources =
+                ContractSources::from_project_output(&output, project.root(), Some(&libraries))?;
 
             // Run the debugger.
             let mut builder = Debugger::builder()
@@ -374,7 +365,7 @@ impl TestArgs {
         config: Arc<Config>,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
-        sources: Option<&ContractSources>,
+        output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         if self.list {
             return list(runner, filter, self.json);
@@ -399,6 +390,8 @@ impl TestArgs {
 
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
         let known_contracts = runner.known_contracts.clone();
+
+        let libraries = runner.libraries.clone();
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -431,9 +424,9 @@ impl TestArgs {
         }
 
         if self.decode_internal {
-            if let Some(sources) = sources {
-                builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources.clone()));
-            }
+            let sources =
+                ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
+            builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
         }
         let mut decoder = builder.build();
 

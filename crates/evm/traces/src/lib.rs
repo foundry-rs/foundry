@@ -20,8 +20,8 @@ use yansi::{Color, Paint};
 
 pub use revm_inspectors::tracing::{
     types::{CallKind, CallTrace, CallTraceNode},
-    CallTraceArena, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType, TracingInspector,
-    TracingInspectorConfig,
+    CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
+    TracingInspector, TracingInspectorConfig,
 };
 
 /// Call trace address identifiers.

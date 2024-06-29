@@ -1171,7 +1171,7 @@ impl Backend {
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
         };
 
-        if env.block.basefee == revm::primitives::U256::ZERO {
+        if env.block.basefee.is_zero() {
             // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
             // 0 is only possible if it's manually set
             env.cfg.disable_base_fee = true;
@@ -1921,8 +1921,8 @@ impl Backend {
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
-        if let Some(traces) = self.mined_geth_trace_transaction(hash, opts.clone()) {
-            return Ok(GethTrace::Default(traces));
+        if let Some(trace) = self.mined_geth_trace_transaction(hash, opts.clone()) {
+            return trace;
         }
 
         if let Some(fork) = self.get_fork() {
@@ -1936,8 +1936,8 @@ impl Backend {
         &self,
         hash: B256,
         opts: GethDebugTracingOptions,
-    ) -> Option<DefaultFrame> {
-        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts.config))
+    ) -> Option<Result<GethTrace, BlockchainError>> {
+        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts))
     }
 
     /// Returns the traces for the given block
@@ -2150,7 +2150,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_transaction_by_block_hash_and_index(
+    pub fn mined_transaction_by_block_hash_and_index(
         &self,
         block_hash: B256,
         index: Index,
@@ -2189,7 +2189,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_transaction_by_hash(&self, hash: B256) -> Option<WithOtherFields<Transaction>> {
+    pub fn mined_transaction_by_hash(&self, hash: B256) -> Option<WithOtherFields<Transaction>> {
         let (info, block) = {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { info, block_hash, .. } =

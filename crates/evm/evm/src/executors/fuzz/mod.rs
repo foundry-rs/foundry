@@ -22,6 +22,23 @@ use std::cell::RefCell;
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
+/// Contains data collected during fuzz test runs.
+#[derive(Default)]
+pub struct FuzzTestData {
+    // Stores the first fuzz case.
+    pub first_case: Option<FuzzCase>,
+    // Stored gas usage per fuzz case.
+    pub gas_by_case: Vec<(u64, u64)>,
+    // Stores the result and calldata of the last failed call, if any.
+    pub counterexample: (Bytes, RawCallResult),
+    // Stores up to `max_traces_to_collect` traces.
+    pub traces: Vec<CallTraceArena>,
+    // Stores breakpoints for the last fuzz case.
+    pub breakpoints: Option<Breakpoints>,
+    // Stores coverage information for all fuzz cases.
+    pub coverage: Option<HitMaps>,
+}
+
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
 ///
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contract with
@@ -63,37 +80,17 @@ impl FuzzedExecutor {
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
     ) -> FuzzTestResult {
-        // Stores the first Fuzzcase
-        let first_case: RefCell<Option<FuzzCase>> = RefCell::default();
-
-        // gas usage per case
-        let gas_by_case: RefCell<Vec<(u64, u64)>> = RefCell::default();
-
-        // Stores the result and calldata of the last failed call, if any.
-        let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::default();
-
-        // We want to collect at least one trace which will be displayed to user.
-        let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
-
-        // Stores up to `max_traces_to_collect` traces.
-        let traces: RefCell<Vec<CallTraceArena>> = RefCell::default();
-
-        // Stores coverage information for all fuzz cases
-        let coverage: RefCell<Option<HitMaps>> = RefCell::default();
-
-        // Stores breakpoints for the last fuzz case.
-        let breakpoints: RefCell<Option<Breakpoints>> = RefCell::default();
-
+        // Stores the fuzz test execution data.
+        let execution_data = RefCell::new(FuzzTestData::default());
         let state = self.build_fuzz_state();
-
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-
         let strat = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
         ];
+        // We want to collect at least one trace which will be displayed to user.
+        let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
 
-        debug!(func=?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
 
@@ -104,20 +101,21 @@ impl FuzzedExecutor {
 
             match fuzz_res {
                 FuzzOutcome::Case(case) => {
-                    let mut first_case = first_case.borrow_mut();
-                    gas_by_case.borrow_mut().push((case.case.gas, case.case.stipend));
-                    if first_case.is_none() {
-                        first_case.replace(case.case);
+                    let mut data = execution_data.borrow_mut();
+                    data.gas_by_case.push((case.case.gas, case.case.stipend));
+                    if data.first_case.is_none() {
+                        data.first_case.replace(case.case);
                     }
                     if let Some(call_traces) = case.traces {
-                        if traces.borrow().len() == max_traces_to_collect {
-                            traces.borrow_mut().pop();
+                        if data.traces.len() == max_traces_to_collect {
+                            data.traces.pop();
                         }
-                        traces.borrow_mut().push(call_traces);
-                        breakpoints.borrow_mut().replace(case.breakpoints);
+                        data.traces.push(call_traces);
+                        data.breakpoints.replace(case.breakpoints);
                     }
 
-                    match &mut *coverage.borrow_mut() {
+                    // Collect and merge coverage if `forge snapshot` context.
+                    match &mut data.coverage {
                         Some(prev) => prev.merge(case.coverage.unwrap()),
                         opt => *opt = case.coverage,
                     }
@@ -135,25 +133,26 @@ impl FuzzedExecutor {
                     // to run at least one more case to find a minimal failure
                     // case.
                     let reason = rd.maybe_decode(&outcome.1.result, Some(status));
-                    *counterexample.borrow_mut() = outcome;
+                    execution_data.borrow_mut().counterexample = outcome;
                     // HACK: we have to use an empty string here to denote `None`.
                     Err(TestCaseError::fail(reason.unwrap_or_default()))
                 }
             }
         });
 
-        let (calldata, call) = counterexample.into_inner();
+        let fuzz_result = execution_data.into_inner();
+        let (calldata, call) = fuzz_result.counterexample;
 
-        let mut traces = traces.into_inner();
+        let mut traces = fuzz_result.traces;
         let (last_run_traces, last_run_breakpoints) = if run_result.is_ok() {
-            (traces.pop(), breakpoints.into_inner())
+            (traces.pop(), fuzz_result.breakpoints)
         } else {
             (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
         };
 
         let mut result = FuzzTestResult {
-            first_case: first_case.take().unwrap_or_default(),
-            gas_by_case: gas_by_case.take(),
+            first_case: fuzz_result.first_case.unwrap_or_default(),
+            gas_by_case: fuzz_result.gas_by_case,
             success: run_result.is_ok(),
             reason: None,
             counterexample: None,
@@ -163,7 +162,7 @@ impl FuzzedExecutor {
             traces: last_run_traces,
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces,
-            coverage: coverage.into_inner(),
+            coverage: fuzz_result.coverage,
         };
 
         match run_result {

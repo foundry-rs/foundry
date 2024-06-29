@@ -90,7 +90,7 @@ impl CoverageArgs {
         let report = self.prepare(&project, &output)?;
 
         p_println!(!self.test.build_args().silent => "Running tests...");
-        self.collect(project, output, report, Arc::new(config), evm_opts).await
+        self.collect(project, &output, report, Arc::new(config), evm_opts).await
     }
 
     /// Builds the project.
@@ -222,7 +222,7 @@ impl CoverageArgs {
     async fn collect(
         self,
         project: Project,
-        output: ProjectCompileOutput,
+        output: &ProjectCompileOutput,
         mut report: CoverageReport,
         config: Arc<Config>,
         evm_opts: EvmOpts,
@@ -249,8 +249,10 @@ impl CoverageArgs {
 
         let outcome = self
             .test
-            .run_tests(runner, config.clone(), verbosity, &self.test.filter(&config), None)
+            .run_tests(runner, config.clone(), verbosity, &self.test.filter(&config), output)
             .await?;
+
+        outcome.ensure_ok()?;
 
         // Add hit data to the coverage report
         let data = outcome.results.iter().flat_map(|(_, suite)| {
