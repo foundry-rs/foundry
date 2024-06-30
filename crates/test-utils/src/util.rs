@@ -27,6 +27,9 @@ use std::{
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
+/// The commit of forge-std to use.
+const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
+
 /// Stores whether `stdout` is a tty / terminal.
 pub static IS_TTY: Lazy<bool> = Lazy::new(|| std::io::stdout().is_terminal());
 
@@ -250,6 +253,12 @@ pub fn initialize(target: &Path) {
             eprintln!("- initializing template dir in {}", prj.root().display());
 
             cmd.args(["init", "--force"]).assert_success();
+            // checkout forge-std
+            Command::new("git")
+                .current_dir(prj.root().join("lib/forge-std"))
+                .args(["checkout", FORGE_STD_REVISION])
+                .spawn()
+                .expect("failed to checkout forge-std");
             cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
 
             // Remove the existing template, if any.
