@@ -575,7 +575,7 @@ impl CallTraceDecoder {
 
         let events_it = nodes
             .iter()
-            .flat_map(|node| node.logs.iter().filter_map(|log| log.topics().first()))
+            .flat_map(|node| node.logs.iter().filter_map(|log| log.raw_log.topics().first()))
             .unique();
         identifier.write().await.identify_events(events_it).await;
 

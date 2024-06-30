@@ -415,22 +415,24 @@ impl InspectorStack {
     /// Set whether to enable the tracer.
     #[inline]
     pub fn tracing(&mut self, yes: bool, debug: bool) {
-        self.tracer = yes.then(|| {
-            TracingInspector::new(TracingInspectorConfig {
-                record_steps: debug,
-                record_memory_snapshots: debug,
-                record_stack_snapshots: if debug {
-                    StackSnapshotType::Full
-                } else {
-                    StackSnapshotType::None
-                },
-                record_state_diff: false,
-                exclude_precompile_calls: false,
-                record_logs: true,
-                record_opcodes_filter: None,
-                record_returndata_snapshots: debug,
-            })
-        });
+        if !yes {
+            self.tracer = None;
+            return;
+        }
+        *self.tracer.get_or_insert_with(Default::default).config_mut() = TracingInspectorConfig {
+            record_steps: debug,
+            record_memory_snapshots: debug,
+            record_stack_snapshots: if debug {
+                StackSnapshotType::Full
+            } else {
+                StackSnapshotType::None
+            },
+            record_state_diff: false,
+            exclude_precompile_calls: false,
+            record_logs: true,
+            record_opcodes_filter: None,
+            record_returndata_snapshots: debug,
+        };
     }
 
     /// Collects all the data gathered during inspection into a single struct.
@@ -447,13 +449,14 @@ impl InspectorStack {
                 .as_ref()
                 .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
-            traces: tracer.map(|tracer| tracer.get_traces().clone()),
+            traces: tracer.map(|tracer| tracer.into_traces()),
             coverage: coverage.map(|coverage| coverage.maps),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
         }
     }
 
+    #[inline(always)]
     fn as_mut(&mut self) -> InspectorStackRefMut<'_> {
         InspectorStackRefMut { cheatcodes: self.cheatcodes.as_mut(), inner: &mut self.inner }
     }

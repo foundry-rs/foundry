@@ -307,18 +307,16 @@ impl<'a> ContractRunner<'a> {
         });
 
         // Invariant testing requires tracing to figure out what contracts were created.
+        // We also want to disable `debug` for setup since we won't be using those traces.
         let has_invariants = self.contract.abi.functions().any(|func| func.is_invariant_test());
-        let tmp_tracing =
-            self.executor.inspector().tracer.is_none() && has_invariants && call_setup;
-        if tmp_tracing {
-            self.executor.set_tracing(true, false);
-        }
+        let prev_tracer = self.executor.inspector_mut().tracer.take();
+        self.executor.set_tracing(prev_tracer.is_some() || has_invariants, false);
+
         let setup_time = Instant::now();
         let setup = self.setup(call_setup);
         debug!("finished setting up in {:?}", setup_time.elapsed());
-        if tmp_tracing {
-            self.executor.set_tracing(false, false);
-        }
+
+        self.executor.inspector_mut().tracer = prev_tracer;
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
