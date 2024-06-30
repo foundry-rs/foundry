@@ -1724,23 +1724,25 @@ impl Backend {
 
         if block_number < self.env.read().block.number {
             {
-                let mut states = self.states.write();
-
-                if let Some((state, block)) = self
-                    .get_block(block_number.to::<u64>())
-                    .and_then(|block| Some((states.get(&block.header.hash_slow())?, block)))
                 {
-                    let block = BlockEnv {
-                        number: U256::from(block.header.number),
-                        coinbase: block.header.beneficiary,
-                        timestamp: U256::from(block.header.timestamp),
-                        difficulty: block.header.difficulty,
-                        prevrandao: Some(block.header.mix_hash),
-                        basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
-                        gas_limit: U256::from(block.header.gas_limit),
-                        ..Default::default()
-                    };
-                    return Ok(f(Box::new(state), block));
+                    let mut states = self.states.write();
+
+                    if let Some((state, block)) = self
+                        .get_block(block_number.to::<u64>())
+                        .and_then(|block| Some((states.get(&block.header.hash_slow())?, block)))
+                    {
+                        let block = BlockEnv {
+                            number: U256::from(block.header.number),
+                            coinbase: block.header.beneficiary,
+                            timestamp: U256::from(block.header.timestamp),
+                            difficulty: block.header.difficulty,
+                            prevrandao: Some(block.header.mix_hash),
+                            basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
+                            gas_limit: U256::from(block.header.gas_limit),
+                            ..Default::default()
+                        };
+                        return Ok(f(Box::new(state), block));
+                    }
                 }
             }
 
