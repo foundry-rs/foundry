@@ -3689,8 +3689,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2ea36984de5126fe2b05efb22d04148c39f244de1cc285493e3c2a4cfcc843a"
+source = "git+https://github.com/foundry-rs/compilers?rev=d9e7306#d9e730675795d1acfc0c85550a4c8d566f62bf54"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3727,8 +3726,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5795278ec3d726eb4ec932ea452a05c880780fbb677aef06f5eeab3d0e2ae075"
+source = "git+https://github.com/foundry-rs/compilers?rev=d9e7306#d9e730675795d1acfc0c85550a4c8d566f62bf54"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3737,8 +3735,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93f19355ab89cd2b782c6d791d7cb16b7733074a7945443668183e7c258d007a"
+source = "git+https://github.com/foundry-rs/compilers?rev=d9e7306#d9e730675795d1acfc0c85550a4c8d566f62bf54"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3760,8 +3757,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05564ba0e04eb361e264e68d5e7d5b69e272d7d378f22c5c6a2edbe6d1cc3b58"
+source = "git+https://github.com/foundry-rs/compilers?rev=d9e7306#d9e730675795d1acfc0c85550a4c8d566f62bf54"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3773,8 +3769,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "208e1a34268fbfccea0a8d4c974db01bfa44dac370724907ad404ccb79455b64"
+source = "git+https://github.com/foundry-rs/compilers?rev=d9e7306#d9e730675795d1acfc0c85550a4c8d566f62bf54"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -6977,8 +6972,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "10.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "355bde4e21578c241f9379fbb344a73d254969b5007239115e094dda1511cd34"
+source = "git+https://github.com/bluealloy/revm.git?rev=3eb1b1a#3eb1b1a6fbf7aaad4851ec52683df7f5b0e159d2"
 dependencies = [
  "auto_impl",
  "cfg-if",
@@ -6992,8 +6986,7 @@ dependencies = [
 [[package]]
 name = "revm-inspectors"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3e260c899e462b4e189a3bfcf5a947bc3506f8bd89183859604bca009b57530"
+source = "git+https://github.com/paradigmxyz/revm-inspectors.git?rev=076ba29#076ba29698b1075d445e60d82ac01b96a3e5d4a7"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
@@ -7009,8 +7002,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23dfd24faa3cbbd96e0976103d1e174d6559b8036730f70415488ee21870d578"
+source = "git+https://github.com/bluealloy/revm.git?rev=3eb1b1a#3eb1b1a6fbf7aaad4851ec52683df7f5b0e159d2"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -7019,8 +7011,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "8.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c669c9b105dbb41133c17bf7f34d29368e358a7fee8fcc289e90dbfb024dfc4"
+source = "git+https://github.com/bluealloy/revm.git?rev=3eb1b1a#3eb1b1a6fbf7aaad4851ec52683df7f5b0e159d2"
 dependencies = [
  "aurora-engine-modexp",
  "c-kzg",
@@ -7037,8 +7028,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "5.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "902184a7a781550858d4b96707098da357429f1e4545806fd5b589f455555cf2"
+source = "git+https://github.com/bluealloy/revm.git?rev=3eb1b1a#3eb1b1a6fbf7aaad4851ec52683df7f5b0e159d2"
 dependencies = [
  "alloy-primitives",
  "auto_impl",

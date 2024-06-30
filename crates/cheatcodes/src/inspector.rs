@@ -486,8 +486,8 @@ impl Cheatcodes {
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if ecx.journaled_state.depth() >= broadcast.depth &&
-                input.caller() == broadcast.original_caller
+            if ecx.journaled_state.depth() >= broadcast.depth
+                && input.caller() == broadcast.original_caller
             {
                 if let Err(err) =
                     ecx.journaled_state.load_account(broadcast.new_origin, &mut ecx.db)
@@ -499,7 +499,7 @@ impl Cheatcodes {
                             gas,
                         },
                         address: None,
-                    })
+                    });
                 }
 
                 ecx.env.tx.caller = broadcast.new_origin;
@@ -596,8 +596,8 @@ impl Cheatcodes {
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if ecx.journaled_state.depth() <= expected_revert.depth &&
-                matches!(expected_revert.kind, ExpectedRevertKind::Default)
+            if ecx.journaled_state.depth() <= expected_revert.depth
+                && matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match expect::handle_expect_revert(
@@ -730,7 +730,7 @@ impl Cheatcodes {
         let ecx = &mut ecx.inner;
 
         if call.target_address == HARDHAT_CONSOLE_ADDRESS {
-            return None
+            return None;
         }
 
         // Handle expected calls
@@ -767,8 +767,8 @@ impl Cheatcodes {
                 mocks
                     .iter()
                     .find(|(mock, _)| {
-                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
-                            mock.value.map_or(true, |value| Some(value) == call.transfer_value())
+                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..])
+                            && mock.value.map_or(true, |value| Some(value) == call.transfer_value())
                     })
                     .map(|(_, v)| v)
             }) {
@@ -779,7 +779,7 @@ impl Cheatcodes {
                         gas,
                     },
                     memory_offset: call.return_memory_offset.clone(),
-                })
+                });
             }
         }
 
@@ -815,8 +815,8 @@ impl Cheatcodes {
             //
             // We do this because any subsequent contract calls *must* exist on chain and
             // we only want to grab *this* call, not internal ones
-            if ecx.journaled_state.depth() == broadcast.depth &&
-                call.caller == broadcast.original_caller
+            if ecx.journaled_state.depth() == broadcast.depth
+                && call.caller == broadcast.original_caller
             {
                 // At the target depth we set `msg.sender` & tx.origin.
                 // We are simulating the caller as being an EOA, so *both* must be set to the
@@ -837,7 +837,7 @@ impl Cheatcodes {
                                 gas,
                             },
                             memory_offset: call.return_memory_offset.clone(),
-                        })
+                        });
                     }
 
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call.gas_limit);
@@ -879,7 +879,7 @@ impl Cheatcodes {
                             gas,
                         },
                         memory_offset: call.return_memory_offset.clone(),
-                    })
+                    });
                 }
             }
         }
@@ -902,6 +902,9 @@ impl Cheatcodes {
                 CallScheme::CallCode => crate::Vm::AccountAccessKind::CallCode,
                 CallScheme::DelegateCall => crate::Vm::AccountAccessKind::DelegateCall,
                 CallScheme::StaticCall => crate::Vm::AccountAccessKind::StaticCall,
+                CallScheme::ExtCall => crate::Vm::AccountAccessKind::Call,
+                CallScheme::ExtStaticCall => crate::Vm::AccountAccessKind::StaticCall,
+                CallScheme::ExtDelegateCall => crate::Vm::AccountAccessKind::DelegateCall,
             };
             // Record this call by pushing it to a new pending vector; all subsequent calls at
             // that depth will be pushed to the same vector. When the call ends, the
@@ -1005,8 +1008,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         mut outcome: CallOutcome,
     ) -> CallOutcome {
         let ecx = &mut ecx.inner;
-        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS ||
-            call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
+            || call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
@@ -1086,7 +1089,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Exit early for calls to cheatcodes as other logic is not relevant for cheatcode
         // invocations
         if cheatcode_call {
-            return outcome
+            return outcome;
         }
 
         // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
@@ -1161,7 +1164,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             if self.expected_emits.iter().any(|expected| !expected.found) {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = "log != expected log".abi_encode().into();
-                return outcome
+                return outcome;
             } else {
                 // All emits were found, we're good.
                 // Clear the queue, as we expect the user to declare more events for the next call
@@ -1179,7 +1182,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if outcome.result.is_revert() {
             if let Some(err) = diag {
                 outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
-                return outcome
+                return outcome;
             }
         }
 
@@ -1188,9 +1191,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let TxKind::Call(test_contract) = ecx.env.tx.transact_to {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
-            if ecx.db.is_forked_mode() &&
-                outcome.result.result == InstructionResult::Stop &&
-                call.target_address != test_contract
+            if ecx.db.is_forked_mode()
+                && outcome.result.result == InstructionResult::Stop
+                && call.target_address != test_contract
             {
                 self.fork_revert_diagnostic =
                     ecx.db.diagnose_revert(call.target_address, &ecx.journaled_state);
@@ -1327,8 +1330,8 @@ impl<DB: DatabaseExt> InspectorExt<DB> for Cheatcodes {
                 1
             };
 
-            ecx.journaled_state.depth() == target_depth &&
-                (self.broadcast.is_some() || self.config.always_use_create_2_factory)
+            ecx.journaled_state.depth() == target_depth
+                && (self.broadcast.is_some() || self.config.always_use_create_2_factory)
         } else {
             false
         }
@@ -1781,10 +1784,10 @@ fn check_if_fixed_gas_limit<DB: DatabaseExt>(
 fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
         kind,
-        crate::Vm::AccountAccessKind::Call |
-            crate::Vm::AccountAccessKind::StaticCall |
-            crate::Vm::AccountAccessKind::CallCode |
-            crate::Vm::AccountAccessKind::DelegateCall
+        crate::Vm::AccountAccessKind::Call
+            | crate::Vm::AccountAccessKind::StaticCall
+            | crate::Vm::AccountAccessKind::CallCode
+            | crate::Vm::AccountAccessKind::DelegateCall
     )
 }
 

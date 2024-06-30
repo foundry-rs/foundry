@@ -95,7 +95,7 @@ pub async fn render_trace_arena(
             for child in &node.ordering {
                 match child {
                     TraceMemberOrder::Log(index) => {
-                        let log = render_trace_log(&node.logs[*index], decoder).await?;
+                        let log = render_trace_log(&node.logs[*index].raw_log, decoder).await?;
 
                         // Prepend our tree structure symbols to each line of the displayed log
                         log.lines().enumerate().try_for_each(|(i, line)| {
@@ -162,7 +162,8 @@ pub async fn render_trace(
     let address = trace.address.to_checksum(None);
 
     let decoded = decoder.decode_function(trace).await;
-    if trace.kind.is_any_create() {
+    let is_eofcreate = matches!(trace.kind, CallKind::EOFCreate);
+    if trace.kind.is_any_create() || is_eofcreate {
         write!(
             &mut s,
             "{}{} {}@{}",
@@ -193,7 +194,7 @@ pub async fn render_trace(
             CallKind::StaticCall => " [staticcall]",
             CallKind::CallCode => " [callcode]",
             CallKind::DelegateCall => " [delegatecall]",
-            CallKind::Create | CallKind::Create2 => unreachable!(),
+            CallKind::Create | CallKind::Create2 | CallKind::EOFCreate => unreachable!(),
             CallKind::AuthCall => " [authcall]",
         };
 

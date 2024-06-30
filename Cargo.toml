@@ -250,3 +250,9 @@ tower = "0.4"
 tower-http = "0.5"
 # soldeer
 soldeer = "0.2.15"
+
+[patch.crates-io]
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "d9e7306"}
+revm-primitives = { git = "https://github.com/bluealloy/revm.git", rev = "3eb1b1a" }
+revm = { git = "https://github.com/bluealloy/revm.git", rev = "3eb1b1a" }
+revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "076ba29" }

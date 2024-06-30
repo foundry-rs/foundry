@@ -447,7 +447,7 @@ impl InspectorStack {
                 .as_ref()
                 .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
-            traces: tracer.map(|tracer| tracer.get_traces().clone()),
+            traces: tracer.map(|tracer| tracer.traces().clone()),
             coverage: coverage.map(|coverage| coverage.maps),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
@@ -493,9 +493,9 @@ impl<'a> InspectorStackRefMut<'a> {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = new_outcome.result.result != result ||
-                    (new_outcome.result.result == InstructionResult::Revert &&
-                        new_outcome.output() != outcome.output());
+                let different = new_outcome.result.result != result
+                    || (new_outcome.result.result == InstructionResult::Revert
+                        && new_outcome.output() != outcome.output());
                 different.then_some(new_outcome)
             },
             self,
@@ -578,7 +578,7 @@ impl<'a> InspectorStackRefMut<'a> {
             // Should we match, encode and propagate error as a revert reason?
             let result =
                 InterpreterResult { result: InstructionResult::Revert, output: Bytes::new(), gas };
-            return (result, None)
+            return (result, None);
         };
 
         // Commit changes after transaction
@@ -591,7 +591,7 @@ impl<'a> InspectorStackRefMut<'a> {
                 output: Bytes::from(e.to_string()),
                 gas,
             };
-            return (res, None)
+            return (res, None);
         }
         if let Err(e) = update_state(&mut res.state, &mut ecx.db, None) {
             let res = InterpreterResult {
@@ -599,7 +599,7 @@ impl<'a> InspectorStackRefMut<'a> {
                 output: Bytes::from(e.to_string()),
                 gas,
             };
-            return (res, None)
+            return (res, None);
         }
 
         // Merge transaction journal into the active journal.
@@ -707,16 +707,16 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
             if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner) {
                 if output.result.result != InstructionResult::Continue {
                     ecx.journaled_state.depth -= self.in_inner_context as usize;
-                    return Some(output)
+                    return Some(output);
                 }
             }
         }
         ecx.journaled_state.depth -= self.in_inner_context as usize;
 
-        if self.enable_isolation &&
-            call.scheme == CallScheme::Call &&
-            !self.in_inner_context &&
-            ecx.journaled_state.depth == 1
+        if self.enable_isolation
+            && call.scheme == CallScheme::Call
+            && !self.in_inner_context
+            && ecx.journaled_state.depth == 1
         {
             let (result, _) = self.transact_inner(
                 ecx,
@@ -726,7 +726,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
                 call.gas_limit,
                 call.value.get(),
             );
-            return Some(CallOutcome { result, memory_offset: call.return_memory_offset.clone() })
+            return Some(CallOutcome { result, memory_offset: call.return_memory_offset.clone() });
         }
 
         None
@@ -741,7 +741,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
         // Avoid processing twice.
         if self.in_inner_context && ecx.journaled_state.depth == 0 {
-            return outcome
+            return outcome;
         }
 
         let outcome = self.do_call_end(ecx, inputs, outcome);
@@ -775,10 +775,10 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
             ecx
         );
 
-        if !matches!(create.scheme, CreateScheme::Create2 { .. }) &&
-            self.enable_isolation &&
-            !self.in_inner_context &&
-            ecx.journaled_state.depth == 1
+        if !matches!(create.scheme, CreateScheme::Create2 { .. })
+            && self.enable_isolation
+            && !self.in_inner_context
+            && ecx.journaled_state.depth == 1
         {
             let (result, address) = self.transact_inner(
                 ecx,
@@ -788,7 +788,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
                 create.gas_limit,
                 create.value,
             );
-            return Some(CreateOutcome { result, address })
+            return Some(CreateOutcome { result, address });
         }
 
         None
@@ -803,7 +803,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
         // Avoid processing twice.
         if self.in_inner_context && ecx.journaled_state.depth == 0 {
-            return outcome
+            return outcome;
         }
 
         let result = outcome.result.result;
@@ -816,9 +816,9 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = new_outcome.result.result != result ||
-                    (new_outcome.result.result == InstructionResult::Revert &&
-                        new_outcome.output() != outcome.output());
+                let different = new_outcome.result.result != result
+                    || (new_outcome.result.result == InstructionResult::Revert
+                        && new_outcome.output() != outcome.output());
                 different.then_some(new_outcome)
             },
             self,
@@ -846,10 +846,14 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
             ecx
         );
 
-        if self.enable_isolation && !self.in_inner_context && ecx.journaled_state.depth == 1 {
-            let init_code = match &create.kind {
+        if matches!(create.kind, EOFCreateKind::Tx { .. })
+            && self.enable_isolation
+            && !self.in_inner_context
+            && ecx.journaled_state.depth == 1
+        {
+            let init_code = match &mut create.kind {
                 EOFCreateKind::Tx { initdata } => initdata.clone(),
-                EOFCreateKind::Opcode { initcode, .. } => initcode.raw.clone(),
+                EOFCreateKind::Opcode { .. } => unreachable!(),
             };
 
             let (result, address) = self.transact_inner(
@@ -860,7 +864,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
                 create.gas_limit,
                 create.value,
             );
-            return Some(CreateOutcome { result, address })
+            return Some(CreateOutcome { result, address });
         }
 
         None
@@ -875,7 +879,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
         // Avoid processing twice.
         if self.in_inner_context && ecx.journaled_state.depth == 0 {
-            return outcome
+            return outcome;
         }
 
         let result = outcome.result.result;
@@ -888,9 +892,9 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = new_outcome.result.result != result ||
-                    (new_outcome.result.result == InstructionResult::Revert &&
-                        new_outcome.output() != outcome.output());
+                let different = new_outcome.result.result != result
+                    || (new_outcome.result.result == InstructionResult::Revert
+                        && new_outcome.output() != outcome.output());
                 different.then_some(new_outcome)
             },
             self,
@@ -968,6 +972,23 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         outcome: CreateOutcome,
     ) -> CreateOutcome {
         self.as_mut().create_end(context, call, outcome)
+    }
+
+    fn eofcreate(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        create: &mut EOFCreateInputs,
+    ) -> Option<CreateOutcome> {
+        self.as_mut().eofcreate(context, create)
+    }
+
+    fn eofcreate_end(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        call: &EOFCreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        self.as_mut().eofcreate_end(context, call, outcome)
     }
 
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
