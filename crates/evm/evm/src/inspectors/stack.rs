@@ -407,7 +407,11 @@ impl InspectorStack {
     /// Set whether to enable the tracer.
     #[inline]
     pub fn tracing(&mut self, mode: TraceMode) {
-        self.tracer = mode.into_config().map(TracingInspector::new);
+        if let Some(config) = mode.into_config() {
+            *self.tracer.get_or_insert_with(Default::default).config_mut() = config;
+        } else {
+            self.tracer = None;
+        }
     }
 
     /// Collects all the data gathered during inspection into a single struct.
@@ -424,13 +428,14 @@ impl InspectorStack {
                 .as_ref()
                 .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
-            traces: tracer.map(|tracer| tracer.get_traces().clone()),
+            traces: tracer.map(|tracer| tracer.into_traces()),
             coverage: coverage.map(|coverage| coverage.maps),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
         }
     }
 
+    #[inline(always)]
     fn as_mut(&mut self) -> InspectorStackRefMut<'_> {
         InspectorStackRefMut { cheatcodes: self.cheatcodes.as_mut(), inner: &mut self.inner }
     }

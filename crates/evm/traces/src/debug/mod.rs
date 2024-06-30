@@ -281,7 +281,7 @@ fn try_decode_args_from_step(args: &Parameters<'_>, step: &CallTraceStep) -> Opt
                         (DynSolType::Uint(8), Some(Storage::Memory | Storage::Storage)) => None,
                         (_, Some(Storage::Memory)) => decode_from_memory(
                             type_,
-                            step.memory.as_bytes(),
+                            step.memory.as_ref().unwrap().as_bytes(),
                             input.try_into().ok()?,
                         ),
                         // Read other types from stack

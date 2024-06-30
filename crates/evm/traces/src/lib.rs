@@ -108,18 +108,23 @@ pub async fn render_trace_arena(
                 let child = &node.ordering[ordering_idx];
                 match child {
                     TraceMemberOrder::Log(index) => {
-                        let log = render_trace_log(&node.logs[*index], decoder).await?;
+                        let log = render_trace_log(&node.logs[*index].raw_log, decoder).await?;
 
                         // Prepend our tree structure symbols to each line of the displayed log
                         log.lines().enumerate().try_for_each(|(i, line)| {
-                            writeln!(s, "{}{}", if i == 0 { left } else { right }, line)
+                            writeln!(
+                                s,
+                                "{}{}",
+                                if i == 0 { left } else { right },
+                                line
+                            )
                         })?;
                     }
                     TraceMemberOrder::Call(index) => {
                         inner(
                             arena,
                             decoder,
-                            identified_internals,
+                            &identified_internals,
                             s,
                             node.children[*index],
                             left,
