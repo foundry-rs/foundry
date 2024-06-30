@@ -112,6 +112,7 @@ fn main() -> Result<()> {
         },
         ForgeSubcommand::VerifyBytecode(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Soldeer(cmd) => cmd.run(),
+        // TODO flamegraph
     }
 }
 
@@ -120,6 +121,8 @@ fn main() -> Result<()> {
 /// cheatcodes.
 fn init_execution_context(subcommand: &ForgeSubcommand) {
     let context = match subcommand {
+        // Test or Flamegraph should give the same context
+        // or actually I am not sure about this.
         ForgeSubcommand::Test(_) => ForgeContext::Test,
         ForgeSubcommand::Coverage(_) => ForgeContext::Coverage,
         ForgeSubcommand::Snapshot(_) => ForgeContext::Snapshot,

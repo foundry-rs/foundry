@@ -134,10 +134,10 @@ impl BindArgs {
     /// Returns the filter to use for `MultiAbigen`
     fn get_filter(&self) -> Result<ContractFilter> {
         if self.select_all {
-            return Ok(ContractFilter::All)
+            return Ok(ContractFilter::All);
         }
         if !self.select.is_empty() {
-            return Ok(SelectContracts::default().extend_regex(self.select.clone()).into())
+            return Ok(SelectContracts::default().extend_regex(self.select.clone()).into());
         }
         if let Some(skip) = self.build_args.skip.as_ref().filter(|s| !s.is_empty()) {
             return Ok(ExcludeContracts::default()
@@ -147,7 +147,7 @@ impl BindArgs {
                         .map(|s| Regex::new(s.file_pattern()))
                         .collect::<Result<Vec<_>, _>>()?,
                 )
-                .into())
+                .into());
         }
         // This excludes all Test/Script and forge-std contracts
         Ok(ExcludeContracts::default()

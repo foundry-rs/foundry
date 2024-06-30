@@ -131,7 +131,7 @@ fn clean_chain_cache(chain: impl Into<Chain>, blocks: Vec<u64>, etherscan: bool)
     if blocks.is_empty() {
         Config::clean_foundry_etherscan_chain_cache(chain)?;
         if etherscan {
-            return Ok(())
+            return Ok(());
         }
         Config::clean_foundry_chain_cache(chain)?;
     } else {

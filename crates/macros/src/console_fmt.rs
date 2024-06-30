@@ -33,7 +33,7 @@ fn impl_struct(s: &DataStruct) -> Option<TokenStream> {
     };
 
     if fields.is_empty() {
-        return None
+        return None;
     }
 
     let first_ty = match &fields.first().unwrap().ty {

@@ -57,7 +57,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
                         gas: Gas::new(inputs.gas_limit),
                     },
                     memory_offset: inputs.return_memory_offset.clone(),
-                })
+                });
             }
         }
 

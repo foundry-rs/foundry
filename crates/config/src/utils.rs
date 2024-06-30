@@ -73,12 +73,12 @@ pub fn find_project_root_path(path: Option<&PathBuf>) -> std::io::Result<PathBuf
     while cwd.starts_with(&boundary) {
         let file_path = cwd.join(Config::FILE_NAME);
         if file_path.is_file() {
-            return Ok(cwd.to_path_buf())
+            return Ok(cwd.to_path_buf());
         }
         if let Some(parent) = cwd.parent() {
             cwd = parent;
         } else {
-            break
+            break;
         }
     }
     // no foundry.toml found
@@ -197,7 +197,7 @@ pub fn get_available_profiles(toml_path: impl AsRef<Path>) -> eyre::Result<Vec<S
     let mut result = vec![Config::DEFAULT_PROFILE.to_string()];
 
     if !toml_path.as_ref().exists() {
-        return Ok(result)
+        return Ok(result);
     }
 
     let doc = read_toml(toml_path)?;

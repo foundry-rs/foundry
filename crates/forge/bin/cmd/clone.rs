@@ -266,7 +266,7 @@ impl CloneArgs {
                 let remappings_txt_content =
                     config.remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
                 if fs::write(&remappings_txt, remappings_txt_content).is_err() {
-                    return false
+                    return false;
                 }
 
                 let profile = config.profile.as_str().as_str();

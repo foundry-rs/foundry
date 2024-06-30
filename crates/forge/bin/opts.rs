@@ -164,6 +164,7 @@ pub enum ForgeSubcommand {
 
     /// Soldeer dependency manager.
     Soldeer(soldeer::SoldeerArgs),
+    // TODO add flamegraph args here
 }
 
 #[cfg(test)]

@@ -70,7 +70,7 @@ pub fn transaction_request_to_typed(
             gas_limit: gas.unwrap_or_default(),
             is_system_tx: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
             input: input.into_input().unwrap_or_default(),
-        }))
+        }));
     }
 
     match (
@@ -198,7 +198,7 @@ impl MaybeImpersonatedTransaction {
     #[cfg(feature = "impersonated-tx")]
     pub fn recover(&self) -> Result<Address, alloy_primitives::SignatureError> {
         if let Some(sender) = self.impersonated_sender {
-            return Ok(sender)
+            return Ok(sender);
         }
         self.transaction.recover()
     }
@@ -211,7 +211,7 @@ impl MaybeImpersonatedTransaction {
     pub fn hash(&self) -> B256 {
         if self.transaction.is_impersonated() {
             if let Some(sender) = self.impersonated_sender {
-                return self.transaction.impersonated_hash(sender)
+                return self.transaction.impersonated_hash(sender);
             }
         }
         self.transaction.hash()
@@ -919,7 +919,7 @@ impl Decodable for TypedTransaction {
 
         // Legacy TX
         if header.list {
-            return Ok(TxEnvelope::decode(buf)?.into())
+            return Ok(TxEnvelope::decode(buf)?.into());
         }
 
         // Check byte after header
@@ -965,7 +965,7 @@ impl Encodable2718 for TypedTransaction {
 impl Decodable2718 for TypedTransaction {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
         if ty == 0x7E {
-            return Ok(Self::Deposit(DepositTransaction::decode(buf)?))
+            return Ok(Self::Deposit(DepositTransaction::decode(buf)?));
         }
         match TxEnvelope::typed_decode(ty, buf)? {
             TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
@@ -1298,7 +1298,7 @@ impl Encodable2718 for TypedReceipt {
 impl Decodable2718 for TypedReceipt {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
         if ty == 0x7E {
-            return Ok(Self::Deposit(DepositReceipt::decode(buf)?))
+            return Ok(Self::Deposit(DepositReceipt::decode(buf)?));
         }
         match ReceiptEnvelope::typed_decode(ty, buf)? {
             ReceiptEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),

@@ -46,7 +46,7 @@ impl CommentTag {
             }
             _ => {
                 warn!(target: "forge::doc", tag=trimmed, "unknown comment tag. custom tags must be preceded by `custom:`");
-                return None
+                return None;
             }
         };
         Some(tag)

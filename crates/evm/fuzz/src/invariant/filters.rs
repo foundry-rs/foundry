@@ -38,14 +38,14 @@ impl ArtifactFilters {
                 .collect::<eyre::Result<Vec<_>>>()?;
             // targetArtifactSelectors > excludeArtifacts > targetArtifacts
             if functions.is_empty() && self.excluded.contains(&artifact.identifier()) {
-                return Ok(None)
+                return Ok(None);
             }
-            return Ok(Some(functions))
+            return Ok(Some(functions));
         }
         // If no contract is specifically targeted, and this contract is not excluded, then accept
         // all functions.
         if self.targeted.is_empty() && !self.excluded.contains(&artifact.identifier()) {
-            return Ok(Some(vec![]))
+            return Ok(Some(vec![]));
         }
         Ok(None)
     }

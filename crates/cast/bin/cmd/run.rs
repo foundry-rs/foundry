@@ -160,7 +160,7 @@ impl RunArgs {
                 pb.set_position(0);
 
                 let BlockTransactions::Full(txs) = block.transactions else {
-                    return Err(eyre::eyre!("Could not get block txs"))
+                    return Err(eyre::eyre!("Could not get block txs"));
                 };
 
                 for (index, tx) in txs.into_iter().enumerate() {

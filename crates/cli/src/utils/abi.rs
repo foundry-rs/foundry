@@ -43,7 +43,7 @@ pub async fn parse_function_args<T: Transport + Clone, P: Provider<T, AnyNetwork
     let args = resolve_name_args(&args, provider).await;
 
     if let Ok(data) = hex::decode(sig) {
-        return Ok((data, None))
+        return Ok((data, None));
     }
 
     let func = if sig.contains('(') {

@@ -52,7 +52,7 @@ impl Filters {
                     .await
                     .unwrap_or_else(|| ResponseResult::success(Vec::<()>::new()));
                 *deadline = self.next_deadline();
-                return resp
+                return resp;
             }
         }
         warn!(target: "node::filter", "No filter found for {}", id);
@@ -63,7 +63,7 @@ impl Filters {
     pub async fn get_log_filter(&self, id: &str) -> Option<Filter> {
         let filters = self.active_filters.lock().await;
         if let Some((EthFilter::Logs(ref log), _)) = filters.get(id) {
-            return log.filter.filter.clone()
+            return log.filter.filter.clone();
         }
         None
     }
@@ -92,7 +92,7 @@ impl Filters {
         active_filters.retain(|id, (_, deadline)| {
             if now > *deadline {
                 trace!(target: "node::filter",?id, "Evicting stale filter");
-                return false
+                return false;
             }
             true
         });

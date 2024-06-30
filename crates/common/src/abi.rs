@@ -119,7 +119,7 @@ pub async fn get_func_etherscan(
     for func in funcs {
         let res = encode_function_args(&func, args);
         if res.is_ok() {
-            return Ok(func)
+            return Ok(func);
         }
     }
 

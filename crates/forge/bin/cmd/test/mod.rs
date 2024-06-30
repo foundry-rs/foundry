@@ -10,7 +10,7 @@ use forge::{
     traces::{
         debug::{ContractSources, DebugTraceIdentifier},
         identifier::SignaturesIdentifier,
-        CallTraceDecoderBuilder, TraceKind,
+        CallTraceDecoderBuilder, CallTraceNode, DecodedCallTrace, TraceKind,
     },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
@@ -75,6 +75,10 @@ pub struct TestArgs {
     /// For more fine-grained control of which fuzz case is run, see forge run.
     #[arg(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
+
+    /// Generate flamegraph for a test function. Works similar to debug flag.
+    #[arg(long, value_name = "TEST_FUNCTION")]
+    flamegraph: Option<Regex>,
 
     /// Whether to identify internal functions in traces.
     #[arg(long)]
@@ -288,19 +292,21 @@ impl TestArgs {
             .profiles(profiles)
             .build(&output, project_root)?;
 
+        // Prepare the test builder
+        let should_debug = self.debug.is_some();
+        let should_flamegraph = self.flamegraph.is_some();
+
         // Determine print verbosity and executor verbosity
         let verbosity = evm_opts.verbosity;
-        if self.gas_report && evm_opts.verbosity < 3 {
+        if (self.gas_report && evm_opts.verbosity < 3) || should_flamegraph {
             evm_opts.verbosity = 3;
         }
 
         let env = evm_opts.evm_env().await?;
 
-        // Prepare the test builder
-        let should_debug = self.debug.is_some();
-
         // Clone the output only if we actually need it later for the debugger.
-        let output_clone = (should_debug || self.decode_internal).then(|| output.clone());
+        let output_clone =
+            (should_debug || should_flamegraph || self.decode_internal).then(|| output.clone());
 
         let config = Arc::new(config);
 
@@ -321,19 +327,137 @@ impl TestArgs {
             })
             .transpose()?;
 
-        if let Some(debug_test_pattern) = &self.debug {
+        if should_debug && should_flamegraph {
+            eyre::bail!("Cannot specify both --debug and --flamegraph.");
+        }
+
+        let mut set_test_pattern = |new_test_pattern: &Regex, flag_name| {
             let test_pattern = &mut filter.args_mut().test_pattern;
             if test_pattern.is_some() {
                 eyre::bail!(
-                    "Cannot specify both --debug and --match-test. \
-                     Use --match-contract and --match-path to further limit the search instead."
+                    "Cannot specify both --{} and --match-test. \
+                     Use --match-contract and --match-path to further limit the search instead.",
+                    flag_name
                 );
             }
-            *test_pattern = Some(debug_test_pattern.clone());
+            *test_pattern = Some(new_test_pattern.clone());
+            Ok(())
+        };
+
+        if let Some(debug_test_pattern) = &self.debug {
+            set_test_pattern(debug_test_pattern, "debug")?;
+        }
+
+        if let Some(flamegraph_test_pattern) = &self.flamegraph {
+            set_test_pattern(flamegraph_test_pattern, "flamegraph")?;
         }
 
         let outcome =
             self.run_tests(runner, config, verbosity, &filter, debug_sources.as_ref()).await?;
+
+        println!("after run tests");
+
+        // TODO instead of adding a subcommand, I should add a "flamegraph" flag
+        if should_flamegraph {
+            // let sources = debug_sources.as_ref().unwrap();
+
+            let (suite_result, test_result) = outcome
+                .results
+                .iter()
+                .find(|(_, r)| !r.test_results.is_empty())
+                .map(|(_, r)| (r, r.test_results.values().next().unwrap()))
+                .unwrap();
+
+            let arena = test_result
+                .traces
+                .iter()
+                .find_map(
+                    |(kind, arena)| {
+                        if *kind == TraceKind::Execution {
+                            Some(arena)
+                        } else {
+                            None
+                        }
+                    },
+                )
+                .unwrap();
+
+            // println!("arena: {:?}", arena);
+
+            let nodes = arena.nodes();
+            println!("my nodes: {} {:#?}", nodes.len(), nodes);
+
+            let decoder = outcome.last_run_decoder.as_ref().unwrap();
+            decoder.prefetch_signatures(arena.nodes()).await;
+            // let dbg_idr = decoder.debug_identifier.as_ref().unwrap();
+            // decoder.identify(arena, identifier);
+            let decoded_arena = decoder.identify_arena_steps(arena);
+            println!("my decoded_arena: {} {:#?}", decoded_arena.len(), decoded_arena);
+
+            let mut decoded = vec![];
+            println!("decoder.contracts: {:?}", decoder.contracts);
+
+            for node in nodes {
+                // let d = dbg_idr.identify_node_steps(node, contract_name);
+                // println!("d: {:?}", d);
+                let function = decoder.decode_function(&node.trace).await;
+                decoded.push((node, function));
+            }
+
+            let mut folded_stack_lines = vec![];
+            for current in &decoded {
+                let mut stack = vec![];
+                let mut ptr = current;
+                loop {
+                    stack.push(ptr);
+                    if let Some(parent_idx) = ptr.0.parent {
+                        ptr = &decoded[parent_idx];
+                    } else {
+                        break;
+                    }
+                }
+
+                let mut line = vec![];
+                while let Some(el) = stack.pop() {
+                    line.push(get_display(el));
+                }
+
+                let mut gas = current.0.trace.gas_used as i64;
+                for child_idx in &current.0.children {
+                    gas -= decoded[*child_idx].0.trace.gas_used as i64;
+                }
+
+                let line = [line.join(";"), gas.to_string()].join(" ");
+                folded_stack_lines.push(line);
+            }
+            folded_stack_lines.reverse();
+
+            println!("folded_stack_lines: {:?}", folded_stack_lines);
+
+            // if Path::new(&file_name).exists() {
+            //     fs::remove_file(file_name).unwrap();
+            // }
+
+            // self.options.title = file_name.clone();
+            // if !merge_stacks {
+            //     self.options.flame_chart = true;
+            // }
+
+            // let file = fs::File::create(file_name).unwrap();
+
+            // flamegraph::from_lines(
+            //     &mut self.options,
+            //     self.folded_stack_lines.iter().map(|s| s.as_str()),
+            //     file,
+            // )
+            // .unwrap();
+
+            // let mut buf = String::new();
+            // let mut file = fs::File::open(file_name).unwrap();
+            // file.read_to_string(&mut buf).expect("failed to read flamegraph file");
+            // let buf = buf.replace("samples", "gas");
+            // fs::write(file_name, buf).expect("failed to write flamegraph file");
+        }
 
         if should_debug {
             // Get first non-empty suite result. We will have only one such entry
@@ -383,11 +507,12 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         let num_filtered = runner.matching_test_functions(filter).count();
-        if self.debug.is_some() && num_filtered != 1 {
+        if (self.debug.is_some() || self.flamegraph.is_some()) && num_filtered != 1 {
             eyre::bail!(
-                "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\
+                "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to {action}.\n\n\
                  Use --match-contract and --match-path to further limit the search.\n\
-                 Filter used:\n{filter}"
+                 Filter used:\n{filter}",
+                action = if self.debug.is_some() {"run the debugger"} else {"generate a flamegraph"},
             );
         }
 
@@ -419,6 +544,7 @@ impl TestArgs {
         }
 
         // Build the trace decoder.
+        // TODO can use this
         let mut builder = CallTraceDecoderBuilder::new()
             .with_known_contracts(&known_contracts)
             .with_verbosity(verbosity);
@@ -451,7 +577,10 @@ impl TestArgs {
             decoder.clear_addresses();
 
             // We identify addresses if we're going to print *any* trace or gas report.
-            let identify_addresses = verbosity >= 3 || self.gas_report || self.debug.is_some();
+            let identify_addresses = verbosity >= 3 ||
+                self.gas_report ||
+                self.debug.is_some() ||
+                self.flamegraph.is_some();
 
             // Print suite header.
             println!();
@@ -485,8 +614,11 @@ impl TestArgs {
                 // processing the remaining tests and print the suite summary.
                 any_test_failed |= result.status == TestStatus::Failure;
 
+                // println!("dd: {:?}", decoder.contracts);
+
                 // Clear the addresses and labels from previous runs.
                 decoder.clear_addresses();
+                // this
                 decoder
                     .labels
                     .extend(result.labeled_addresses.iter().map(|(k, v)| (*k, v.clone())));
@@ -495,6 +627,7 @@ impl TestArgs {
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &result.traces {
                     if identify_addresses {
+                        // this
                         decoder.identify(arena, &mut identifier);
                     }
 
@@ -519,6 +652,7 @@ impl TestArgs {
                 }
 
                 if !decoded_traces.is_empty() {
+                    // trace printing
                     shell::println("Traces:")?;
                     for trace in &decoded_traces {
                         shell::println(trace)?;
@@ -610,6 +744,15 @@ impl TestArgs {
             vec![config.src, config.test]
         })
     }
+}
+
+pub fn get_display(el: &(&CallTraceNode, DecodedCallTrace)) -> String {
+    format!(
+        "{contract_name}.{func_name}",
+        contract_name = el.1.contract.as_ref().unwrap_or(&"<unknown-contract>".to_string()),
+        func_name =
+            el.1.func.as_ref().map(|f| &f.signature).unwrap_or(&"<unknown-function>".to_string())
+    )
 }
 
 impl Provider for TestArgs {

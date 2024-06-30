@@ -212,7 +212,7 @@ impl VerifyArgs {
                 .create_verify_request(&self, &context)
                 .await?;
             println!("{}", args.source);
-            return Ok(())
+            return Ok(());
         }
 
         let verifier_url = self.verifier.verifier_url.clone();

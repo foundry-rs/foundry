@@ -58,7 +58,7 @@ impl Item {
             Value::Object(_) => {
                 eyre::bail!("RLP input can not contain objects")
             }
-        }
+        };
     }
 }
 

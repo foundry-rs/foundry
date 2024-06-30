@@ -79,6 +79,7 @@ dunce.workspace = true
 futures.workspace = true
 indicatif = "0.17"
 itertools.workspace = true
+inferno = "0.11.19"
 once_cell.workspace = true
 parking_lot.workspace = true
 regex = { version = "1", default-features = false }

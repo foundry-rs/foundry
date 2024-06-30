@@ -13,7 +13,7 @@ impl EyreHandler for Handler {
         f: &mut core::fmt::Formatter<'_>,
     ) -> core::fmt::Result {
         if f.alternate() {
-            return core::fmt::Debug::fmt(error, f)
+            return core::fmt::Debug::fmt(error, f);
         }
         writeln!(f)?;
         write!(f, "{}", error.red())?;
