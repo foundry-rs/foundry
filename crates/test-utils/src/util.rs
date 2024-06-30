@@ -254,11 +254,13 @@ pub fn initialize(target: &Path) {
 
             cmd.args(["init", "--force"]).assert_success();
             // checkout forge-std
-            Command::new("git")
+            assert!(Command::new("git")
                 .current_dir(prj.root().join("lib/forge-std"))
                 .args(["checkout", FORGE_STD_REVISION])
-                .spawn()
-                .expect("failed to checkout forge-std");
+                .output()
+                .expect("failed to checkout forge-std")
+                .status
+                .success());
             cmd.forge_fuse().args(["build", "--use", SOLC_VERSION]).assert_success();
 
             // Remove the existing template, if any.

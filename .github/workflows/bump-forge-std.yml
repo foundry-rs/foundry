@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Fetch and update forge-std tag
-        run: curl 'https://api.github.com/repos/foundry-rs/forge-std/tags' | jq '.[0].commit.sha' > testdata/forge-std-rev
+        run: curl 'https://api.github.com/repos/foundry-rs/forge-std/tags' | jq '.[0].commit.sha' -jr > testdata/forge-std-rev
       - name: Create pull request
         uses: peter-evans/create-pull-request@v5
         with:
