@@ -201,7 +201,7 @@ impl DebuggerContext<'_> {
             CallKind::CallCode => "Contract callcode",
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
-            CallKind::EOFCreate => "EOF contract creation"
+            CallKind::EOFCreate => "EOF contract creation",
         };
         let title = format!(
             "{} {} ",
@@ -358,7 +358,8 @@ impl DebuggerContext<'_> {
             return Err(format!("No PC-IC maps for contract {contract_name}"));
         };
 
-        let is_create = matches!(self.call_kind(), CallKind::Create | CallKind::Create2 | CallKind::EOFCreate);
+        let is_create =
+            matches!(self.call_kind(), CallKind::Create | CallKind::Create2 | CallKind::EOFCreate);
         let pc = self.current_step().pc;
         let Some((source_element, source_code, source_file)) =
             files_source_code.find_map(|(artifact, source)| {
