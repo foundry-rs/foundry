@@ -38,7 +38,6 @@ once_cell.workspace = true
 serde.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
-yansi.workspace = true
 rustc-hash.workspace = true
 tempfile.workspace = true
 

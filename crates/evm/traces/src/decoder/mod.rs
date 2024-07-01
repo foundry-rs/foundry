@@ -291,6 +291,31 @@ impl CallTraceDecoder {
         }
     }
 
+    /// Populates the traces with decoded data by mutating the
+    /// [CallTrace] in place. See [CallTraceDecoder::decode_function] and
+    /// [CallTraceDecoder::decode_event] for more details.
+    pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
+        for node in traces {
+            let decoded = self.decode_function(&node.trace).await;
+            node.trace.decoded.label = decoded.label;
+            node.trace.decoded.call_data = decoded.func;
+            node.trace.decoded.return_data = decoded.return_data;
+
+            for log in node.logs.iter_mut() {
+                let decoded = self.decode_event(&log.raw_log).await;
+
+                match decoded {
+                    DecodedCallLog::Decoded(name, params) => {
+                        log.decoded.name = Some(name);
+                        log.decoded.params = Some(params);
+                    }
+                    DecodedCallLog::Raw(_) => {}
+                }
+            }
+        }
+    }
+
+    /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
         // Decode precompile
         if let Some((label, func)) = precompiles::decode(trace, 1) {
