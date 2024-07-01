@@ -291,11 +291,11 @@ impl CoverageArgs {
         }
 
         // Filter out ignored sources from the report
+        let file_pattern = filter.args().coverage_pattern_inverse.as_ref();
+        let file_root = &filter.paths().root;
         report.filter_out_ignored_sources(|path: &Path| {
-            filter.args().coverage_pattern_inverse.as_ref().map_or(true, |re| {
-                !re.is_match(
-                    &path.strip_prefix(&filter.paths().root).unwrap_or(path).to_string_lossy(),
-                )
+            file_pattern.map_or(true, |re| {
+                !re.is_match(&path.strip_prefix(file_root).unwrap_or(path).to_string_lossy())
             })
         });
 
