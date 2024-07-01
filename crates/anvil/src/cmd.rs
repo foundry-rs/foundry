@@ -230,7 +230,7 @@ impl NodeArgs {
             .with_transaction_order(self.order)
             .with_genesis(self.init)
             .with_steps_tracing(self.evm_opts.steps_tracing)
-            .with_print_logs(self.evm_opts.print_logs)
+            .with_print_logs(!self.evm_opts.disable_logs)
             .with_auto_impersonate(self.evm_opts.auto_impersonate)
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm_opts.code_size_limit)
@@ -508,9 +508,9 @@ pub struct AnvilEvmArgs {
     #[arg(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
 
-    /// Enable printing of `console.log` invocations to stdout.
+    /// Disable printing of `console.log` invocations to stdout.
     #[arg(long)]
-    pub print_logs: bool,
+    pub disable_logs: bool,
 
     /// Enable autoImpersonate on startup
     #[arg(long, visible_alias = "auto-impersonate")]

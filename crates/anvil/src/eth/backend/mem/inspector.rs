@@ -1,6 +1,6 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
-use crate::{eth::macros::node_info, revm::Database};
+use crate::revm::Database;
 use alloy_primitives::{Address, Log};
 use foundry_evm::{
     call_inspectors,
@@ -166,6 +166,6 @@ impl<DB: Database> InspectorExt<DB> for Inspector {}
 /// Prints all the logs
 pub fn print_logs(logs: &[Log]) {
     for log in decode_console_logs(logs) {
-        node_info!("{}", log);
+        tracing::info!(target: crate::logging::EVM_CONSOLE_LOG_TARGET, "{}", log);
     }
 }
