@@ -12,7 +12,7 @@ use std::{
     fmt,
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
+    task::{ready, Context, Poll},
     time::Duration,
 };
 use tokio::time::{Interval, MissedTickBehavior};
@@ -87,21 +87,12 @@ impl Miner {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction>>> {
         self.inner.register(cx);
-        match self.mode.write().poll(pool, cx) {
-            Poll::Ready(next) => {
-                if let Some(transactions) = self.force_transactions.take() {
-                    Poll::Ready(transactions.into_iter().chain(next).collect())
-                } else {
-                    Poll::Ready(next)
-                }
-            }
-            Poll::Pending => {
-                if let Some(transactions) = self.force_transactions.take() {
-                    Poll::Ready(transactions)
-                } else {
-                    Poll::Pending
-                }
-            }
+        let next = ready!(self.mode.write().poll(pool, cx));
+        if let Some(mut transactions) = self.force_transactions.take() {
+            transactions.extend(next);
+            Poll::Ready(transactions)
+        } else {
+            Poll::Ready(next)
         }
     }
 }
