@@ -14,7 +14,7 @@ use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        identifier::{CachedSignatures, EtherscanIdentifier, SignaturesIdentifier},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
@@ -412,5 +412,27 @@ pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) 
     }
 
     println!("Gas used: {}", result.gas_used);
+    Ok(())
+}
+
+pub fn generate_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
+    let mut cached_signatures = CachedSignatures::default();
+    output.artifacts().for_each(|(_, artifact)| {
+        if let Some(abi) = &artifact.abi {
+            for func in abi.functions() {
+                cached_signatures.functions.insert(func.selector().to_string(), func.signature());
+            }
+            for event in abi.events() {
+                cached_signatures
+                    .events
+                    .insert(event.selector().to_string(), event.full_signature());
+            }
+        }
+    });
+    let path = cache_path.join("signatures");
+    if !path.is_file() {
+        std::fs::create_dir_all(&cache_path)?;
+    }
+    fs::write_json_file(&path, &cached_signatures)?;
     Ok(())
 }

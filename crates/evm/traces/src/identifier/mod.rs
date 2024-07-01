@@ -12,7 +12,7 @@ mod etherscan;
 pub use etherscan::EtherscanIdentifier;
 
 mod signatures;
-pub use signatures::{SignaturesIdentifier, SingleSignaturesIdentifier};
+pub use signatures::{CachedSignatures, SignaturesIdentifier, SingleSignaturesIdentifier};
 
 /// An address identity
 pub struct AddressIdentity<'a> {

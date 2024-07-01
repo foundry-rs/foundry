@@ -1,7 +1,10 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{
+    opts::CoreBuildArgs,
+    utils::{generate_local_signatures, LoadConfig},
+};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     compilers::{multi::MultiCompilerLanguage, Language},
@@ -80,8 +83,8 @@ impl BuildArgs {
     pub fn run(self) -> Result<ProjectCompileOutput> {
         let mut config = self.try_load_config_emit_warnings()?;
 
-        if install::install_missing_dependencies(&mut config, self.args.silent) &&
-            config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config, self.args.silent)
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
@@ -108,6 +111,16 @@ impl BuildArgs {
 
         if self.format_json {
             println!("{}", serde_json::to_string_pretty(&output.output())?);
+        }
+
+        if self.args.generate_local_signatures {
+            if let Err(err) =
+                generate_local_signatures(&output, Config::foundry_cache_dir().unwrap())
+            {
+                warn!(target: "forge::build", ?err, "failed to flush signature cache");
+            } else {
+                trace!(target: "forge::build", "flushed signature cache")
+            }
         }
 
         Ok(output)
