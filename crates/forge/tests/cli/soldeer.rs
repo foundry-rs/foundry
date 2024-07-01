@@ -11,6 +11,8 @@ forgesoldeer!(install_dependency, |prj, cmd| {
     let command = "install";
     let dependency = "forge-std~1.8.1";
 
+    let foundry_file = prj.root().join("foundry.toml");
+
     cmd.arg("soldeer").args([command, dependency]);
     cmd.execute();
 
@@ -34,16 +36,18 @@ checksum = "0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"
     assert_eq!(lock_contents, actual_lock_contents);
 
     // Making sure the foundry contents are the right ones
-    let foundry_file = prj.root().join("foundry.toml");
-    let foundry_contents = r#"[profile.default]
-src = "src"
-out = "out"
-libs = ["lib"]
+    let foundry_contents = r#"
+# Full reference https://github.com/foundry-rs/foundry/tree/master/crates/config
 
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+[profile.default]
+script = "script"
+solc = "0.8.26"
+src = "src"
+test = "test"
+libs = ["dependencies"]
 
 [dependencies]
-forge-std = { version = "1.8.1" }
+forge-std = "1.8.1"
 "#;
 
     let actual_foundry_contents = read_file_to_string(&foundry_file);
