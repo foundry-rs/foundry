@@ -247,10 +247,8 @@ impl CoverageArgs {
 
         let known_contracts = runner.known_contracts.clone();
 
-        let outcome = self
-            .test
-            .run_tests(runner, config.clone(), verbosity, &self.test.filter(&config))
-            .await?;
+        let filter = self.test.filter(&config);
+        let outcome = self.test.run_tests(runner, config.clone(), verbosity, &filter).await?;
 
         outcome.ensure_ok()?;
 
@@ -287,6 +285,9 @@ impl CoverageArgs {
                 )?;
             }
         }
+
+        // Filter out ignored sources from the report
+        report.filter_out_ignored_sources(&filter);
 
         // Output final report
         for report_kind in self.report {

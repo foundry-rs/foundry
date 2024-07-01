@@ -40,7 +40,7 @@ pub struct FilterArgs {
     pub path_pattern_inverse: Option<GlobMatcher>,
 
     /// Only show coverage for files that do not match the specified regex pattern.
-    #[arg(long = "no-match-coverage", visible_alias = "nmco", value_name = "GLOB")]
+    #[arg(long = "no-match-coverage", visible_alias = "nmco", value_name = "REGEX")]
     pub coverage_pattern_inverse: Option<regex::Regex>,
 }
 
@@ -91,10 +91,7 @@ impl fmt::Debug for FilterArgs {
             .field("no-match-contract", &self.contract_pattern_inverse.as_ref().map(|r| r.as_str()))
             .field("match-path", &self.path_pattern.as_ref().map(|g| g.as_str()))
             .field("no-match-path", &self.path_pattern_inverse.as_ref().map(|g| g.as_str()))
-            .field(
-                "ignore-coverage-path",
-                &self.coverage_pattern_inverse.as_ref().map(|g| g.as_str()),
-            )
+            .field("no-match-coverage", &self.coverage_pattern_inverse.as_ref().map(|g| g.as_str()))
             .finish_non_exhaustive()
     }
 }
@@ -228,6 +225,14 @@ impl TestFilter for ProjectPathsAwareFilter {
         // we don't want to test files that belong to a library
         path = path.strip_prefix(&self.paths.root).unwrap_or(path);
         self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(path)
+    }
+}
+
+impl CoverageFilter for ProjectPathsAwareFilter {
+    /// Returns true if the file path does not match the ignore coverage pattern.
+    fn matches_file_path(&self, mut path: &Path) -> bool {
+        path = path.strip_prefix(&self.paths.root).unwrap_or(path);
+        self.args_filter.matches_file_path(path)
     }
 }
 

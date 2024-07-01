@@ -252,7 +252,7 @@ pub struct Config {
     /// Only run tests in source files that do not match the specified glob pattern.
     #[serde(rename = "no_match_path", with = "from_opt_glob")]
     pub path_pattern_inverse: Option<globset::Glob>,
-    /// Only show coverage for files that do not match the specified glob pattern.
+    /// Only show coverage for files that do not match the specified regex pattern.
     #[serde(rename = "no_match_coverage")]
     pub coverage_pattern_inverse: Option<RegexWrapper>,
     /// Configuration for fuzz testing
