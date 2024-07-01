@@ -1,10 +1,12 @@
+use crate::debug::ContractSources;
+
 use super::{AddressIdentity, TraceIdentifier};
 use alloy_primitives::Address;
 use foundry_block_explorers::{
     contract::{ContractMetadata, Metadata},
     errors::EtherscanError,
 };
-use foundry_common::compile::{etherscan_project, ContractSources};
+use foundry_common::compile::etherscan_project;
 use foundry_config::{Chain, Config};
 use futures::{
     future::{join_all, Future},
@@ -85,7 +87,7 @@ impl EtherscanIdentifier {
 
         // construct the map
         for res in outputs {
-            let (project, output, _) = res?;
+            let (project, output, _root) = res?;
             sources.insert(&output, project.root(), None)?;
         }
 

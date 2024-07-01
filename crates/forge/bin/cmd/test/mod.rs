@@ -7,22 +7,23 @@ use forge::{
     gas_report::GasReport,
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
-    traces::{identifier::SignaturesIdentifier, CallTraceDecoderBuilder, TraceKind},
+    traces::{
+        debug::{ContractSources, DebugTraceIdentifier},
+        identifier::SignaturesIdentifier,
+        CallTraceDecoderBuilder, TraceKind,
+    },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
 use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{
-    compile::{ContractSources, ProjectCompiler},
-    evm::EvmArgs,
-    shell,
-};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, shell};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
     utils::source_files_iter,
+    ProjectCompileOutput,
 };
 use foundry_config::{
     figment,
@@ -75,6 +76,10 @@ pub struct TestArgs {
     /// For more fine-grained control of which fuzz case is run, see forge run.
     #[arg(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
+
+    /// Whether to identify internal functions in traces.
+    #[arg(long)]
+    decode_internal: bool,
 
     /// Print a gas report.
     #[arg(long, env = "FORGE_GAS_REPORT")]
@@ -297,6 +302,7 @@ impl TestArgs {
         let config = Arc::new(config);
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
+            .set_decode_internal(self.decode_internal)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
@@ -317,7 +323,7 @@ impl TestArgs {
         }
 
         let libraries = runner.libraries.clone();
-        let outcome = self.run_tests(runner, config, verbosity, &filter).await?;
+        let outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
 
         if should_debug {
             // Get first non-empty suite result. We will have only one such entry
@@ -340,9 +346,11 @@ impl TestArgs {
                 )
                 .sources(sources)
                 .breakpoints(test_result.breakpoints.clone());
+
             if let Some(decoder) = &outcome.last_run_decoder {
                 builder = builder.decoder(decoder);
             }
+
             let mut debugger = builder.build();
             debugger.try_run()?;
         }
@@ -357,6 +365,7 @@ impl TestArgs {
         config: Arc<Config>,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
+        output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         if self.list {
             return list(runner, filter, self.json);
@@ -381,6 +390,8 @@ impl TestArgs {
 
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
         let known_contracts = runner.known_contracts.clone();
+
+        let libraries = runner.libraries.clone();
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -410,6 +421,12 @@ impl TestArgs {
                 Config::foundry_cache_dir(),
                 config.offline,
             )?);
+        }
+
+        if self.decode_internal {
+            let sources =
+                ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
+            builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
         }
         let mut decoder = builder.build();
 

@@ -14,6 +14,7 @@ use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
+        debug::DebugTraceIdentifier,
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
@@ -350,6 +351,7 @@ pub async fn handle_traces(
     chain: Option<Chain>,
     labels: Vec<String>,
     debug: bool,
+    decode_internal: bool,
 ) -> Result<()> {
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
@@ -375,6 +377,15 @@ pub async fn handle_traces(
         for (_, trace) in result.traces.as_deref_mut().unwrap_or_default() {
             decoder.identify(trace, etherscan_identifier);
         }
+    }
+
+    if decode_internal {
+        let sources = if let Some(etherscan_identifier) = &etherscan_identifier {
+            etherscan_identifier.get_compiled_contracts().await?
+        } else {
+            Default::default()
+        };
+        decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
     if debug {

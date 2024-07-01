@@ -12,7 +12,8 @@ use alloy_primitives::{hex, LogData};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use futures::{future::BoxFuture, FutureExt};
-use revm_inspectors::tracing::types::TraceMemberOrder;
+use revm::interpreter::OpCode;
+use revm_inspectors::tracing::{types::TraceMemberOrder, OpcodeFilter};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use yansi::{Color, Paint};
@@ -31,6 +32,8 @@ use identifier::{LocalTraceIdentifier, TraceIdentifier};
 
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
+
+pub mod debug;
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
@@ -59,6 +62,16 @@ pub enum DecodedCallLog<'a> {
     Decoded(String, Vec<(String, String)>),
 }
 
+#[derive(Debug, Clone)]
+pub struct DecodedTraceStep {
+    pub start_step_idx: usize,
+    pub end_step_idx: Option<usize>,
+    pub function_name: String,
+    pub inputs: Option<Vec<String>>,
+    pub outputs: Option<Vec<String>>,
+    pub gas_used: i64,
+}
+
 const PIPE: &str = "  │ ";
 const EDGE: &str = "  └─ ";
 const BRANCH: &str = "  ├─ ";
@@ -74,9 +87,109 @@ pub async fn render_trace_arena(
 ) -> Result<String, std::fmt::Error> {
     decoder.prefetch_signatures(arena.nodes()).await;
 
+    let identified_internals = &decoder.identify_arena_steps(arena);
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_items<'a>(
+        arena: &'a [CallTraceNode],
+        decoder: &'a CallTraceDecoder,
+        identified_internals: &'a [Vec<DecodedTraceStep>],
+        s: &'a mut String,
+        node_idx: usize,
+        mut ordering_idx: usize,
+        internal_end_step_idx: Option<usize>,
+        left: &'a str,
+        right: &'a str,
+    ) -> BoxFuture<'a, Result<usize, std::fmt::Error>> {
+        async move {
+            let node = &arena[node_idx];
+
+            while ordering_idx < node.ordering.len() {
+                let child = &node.ordering[ordering_idx];
+                match child {
+                    TraceMemberOrder::Log(index) => {
+                        let log = render_trace_log(&node.logs[*index].raw_log, decoder).await?;
+
+                        // Prepend our tree structure symbols to each line of the displayed log
+                        log.lines().enumerate().try_for_each(|(i, line)| {
+                            writeln!(
+                                s,
+                                "{}{}",
+                                if i == 0 { left } else { right },
+                                line
+                            )
+                        })?;
+                    }
+                    TraceMemberOrder::Call(index) => {
+                        inner(
+                            arena,
+                            decoder,
+                            &identified_internals,
+                            s,
+                            node.children[*index],
+                            left,
+                            right,
+                        )
+                        .await?;
+                    }
+                    TraceMemberOrder::Step(step_idx) => {
+                        if let Some(internal_step_end_idx) = internal_end_step_idx {
+                            if *step_idx >= internal_step_end_idx {
+                                return Ok(ordering_idx);
+                            }
+                        }
+                        if let Some(decoded) = identified_internals[node_idx]
+                            .iter()
+                            .find(|d| *step_idx == d.start_step_idx)
+                        {
+                            writeln!(
+                                s,
+                                "{left}[{}] {}{}",
+                                decoded.gas_used,
+                                decoded.function_name,
+                                decoded
+                                    .inputs
+                                    .as_ref()
+                                    .map(|v| format!("({})", v.join(", ")))
+                                    .unwrap_or_default()
+                            )?;
+                            let left_prefix = format!("{right}{BRANCH}");
+                            let right_prefix = format!("{right}{PIPE}");
+                            ordering_idx = render_items(
+                                arena,
+                                decoder,
+                                identified_internals,
+                                s,
+                                node_idx,
+                                ordering_idx + 1,
+                                decoded.end_step_idx,
+                                &left_prefix,
+                                &right_prefix,
+                            )
+                            .await?;
+
+                            write!(s, "{right}{EDGE}{RETURN}")?;
+
+                            if let Some(outputs) = &decoded.outputs {
+                                write!(s, " {}", outputs.join(", "))?;
+                            }
+
+                            writeln!(s)?;
+                        }
+                    }
+                }
+                ordering_idx += 1;
+            }
+
+            Ok(ordering_idx)
+        }
+        .boxed()
+    }
+
     fn inner<'a>(
         arena: &'a [CallTraceNode],
         decoder: &'a CallTraceDecoder,
+        identified_internals: &'a [Vec<DecodedTraceStep>],
         s: &'a mut String,
         idx: usize,
         left: &'a str,
@@ -90,37 +203,18 @@ pub async fn render_trace_arena(
             writeln!(s, "{left}{trace}")?;
 
             // Display logs and subcalls
-            let left_prefix = format!("{child}{BRANCH}");
-            let right_prefix = format!("{child}{PIPE}");
-            for child in &node.ordering {
-                match child {
-                    TraceMemberOrder::Log(index) => {
-                        let log = render_trace_log(&node.logs[*index].raw_log, decoder).await?;
-
-                        // Prepend our tree structure symbols to each line of the displayed log
-                        log.lines().enumerate().try_for_each(|(i, line)| {
-                            writeln!(
-                                s,
-                                "{}{}",
-                                if i == 0 { &left_prefix } else { &right_prefix },
-                                line
-                            )
-                        })?;
-                    }
-                    TraceMemberOrder::Call(index) => {
-                        inner(
-                            arena,
-                            decoder,
-                            s,
-                            node.children[*index],
-                            &left_prefix,
-                            &right_prefix,
-                        )
-                        .await?;
-                    }
-                    TraceMemberOrder::Step(_) => {}
-                }
-            }
+            render_items(
+                arena,
+                decoder,
+                identified_internals,
+                s,
+                idx,
+                0,
+                None,
+                &format!("{child}{BRANCH}"),
+                &format!("{child}{PIPE}"),
+            )
+            .await?;
 
             // Display trace return data
             let color = trace_color(&node.trace);
@@ -146,7 +240,7 @@ pub async fn render_trace_arena(
     }
 
     let mut s = String::new();
-    inner(arena.nodes(), decoder, &mut s, 0, "  ", "  ").await?;
+    inner(arena.nodes(), decoder, identified_internals, &mut s, 0, "  ", "  ").await?;
     Ok(s)
 }
 
@@ -311,4 +405,64 @@ pub fn load_contracts<'a>(
         }
     }
     contracts
+}
+
+/// Different kinds of traces used by different foundry components.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum TraceMode {
+    /// Disabled tracing.
+    #[default]
+    None,
+    /// Simple call trace, no steps tracing required.
+    Call,
+    /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
+    ///
+    /// Used for internal functions identification.
+    Jump,
+    /// Call trace with complete steps tracing.
+    ///
+    /// Used by debugger.
+    Debug,
+}
+
+impl TraceMode {
+    pub const fn is_none(self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    pub const fn is_call(self) -> bool {
+        matches!(self, Self::Call)
+    }
+
+    pub const fn is_jump(self) -> bool {
+        matches!(self, Self::Jump)
+    }
+
+    pub const fn is_debug(self) -> bool {
+        matches!(self, Self::Debug)
+    }
+
+    pub fn into_config(self) -> Option<TracingInspectorConfig> {
+        if self.is_none() {
+            None
+        } else {
+            TracingInspectorConfig {
+                record_steps: self.is_debug() || self.is_jump(),
+                record_memory_snapshots: self.is_debug() || self.is_jump(),
+                record_stack_snapshots: if self.is_debug() || self.is_jump() {
+                    StackSnapshotType::Full
+                } else {
+                    StackSnapshotType::None
+                },
+                record_logs: true,
+                record_state_diff: false,
+                record_returndata_snapshots: self.is_debug(),
+                record_opcodes_filter: self
+                    .is_jump()
+                    .then(|| OpcodeFilter::new().enable(OpCode::JUMP).enable(OpCode::JUMPDEST)),
+                exclude_precompile_calls: false,
+            }
+            .into()
+        }
+    }
 }

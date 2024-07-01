@@ -3,9 +3,8 @@
 use super::context::{BufferKind, DebuggerContext};
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
-use foundry_compilers::{
-    artifacts::sourcemap::SourceElement, compilers::multi::MultiCompilerLanguage,
-};
+use foundry_compilers::artifacts::sourcemap::SourceElement;
+use foundry_evm_traces::debug::SourceData;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -213,7 +212,7 @@ impl DebuggerContext<'_> {
     }
 
     fn src_text(&self, area: Rect) -> (Text<'_>, Option<&str>) {
-        let (source_element, source_code, source_file) = match self.src_map() {
+        let (source_element, source) = match self.src_map() {
             Ok(r) => r,
             Err(e) => return (Text::from(e), None),
         };
@@ -224,15 +223,16 @@ impl DebuggerContext<'_> {
         // minus `sum(push_bytes[..pc])`.
         let offset = source_element.offset() as usize;
         let len = source_element.length() as usize;
-        let max = source_code.len();
+        let max = source.source.len();
 
         // Split source into before, relevant, and after chunks, split by line, for formatting.
         let actual_start = offset.min(max);
         let actual_end = (offset + len).min(max);
 
-        let mut before: Vec<_> = source_code[..actual_start].split_inclusive('\n').collect();
-        let actual: Vec<_> = source_code[actual_start..actual_end].split_inclusive('\n').collect();
-        let mut after: VecDeque<_> = source_code[actual_end..].split_inclusive('\n').collect();
+        let mut before: Vec<_> = source.source[..actual_start].split_inclusive('\n').collect();
+        let actual: Vec<_> =
+            source.source[actual_start..actual_end].split_inclusive('\n').collect();
+        let mut after: VecDeque<_> = source.source[actual_end..].split_inclusive('\n').collect();
 
         let num_lines = before.len() + actual.len() + after.len();
         let height = area.height as usize;
@@ -279,7 +279,7 @@ impl DebuggerContext<'_> {
         // Highlighted text: cyan, bold.
         let h_text = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 
-        let mut lines = SourceLines::new(decimal_digits(num_lines));
+        let mut lines = SourceLines::new(start_line, end_line);
 
         // We check if there is other text on the same line before the highlight starts.
         if let Some(last) = before.pop() {
@@ -337,74 +337,24 @@ impl DebuggerContext<'_> {
             }
         }
 
-        (Text::from(lines.lines), Some(source_file))
+        (Text::from(lines.lines), source.path.to_str())
     }
 
     /// Returns source map, source code and source name of the current line.
-    fn src_map(&self) -> Result<(SourceElement, &str, &str), String> {
+    fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
         let address = self.address();
         let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
         };
 
-        let Some(mut files_source_code) =
-            self.debugger.contracts_sources.get_sources(contract_name)
-        else {
-            return Err(format!("No source map index for contract {contract_name}"));
-        };
-
-        let Some((create_map, rt_map)) = self.debugger.pc_ic_maps.get(contract_name) else {
-            return Err(format!("No PC-IC maps for contract {contract_name}"));
-        };
-
-        let is_create = matches!(self.call_kind(), CallKind::Create | CallKind::Create2);
-        let pc = self.current_step().pc;
-        let Some((source_element, source_code, source_file)) =
-            files_source_code.find_map(|(artifact, source)| {
-                let bytecode = if is_create {
-                    &artifact.bytecode.bytecode
-                } else {
-                    artifact.bytecode.deployed_bytecode.bytecode.as_ref()?
-                };
-                let source_map = bytecode.source_map()?.expect("failed to parse");
-
-                let pc_ic_map = if is_create { create_map } else { rt_map };
-                let ic = pc_ic_map.get(pc)?;
-
-                // Solc indexes source maps by instruction counter, but Vyper indexes by program
-                // counter.
-                let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
-                    source_map.get(ic)?
-                } else {
-                    source_map.get(pc)?
-                };
-                // if the source element has an index, find the sourcemap for that index
-                let res = source_element
-                    .index()
-                    // if index matches current file_id, return current source code
-                    .and_then(|index| {
-                        (index == artifact.file_id)
-                            .then(|| (source_element.clone(), source.source.as_str(), &source.name))
-                    })
-                    .or_else(|| {
-                        // otherwise find the source code for the element's index
-                        self.debugger
-                            .contracts_sources
-                            .sources_by_id
-                            .get(&artifact.build_id)?
-                            .get(&source_element.index()?)
-                            .map(|source| {
-                                (source_element.clone(), source.source.as_str(), &source.name)
-                            })
-                    });
-
-                res
-            })
-        else {
-            return Err(format!("No source map for contract {contract_name}"));
-        };
-
-        Ok((source_element, source_code, source_file))
+        self.debugger
+            .contracts_sources
+            .find_source_mapping(
+                contract_name,
+                self.current_step().pc,
+                self.debug_call().kind.is_any_create(),
+            )
+            .ok_or_else(|| format!("No source map for contract {contract_name}"))
     }
 
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {
@@ -638,12 +588,13 @@ impl DebuggerContext<'_> {
 /// Wrapper around a list of [`Line`]s that prepends the line number on each new line.
 struct SourceLines<'a> {
     lines: Vec<Line<'a>>,
+    start_line: usize,
     max_line_num: usize,
 }
 
 impl<'a> SourceLines<'a> {
-    fn new(max_line_num: usize) -> Self {
-        Self { lines: Vec::new(), max_line_num }
+    fn new(start_line: usize, end_line: usize) -> Self {
+        Self { lines: Vec::new(), start_line, max_line_num: decimal_digits(end_line) }
     }
 
     fn push(&mut self, line_number_style: Style, line: &'a str, line_style: Style) {
@@ -653,8 +604,11 @@ impl<'a> SourceLines<'a> {
     fn push_raw(&mut self, line_number_style: Style, spans: &[Span<'a>]) {
         let mut line_spans = Vec::with_capacity(4);
 
-        let line_number =
-            format!("{number: >width$} ", number = self.lines.len() + 1, width = self.max_line_num);
+        let line_number = format!(
+            "{number: >width$} ",
+            number = self.start_line + self.lines.len() + 1,
+            width = self.max_line_num
+        );
         line_spans.push(Span::styled(line_number, line_number_style));
 
         // Space between line number and line text.

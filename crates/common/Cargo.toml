@@ -17,7 +17,6 @@ foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-common-fmt.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
-foundry-linking.workspace = true
 
 alloy-contract.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }

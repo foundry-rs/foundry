@@ -13,7 +13,7 @@ use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
     backend::Backend, decode::decode_console_logs, executors::ExecutorBuilder,
-    inspectors::CheatsConfig,
+    inspectors::CheatsConfig, traces::TraceMode,
 };
 use solang_parser::pt::{self, CodeLocation};
 use std::str::FromStr;
@@ -302,7 +302,7 @@ impl SessionSource {
         // Build a new executor
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
-                stack.chisel_state(final_pc).trace(true).cheatcodes(
+                stack.chisel_state(final_pc).trace_mode(TraceMode::Call).cheatcodes(
                     CheatsConfig::new(
                         &self.config.foundry_config,
                         self.config.evm_opts.clone(),

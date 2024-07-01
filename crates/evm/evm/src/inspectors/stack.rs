@@ -1,6 +1,6 @@
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Fuzzer, LogCollector,
-    StackSnapshotType, TracingInspector, TracingInspectorConfig,
+    TracingInspector,
 };
 use alloy_primitives::{Address, Bytes, Log, TxKind, U256};
 use foundry_cheatcodes::CheatcodesExecutor;
@@ -9,7 +9,7 @@ use foundry_evm_core::{
     InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_traces::CallTraceArena;
+use foundry_evm_traces::{CallTraceArena, TraceMode};
 use revm::{
     inspectors::CustomPrintTracer,
     interpreter::{
@@ -45,9 +45,7 @@ pub struct InspectorStackBuilder {
     /// The fuzzer inspector and its state, if it exists.
     pub fuzzer: Option<Fuzzer>,
     /// Whether to enable tracing.
-    pub trace: Option<bool>,
-    /// Whether to enable debug traces.
-    pub debug: Option<bool>,
+    pub trace_mode: TraceMode,
     /// Whether logs should be collected.
     pub logs: Option<bool>,
     /// Whether coverage info should be collected.
@@ -118,13 +116,6 @@ impl InspectorStackBuilder {
         self
     }
 
-    /// Set whether to enable the debugger.
-    #[inline]
-    pub fn debug(mut self, yes: bool) -> Self {
-        self.debug = Some(yes);
-        self
-    }
-
     /// Set whether to enable the trace printer.
     #[inline]
     pub fn print(mut self, yes: bool) -> Self {
@@ -134,8 +125,10 @@ impl InspectorStackBuilder {
 
     /// Set whether to enable the tracer.
     #[inline]
-    pub fn trace(mut self, yes: bool) -> Self {
-        self.trace = Some(yes);
+    pub fn trace_mode(mut self, mode: TraceMode) -> Self {
+        if self.trace_mode < mode {
+            self.trace_mode = mode
+        }
         self
     }
 
@@ -154,8 +147,7 @@ impl InspectorStackBuilder {
             gas_price,
             cheatcodes,
             fuzzer,
-            trace,
-            debug,
+            trace_mode,
             logs,
             coverage,
             print,
@@ -177,7 +169,7 @@ impl InspectorStackBuilder {
         stack.collect_coverage(coverage.unwrap_or(false));
         stack.collect_logs(logs.unwrap_or(true));
         stack.print(print.unwrap_or(false));
-        stack.tracing(trace.unwrap_or(false), debug.unwrap_or(false));
+        stack.tracing(trace_mode);
 
         stack.enable_isolation(enable_isolation);
 
@@ -414,25 +406,12 @@ impl InspectorStack {
 
     /// Set whether to enable the tracer.
     #[inline]
-    pub fn tracing(&mut self, yes: bool, debug: bool) {
-        if !yes {
+    pub fn tracing(&mut self, mode: TraceMode) {
+        if let Some(config) = mode.into_config() {
+            *self.tracer.get_or_insert_with(Default::default).config_mut() = config;
+        } else {
             self.tracer = None;
-            return;
         }
-        *self.tracer.get_or_insert_with(Default::default).config_mut() = TracingInspectorConfig {
-            record_steps: debug,
-            record_memory_snapshots: debug,
-            record_stack_snapshots: if debug {
-                StackSnapshotType::Full
-            } else {
-                StackSnapshotType::None
-            },
-            record_state_diff: false,
-            exclude_precompile_calls: false,
-            record_logs: true,
-            record_opcodes_filter: None,
-            record_returndata_snapshots: debug,
-        };
     }
 
     /// Collects all the data gathered during inspection into a single struct.
