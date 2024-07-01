@@ -228,7 +228,7 @@ impl PoolInner {
     /// Returns `None` if the transaction does not exist in the pool
     fn get_transaction(&self, hash: TxHash) -> Option<PendingTransaction> {
         if let Some(pending) = self.pending_transactions.get(&hash) {
-            return Some(pending.transaction.pending_transaction.clone())
+            return Some(pending.transaction.pending_transaction.clone());
         }
         Some(
             self.ready_transactions.get(&hash)?.transaction.transaction.pending_transaction.clone(),
@@ -261,7 +261,7 @@ impl PoolInner {
     fn add_transaction(&mut self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
         if self.contains(&tx.hash()) {
             warn!(target: "txpool", "[{:?}] Already imported", tx.hash());
-            return Err(PoolError::AlreadyImported(Box::new(tx)))
+            return Err(PoolError::AlreadyImported(Box::new(tx)));
         }
 
         let tx = PendingPoolTransaction::new(tx, self.ready_transactions.provided_markers());
@@ -271,7 +271,7 @@ impl PoolInner {
         if !tx.is_ready() {
             let hash = tx.transaction.hash();
             self.pending_transactions.add_transaction(tx)?;
-            return Ok(AddedTransaction::Pending { hash })
+            return Ok(AddedTransaction::Pending { hash });
         }
         self.add_ready_transaction(tx)
     }
@@ -311,7 +311,7 @@ impl PoolInner {
                     if is_new_tx {
                         debug!(target: "txpool", "[{:?}] Failed to add tx: {:?}", current_hash,
         err);
-                        return Err(err)
+                        return Err(err);
                     } else {
                         ready.discarded.push(current_hash);
                     }
@@ -325,7 +325,7 @@ impl PoolInner {
         // the pending queue
         if ready.removed.iter().any(|tx| *tx.hash() == hash) {
             self.ready_transactions.clear_transactions(&ready.promoted);
-            return Err(PoolError::CyclicTransaction)
+            return Err(PoolError::CyclicTransaction);
         }
 
         Ok(AddedTransaction::Ready(ready))
@@ -366,7 +366,7 @@ impl PoolInner {
     pub fn remove_invalid(&mut self, tx_hashes: Vec<TxHash>) -> Vec<Arc<PoolTransaction>> {
         // early exit in case there is no invalid transactions.
         if tx_hashes.is_empty() {
-            return vec![]
+            return vec![];
         }
         trace!(target: "txpool", "Removing invalid transactions: {:?}", tx_hashes);
 
@@ -384,7 +384,7 @@ impl PoolInner {
             self.transactions_by_sender(sender).map(move |tx| tx.hash()).collect::<Vec<TxHash>>();
 
         if tx_hashes.is_empty() {
-            return vec![]
+            return vec![];
         }
 
         trace!(target: "txpool", "Removing transactions: {:?}", tx_hashes);

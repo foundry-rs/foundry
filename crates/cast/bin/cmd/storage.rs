@@ -256,7 +256,7 @@ async fn fetch_storage_slots<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
 fn print_storage(layout: StorageLayout, values: Vec<StorageValue>, pretty: bool) -> Result<()> {
     if !pretty {
         println!("{}", serde_json::to_string_pretty(&serde_json::to_value(layout)?)?);
-        return Ok(())
+        return Ok(());
     }
 
     let mut table = Table::new();

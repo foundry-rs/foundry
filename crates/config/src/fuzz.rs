@@ -69,7 +69,7 @@ impl InlineConfigParser for FuzzConfig {
         let overrides: Vec<(String, String)> = Self::get_config_overrides(configs);
 
         if overrides.is_empty() {
-            return Ok(None)
+            return Ok(None);
         }
 
         let mut conf_clone = self.clone();

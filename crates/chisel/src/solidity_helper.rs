@@ -103,7 +103,7 @@ impl SolidityHelper {
     /// Highlights a solidity source string
     pub fn highlight(input: &str) -> Cow<'_, str> {
         if !yansi::is_enabled() {
-            return Cow::Borrowed(input)
+            return Cow::Borrowed(input);
         }
 
         // Highlight commands separately
@@ -221,7 +221,7 @@ impl Highlighter for SolidityHelper {
         _default: bool,
     ) -> Cow<'b, str> {
         if !yansi::is_enabled() {
-            return Cow::Borrowed(prompt)
+            return Cow::Borrowed(prompt);
         }
 
         let mut out = prompt.to_string();

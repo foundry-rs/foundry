@@ -41,7 +41,7 @@ impl TransactionReceiptWithRevertReason {
         provider: &P,
     ) -> Result<Option<String>> {
         if !self.is_failure() {
-            return Ok(None)
+            return Ok(None);
         }
 
         let transaction = provider

@@ -386,7 +386,7 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
         "value" => Some(transaction.value.pretty()),
         other => {
             if let Some(value) = transaction.other.get(other) {
-                return Some(value.to_string().trim_matches('"').to_string())
+                return Some(value.to_string().trim_matches('"').to_string());
             }
             None
         }
@@ -418,7 +418,7 @@ pub fn get_pretty_block_attr(block: &Block, attr: &str) -> Option<String> {
         other => {
             if let Some(value) = block.other.get(other) {
                 let val = EthValue::from(value.clone());
-                return Some(val.pretty())
+                return Some(val.pretty());
             }
             None
         }

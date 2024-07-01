@@ -152,7 +152,7 @@ impl VerifyBundle {
                     guess_constructor_args: false,
                 };
 
-                return Some(verify)
+                return Some(verify);
             }
         }
         None

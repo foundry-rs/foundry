@@ -170,7 +170,7 @@ impl<'a> RemappingsProvider<'a> {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
                     trace!(target: "forge", "- skipping the remapping");
-                    continue
+                    continue;
                 }
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
@@ -252,7 +252,7 @@ impl<'a> Provider for RemappingsProvider<'a> {
                 if let figment::error::Kind::MissingField(_) = err.kind {
                     self.get_remappings(vec![])
                 } else {
-                    return Err(err.clone())
+                    return Err(err.clone());
                 }
             }
         }?;

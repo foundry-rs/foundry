@@ -164,7 +164,7 @@ interface Vm {{
         if let Ok(old_contents) = fs::read_to_string(file) {
             if normalize_newlines(&old_contents) == normalize_newlines(contents) {
                 // File is already up to date.
-                return
+                return;
             }
         }
 
