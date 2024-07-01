@@ -155,9 +155,7 @@ solang-parser = "=0.3.3"
 # no default features to avoid c-kzg
 revm = { version = "10.0.0", default-features = false }
 revm-primitives = { version = "5.0.0", default-features = false }
-revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "bc01e05", features = [
-    "serde",
-] }
+revm-inspectors = { version = "0.3.0", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
