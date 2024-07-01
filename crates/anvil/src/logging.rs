@@ -30,8 +30,8 @@ where
     S: tracing::Subscriber,
 {
     fn register_callsite(&self, metadata: &'static Metadata<'static>) -> Interest {
-        if self.state.is_enabled() && metadata.target() == NODE_USER_LOG_TARGET {
-            Interest::always()
+        if metadata.target() == NODE_USER_LOG_TARGET {
+            Interest::sometimes()
         } else {
             Interest::never()
         }
