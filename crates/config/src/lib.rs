@@ -1620,7 +1620,7 @@ impl Config {
             loop {
                 let file_path = cwd.join(path);
                 if file_path.is_file() {
-                    return Some(file_path);
+                    return Some(file_path)
                 }
                 cwd = cwd.parent()?;
             }
@@ -1760,7 +1760,7 @@ impl Config {
     /// The path provided to this function should point to the etherscan cache for a chain.
     fn get_cached_block_explorer_data(chain_path: &Path) -> eyre::Result<u64> {
         if !chain_path.exists() {
-            return Ok(0);
+            return Ok(0)
         }
 
         fn dir_size_recursive(mut dir: fs::ReadDir) -> eyre::Result<u64> {
@@ -2257,7 +2257,7 @@ impl TomlFileProvider {
                     "Config file `{}` set in env var `{}` does not exist",
                     file,
                     self.env_var.unwrap()
-                )));
+                )))
             }
             Toml::file(file)
         } else {
