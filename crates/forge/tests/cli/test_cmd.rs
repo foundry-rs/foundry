@@ -21,7 +21,7 @@ forgetest!(can_set_filter_values, |prj, cmd| {
         contract_pattern_inverse: None,
         path_pattern: Some(glob.clone()),
         path_pattern_inverse: None,
-        path_pattern_ignore_coverage: None,
+        coverage_pattern_inverse: None,
         ..Default::default()
     };
     prj.write_config(config);
@@ -34,7 +34,7 @@ forgetest!(can_set_filter_values, |prj, cmd| {
     assert_eq!(config.contract_pattern_inverse, None);
     assert_eq!(config.path_pattern.unwrap(), glob);
     assert_eq!(config.path_pattern_inverse, None);
-    assert_eq!(config.path_pattern_ignore_coverage, None);
+    assert_eq!(config.coverage_pattern_inverse, None);
 });
 
 // tests that warning is displayed when there are no tests in project

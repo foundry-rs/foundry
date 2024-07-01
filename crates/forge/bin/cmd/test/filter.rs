@@ -40,8 +40,8 @@ pub struct FilterArgs {
     pub path_pattern_inverse: Option<GlobMatcher>,
 
     /// Only show coverage for files that do not match the specified glob pattern.
-    #[arg(long = "ignore-coverage-path", visible_alias = "icp", value_name = "GLOB")]
-    pub path_pattern_ignore_coverage: Option<GlobMatcher>,
+    #[arg(long = "no-match-coverage", visible_alias = "nmco", value_name = "GLOB")]
+    pub coverage_pattern_inverse: Option<GlobMatcher>,
 }
 
 impl FilterArgs {
@@ -75,9 +75,8 @@ impl FilterArgs {
         if self.path_pattern_inverse.is_none() {
             self.path_pattern_inverse = config.path_pattern_inverse.clone().map(Into::into);
         }
-        if self.path_pattern_ignore_coverage.is_none() {
-            self.path_pattern_ignore_coverage =
-                config.path_pattern_ignore_coverage.clone().map(Into::into);
+        if self.coverage_pattern_inverse.is_none() {
+            self.coverage_pattern_inverse = config.coverage_pattern_inverse.clone().map(Into::into);
         }
         ProjectPathsAwareFilter { args_filter: self, paths: config.project_paths() }
     }
@@ -94,7 +93,7 @@ impl fmt::Debug for FilterArgs {
             .field("no-match-path", &self.path_pattern_inverse.as_ref().map(|g| g.as_str()))
             .field(
                 "ignore-coverage-path",
-                &self.path_pattern_ignore_coverage.as_ref().map(|g| g.as_str()),
+                &self.coverage_pattern_inverse.as_ref().map(|g| g.as_str()),
             )
             .finish_non_exhaustive()
     }
@@ -147,7 +146,7 @@ impl TestFilter for FilterArgs {
 impl CoverageFilter for FilterArgs {
     /// Returns true if the file path does not match the ignore coverage pattern.
     fn matches_file_path(&self, path: &Path) -> bool {
-        if let Some(glob) = &self.path_pattern_ignore_coverage {
+        if let Some(glob) = &self.coverage_pattern_inverse {
             return !glob.is_match(path);
         }
         true
@@ -174,7 +173,7 @@ impl fmt::Display for FilterArgs {
         if let Some(p) = &self.path_pattern_inverse {
             writeln!(f, "\tno-match-path: `{}`", p.as_str())?;
         }
-        if let Some(p) = &self.path_pattern_ignore_coverage {
+        if let Some(p) = &self.coverage_pattern_inverse {
             writeln!(f, "\tignore-coverage-path: `{}`", p.as_str())?;
         }
         Ok(())
