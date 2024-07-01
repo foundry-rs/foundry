@@ -7,7 +7,9 @@ use foundry_evm::{
     decode::decode_console_logs,
     inspectors::{LogCollector, TracingInspector},
     revm::{
-        interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
+        interpreter::{
+            CallInputs, CallOutcome, CreateInputs, CreateOutcome, EOFCreateInputs, Interpreter,
+        },
         primitives::U256,
         EvmContext,
     },
@@ -117,6 +119,35 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         outcome
     }
 
+    #[inline]
+    fn eofcreate(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        inputs: &mut EOFCreateInputs,
+    ) -> Option<CreateOutcome> {
+        if let Some(tracer) = &mut self.tracer {
+            if let Some(out) = tracer.eofcreate(ecx, inputs) {
+                return Some(out);
+            }
+        }
+        None
+    }
+
+    #[inline]
+    fn eofcreate_end(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        inputs: &EOFCreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        if let Some(tracer) = &mut self.tracer {
+            return tracer.eofcreate_end(ecx, inputs, outcome);
+        }
+
+        outcome
+    }
+
+    #[inline]
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         if let Some(tracer) = &mut self.tracer {
             revm::Inspector::<DB>::selfdestruct(tracer, contract, target, value);

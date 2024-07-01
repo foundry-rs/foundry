@@ -218,7 +218,7 @@ impl TestArgs {
 
         // Always recompile all sources to ensure that `getCode` cheatcode can use any artifact.
         test_sources.extend(source_files_iter(
-            project.paths.sources,
+            &project.paths.sources,
             MultiCompilerLanguage::FILE_EXTENSIONS,
         ));
 
@@ -295,12 +295,7 @@ impl TestArgs {
 
         // Prepare the test builder
         let should_debug = self.debug.is_some();
-
-        // Clone the output only if we actually need it later for the debugger.
-        let output_clone = should_debug.then(|| output.clone());
-
         let config = Arc::new(config);
-
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .initial_balance(evm_opts.initial_balance)
@@ -309,7 +304,7 @@ impl TestArgs {
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_test_options(test_options)
             .enable_isolation(evm_opts.isolate)
-            .build(project_root, output, env, evm_opts)?;
+            .build(project_root, &output, env, evm_opts)?;
 
         if let Some(debug_test_pattern) = &self.debug {
             let test_pattern = &mut filter.args_mut().test_pattern;
@@ -336,11 +331,8 @@ impl TestArgs {
                 return Err(eyre::eyre!("no tests were executed"));
             };
 
-            let sources = ContractSources::from_project_output(
-                output_clone.as_ref().unwrap(),
-                project.root(),
-                Some(&libraries),
-            )?;
+            let sources =
+                ContractSources::from_project_output(&output, project.root(), Some(&libraries))?;
 
             // Run the debugger.
             let mut builder = Debugger::builder()

@@ -33,7 +33,7 @@ pub fn remove_contract(
     path: &Path,
     name: &str,
 ) -> Result<(JsonAbi, CompactBytecode, CompactDeployedBytecode)> {
-    let contract = if let Some(contract) = output.remove(path.to_string_lossy(), name) {
+    let contract = if let Some(contract) = output.remove(path, name) {
         contract
     } else {
         let mut err = format!("could not find artifact: `{name}`");

@@ -147,15 +147,15 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.4.1", default-features = false }
-foundry-compilers = { version = "0.8.0", default-features = false }
+foundry-block-explorers = { version = "0.5.0", default-features = false }
+foundry-compilers = { version = "0.9.0", default-features = false }
 solang-parser = "=0.3.3"
 
 ## revm
 # no default features to avoid c-kzg
 revm = { version = "10.0.0", default-features = false }
 revm-primitives = { version = "5.0.0", default-features = false }
-revm-inspectors = { version = "0.3.0", features = ["serde"] }
+revm-inspectors = { version = "0.3", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }

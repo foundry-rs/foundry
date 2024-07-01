@@ -292,10 +292,10 @@ impl CallTraceDecoder {
         }
     }
 
-    /// Extends the traces with decoded data by mutating the
+    /// Populates the traces with decoded data by mutating the
     /// [CallTrace] in place. See [CallTraceDecoder::decode_function] and
     /// [CallTraceDecoder::decode_event] for more details.
-    pub async fn extend_traces(&self, traces: &mut Vec<CallTraceNode>) {
+    pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
             let decoded = self.decode_function(&node.trace).await;
             node.trace.decoded.label = decoded.label;

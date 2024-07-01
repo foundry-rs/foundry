@@ -297,7 +297,7 @@ impl OtsInternalOperation {
             .filter_map(|node| {
                 let r#type = match node.trace.kind {
                     _ if node.is_selfdestruct() => OtsInternalOperationType::SelfDestruct,
-                    CallKind::Call if node.trace.value != U256::ZERO => {
+                    CallKind::Call if !node.trace.value.is_zero() => {
                         OtsInternalOperationType::Transfer
                     }
                     CallKind::Create => OtsInternalOperationType::Create,

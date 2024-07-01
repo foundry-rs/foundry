@@ -13,8 +13,8 @@ use foundry_evm_traces::CallTraceArena;
 use revm::{
     inspectors::CustomPrintTracer,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
-        Interpreter, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
+        EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
     primitives::{
         BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult, Output, TransactTo,
@@ -415,22 +415,24 @@ impl InspectorStack {
     /// Set whether to enable the tracer.
     #[inline]
     pub fn tracing(&mut self, yes: bool, debug: bool) {
-        self.tracer = yes.then(|| {
-            TracingInspector::new(TracingInspectorConfig {
-                record_steps: debug,
-                record_memory_snapshots: debug,
-                record_stack_snapshots: if debug {
-                    StackSnapshotType::Full
-                } else {
-                    StackSnapshotType::None
-                },
-                record_state_diff: false,
-                exclude_precompile_calls: false,
-                record_logs: true,
-                record_opcodes_filter: None,
-                record_returndata_snapshots: debug,
-            })
-        });
+        if !yes {
+            self.tracer = None;
+            return;
+        }
+        *self.tracer.get_or_insert_with(Default::default).config_mut() = TracingInspectorConfig {
+            record_steps: debug,
+            record_memory_snapshots: debug,
+            record_stack_snapshots: if debug {
+                StackSnapshotType::Full
+            } else {
+                StackSnapshotType::None
+            },
+            record_state_diff: false,
+            exclude_precompile_calls: false,
+            record_logs: true,
+            record_opcodes_filter: None,
+            record_returndata_snapshots: debug,
+        };
     }
 
     /// Collects all the data gathered during inspection into a single struct.
@@ -447,13 +449,14 @@ impl InspectorStack {
                 .as_ref()
                 .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
-            traces: tracer.map(|tracer| tracer.traces().clone()),
+            traces: tracer.map(|tracer| tracer.into_traces()),
             coverage: coverage.map(|coverage| coverage.maps),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
         }
     }
 
+    #[inline(always)]
     fn as_mut(&mut self) -> InspectorStackRefMut<'_> {
         InspectorStackRefMut { cheatcodes: self.cheatcodes.as_mut(), inner: &mut self.inner }
     }
@@ -828,6 +831,78 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         outcome
     }
 
+    fn eofcreate(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        create: &mut EOFCreateInputs,
+    ) -> Option<CreateOutcome> {
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
+            self.adjust_evm_data_for_inner_context(ecx);
+            return None;
+        }
+
+        call_inspectors_adjust_depth!(
+            #[ret]
+            [&mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
+            |inspector| inspector.eofcreate(ecx, create).map(Some),
+            self,
+            ecx
+        );
+
+        if self.enable_isolation && !self.in_inner_context && ecx.journaled_state.depth == 1 {
+            let init_code = match &create.kind {
+                EOFCreateKind::Tx { initdata } => initdata.clone(),
+                EOFCreateKind::Opcode { initcode, .. } => initcode.raw.clone(),
+            };
+
+            let (result, address) = self.transact_inner(
+                ecx,
+                TxKind::Create,
+                create.caller,
+                init_code,
+                create.gas_limit,
+                create.value,
+            );
+            return Some(CreateOutcome { result, address })
+        }
+
+        None
+    }
+
+    fn eofcreate_end(
+        &mut self,
+        ecx: &mut EvmContext<DB>,
+        call: &EOFCreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
+        // Avoid processing twice.
+        if self.in_inner_context && ecx.journaled_state.depth == 0 {
+            return outcome
+        }
+
+        let result = outcome.result.result;
+
+        call_inspectors_adjust_depth!(
+            #[ret]
+            [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
+            |inspector| {
+                let new_outcome = inspector.eofcreate_end(ecx, call, outcome.clone());
+
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                let different = new_outcome.result.result != result ||
+                    (new_outcome.result.result == InstructionResult::Revert &&
+                        new_outcome.output() != outcome.output());
+                different.then_some(new_outcome)
+            },
+            self,
+            ecx
+        );
+
+        outcome
+    }
+
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         call_inspectors!([&mut self.tracer, &mut self.printer], |inspector| {
             Inspector::<DB>::selfdestruct(inspector, contract, target, value)
@@ -854,6 +929,16 @@ impl<'a, DB: DatabaseExt> InspectorExt<DB> for InspectorStackRefMut<'a> {
 }
 
 impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
+    #[inline]
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        self.as_mut().step(interpreter, ecx)
+    }
+
+    #[inline]
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        self.as_mut().step_end(interpreter, ecx)
+    }
+
     fn call(
         &mut self,
         context: &mut EvmContext<DB>,
@@ -898,14 +983,6 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         Inspector::<DB>::selfdestruct(&mut self.as_mut(), contract, target, value)
-    }
-
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
-        self.as_mut().step(interpreter, ecx)
-    }
-
-    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
-        self.as_mut().step_end(interpreter, ecx)
     }
 }
 

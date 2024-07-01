@@ -1,4 +1,5 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
+use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
@@ -232,21 +233,20 @@ impl Cheatcode for isPersistentCall {
     }
 }
 
-impl Cheatcode for rpcCall {
+impl Cheatcode for rpc_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { method, params } = self;
         let url =
             ccx.ecx.db.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        let provider = ProviderBuilder::new(&url).build()?;
-        let params_json: serde_json::Value = serde_json::from_str(params)?;
-        let result =
-            foundry_common::block_on(provider.raw_request(method.clone().into(), params_json))
-                .map_err(|err| fmt_err!("{method:?}: {err}"))?;
+        rpc_call(&url, method, params)
+    }
+}
 
-        let result_as_tokens = crate::json::json_value_to_token(&result)
-            .map_err(|err| fmt_err!("failed to parse result: {err}"))?;
-
-        Ok(result_as_tokens.abi_encode())
+impl Cheatcode for rpc_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { urlOrAlias, method, params } = self;
+        let url = state.config.rpc_url(urlOrAlias)?;
+        rpc_call(&url, method, params)
     }
 }
 
@@ -382,4 +382,27 @@ fn check_broadcast(state: &Cheatcodes) -> Result<()> {
 #[inline]
 fn persist_caller<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) {
     ccx.ecx.db.add_persistent_account(ccx.caller);
+}
+
+/// Performs an Ethereum JSON-RPC request to the given endpoint.
+fn rpc_call(url: &str, method: &str, params: &str) -> Result {
+    let provider = ProviderBuilder::new(url).build()?;
+    let params_json: serde_json::Value = serde_json::from_str(params)?;
+    let result =
+        foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
+            .map_err(|err| fmt_err!("{method:?}: {err}"))?;
+
+    let result_as_tokens = match crate::json::json_value_to_token(&result)
+        .map_err(|err| fmt_err!("failed to parse result: {err}"))?
+    {
+        // Convert fixed bytes to bytes to prevent encoding issues.
+        // See: <https://github.com/foundry-rs/foundry/issues/8287>
+        DynSolValue::FixedBytes(bytes, size) => {
+            DynSolValue::Bytes(bytes.as_slice()[..size].to_vec())
+        }
+        DynSolValue::Address(addr) => DynSolValue::Bytes(addr.to_vec()),
+        val => val,
+    };
+
+    Ok(result_as_tokens.abi_encode())
 }

@@ -939,7 +939,6 @@ impl Backend {
             env.block.number = env.block.number.saturating_add(U256::from(1));
             env.block.basefee = U256::from(current_base_fee);
             env.block.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
-            env.block.timestamp = U256::from(self.time.next_timestamp());
 
             // pick a random value for prevrandao
             env.block.prevrandao = Some(B256::random());
@@ -954,6 +953,12 @@ impl Backend {
 
             let (executed_tx, block_hash) = {
                 let mut db = self.db.write().await;
+
+                // finally set the next block timestamp, this is done just before execution, because
+                // there can be concurrent requests that can delay acquiring the db lock and we want
+                // to ensure the timestamp is as close as possible to the actual execution.
+                env.block.timestamp = U256::from(self.time.next_timestamp());
+
                 let executor = TransactionExecutor {
                     db: &mut *db,
                     validator: self,
@@ -1171,7 +1176,7 @@ impl Backend {
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
         };
 
-        if env.block.basefee == revm::primitives::U256::ZERO {
+        if env.block.basefee.is_zero() {
             // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
             // 0 is only possible if it's manually set
             env.cfg.disable_base_fee = true;
