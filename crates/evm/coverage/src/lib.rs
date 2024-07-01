@@ -15,7 +15,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     ops::{AddAssign, Deref, DerefMut},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -160,26 +160,21 @@ impl CoverageReport {
     pub fn filter_out_ignored_sources(&mut self, filter: &impl CoverageFilter) {
         let mut new_items = HashMap::new();
         for (version, items) in self.items.iter() {
-            let new_items_for_version = items
+            let new_items_for_version: Vec<_> = items
                 .iter()
                 .filter(|item| {
-                    filter.matches_file_path(Path::new(
-                        &self.get_source_path(version, item.loc.source_id),
-                    ))
+                    self.source_paths
+                        .get(&(version.clone(), item.loc.source_id))
+                        .map(|path| filter.matches_file_path(Path::new(path)))
+                        .unwrap_or(false)
                 })
                 .cloned()
                 .collect();
-            new_items.insert(version.clone(), new_items_for_version);
+            if !new_items_for_version.is_empty() {
+                new_items.insert(version.clone(), new_items_for_version);
+            }
         }
         self.items = new_items;
-    }
-
-    /// Get the source path for a specific source file ID and version.
-    fn get_source_path(&self, version: &Version, source_id: usize) -> String {
-        self.source_paths
-            .get(&(version.clone(), source_id))
-            .cloned()
-            .unwrap_or_else(|| format!("Unknown (ID: {}, solc: {version})", source_id))
     }
 }
 
