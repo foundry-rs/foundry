@@ -158,7 +158,7 @@ async fn test_persist_fuzz_failure() {
 async fn test_scrape_bytecode() {
     let filter = Filter::new(".*", ".*", ".*fuzz/FuzzScrapeBytecode.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
-    runner.test_options.fuzz.runs = 2000;
+    runner.test_options.fuzz.dictionary.dictionary_weight = 100;
     runner.test_options.fuzz.seed = Some(U256::from(6u32));
     let suite_result = runner.test_collect(&filter);
 
