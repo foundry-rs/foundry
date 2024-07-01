@@ -409,7 +409,7 @@ pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives:
     // This allows a contract to arbitrarily emit more events than expected (additive behavior),
     // as long as all the previous events were matched in the order they were expected to be.
     if state.expected_emits.iter().all(|expected| expected.found) {
-        return;
+        return
     }
 
     // if there's anything to fill, we need to pop back.
@@ -427,7 +427,7 @@ pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives:
         // Fill the event.
         event_to_fill_or_check.log = Some(log.data.clone());
         state.expected_emits.push_back(event_to_fill_or_check);
-        return;
+        return
     };
 
     let expected_topic_0 = expected.topics().first();

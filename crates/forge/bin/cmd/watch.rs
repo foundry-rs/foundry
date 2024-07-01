@@ -169,7 +169,7 @@ fn on_test(action: OnActionState<'_, WatchTestState>) {
 
     if no_reconfigure {
         // nothing to reconfigure
-        return;
+        return
     }
 
     let mut cmd = cmd.clone();
@@ -210,7 +210,7 @@ fn on_test(action: OnActionState<'_, WatchTestState>) {
             },
             on_test,
         );
-        return;
+        return
     }
 
     if changed_sol_test_files.is_empty() {
@@ -278,11 +278,11 @@ fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
         fn contains_w_in_short(arg: &str) -> Option<bool> {
             let mut iter = arg.chars().peekable();
             if *iter.peek()? != '-' {
-                return None;
+                return None
             }
             iter.next();
             if *iter.peek()? == '-' {
-                return None;
+                return None
             }
             Some(iter.any(|c| c == 'w'))
         }
@@ -347,7 +347,7 @@ fn on_action<F, T>(
 
         if signals.contains(&MainSignal::Terminate) || signals.contains(&MainSignal::Interrupt) {
             action.outcome(Outcome::both(Outcome::Stop, Outcome::Exit));
-            return fut;
+            return fut
         }
 
         if !has_paths {
@@ -358,7 +358,7 @@ fn on_action<F, T>(
                 }
 
                 action.outcome(out);
-                return fut;
+                return fut
             }
 
             let completion = action.events.iter().flat_map(|e| e.completions()).next();
@@ -382,7 +382,7 @@ fn on_action<F, T>(
                 };
 
                 action.outcome(Outcome::DoNothing);
-                return fut;
+                return fut
             }
         }
 

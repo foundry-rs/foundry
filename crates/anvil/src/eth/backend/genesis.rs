@@ -108,14 +108,14 @@ impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
     type Error = DatabaseError;
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
         if let Some(acc) = self.accounts.get(&(address)).cloned() {
-            return Ok(Some(acc));
+            return Ok(Some(acc))
         }
         self.db.basic_ref(address)
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
         if let Some((_, acc)) = self.accounts.iter().find(|(_, acc)| acc.code_hash == code_hash) {
-            return Ok(acc.code.clone().unwrap_or_default());
+            return Ok(acc.code.clone().unwrap_or_default())
         }
         self.db.code_by_hash_ref(code_hash)
     }
@@ -125,7 +125,7 @@ impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
             if let Some(storage) = acc.storage.as_ref() {
                 return Ok(U256::from_be_bytes(
                     storage.get(&B256::from(index)).copied().unwrap_or_default().0,
-                ));
+                ))
             }
         }
         self.db.storage_ref(address, index)

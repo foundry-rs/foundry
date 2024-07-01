@@ -76,7 +76,7 @@ impl FmtArgs {
                         ((path.is_absolute() && ignored.contains(path)) ||
                             ignored.contains(&cwd.join(path)))
                     {
-                        continue;
+                        continue
                     }
 
                     if path.is_dir() {
@@ -132,7 +132,7 @@ impl FmtArgs {
 
                 let diff = TextDiff::from_lines(&source, &output);
                 if diff.ratio() < 1.0 {
-                    return Ok(Some(format_diff_summary(&name, &diff)));
+                    return Ok(Some(format_diff_summary(&name, &diff)))
                 }
             } else if let Some(path) = path {
                 fs::write(path, output)?;
@@ -149,7 +149,7 @@ impl FmtArgs {
                          HINT: If you are working outside of the project, \
                          try providing paths to your source files: `forge fmt <paths>`"
                     );
-                    return Ok(());
+                    return Ok(())
                 }
                 paths
                     .par_iter()

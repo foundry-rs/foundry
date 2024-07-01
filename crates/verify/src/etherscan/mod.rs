@@ -65,7 +65,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 verify_args.address.to_checksum(None)
             );
 
-            return Ok(());
+            return Ok(())
         }
 
         trace!(target: "forge::verify", ?verify_args, "submitting verification request");
@@ -130,7 +130,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     verifier: args.verifier,
                 };
                 // return check_args.run().await
-                return self.check(check_args).await;
+                return self.check(check_args).await
             }
         } else {
             println!("Contract source code already verified");
@@ -165,16 +165,16 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     );
 
                     if resp.result == "Pending in queue" {
-                        return Err(eyre!("Verification is still pending...",));
+                        return Err(eyre!("Verification is still pending...",))
                     }
 
                     if resp.result == "Unable to verify" {
-                        return Err(eyre!("Unable to verify.",));
+                        return Err(eyre!("Unable to verify.",))
                     }
 
                     if resp.result == "Already Verified" {
                         println!("Contract source code already verified");
-                        return Ok(());
+                        return Ok(())
                     }
 
                     if resp.status == "0" {
@@ -355,10 +355,10 @@ impl EtherscanVerificationProvider {
                 read_constructor_args_file(constructor_args_path.to_path_buf())?,
             )?;
             let encoded_args = hex::encode(encoded_args);
-            return Ok(Some(encoded_args[8..].into()));
+            return Ok(Some(encoded_args[8..].into()))
         }
         if args.guess_constructor_args {
-            return Ok(Some(self.guess_constructor_args(args, context).await?));
+            return Ok(Some(self.guess_constructor_args(args, context).await?))
         }
 
         Ok(args.constructor_args.clone())

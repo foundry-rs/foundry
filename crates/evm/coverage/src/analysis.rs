@@ -54,7 +54,7 @@ impl<'a> ContractVisitor<'a> {
         let kind: String =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
         if kind == "receive" {
-            return Ok(());
+            return Ok(())
         }
 
         match &node.body {

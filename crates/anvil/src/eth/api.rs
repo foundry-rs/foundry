@@ -348,7 +348,7 @@ impl EthApi {
                 if time >= U256::from(u64::MAX) {
                     return ResponseResult::Error(RpcError::invalid_params(
                         "The timestamp is too big",
-                    ));
+                    ))
                 }
                 let time = time.to::<u64>();
                 self.evm_set_next_block_timestamp(time).to_rpc_result()
@@ -357,7 +357,7 @@ impl EthApi {
                 if timestamp >= U256::from(u64::MAX) {
                     return ResponseResult::Error(RpcError::invalid_params(
                         "The timestamp is too big",
-                    ));
+                    ))
                 }
                 let time = timestamp.to::<u64>();
                 self.evm_set_time(time).to_rpc_result()
@@ -448,13 +448,13 @@ impl EthApi {
                         false,
                     )
                     .unwrap();
-                return build_typed_transaction(request, nil_signature);
+                return build_typed_transaction(request, nil_signature)
             }
             _ => {
                 for signer in self.signers.iter() {
                     if signer.accounts().contains(from) {
                         let signature = signer.sign_transaction(request.clone(), from)?;
-                        return build_typed_transaction(request, signature);
+                        return build_typed_transaction(request, signature)
                     }
                 }
             }
@@ -644,7 +644,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return Ok(fork.get_balance(address, number).await?);
+                    return Ok(fork.get_balance(address, number).await?)
                 }
             }
         }
@@ -801,7 +801,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return Ok(fork.get_code(address, number).await?);
+                    return Ok(fork.get_code(address, number).await?)
                 }
             }
         }
@@ -826,7 +826,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number) {
-                    return Ok(fork.get_proof(address, keys, Some(number.into())).await?);
+                    return Ok(fork.get_proof(address, keys, Some(number.into())).await?)
                 }
             }
         }
@@ -1011,7 +1011,7 @@ impl EthApi {
                             "not available on past forked blocks".to_string(),
                         ));
                     }
-                    return Ok(fork.call(&request, Some(number.into())).await?);
+                    return Ok(fork.call(&request, Some(number.into())).await?)
                 }
             }
         }
@@ -1059,7 +1059,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return Ok(fork.create_access_list(&request, Some(number.into())).await?);
+                    return Ok(fork.create_access_list(&request, Some(number.into())).await?)
                 }
             }
         }
@@ -1205,7 +1205,7 @@ impl EthApi {
             self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.uncle_by_block_hash_and_index(block_hash, idx.into()).await?);
+                return Ok(fork.uncle_by_block_hash_and_index(block_hash, idx.into()).await?)
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -1224,7 +1224,7 @@ impl EthApi {
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.uncle_by_block_number_and_index(number, idx.into()).await?);
+                return Ok(fork.uncle_by_block_number_and_index(number, idx.into()).await?)
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -2247,7 +2247,7 @@ impl EthApi {
                             "not available on past forked blocks".to_string(),
                         ));
                     }
-                    return Ok(fork.estimate_gas(&request, Some(number.into())).await?);
+                    return Ok(fork.estimate_gas(&request, Some(number.into())).await?)
                 }
             }
         }
@@ -2587,7 +2587,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number) {
-                    return Ok(fork.get_nonce(address, number).await?);
+                    return Ok(fork.get_nonce(address, number).await?)
                 }
             }
         }

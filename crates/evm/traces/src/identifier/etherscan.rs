@@ -102,7 +102,7 @@ impl TraceIdentifier for EtherscanIdentifier {
 
         if self.invalid_api_key.load(Ordering::Relaxed) {
             // api key was marked as invalid
-            return Vec::new();
+            return Vec::new()
         }
 
         let mut identities = Vec::new();
@@ -221,7 +221,7 @@ impl Stream for EtherscanFetcher {
             if let Some(mut backoff) = pin.backoff.take() {
                 if backoff.poll_tick(cx).is_pending() {
                     pin.backoff = Some(backoff);
-                    return Poll::Pending;
+                    return Poll::Pending
                 }
             }
 
@@ -236,7 +236,7 @@ impl Stream for EtherscanFetcher {
                     match res {
                         Ok(mut metadata) => {
                             if let Some(item) = metadata.items.pop() {
-                                return Poll::Ready(Some((addr, item)));
+                                return Poll::Ready(Some((addr, item)))
                             }
                         }
                         Err(EtherscanError::RateLimitExceeded) => {
@@ -248,13 +248,13 @@ impl Stream for EtherscanFetcher {
                             warn!(target: "traces::etherscan", "invalid api key");
                             // mark key as invalid
                             pin.invalid_api_key.store(true, Ordering::Relaxed);
-                            return Poll::Ready(None);
+                            return Poll::Ready(None)
                         }
                         Err(EtherscanError::BlockedByCloudflare) => {
                             warn!(target: "traces::etherscan", "blocked by cloudflare");
                             // mark key as invalid
                             pin.invalid_api_key.store(true, Ordering::Relaxed);
-                            return Poll::Ready(None);
+                            return Poll::Ready(None)
                         }
                         Err(err) => {
                             warn!(target: "traces::etherscan", "could not get etherscan info: {:?}", err);
@@ -264,7 +264,7 @@ impl Stream for EtherscanFetcher {
             }
 
             if !made_progress_this_iter {
-                return Poll::Pending;
+                return Poll::Pending
             }
         }
     }

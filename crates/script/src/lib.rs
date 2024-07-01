@@ -234,7 +234,7 @@ impl ScriptArgs {
                 .await?;
 
             if pre_simulation.args.debug {
-                return pre_simulation.run_debugger();
+                return pre_simulation.run_debugger()
             }
 
             if pre_simulation.args.json {
