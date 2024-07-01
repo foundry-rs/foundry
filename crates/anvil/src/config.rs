@@ -245,6 +245,10 @@ Chain ID:       {}
                 fork.block_hash(),
                 fork.chain_id()
             );
+
+            if let Some(tx_hash) = fork.transaction_hash() {
+                let _ = writeln!(config_string, "Transaction hash: {tx_hash}");
+            }
         } else {
             let _ = write!(
                 config_string,
@@ -1169,6 +1173,7 @@ latest block number: {latest_block}"
             eth_rpc_url,
             block_number: fork_block_number,
             block_hash,
+            transaction_hash: self.fork_choice.and_then(|fc| fc.transaction_hash()),
             provider,
             chain_id,
             override_chain_id,
@@ -1243,6 +1248,24 @@ pub enum ForkChoice {
     Block(BlockNumber),
     /// Transaction hash to fork from
     Transaction(TxHash),
+}
+
+impl ForkChoice {
+    /// Returns the block number to fork from
+    pub fn block_number(&self) -> Option<BlockNumber> {
+        match self {
+            Self::Block(block_number) => Some(*block_number),
+            Self::Transaction(_) => None,
+        }
+    }
+
+    /// Returns the transaction hash to fork from
+    pub fn transaction_hash(&self) -> Option<TxHash> {
+        match self {
+            Self::Block(_) => None,
+            Self::Transaction(transaction_hash) => Some(*transaction_hash),
+        }
+    }
 }
 
 /// Convert a transaction hash into a ForkChoice
