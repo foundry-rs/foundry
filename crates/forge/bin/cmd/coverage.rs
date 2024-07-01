@@ -52,10 +52,10 @@ pub struct CoverageArgs {
     ///
     /// If not specified, the report will be stored in the root of the project.
     #[arg(
-    long,
-    short,
-    value_hint = ValueHint::FilePath,
-    value_name = "PATH"
+        long,
+        short,
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
     )]
     report_file: Option<PathBuf>,
 
