@@ -25,6 +25,10 @@ pub struct ListArgs {
     #[arg(long, hide = !cfg!(feature = "aws-kms"))]
     aws: bool,
 
+    /// List accounts from Google Cloud KMS.
+    #[arg(long, hide = !cfg!(feature = "gcp-kms"))]
+    gcp: bool,
+
     /// List all configured accounts.
     #[arg(long, group = "hw-wallets")]
     all: bool,
@@ -37,7 +41,10 @@ pub struct ListArgs {
 impl ListArgs {
     pub async fn run(self) -> Result<()> {
         // list local accounts as files in keystore dir, no need to unlock / provide password
-        if self.dir.is_some() || self.all || (!self.ledger && !self.trezor && !self.aws) {
+        if self.dir.is_some() ||
+            self.all ||
+            (!self.ledger && !self.trezor && !self.aws && !self.gcp)
+        {
             let _ = self.list_local_senders();
         }
 
@@ -47,6 +54,7 @@ impl ListArgs {
             .mnemonic_indexes(Some(vec![0]))
             .trezor(self.trezor || self.all)
             .aws(self.aws || self.all)
+            .gcp(self.gcp || self.all)
             .interactives(0)
             .build()
             .expect("build multi wallet");
