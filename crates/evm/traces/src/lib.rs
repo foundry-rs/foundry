@@ -8,6 +8,7 @@
 #[macro_use]
 extern crate tracing;
 
+use alloy_primitives::LogData;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use serde::{Deserialize, Serialize};
 
@@ -39,7 +40,7 @@ pub struct DecodedCallTrace {
 #[derive(Debug)]
 pub enum DecodedCallLog<'a> {
     /// A raw log.
-    Raw(&'a CallLog),
+    Raw(&'a LogData),
     /// A decoded log.
     ///
     /// The first member of the tuple is the event name, and the second is a vector of decoded

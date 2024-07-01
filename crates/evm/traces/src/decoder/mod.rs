@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
-use alloy_primitives::{Address, Selector, B256};
+use alloy_primitives::{Address, LogData, Selector, B256};
 use foundry_common::{
     abi::get_indexed_event, fmt::format_token, ContractsByArtifact, SELECTOR_LEN,
 };
@@ -20,7 +20,6 @@ use foundry_evm_core::{
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
-use revm_inspectors::tracing::types::CallLog;
 use rustc_hash::FxHashMap;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 
@@ -303,7 +302,7 @@ impl CallTraceDecoder {
             node.trace.decoded.return_data = decoded.return_data;
 
             for log in node.logs.iter_mut() {
-                let decoded = self.decode_event(log).await;
+                let decoded = self.decode_event(&log.raw_log).await;
 
                 match decoded {
                     DecodedCallLog::Decoded(name, params) => {
@@ -559,23 +558,23 @@ impl CallTraceDecoder {
     }
 
     /// Decodes an event.
-    pub async fn decode_event<'a>(&self, log: &'a CallLog) -> DecodedCallLog<'a> {
-        let &[t0, ..] = log.raw_log.topics() else { return DecodedCallLog::Raw(log) };
+    pub async fn decode_event<'a>(&self, log: &'a LogData) -> DecodedCallLog<'a> {
+        let &[t0, ..] = log.topics() else { return DecodedCallLog::Raw(log) };
 
         let mut events = Vec::new();
-        let events = match self.events.get(&(t0, log.raw_log.topics().len() - 1)) {
+        let events = match self.events.get(&(t0, log.topics().len() - 1)) {
             Some(es) => es,
             None => {
                 if let Some(identifier) = &self.signature_identifier {
                     if let Some(event) = identifier.write().await.identify_event(&t0[..]).await {
-                        events.push(get_indexed_event(event, &log.raw_log));
+                        events.push(get_indexed_event(event, log));
                     }
                 }
                 &events
             }
         };
         for event in events {
-            if let Ok(decoded) = event.decode_log(&log.raw_log, false) {
+            if let Ok(decoded) = event.decode_log(log, false) {
                 let params = reconstruct_params(event, &decoded);
                 return DecodedCallLog::Decoded(
                     event.name.clone(),
