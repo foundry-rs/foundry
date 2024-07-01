@@ -62,12 +62,10 @@ pub async fn decode_trace_arena(
 }
 
 /// Render a collection of call traces.
-pub async fn render_trace_arena(arena: &mut CallTraceArena) -> Result<String, std::fmt::Error> {
+pub fn render_trace_arena(arena: &CallTraceArena) -> String {
     let mut w = TraceWriter::new(Vec::<u8>::new()).use_colors(revm_inspectors::ColorChoice::Auto);
     w.write_arena(arena).expect("Failed to write traces");
-    let s = String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8");
-
-    Ok(s)
+    String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
 }
 
 /// Specifies the kind of trace.

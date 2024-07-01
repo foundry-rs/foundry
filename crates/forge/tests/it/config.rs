@@ -76,13 +76,15 @@ impl TestConfig {
                     let decoded_traces = join_all(result.traces.iter_mut().map(|(_, arena)| {
                         let decoder = &call_trace_decoder;
                         async move {
-                            decode_trace_arena(arena, decoder).await?;
-                            render_trace_arena(arena).await
+                            decode_trace_arena(arena, decoder)
+                                .await
+                                .expect("Failed to decode traces");
+                            render_trace_arena(arena)
                         }
                     }))
                     .await
                     .into_iter()
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Vec<String>>();
 
                     eyre::bail!(
                         "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}\n\nTraces:\n{}",

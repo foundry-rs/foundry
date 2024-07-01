@@ -494,7 +494,7 @@ impl TestArgs {
 
                     if should_include {
                         decode_trace_arena(arena, &decoder).await?;
-                        decoded_traces.push(render_trace_arena(arena).await?);
+                        decoded_traces.push(render_trace_arena(arena));
                     }
                 }
 

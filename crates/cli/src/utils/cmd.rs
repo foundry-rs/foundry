@@ -403,7 +403,7 @@ pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) 
     println!("Traces:");
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await?;
-        println!("{}", render_trace_arena(arena).await?);
+        println!("{}", render_trace_arena(arena));
     }
     println!();
 

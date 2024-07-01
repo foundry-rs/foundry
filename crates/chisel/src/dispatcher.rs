@@ -937,7 +937,7 @@ impl ChiselDispatcher {
             // Display all Setup + Execution traces.
             if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
                 decode_trace_arena(trace, decoder).await?;
-                println!("{}", render_trace_arena(trace).await?);
+                println!("{}", render_trace_arena(trace));
             }
         }
 
