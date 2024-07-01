@@ -26,7 +26,11 @@ use foundry_config::{Config, SolcReq};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use semver::Version;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -287,7 +291,13 @@ impl CoverageArgs {
         }
 
         // Filter out ignored sources from the report
-        report.filter_out_ignored_sources(&filter);
+        report.filter_out_ignored_sources(|path: &Path| {
+            filter.args().coverage_pattern_inverse.as_ref().map_or(true, |re| {
+                !re.is_match(
+                    &path.strip_prefix(&filter.paths().root).unwrap_or(path).to_string_lossy(),
+                )
+            })
+        });
 
         // Output final report
         for report_kind in self.report {

@@ -1,5 +1,5 @@
 use clap::Parser;
-use foundry_common::{CoverageFilter, TestFilter};
+use foundry_common::TestFilter;
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::{filter::GlobMatcher, Config};
 use std::{fmt, path::Path};
@@ -140,17 +140,6 @@ impl TestFilter for FilterArgs {
     }
 }
 
-impl CoverageFilter for FilterArgs {
-    /// Returns true if the file path does not match the ignore coverage pattern.
-    fn matches_file_path(&self, path: &Path) -> bool {
-        let mut ok = true;
-        if let Some(re) = &self.coverage_pattern_inverse {
-            ok = ok && !re.is_match(&path.to_string_lossy());
-        }
-        ok
-    }
-}
-
 impl fmt::Display for FilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(p) = &self.test_pattern {
@@ -200,6 +189,11 @@ impl ProjectPathsAwareFilter {
     pub fn args_mut(&mut self) -> &mut FilterArgs {
         &mut self.args_filter
     }
+
+    /// Returns the project paths.
+    pub fn paths(&self) -> &ProjectPathsConfig {
+        &self.paths
+    }
 }
 
 impl FileFilter for ProjectPathsAwareFilter {
@@ -225,14 +219,6 @@ impl TestFilter for ProjectPathsAwareFilter {
         // we don't want to test files that belong to a library
         path = path.strip_prefix(&self.paths.root).unwrap_or(path);
         self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(path)
-    }
-}
-
-impl CoverageFilter for ProjectPathsAwareFilter {
-    /// Returns true if the file path does not match the ignore coverage pattern.
-    fn matches_file_path(&self, mut path: &Path) -> bool {
-        path = path.strip_prefix(&self.paths.root).unwrap_or(path);
-        self.args_filter.matches_file_path(path)
     }
 }
 
