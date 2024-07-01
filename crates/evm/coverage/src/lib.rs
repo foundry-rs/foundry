@@ -9,17 +9,16 @@
 extern crate tracing;
 
 use alloy_primitives::{Bytes, B256};
+use eyre::{Context, Result};
 use foundry_compilers::artifacts::sourcemap::SourceMap;
 use semver::Version;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     ops::{AddAssign, Deref, DerefMut},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
-
-use eyre::{Context, Result};
 
 pub mod analysis;
 pub mod anchors;
@@ -149,6 +148,22 @@ impl CoverageReport {
             }
         }
         Ok(())
+    }
+
+    /// Removes all the coverage items that should be ignored by the filter.
+    ///
+    /// This function should only be called after all the sources were used, otherwise, the output
+    /// will be missing the ones that are dependent on them.
+    pub fn filter_out_ignored_sources(&mut self, filter: impl Fn(&Path) -> bool) {
+        self.items.retain(|version, items| {
+            items.retain(|item| {
+                self.source_paths
+                    .get(&(version.clone(), item.loc.source_id))
+                    .map(|path| filter(path))
+                    .unwrap_or(false)
+            });
+            !items.is_empty()
+        });
     }
 }
 

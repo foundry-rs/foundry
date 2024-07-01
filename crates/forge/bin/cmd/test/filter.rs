@@ -1,5 +1,5 @@
 use clap::Parser;
-use forge::TestFilter;
+use foundry_common::TestFilter;
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::{filter::GlobMatcher, Config};
 use std::{fmt, path::Path};
@@ -38,6 +38,10 @@ pub struct FilterArgs {
         value_name = "GLOB"
     )]
     pub path_pattern_inverse: Option<GlobMatcher>,
+
+    /// Only show coverage for files that do not match the specified regex pattern.
+    #[arg(long = "no-match-coverage", visible_alias = "nmco", value_name = "REGEX")]
+    pub coverage_pattern_inverse: Option<regex::Regex>,
 }
 
 impl FilterArgs {
@@ -71,6 +75,9 @@ impl FilterArgs {
         if self.path_pattern_inverse.is_none() {
             self.path_pattern_inverse = config.path_pattern_inverse.clone().map(Into::into);
         }
+        if self.coverage_pattern_inverse.is_none() {
+            self.coverage_pattern_inverse = config.coverage_pattern_inverse.clone().map(Into::into);
+        }
         ProjectPathsAwareFilter { args_filter: self, paths: config.project_paths() }
     }
 }
@@ -84,6 +91,7 @@ impl fmt::Debug for FilterArgs {
             .field("no-match-contract", &self.contract_pattern_inverse.as_ref().map(|r| r.as_str()))
             .field("match-path", &self.path_pattern.as_ref().map(|g| g.as_str()))
             .field("no-match-path", &self.path_pattern_inverse.as_ref().map(|g| g.as_str()))
+            .field("no-match-coverage", &self.coverage_pattern_inverse.as_ref().map(|g| g.as_str()))
             .finish_non_exhaustive()
     }
 }
@@ -152,6 +160,9 @@ impl fmt::Display for FilterArgs {
         if let Some(p) = &self.path_pattern_inverse {
             writeln!(f, "\tno-match-path: `{}`", p.as_str())?;
         }
+        if let Some(p) = &self.coverage_pattern_inverse {
+            writeln!(f, "\tno-match-coverage: `{}`", p.as_str())?;
+        }
         Ok(())
     }
 }
@@ -177,6 +188,11 @@ impl ProjectPathsAwareFilter {
     /// Returns the CLI arguments mutably.
     pub fn args_mut(&mut self) -> &mut FilterArgs {
         &mut self.args_filter
+    }
+
+    /// Returns the project paths.
+    pub fn paths(&self) -> &ProjectPathsConfig {
+        &self.paths
     }
 }
 
