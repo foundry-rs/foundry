@@ -156,23 +156,15 @@ impl CoverageReport {
     /// This function should only be called after all the sources were used, otherwise, the output
     /// will be missing the ones that are dependent on them.
     pub fn filter_out_ignored_sources(&mut self, filter: &impl CoverageFilter) {
-        let mut new_items = HashMap::new();
-        for (version, items) in self.items.iter() {
-            let new_items_for_version: Vec<_> = items
-                .iter()
-                .filter(|item| {
-                    self.source_paths
-                        .get(&(version.clone(), item.loc.source_id))
-                        .map(|path| filter.matches_file_path(path))
-                        .unwrap_or(false)
-                })
-                .cloned()
-                .collect();
-            if !new_items_for_version.is_empty() {
-                new_items.insert(version.clone(), new_items_for_version);
-            }
-        }
-        self.items = new_items;
+        self.items.retain(|version, items| {
+            items.retain(|item| {
+                self.source_paths
+                    .get(&(version.clone(), item.loc.source_id))
+                    .map(|path| filter.matches_file_path(path))
+                    .unwrap_or(false)
+            });
+            !items.is_empty()
+        });
     }
 }
 
