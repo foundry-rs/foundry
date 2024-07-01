@@ -1,10 +1,9 @@
 use crate::eth::{
-    backend::mem::Backend,
     error::{BlockchainError, Result},
     macros::node_info,
     EthApi,
 };
-use alloy_primitives::{Address, Bytes, FixedBytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rpc_types::{
     trace::{
         otterscan::{
@@ -22,10 +21,7 @@ use itertools::Itertools;
 
 use futures::future::join_all;
 
-pub fn mentions_address(
-    trace: LocalizedTransactionTrace,
-    address: Address,
-) -> Option<FixedBytes<32>> {
+pub fn mentions_address(trace: LocalizedTransactionTrace, address: Address) -> Option<B256> {
     match (trace.trace.action, trace.trace.result) {
         (Action::Call(CallAction { from, to, .. }), _) if from == address || to == address => {
             trace.transaction_hash
@@ -50,7 +46,7 @@ pub fn batch_build_ots_traces(traces: Vec<LocalizedTransactionTrace>) -> Vec<Tra
         .into_iter()
         .filter_map(|trace| match trace.trace.action {
             Action::Call(call) => {
-                let ots_type = format!("{:?}", call.call_type);
+                let ots_type = serde_json::to_string(&call.call_type).unwrap();
                 Some(TraceEntry {
                     r#type: ots_type,
                     depth: trace.trace.trace_address.len() as u32,
@@ -65,7 +61,261 @@ pub fn batch_build_ots_traces(traces: Vec<LocalizedTransactionTrace>) -> Vec<Tra
         .collect()
 }
 
-impl Backend {
+impl EthApi {
+    /// Otterscan currently requires this endpoint, even though it's not part of the `ots_*`.
+    /// Ref: <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
+    ///
+    /// As a faster alternative to `eth_getBlockByNumber` (by excluding uncle block
+    /// information), which is not relevant in the context of an anvil node
+    pub async fn erigon_get_header_by_number(&self, number: BlockNumber) -> Result<Option<Block>> {
+        node_info!("ots_getApiLevel");
+
+        self.backend.block_by_number(number).await
+    }
+
+    /// As per the latest Otterscan source code, at least version 8 is needed.
+    /// Ref: <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/params.ts#L1C2-L1C2>
+    pub async fn ots_get_api_level(&self) -> Result<u64> {
+        node_info!("ots_getApiLevel");
+
+        // as required by current otterscan's source code
+        Ok(8)
+    }
+
+    /// Trace internal ETH transfers, contracts creation (CREATE/CREATE2) and self-destructs for a
+    /// certain transaction.
+    pub async fn ots_get_internal_operations(&self, hash: B256) -> Result<Vec<InternalOperation>> {
+        node_info!("ots_getInternalOperations");
+
+        self.backend
+            .mined_transaction(hash)
+            .map(|tx| tx.ots_internal_operations())
+            .ok_or_else(|| BlockchainError::DataUnavailable)
+    }
+
+    /// Check if an ETH address contains code at a certain block number.
+    pub async fn ots_has_code(&self, address: Address, block_number: BlockNumber) -> Result<bool> {
+        node_info!("ots_hasCode");
+        let block_id = Some(BlockId::Number(block_number));
+        Ok(self.get_code(address, block_id).await?.len() > 0)
+    }
+
+    /// Trace a transaction and generate a trace call tree.
+    pub async fn ots_trace_transaction(&self, hash: B256) -> Result<Vec<TraceEntry>> {
+        node_info!("ots_traceTransaction");
+
+        Ok(batch_build_ots_traces(self.backend.trace_transaction(hash).await?))
+    }
+
+    /// Given a transaction hash, returns its raw revert reason.
+    pub async fn ots_get_transaction_error(&self, hash: B256) -> Result<Bytes> {
+        node_info!("ots_getTransactionError");
+
+        if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
+            if !receipt.inner.inner.as_receipt_with_bloom().receipt.status.coerce_status() {
+                return Ok(receipt.out.map(|b| b.0.into()).unwrap_or(Bytes::default()));
+            }
+        }
+
+        Ok(Bytes::default())
+    }
+
+    /// For simplicity purposes, we return the entire block instead of emptying the values that
+    /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
+    /// but it doesn't seem necessary in the context of an anvil node
+    pub async fn ots_get_block_details(&self, number: BlockNumber) -> Result<BlockDetails> {
+        node_info!("ots_getBlockDetails");
+
+        if let Some(block) = self.backend.block_by_number(number).await? {
+            let ots_block = self.build_ots_block_details(block).await?;
+            Ok(ots_block)
+        } else {
+            Err(BlockchainError::BlockNotFound)
+        }
+    }
+
+    /// For simplicity purposes, we return the entire block instead of emptying the values that
+    /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
+    /// but it doesn't seem necessary in the context of an anvil node
+    pub async fn ots_get_block_details_by_hash(&self, hash: B256) -> Result<BlockDetails> {
+        node_info!("ots_getBlockDetailsByHash");
+
+        if let Some(block) = self.backend.block_by_hash(hash).await? {
+            let ots_block = self.build_ots_block_details(block).await?;
+            Ok(ots_block)
+        } else {
+            Err(BlockchainError::BlockNotFound)
+        }
+    }
+
+    /// Gets paginated transaction data for a certain block. Return data is similar to
+    /// eth_getBlockBy* + eth_getTransactionReceipt.
+    pub async fn ots_get_block_transactions(
+        &self,
+        number: u64,
+        page: usize,
+        page_size: usize,
+    ) -> Result<OtsBlockTransactions> {
+        node_info!("ots_getBlockTransactions");
+
+        match self.backend.block_by_number_full(number.into()).await? {
+            Some(block) => self.build_ots_block_tx(block, page, page_size).await,
+            None => Err(BlockchainError::BlockNotFound),
+        }
+    }
+
+    /// Address history navigation. searches backwards from certain point in time.
+    pub async fn ots_search_transactions_before(
+        &self,
+        address: Address,
+        block_number: u64,
+        page_size: usize,
+    ) -> Result<TransactionsWithReceipts> {
+        node_info!("ots_searchTransactionsBefore");
+
+        let best = self.backend.best_number();
+        // we go from given block (defaulting to best) down to first block
+        // considering only post-fork
+        let from = if block_number == 0 { best } else { block_number - 1 };
+        let to = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
+
+        let first_page = from >= best;
+        let mut last_page = false;
+
+        let mut res: Vec<_> = vec![];
+
+        for n in (to..=from).rev() {
+            if let Some(traces) = self.backend.mined_parity_trace_block(n) {
+                let hashes = traces
+                    .into_iter()
+                    .rev()
+                    .filter_map(|trace| mentions_address(trace, address))
+                    .unique();
+
+                if res.len() >= page_size {
+                    break;
+                }
+
+                res.extend(hashes);
+            }
+
+            if n == to {
+                last_page = true;
+            }
+        }
+
+        self.build_ots_search_transactions(res, first_page, last_page).await
+    }
+
+    /// Address history navigation. searches forward from certain point in time.
+    pub async fn ots_search_transactions_after(
+        &self,
+        address: Address,
+        block_number: u64,
+        page_size: usize,
+    ) -> Result<TransactionsWithReceipts> {
+        node_info!("ots_searchTransactionsAfter");
+
+        let best = self.backend.best_number();
+        // we go from the first post-fork block, up to the tip
+        let first_block = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
+        let from = if block_number == 0 { first_block } else { block_number + 1 };
+        let to = best;
+
+        let mut first_page = from >= best;
+        let mut last_page = false;
+
+        let mut res: Vec<_> = vec![];
+
+        for n in from..=to {
+            if n == first_block {
+                last_page = true;
+            }
+
+            if let Some(traces) = self.backend.mined_parity_trace_block(n) {
+                let hashes = traces
+                    .into_iter()
+                    .rev()
+                    .filter_map(|trace| mentions_address(trace, address))
+                    .unique();
+
+                if res.len() >= page_size {
+                    break;
+                }
+
+                res.extend(hashes);
+            }
+
+            if n == to {
+                first_page = true;
+            }
+        }
+
+        // Results are always sent in reverse chronological order, according to the Otterscan spec
+        res.reverse();
+        self.build_ots_search_transactions(res, first_page, last_page).await
+    }
+
+    /// Given a sender address and a nonce, returns the tx hash or null if not found. It returns
+    /// only the tx hash on success, you can use the standard eth_getTransactionByHash after that to
+    /// get the full transaction data.
+    pub async fn ots_get_transaction_by_sender_and_nonce(
+        &self,
+        address: Address,
+        nonce: U256,
+    ) -> Result<Option<B256>> {
+        node_info!("ots_getTransactionBySenderAndNonce");
+
+        let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();
+        let to = self.backend.best_number();
+
+        for n in (from..=to).rev() {
+            if let Some(txs) = self.backend.mined_transactions_by_block_number(n.into()).await {
+                for tx in txs {
+                    if U256::from(tx.nonce) == nonce && tx.from == address {
+                        return Ok(Some(tx.hash));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Given an ETH contract address, returns the tx hash and the direct address who created the
+    /// contract.
+    pub async fn ots_get_contract_creator(&self, addr: Address) -> Result<Option<ContractCreator>> {
+        node_info!("ots_getContractCreator");
+
+        let from = self.get_fork().map(|f| f.block_number()).unwrap_or_default();
+        let to = self.backend.best_number();
+
+        // loop in reverse, since we want the latest deploy to the address
+        for n in (from..=to).rev() {
+            if let Some(traces) = self.backend.mined_parity_trace_block(n) {
+                for trace in traces.into_iter().rev() {
+                    match (trace.trace.action, trace.trace.result) {
+                        (
+                            Action::Create(CreateAction { from, .. }),
+                            Some(TraceOutput::Create(CreateOutput { address, .. })),
+                        ) if address == addr => {
+                            let tx = self
+                                .backend
+                                .transaction_by_hash(trace.transaction_hash.unwrap())
+                                .await
+                                .unwrap()
+                                .unwrap()
+                                .inner;
+                            return Ok(Some(ContractCreator { tx, creator: from }));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
     /// The response for ots_getBlockDetails includes an `issuance` object that requires computing
     /// the total gas spent in a given block.
     ///
@@ -144,7 +394,7 @@ impl Backend {
             .map(|r| match r {
                 Ok(Some(r)) => {
                     let timestamp =
-                        self.get_block(r.block_number.unwrap()).unwrap().header.timestamp;
+                        self.backend.get_block(r.block_number.unwrap()).unwrap().header.timestamp;
                     let receipt = r.map_inner(OtsReceipt::from);
                     let res = OtsTransactionReceipt { receipt, timestamp: Some(timestamp) };
                     Ok(res)
@@ -178,8 +428,12 @@ impl Backend {
         let receipts = join_all(hashes.iter().map(|hash| async {
             match self.transaction_receipt(*hash).await {
                 Ok(Some(receipt)) => {
-                    let timestamp =
-                        self.get_block(receipt.block_number.unwrap()).unwrap().header.timestamp;
+                    let timestamp = self
+                        .backend
+                        .get_block(receipt.block_number.unwrap())
+                        .unwrap()
+                        .header
+                        .timestamp;
                     let receipt = receipt.map_inner(OtsReceipt::from);
                     let res = OtsTransactionReceipt { receipt, timestamp: Some(timestamp) };
                     Ok(res)
@@ -193,262 +447,5 @@ impl Backend {
         .collect::<Result<Vec<_>>>()?;
 
         Ok(TransactionsWithReceipts { txs, receipts, first_page, last_page })
-    }
-}
-
-impl EthApi {
-    /// Otterscan currently requires this endpoint, even though it's not part of the `ots_*`.
-    /// Ref: <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
-    ///
-    /// As a faster alternative to `eth_getBlockByNumber` (by excluding uncle block
-    /// information), which is not relevant in the context of an anvil node
-    pub async fn erigon_get_header_by_number(&self, number: BlockNumber) -> Result<Option<Block>> {
-        node_info!("ots_getApiLevel");
-
-        self.backend.block_by_number(number).await
-    }
-
-    /// As per the latest Otterscan source code, at least version 8 is needed.
-    /// Ref: <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/params.ts#L1C2-L1C2>
-    pub async fn ots_get_api_level(&self) -> Result<u64> {
-        node_info!("ots_getApiLevel");
-
-        // as required by current otterscan's source code
-        Ok(8)
-    }
-
-    /// Trace internal ETH transfers, contracts creation (CREATE/CREATE2) and self-destructs for a
-    /// certain transaction.
-    pub async fn ots_get_internal_operations(&self, hash: B256) -> Result<Vec<InternalOperation>> {
-        node_info!("ots_getInternalOperations");
-
-        self.backend
-            .mined_transaction(hash)
-            .map(|tx| tx.ots_internal_operations())
-            .ok_or_else(|| BlockchainError::DataUnavailable)
-    }
-
-    /// Check if an ETH address contains code at a certain block number.
-    pub async fn ots_has_code(&self, address: Address, block_number: BlockNumber) -> Result<bool> {
-        node_info!("ots_hasCode");
-        let block_id = Some(BlockId::Number(block_number));
-        Ok(self.get_code(address, block_id).await?.len() > 0)
-    }
-
-    /// Trace a transaction and generate a trace call tree.
-    pub async fn ots_trace_transaction(&self, hash: B256) -> Result<Vec<TraceEntry>> {
-        node_info!("ots_traceTransaction");
-
-        Ok(batch_build_ots_traces(self.backend.trace_transaction(hash).await?))
-    }
-
-    /// Given a transaction hash, returns its raw revert reason.
-    pub async fn ots_get_transaction_error(&self, hash: B256) -> Result<Bytes> {
-        node_info!("ots_getTransactionError");
-
-        if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
-            if !receipt.inner.inner.as_receipt_with_bloom().receipt.status.coerce_status() {
-                return Ok(receipt.out.map(|b| b.0.into()).unwrap_or(Bytes::default()));
-            }
-        }
-
-        Ok(Bytes::default())
-    }
-
-    /// For simplicity purposes, we return the entire block instead of emptying the values that
-    /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
-    /// but it doesn't seem necessary in the context of an anvil node
-    pub async fn ots_get_block_details(&self, number: BlockNumber) -> Result<BlockDetails> {
-        node_info!("ots_getBlockDetails");
-
-        if let Some(block) = self.backend.block_by_number(number).await? {
-            let ots_block = self.backend.build_ots_block_details(block).await?;
-            Ok(ots_block)
-        } else {
-            Err(BlockchainError::BlockNotFound)
-        }
-    }
-
-    /// For simplicity purposes, we return the entire block instead of emptying the values that
-    /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
-    /// but it doesn't seem necessary in the context of an anvil node
-    pub async fn ots_get_block_details_by_hash(&self, hash: B256) -> Result<BlockDetails> {
-        node_info!("ots_getBlockDetailsByHash");
-
-        if let Some(block) = self.backend.block_by_hash(hash).await? {
-            let ots_block = self.backend.build_ots_block_details(block).await?;
-            Ok(ots_block)
-        } else {
-            Err(BlockchainError::BlockNotFound)
-        }
-    }
-
-    /// Gets paginated transaction data for a certain block. Return data is similar to
-    /// eth_getBlockBy* + eth_getTransactionReceipt.
-    pub async fn ots_get_block_transactions(
-        &self,
-        number: u64,
-        page: usize,
-        page_size: usize,
-    ) -> Result<OtsBlockTransactions> {
-        node_info!("ots_getBlockTransactions");
-
-        match self.backend.block_by_number_full(number.into()).await? {
-            Some(block) => self.backend.build_ots_block_tx(block, page, page_size).await,
-            None => Err(BlockchainError::BlockNotFound),
-        }
-    }
-
-    /// Address history navigation. searches backwards from certain point in time.
-    pub async fn ots_search_transactions_before(
-        &self,
-        address: Address,
-        block_number: u64,
-        page_size: usize,
-    ) -> Result<TransactionsWithReceipts> {
-        node_info!("ots_searchTransactionsBefore");
-
-        let best = self.backend.best_number();
-        // we go from given block (defaulting to best) down to first block
-        // considering only post-fork
-        let from = if block_number == 0 { best } else { block_number - 1 };
-        let to = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
-
-        let first_page = from >= best;
-        let mut last_page = false;
-
-        let mut res: Vec<_> = vec![];
-
-        for n in (to..=from).rev() {
-            if let Some(traces) = self.backend.mined_parity_trace_block(n) {
-                let hashes = traces
-                    .into_iter()
-                    .rev()
-                    .filter_map(|trace| mentions_address(trace, address))
-                    .unique();
-
-                if res.len() >= page_size {
-                    break;
-                }
-
-                res.extend(hashes);
-            }
-
-            if n == to {
-                last_page = true;
-            }
-        }
-
-        self.backend.build_ots_search_transactions(res, first_page, last_page).await
-    }
-
-    /// Address history navigation. searches forward from certain point in time.
-    pub async fn ots_search_transactions_after(
-        &self,
-        address: Address,
-        block_number: u64,
-        page_size: usize,
-    ) -> Result<TransactionsWithReceipts> {
-        node_info!("ots_searchTransactionsAfter");
-
-        let best = self.backend.best_number();
-        // we go from the first post-fork block, up to the tip
-        let first_block = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
-        let from = if block_number == 0 { first_block } else { block_number + 1 };
-        let to = best;
-
-        let mut first_page = from >= best;
-        let mut last_page = false;
-
-        let mut res: Vec<_> = vec![];
-
-        for n in from..=to {
-            if n == first_block {
-                last_page = true;
-            }
-
-            if let Some(traces) = self.backend.mined_parity_trace_block(n) {
-                let hashes = traces
-                    .into_iter()
-                    .rev()
-                    .filter_map(|trace| mentions_address(trace, address))
-                    .unique();
-
-                if res.len() >= page_size {
-                    break;
-                }
-
-                res.extend(hashes);
-            }
-
-            if n == to {
-                first_page = true;
-            }
-        }
-
-        // Results are always sent in reverse chronological order, according to the Otterscan spec
-        res.reverse();
-        self.backend.build_ots_search_transactions(res, first_page, last_page).await
-    }
-
-    /// Given a sender address and a nonce, returns the tx hash or null if not found. It returns
-    /// only the tx hash on success, you can use the standard eth_getTransactionByHash after that to
-    /// get the full transaction data.
-    pub async fn ots_get_transaction_by_sender_and_nonce(
-        &self,
-        address: Address,
-        nonce: U256,
-    ) -> Result<Option<B256>> {
-        node_info!("ots_getTransactionBySenderAndNonce");
-
-        let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();
-        let to = self.backend.best_number();
-
-        for n in (from..=to).rev() {
-            if let Some(txs) = self.backend.mined_transactions_by_block_number(n.into()).await {
-                for tx in txs {
-                    if U256::from(tx.nonce) == nonce && tx.from == address {
-                        return Ok(Some(tx.hash));
-                    }
-                }
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// Given an ETH contract address, returns the tx hash and the direct address who created the
-    /// contract.
-    pub async fn ots_get_contract_creator(&self, addr: Address) -> Result<Option<ContractCreator>> {
-        node_info!("ots_getContractCreator");
-
-        let from = self.get_fork().map(|f| f.block_number()).unwrap_or_default();
-        let to = self.backend.best_number();
-
-        // loop in reverse, since we want the latest deploy to the address
-        for n in (from..=to).rev() {
-            if let Some(traces) = self.backend.mined_parity_trace_block(n) {
-                for trace in traces.into_iter().rev() {
-                    match (trace.trace.action, trace.trace.result) {
-                        (
-                            Action::Create(CreateAction { from, .. }),
-                            Some(TraceOutput::Create(CreateOutput { address, .. })),
-                        ) if address == addr => {
-                            let tx = self
-                                .backend
-                                .transaction_by_hash(trace.transaction_hash.unwrap())
-                                .await
-                                .unwrap()
-                                .unwrap()
-                                .inner;
-                            return Ok(Some(ContractCreator { tx, creator: from }));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        Ok(None)
     }
 }

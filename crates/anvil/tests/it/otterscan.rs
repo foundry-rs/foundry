@@ -240,7 +240,7 @@ async fn test_call_ots_trace_transaction() {
     let res = api.ots_trace_transaction(receipt.transaction_hash).await.unwrap();
     let expected = vec![
         TraceEntry {
-            r#type: format!("{:?}", CallType::Call),
+            r#type: serde_json::to_string(&CallType::Call).unwrap(),
             depth: 0,
             from: sender,
             to: contract_address,
@@ -248,7 +248,7 @@ async fn test_call_ots_trace_transaction() {
             input: Contract::runCall::SELECTOR.into(),
         },
         TraceEntry {
-            r#type: format!("{:?}", CallType::StaticCall),
+            r#type: serde_json::to_string(&CallType::StaticCall).unwrap(),
             depth: 1,
             from: contract_address,
             to: contract_address,
@@ -256,7 +256,7 @@ async fn test_call_ots_trace_transaction() {
             input: Contract::do_staticcallCall::SELECTOR.into(),
         },
         TraceEntry {
-            r#type: format!("{:?}", CallType::Call),
+            r#type: serde_json::to_string(&CallType::Call).unwrap(),
             depth: 1,
             from: contract_address,
             to: contract_address,
@@ -264,7 +264,7 @@ async fn test_call_ots_trace_transaction() {
             input: Contract::do_callCall::SELECTOR.into(),
         },
         TraceEntry {
-            r#type: format!("{:?}", CallType::Call),
+            r#type: serde_json::to_string(&CallType::Call).unwrap(),
             depth: 2,
             from: contract_address,
             to: sender,
@@ -272,7 +272,7 @@ async fn test_call_ots_trace_transaction() {
             input: Bytes::new(),
         },
         TraceEntry {
-            r#type: format!("{:?}", CallType::DelegateCall),
+            r#type: serde_json::to_string(&CallType::DelegateCall).unwrap(),
             depth: 2,
             from: contract_address,
             to: contract_address,
