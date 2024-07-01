@@ -18,7 +18,7 @@ use eyre::{Context, Result};
 use foundry_cheatcodes::{BroadcastableTransactions, ScriptWallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{get_contract_name, shell, ContractData};
-use foundry_evm::traces::render_trace_arena;
+use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
 use std::{
@@ -159,10 +159,8 @@ impl PreSimulationState {
             // Transaction will be `None`, if execution didn't pass.
             if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
                 for (_, trace) in &mut traces {
-                    println!(
-                        "{}",
-                        render_trace_arena(trace, &self.execution_artifacts.decoder).await?
-                    );
+                    decode_trace_arena(trace, &self.execution_artifacts.decoder).await?;
+                    println!("{}", render_trace_arena(trace).await?);
                 }
             }
 

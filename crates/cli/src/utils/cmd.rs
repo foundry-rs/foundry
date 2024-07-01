@@ -14,6 +14,7 @@ use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
+        decode_trace_arena,
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
@@ -401,7 +402,8 @@ pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) 
 
     println!("Traces:");
     for (_, arena) in traces {
-        println!("{}", render_trace_arena(arena, decoder).await?);
+        decode_trace_arena(arena, decoder).await?;
+        println!("{}", render_trace_arena(arena).await?);
     }
     println!();
 

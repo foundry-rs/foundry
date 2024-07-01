@@ -8,7 +8,8 @@ use forge::{
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
-        identifier::SignaturesIdentifier, render_trace_arena, CallTraceDecoderBuilder, TraceKind,
+        decode_trace_arena, identifier::SignaturesIdentifier, render_trace_arena,
+        CallTraceDecoderBuilder, TraceKind,
     },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
@@ -492,7 +493,8 @@ impl TestArgs {
                     };
 
                     if should_include {
-                        decoded_traces.push(render_trace_arena(arena, &decoder).await?);
+                        decode_trace_arena(arena, &decoder).await?;
+                        decoded_traces.push(render_trace_arena(arena).await?);
                     }
                 }
 

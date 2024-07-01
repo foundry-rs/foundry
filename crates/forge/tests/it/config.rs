@@ -7,7 +7,7 @@ use forge::{
 use foundry_evm::{
     decode::decode_console_logs,
     revm::primitives::SpecId,
-    traces::{render_trace_arena, CallTraceDecoderBuilder},
+    traces::{decode_trace_arena, render_trace_arena, CallTraceDecoderBuilder},
 };
 use foundry_test_utils::{init_tracing, Filter};
 use futures::future::join_all;
@@ -72,16 +72,18 @@ impl TestConfig {
                     let logs = decode_console_logs(&result.logs);
                     let outcome = if self.should_fail { "fail" } else { "pass" };
                     let call_trace_decoder = CallTraceDecoderBuilder::default().build();
-                    let decoded_traces = join_all(
-                        result
-                            .traces
-                            .iter_mut()
-                            .map(|(_, a)| render_trace_arena(a, &call_trace_decoder)),
-                    )
+
+                    let decoded_traces = join_all(result.traces.iter_mut().map(|(_, arena)| {
+                        let decoder = &call_trace_decoder;
+                        async move {
+                            decode_trace_arena(arena, decoder).await?;
+                            render_trace_arena(arena).await
+                        }
+                    }))
                     .await
                     .into_iter()
-                    .map(|x| x.unwrap())
-                    .collect::<Vec<_>>();
+                    .collect::<Result<Vec<_>, _>>()?;
+
                     eyre::bail!(
                         "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}\n\nTraces:\n{}",
                         test_name,

@@ -47,16 +47,21 @@ pub enum DecodedCallLog<'a> {
     Decoded(String, Vec<(String, String)>),
 }
 
-/// Render a collection of call traces.
+/// Decode a collection of call traces.
 ///
 /// The traces will be decoded using the given decoder, if possible.
-pub async fn render_trace_arena(
+pub async fn decode_trace_arena(
     arena: &mut CallTraceArena,
     decoder: &CallTraceDecoder,
-) -> Result<String, std::fmt::Error> {
+) -> Result<(), std::fmt::Error> {
     decoder.prefetch_signatures(arena.nodes()).await;
     decoder.populate_traces(arena.nodes_mut()).await;
 
+    Ok(())
+}
+
+/// Render a collection of call traces.
+pub async fn render_trace_arena(arena: &mut CallTraceArena) -> Result<String, std::fmt::Error> {
     let mut w = TraceWriter::new(Vec::<u8>::new()).use_colors(revm_inspectors::ColorChoice::Auto);
     w.write_arena(arena).expect("Failed to write traces");
     let s = String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8");
