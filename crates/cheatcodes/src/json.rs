@@ -1,8 +1,8 @@
-//! Implementations of [`Json`](crate::Group::Json) cheatcodes.
+//! Implementations of [`Json`](spec::Group::Json) cheatcodes.
 
 use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{Address, B256, I256};
+use alloy_primitives::{hex, Address, B256, I256};
 use alloy_sol_types::SolValue;
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
@@ -248,6 +248,14 @@ impl Cheatcode for serializeBytes_1Call {
     }
 }
 
+impl Cheatcode for serializeUintToHexCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { objectKey, valueKey, value } = self;
+        let hex = format!("0x{value:x}");
+        serialize_json(state, objectKey, Some(valueKey), &hex)
+    }
+}
+
 impl Cheatcode for writeJson_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, path } = self;
@@ -437,18 +445,18 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
             if let Some(mut val) = string.strip_prefix("0x") {
                 let s;
                 if val.len() % 2 != 0 {
-                    s = format!("0{}", val);
+                    s = format!("0{val}");
                     val = &s[..];
                 }
-                let bytes = hex::decode(val)?;
-                Ok(match bytes.len() {
-                    20 => DynSolValue::Address(Address::from_slice(&bytes)),
-                    32 => DynSolValue::FixedBytes(B256::from_slice(&bytes), 32),
-                    _ => DynSolValue::Bytes(bytes),
-                })
-            } else {
-                Ok(DynSolValue::String(string.to_owned()))
+                if let Ok(bytes) = hex::decode(val) {
+                    return Ok(match bytes.len() {
+                        20 => DynSolValue::Address(Address::from_slice(&bytes)),
+                        32 => DynSolValue::FixedBytes(B256::from_slice(&bytes), 32),
+                        _ => DynSolValue::Bytes(bytes),
+                    });
+                }
             }
+            Ok(DynSolValue::String(string.to_owned()))
         }
     }
 }

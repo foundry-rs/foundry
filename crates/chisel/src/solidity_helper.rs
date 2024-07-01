@@ -19,7 +19,7 @@ use solang_parser::{
     pt,
 };
 use std::{borrow::Cow, str::FromStr};
-use yansi::{Color, Paint, Style};
+use yansi::{Color, Style};
 
 /// The default pre-allocation for solang parsed comments
 const DEFAULT_COMMENTS: usize = 5;
@@ -71,7 +71,7 @@ impl SolidityHelper {
                 pt::Comment::DocLine(loc, _) |
                 pt::Comment::DocBlock(loc, _) => loc,
             };
-            (loc.start(), Style::default().dimmed(), loc.end())
+            (loc.start(), Style::new().dim(), loc.end())
         });
         out.extend(comments_iter);
 
@@ -101,8 +101,8 @@ impl SolidityHelper {
     }
 
     /// Highlights a solidity source string
-    pub fn highlight(input: &str) -> Cow<str> {
-        if !Paint::is_enabled() {
+    pub fn highlight(input: &str) -> Cow<'_, str> {
+        if !yansi::is_enabled() {
             return Cow::Borrowed(input)
         }
 
@@ -119,7 +119,7 @@ impl SolidityHelper {
             // cmd
             out.push(COMMAND_LEADER);
             let cmd_res = ChiselCommand::from_str(cmd);
-            let style = Style::new(if cmd_res.is_ok() { Color::Green } else { Color::Red });
+            let style = (if cmd_res.is_ok() { Color::Green } else { Color::Red }).foreground();
             Self::paint_unchecked(cmd, style, &mut out);
 
             // rest
@@ -186,7 +186,7 @@ impl SolidityHelper {
     }
 
     /// Formats `input` with `style` into `out`, without checking `style.wrapping` or
-    /// `Paint::is_enabled`
+    /// `yansi::is_enabled`
     #[inline]
     fn paint_unchecked(string: &str, style: Style, out: &mut String) {
         if style == Style::default() {
@@ -220,7 +220,7 @@ impl Highlighter for SolidityHelper {
         prompt: &'p str,
         _default: bool,
     ) -> Cow<'b, str> {
-        if !Paint::is_enabled() {
+        if !yansi::is_enabled() {
             return Cow::Borrowed(prompt)
         }
 
@@ -231,12 +231,16 @@ impl Highlighter for SolidityHelper {
             let id_end = prompt.find(')').unwrap();
             let id_span = 5..id_end;
             let id = &prompt[id_span.clone()];
-            out.replace_range(id_span, &Self::paint_unchecked_owned(id, Color::Yellow.style()));
-            out.replace_range(1..=2, &Self::paint_unchecked_owned("ID", Color::Cyan.style()));
+            out.replace_range(
+                id_span,
+                &Self::paint_unchecked_owned(id, Color::Yellow.foreground()),
+            );
+            out.replace_range(1..=2, &Self::paint_unchecked_owned("ID", Color::Cyan.foreground()));
         }
 
         if let Some(i) = out.find(PROMPT_ARROW) {
-            let style = if self.errored { Color::Red.style() } else { Color::Green.style() };
+            let style =
+                if self.errored { Color::Red.foreground() } else { Color::Green.foreground() };
 
             let mut arrow = String::with_capacity(MAX_ANSI_LEN + 4);
 
@@ -252,7 +256,7 @@ impl Highlighter for SolidityHelper {
 }
 
 impl Validator for SolidityHelper {
-    fn validate(&self, ctx: &mut ValidationContext) -> rustyline::Result<ValidationResult> {
+    fn validate(&self, ctx: &mut ValidationContext<'_>) -> rustyline::Result<ValidationResult> {
         Ok(Self::validate_closed(ctx.input()))
     }
 }
@@ -278,7 +282,7 @@ impl<'a> TokenStyle for Token<'a> {
     fn style(&self) -> Style {
         use Token::*;
         match self {
-            StringLiteral(_, _) => Color::Green.style(),
+            StringLiteral(_, _) => Color::Green.foreground(),
 
             AddressLiteral(_) |
             HexLiteral(_) |
@@ -286,21 +290,21 @@ impl<'a> TokenStyle for Token<'a> {
             RationalNumber(_, _, _) |
             HexNumber(_) |
             True |
-            False => Color::Yellow.style(),
+            False => Color::Yellow.foreground(),
 
             Memory | Storage | Calldata | Public | Private | Internal | External | Constant |
             Pure | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override |
-            Modifier | Immutable | Unchecked => Color::Cyan.style(),
+            Modifier | Immutable | Unchecked => Color::Cyan.foreground(),
 
             Contract | Library | Interface | Function | Pragma | Import | Struct | Event |
             Enum | Type | Constructor | As | Is | Using | New | Delete | Do | Continue |
             Break | Throw | Emit | Return | Returns | Revert | For | While | If | Else | Try |
             Catch | Assembly | Let | Leave | Switch | Case | Default | YulArrow | Arrow => {
-                Color::Magenta.style()
+                Color::Magenta.foreground()
             }
 
             Uint(_) | Int(_) | Bytes(_) | Byte | DynamicBytes | Bool | Address | String |
-            Mapping => Color::Blue.style(),
+            Mapping => Color::Blue.foreground(),
 
             Identifier(_) => Style::default(),
 

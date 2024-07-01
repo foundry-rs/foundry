@@ -386,7 +386,7 @@ Logs:
 
 If you are working in a repo with NPM-style imports, like
 
-```
+```solidity
 import "@openzeppelin/contracts/access/Ownable.sol";
 ```
 
@@ -398,7 +398,7 @@ For example, if you have `@openzeppelin` imports, you would
 2. Create a remappings file: `touch remappings.txt`
 3. Add this line to `remappings.txt`
 
-```
+```text
 @openzeppelin/=lib/openzeppelin-contracts/
 ```
 

@@ -1,449 +1,363 @@
-//! tests for otterscan endpoints
-use crate::{
-    abi::MulticallContract,
-    utils::{ethers_http_provider, ethers_ws_provider},
-};
-use alloy_primitives::U256 as rU256;
-use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
-use alloy_signer::Signer as AlloySigner;
+//! Tests for otterscan endpoints.
+
+use crate::abi::MulticallContract;
+use alloy_primitives::{address, Address, Bytes, U256};
+use alloy_provider::Provider;
+use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions, TransactionRequest};
+use alloy_serde::WithOtherFields;
+use alloy_sol_types::{sol, SolCall, SolError};
 use anvil::{
     eth::otterscan::types::{
         OtsInternalOperation, OtsInternalOperationType, OtsTrace, OtsTraceType,
     },
-    spawn, NodeConfig,
+    spawn, Hardfork, NodeConfig,
 };
-use ethers::{
-    abi::Address,
-    prelude::{ContractFactory, ContractInstance, Middleware, SignerMiddleware},
-    signers::Signer,
-    types::{Bytes, TransactionRequest},
-    utils::get_contract_address,
-};
-use ethers_solc::{project_util::TempProject, Artifact};
-use foundry_common::types::{ToAlloy, ToEthers};
-use std::{collections::VecDeque, str::FromStr, sync::Arc};
+use std::collections::VecDeque;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_erigon_get_header_by_number() {
+async fn erigon_get_header_by_number() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
     api.mine_one().await;
 
     let res0 = api.erigon_get_header_by_number(0.into()).await.unwrap().unwrap();
-    let res1 = api.erigon_get_header_by_number(1.into()).await.unwrap().unwrap();
+    assert_eq!(res0.header.number, Some(0));
 
-    assert_eq!(res0.header.number, Some(rU256::from(0)));
-    assert_eq!(res1.header.number, Some(rU256::from(1)));
+    let res1 = api.erigon_get_header_by_number(1.into()).await.unwrap().unwrap();
+    assert_eq!(res1.header.number, Some(1));
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_api_level() {
+async fn ots_get_api_level() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
 
     assert_eq!(api.ots_get_api_level().await.unwrap(), 8);
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_internal_operations_contract_deploy() {
+async fn ots_get_internal_operations_contract_deploy() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let sender = wallet.address();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let contract_receipt = MulticallContract::deploy_builder(&provider)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
 
-    let mut deploy_tx = MulticallContract::deploy(Arc::clone(&client), ()).unwrap().deployer.tx;
-    deploy_tx.set_nonce(0);
-    let contract_address = get_contract_address(sender, deploy_tx.nonce().unwrap());
-
-    let receipt = client.send_transaction(deploy_tx, None).await.unwrap().await.unwrap().unwrap();
-
-    let res = api.ots_get_internal_operations(receipt.transaction_hash.to_alloy()).await.unwrap();
-
-    assert_eq!(res.len(), 1);
+    let res = api.ots_get_internal_operations(contract_receipt.transaction_hash).await.unwrap();
     assert_eq!(
-        res[0],
-        OtsInternalOperation {
+        res,
+        [OtsInternalOperation {
             r#type: OtsInternalOperationType::Create,
-            from: sender.to_alloy(),
-            to: contract_address.to_alloy(),
-            value: rU256::from(0)
-        }
+            from: sender,
+            to: contract_receipt.contract_address.unwrap(),
+            value: U256::from(0)
+        }],
     );
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_internal_operations_contract_transfer() {
+async fn ots_get_internal_operations_contract_transfer() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let amount = handle.genesis_balance().checked_div(rU256::from(2u64)).unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
 
-    let tx = TransactionRequest::new()
-        .to(to.to_ethers())
-        .value(amount.to_ethers())
-        .from(from.to_ethers());
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
 
-    let receipt = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let res = api.ots_get_internal_operations(receipt.transaction_hash.to_alloy()).await.unwrap();
-
-    assert_eq!(res.len(), 1);
+    let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
     assert_eq!(
-        res[0],
-        OtsInternalOperation {
+        res,
+        [OtsInternalOperation {
             r#type: OtsInternalOperationType::Transfer,
             from,
             to,
             value: amount
+        }],
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ots_get_internal_operations_contract_create2() {
+    sol!(
+        #[sol(rpc, bytecode = "60808060405234601557610147908161001a8239f35b5f80fdfe6080600436101561000e575f80fd5b5f3560e01c636cd5c39b14610021575f80fd5b346100d0575f3660031901126100d0575f602082810191825282526001600160401b03916040810191838311828410176100d4578261008960405f959486958252606081019486865281518091608084015e81018660808201520360208101845201826100ee565b519082734e59b44847b379578588920ca78fbf26c0b4956c5af1903d156100e8573d9081116100d4576040516100c991601f01601f1916602001906100ee565b156100d057005b5f80fd5b634e487b7160e01b5f52604160045260245ffd5b506100c9565b601f909101601f19168101906001600160401b038211908210176100d45760405256fea2646970667358221220f76968e121fc002b537029df51a2aecca0793282491baf84b872ffbfbfb1c9d764736f6c63430008190033")]
+        contract Contract {
+            address constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+
+            function deployContract() public {
+                uint256 salt = 0;
+                uint256 code = 0;
+                bytes memory creationCode = abi.encodePacked(code);
+                (bool success,) = address(CREATE2_DEPLOYER).call(abi.encodePacked(salt, creationCode));
+                require(success);
+            }
         }
     );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_internal_operations_contract_create2() {
-    let prj = TempProject::dapptools().unwrap();
-    prj.add_source(
-        "Contract",
-        r"
-pragma solidity 0.8.13;
-contract Contract {
-    address constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
-    constructor() {}
-    function deploy() public {
-        uint256 salt = 0;
-        uint256 code = 0;
-        bytes memory creationCode = abi.encodePacked(code);
-        (bool success,) = address(CREATE2_DEPLOYER).call(abi.encodePacked(salt, creationCode));
-        require(success);
-    }
-}
-",
-    )
-    .unwrap();
-
-    let mut compiled = prj.compile().unwrap();
-    assert!(!compiled.has_compiler_errors());
-    let contract = compiled.remove_first("Contract").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
-    let wallets = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
+    let provider = handle.http_provider();
 
-    // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
-    let contract = factory.deploy(()).unwrap().send().await.unwrap();
+    let contract = Contract::deploy(&provider).await.unwrap();
 
-    let contract = ContractInstance::new(
-        contract.address(),
-        abi.unwrap(),
-        SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
-    );
-    let call = contract.method::<_, ()>("deploy", ()).unwrap();
+    let receipt = contract.deployContract().send().await.unwrap().get_receipt().await.unwrap();
 
-    let receipt = call.send().await.unwrap().await.unwrap().unwrap();
-    let res = api.ots_get_internal_operations(receipt.transaction_hash.to_alloy()).await.unwrap();
-
-    assert_eq!(res.len(), 1);
-    assert_eq!(
-        res[0],
-        OtsInternalOperation {
-            r#type: OtsInternalOperationType::Create2,
-            from: Address::from_str("0x4e59b44847b379578588920cA78FbF26c0B4956C")
-                .unwrap()
-                .to_alloy(),
-            to: Address::from_str("0x347bcdad821abc09b8c275881b368de36476b62c").unwrap().to_alloy(),
-            value: rU256::from(0)
-        }
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_internal_operations_contract_selfdestruct() {
-    let prj = TempProject::dapptools().unwrap();
-    prj.add_source(
-        "Contract",
-        r"
-pragma solidity 0.8.13;
-contract Contract {
-    address payable private owner;
-    constructor() public {
-        owner = payable(msg.sender);
-    }
-    function goodbye() public {
-        selfdestruct(owner);
-    }
-}
-",
-    )
-    .unwrap();
-
-    let mut compiled = prj.compile().unwrap();
-    assert!(!compiled.has_compiler_errors());
-    let contract = compiled.remove_first("Contract").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
-
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
-    let wallets = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
-
-    // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
-    let contract = factory.deploy(()).unwrap().send().await.unwrap();
-
-    let contract = ContractInstance::new(
-        contract.address(),
-        abi.unwrap(),
-        SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
-    );
-    let call = contract.method::<_, ()>("goodbye", ()).unwrap();
-
-    let receipt = call.send().await.unwrap().await.unwrap().unwrap();
-
-    let res = api.ots_get_internal_operations(receipt.transaction_hash.to_alloy()).await.unwrap();
-
-    assert_eq!(res.len(), 1);
-    assert_eq!(
-        res[0],
-        OtsInternalOperation {
-            r#type: OtsInternalOperationType::SelfDestruct,
-            from: contract.address().to_alloy(),
-            to: Default::default(),
-            value: rU256::from(0)
-        }
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_has_code() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
-
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let sender = wallet.address();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
-    api.mine_one().await;
-
-    let mut deploy_tx = MulticallContract::deploy(Arc::clone(&client), ()).unwrap().deployer.tx;
-    deploy_tx.set_nonce(0);
-
-    let pending_contract_address = get_contract_address(sender, deploy_tx.nonce().unwrap());
-
-    // no code in the address before deploying
-    assert!(!api
-        .ots_has_code(pending_contract_address.to_alloy(), BlockNumberOrTag::Number(1))
-        .await
-        .unwrap());
-
-    let pending = client.send_transaction(deploy_tx, None).await.unwrap();
-    let receipt = pending.await.unwrap().unwrap();
-
-    let num = client.get_block_number().await.unwrap();
-    assert_eq!(num, receipt.block_number.unwrap());
-
-    // code is detected after deploying
-    assert!(api
-        .ots_has_code(pending_contract_address.to_alloy(), BlockNumberOrTag::Number(num.as_u64()))
-        .await
-        .unwrap());
-
-    // code is not detected for the previous block
-    assert!(!api
-        .ots_has_code(
-            pending_contract_address.to_alloy(),
-            BlockNumberOrTag::Number(num.as_u64() - 1)
-        )
-        .await
-        .unwrap());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_call_call_ots_trace_transaction() {
-    let prj = TempProject::dapptools().unwrap();
-    prj.add_source(
-        "Contract",
-        r#"
-pragma solidity 0.8.13;
-contract Contract {
-    address payable private owner;
-    constructor() public {
-        owner = payable(msg.sender);
-    }
-    function run() payable public {
-        this.do_staticcall();
-        this.do_call();
-    }
-
-    function do_staticcall() external view returns (bool) {
-        return true;
-    }
-
-    function do_call() external {
-        owner.call{value: address(this).balance}("");
-        address(this).delegatecall(abi.encodeWithSignature("do_delegatecall()"));
-    }
-    
-    function do_delegatecall() internal {
-    }
-}
-"#,
-    )
-    .unwrap();
-
-    let mut compiled = prj.compile().unwrap();
-    assert!(!compiled.has_compiler_errors());
-    let contract = compiled.remove_first("Contract").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
-
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
-    let wallets = handle.dev_wallets().collect::<Vec<_>>().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
-
-    // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
-    let contract = factory.deploy(()).unwrap().send().await.unwrap();
-
-    let contract = ContractInstance::new(
-        contract.address(),
-        abi.unwrap(),
-        SignerMiddleware::new(ethers_http_provider(&handle.http_endpoint()), wallets[1].clone()),
-    );
-    let call = contract.method::<_, ()>("run", ()).unwrap().value(1337);
-    let receipt = call.send().await.unwrap().await.unwrap().unwrap();
-
-    let res = api.ots_trace_transaction(receipt.transaction_hash.to_alloy()).await.unwrap();
-
+    let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
     assert_eq!(
         res,
-        vec![
-            OtsTrace {
-                r#type: OtsTraceType::Call,
-                depth: 0,
-                from: wallets[1].address().to_alloy(),
-                to: contract.address().to_alloy(),
-                value: rU256::from(1337),
-                input: Bytes::from_str("0xc0406226").unwrap().0.into()
-            },
-            OtsTrace {
-                r#type: OtsTraceType::StaticCall,
-                depth: 1,
-                from: contract.address().to_alloy(),
-                to: contract.address().to_alloy(),
-                value: rU256::ZERO,
-                input: Bytes::from_str("0x6a6758fe").unwrap().0.into()
-            },
-            OtsTrace {
-                r#type: OtsTraceType::Call,
-                depth: 1,
-                from: contract.address().to_alloy(),
-                to: contract.address().to_alloy(),
-                value: rU256::ZERO,
-                input: Bytes::from_str("0x96385e39").unwrap().0.into()
-            },
-            OtsTrace {
-                r#type: OtsTraceType::Call,
-                depth: 2,
-                from: contract.address().to_alloy(),
-                to: wallets[0].address().to_alloy(),
-                value: rU256::from(1337),
-                input: Bytes::from_str("0x").unwrap().0.into()
-            },
-            OtsTrace {
-                r#type: OtsTraceType::DelegateCall,
-                depth: 2,
-                from: contract.address().to_alloy(),
-                to: contract.address().to_alloy(),
-                value: rU256::ZERO,
-                input: Bytes::from_str("0xa1325397").unwrap().0.into()
-            },
-        ]
+        [OtsInternalOperation {
+            r#type: OtsInternalOperationType::Create2,
+            from: address!("4e59b44847b379578588920cA78FbF26c0B4956C"),
+            to: address!("347bcdad821abc09b8c275881b368de36476b62c"),
+            value: U256::from(0),
+        }],
     );
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_transaction_error() {
-    let prj = TempProject::dapptools().unwrap();
-    prj.add_source(
-        "Contract",
-        r#"
-pragma solidity 0.8.13;
-contract Contract {
-    error CustomError(string msg);
-
-    function trigger_revert() public {
-        revert CustomError("RevertStringFooBar"); 
-    }
-}
-"#,
-    )
-    .unwrap();
-
-    let mut compiled = prj.compile().unwrap();
-    assert!(!compiled.has_compiler_errors());
-    let contract = compiled.remove_first("Contract").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
-
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_ws_provider(&handle.ws_endpoint());
-
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
-
-    // deploy successfully
-    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
-    let contract = factory.deploy(()).unwrap().send().await.unwrap();
-
-    let call = contract.method::<_, ()>("trigger_revert", ()).unwrap().gas(150_000u64);
-    let receipt = call.send().await.unwrap().await.unwrap().unwrap();
-
-    let res =
-        api.ots_get_transaction_error(receipt.transaction_hash.to_alloy()).await.unwrap().unwrap();
-    let res: Bytes = res.0.into();
-    assert_eq!(res, Bytes::from_str("0x8d6ea8be00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000012526576657274537472696e67466f6f4261720000000000000000000000000000").unwrap());
+async fn ots_get_internal_operations_contract_selfdestruct_london() {
+    ots_get_internal_operations_contract_selfdestruct(Hardfork::London).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_block_details() {
+async fn ots_get_internal_operations_contract_selfdestruct_cancun() {
+    ots_get_internal_operations_contract_selfdestruct(Hardfork::Cancun).await;
+}
+
+async fn ots_get_internal_operations_contract_selfdestruct(hardfork: Hardfork) {
+    sol!(
+        #[sol(rpc, bytecode = "608080604052607f908160108239f3fe6004361015600c57600080fd5b6000803560e01c6375fc8e3c14602157600080fd5b346046578060031936011260465773dcdd539da22bffaa499dbea4d37d086dde196e75ff5b80fdfea264697066735822122080a9ad005cc408b2d4e30ca11216d8e310700fbcdf58a629d6edbb91531f9c6164736f6c63430008190033")]
+        contract Contract {
+            constructor() payable {}
+            function goodbye() public {
+                selfdestruct(payable(0xDcDD539DA22bfFAa499dBEa4d37d086Dde196E75));
+            }
+        }
+    );
+
+    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork))).await;
+    let provider = handle.http_provider();
+
+    let sender = handle.dev_accounts().next().unwrap();
+    let value = U256::from(69);
+
+    let contract_address =
+        Contract::deploy_builder(&provider).from(sender).value(value).deploy().await.unwrap();
+    let contract = Contract::new(contract_address, &provider);
+
+    let receipt = contract.goodbye().send().await.unwrap().get_receipt().await.unwrap();
+
+    // TODO: This is currently not supported by revm-inspectors
+    let (expected_to, expected_value) = if hardfork < Hardfork::Cancun {
+        (address!("DcDD539DA22bfFAa499dBEa4d37d086Dde196E75"), value)
+    } else {
+        (Address::ZERO, U256::ZERO)
+    };
+
+    let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
+    assert_eq!(
+        res,
+        [OtsInternalOperation {
+            r#type: OtsInternalOperationType::SelfDestruct,
+            from: contract_address,
+            to: expected_to,
+            value: expected_value,
+        }],
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ots_has_code() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    api.mine_one().await;
 
-    let tx = TransactionRequest::new().to(Address::random()).value(100u64);
-    let receipt = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    let contract_address = sender.create(0);
+
+    // no code in the address before deploying
+    assert!(!api.ots_has_code(contract_address, BlockNumberOrTag::Number(1)).await.unwrap());
+
+    let contract_builder = MulticallContract::deploy_builder(&provider);
+    let contract_receipt = contract_builder.send().await.unwrap().get_receipt().await.unwrap();
+
+    let num = provider.get_block_number().await.unwrap();
+    assert_eq!(num, contract_receipt.block_number.unwrap());
+
+    // code is detected after deploying
+    assert!(api.ots_has_code(contract_address, BlockNumberOrTag::Number(num)).await.unwrap());
+
+    // code is not detected for the previous block
+    assert!(!api.ots_has_code(contract_address, BlockNumberOrTag::Number(num - 1)).await.unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_call_ots_trace_transaction() {
+    sol!(
+        #[sol(rpc, bytecode = "608080604052346026575f80546001600160a01b0319163317905561025e908161002b8239f35b5f80fdfe6080604081815260049081361015610015575f80fd5b5f925f3560e01c9081636a6758fe1461019a5750806396385e3914610123578063a1325397146101115763c04062261461004d575f80fd5b5f3660031901126100d5578051633533ac7f60e11b81526020818481305afa80156100cb576100d9575b50303b156100d55780516396385e3960e01b8152915f83828183305af180156100cb576100a2578380f35b919250906001600160401b0383116100b8575052005b604190634e487b7160e01b5f525260245ffd5b82513d5f823e3d90fd5b5f80fd5b6020813d602011610109575b816100f2602093836101b3565b810103126100d55751801515036100d5575f610077565b3d91506100e5565b346100d5575f3660031901126100d557005b5090346100d5575f3660031901126100d5575f805481908190819047906001600160a01b03165af1506101546101ea565b50815163a132539760e01b6020820190815282825292909182820191906001600160401b038311848410176100b8575f8086868686525190305af4506101986101ea565b005b346100d5575f3660031901126100d55780600160209252f35b601f909101601f19168101906001600160401b038211908210176101d657604052565b634e487b7160e01b5f52604160045260245ffd5b3d15610223573d906001600160401b0382116101d65760405191610218601f8201601f1916602001846101b3565b82523d5f602084013e565b60609056fea264697066735822122099817ea378044f1f6434272aeb1f3f01a734645e599e69b4caf2ba7a4fb65f9d64736f6c63430008190033")]
+        contract Contract {
+            address private owner;
+
+            constructor() {
+                owner = msg.sender;
+            }
+
+            function run() payable public {
+                this.do_staticcall();
+                this.do_call();
+            }
+
+            function do_staticcall() external view returns (bool) {
+                return true;
+            }
+
+            function do_call() external {
+                owner.call{value: address(this).balance}("");
+                address(this).delegatecall(abi.encodeWithSignature("do_delegatecall()"));
+            }
+
+            function do_delegatecall() external {}
+        }
+    );
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = wallets[0].address();
+
+    let contract_address = Contract::deploy_builder(&provider).from(sender).deploy().await.unwrap();
+    let contract = Contract::new(contract_address, &provider);
+
+    let receipt =
+        contract.run().value(U256::from(1337)).send().await.unwrap().get_receipt().await.unwrap();
+
+    let res = api.ots_trace_transaction(receipt.transaction_hash).await.unwrap();
+    let expected = vec![
+        OtsTrace {
+            r#type: OtsTraceType::Call,
+            depth: 0,
+            from: sender,
+            to: contract_address,
+            value: U256::from(1337),
+            input: Contract::runCall::SELECTOR.into(),
+            output: None,
+        },
+        OtsTrace {
+            r#type: OtsTraceType::StaticCall,
+            depth: 1,
+            from: contract_address,
+            to: contract_address,
+            value: U256::ZERO,
+            input: Contract::do_staticcallCall::SELECTOR.into(),
+            output: None,
+        },
+        OtsTrace {
+            r#type: OtsTraceType::Call,
+            depth: 1,
+            from: contract_address,
+            to: contract_address,
+            value: U256::ZERO,
+            input: Contract::do_callCall::SELECTOR.into(),
+            output: None,
+        },
+        OtsTrace {
+            r#type: OtsTraceType::Call,
+            depth: 2,
+            from: contract_address,
+            to: sender,
+            value: U256::from(1337),
+            input: Bytes::new(),
+            output: None,
+        },
+        OtsTrace {
+            r#type: OtsTraceType::DelegateCall,
+            depth: 2,
+            from: contract_address,
+            to: contract_address,
+            value: U256::ZERO,
+            input: Contract::do_delegatecallCall::SELECTOR.into(),
+            output: None,
+        },
+    ];
+    assert_eq!(res, expected);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ots_get_transaction_error() {
+    sol!(
+        #[sol(rpc, bytecode = "6080806040523460135760a3908160188239f35b5f80fdfe60808060405260043610156011575f80fd5b5f3560e01c63f67f4650146023575f80fd5b346069575f3660031901126069576346b7545f60e11b81526020600482015260126024820152712932bb32b93a29ba3934b733a337b7a130b960711b6044820152606490fd5b5f80fdfea264697066735822122069222918090d4d3ddc6a9c8b6ef282464076c71f923a0e8618ed25489b87f12b64736f6c63430008190033")]
+        contract Contract {
+            error CustomError(string msg);
+
+            function trigger_revert() public {
+                revert CustomError("RevertStringFooBar");
+            }
+        }
+    );
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let contract = Contract::deploy(&provider).await.unwrap();
+
+    let receipt = contract.trigger_revert().send().await.unwrap().get_receipt().await.unwrap();
+
+    let err = api.ots_get_transaction_error(receipt.transaction_hash).await.unwrap();
+    let expected = Contract::CustomError { msg: String::from("RevertStringFooBar") }.abi_encode();
+    assert_eq!(err, Bytes::from(expected));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ots_get_transaction_error_no_error() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // Send a successful transaction
+    let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100));
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let res = api.ots_get_transaction_error(receipt.transaction_hash).await.unwrap();
+    assert!(res.is_empty(), "{res}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ots_get_block_details() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100));
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     let result = api.ots_get_block_details(1.into()).await.unwrap();
 
     assert_eq!(result.block.transaction_count, 1);
-    let hash = match result.block.block.transactions {
-        BlockTransactions::Full(txs) => txs[0].hash,
-        BlockTransactions::Hashes(hashes) => hashes[0],
-        BlockTransactions::Uncle => unreachable!(),
-    };
-    assert_eq!(hash, receipt.transaction_hash.to_alloy());
+    let hash = result.block.block.transactions.hashes().next().unwrap();
+    assert_eq!(*hash, receipt.transaction_hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_block_details_by_hash() {
+async fn ots_get_block_details_by_hash() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
+    let provider = handle.http_provider();
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
-
-    let tx = TransactionRequest::new().to(Address::random()).value(100u64);
-    let receipt = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100));
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     let block_hash = receipt.block_hash.unwrap();
-    let result = api.ots_get_block_details_by_hash(block_hash.to_alloy()).await.unwrap();
+    let result = api.ots_get_block_details_by_hash(block_hash).await.unwrap();
 
     assert_eq!(result.block.transaction_count, 1);
     let hash = match result.block.block.transactions {
@@ -451,25 +365,25 @@ async fn can_call_ots_get_block_details_by_hash() {
         BlockTransactions::Hashes(hashes) => hashes[0],
         BlockTransactions::Uncle => unreachable!(),
     };
-    assert_eq!(hash.to_ethers(), receipt.transaction_hash);
+    assert_eq!(hash, receipt.transaction_hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_block_transactions() {
+async fn ots_get_block_transactions() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
-
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let provider = handle.http_provider();
 
     // disable automine
     api.anvil_set_auto_mine(false).await.unwrap();
 
     let mut hashes = VecDeque::new();
     for i in 0..10 {
-        let tx = TransactionRequest::new().to(Address::random()).value(100u64).nonce(i);
-        let receipt = client.send_transaction(tx, None).await.unwrap();
-        hashes.push_back(receipt.tx_hash());
+        let tx =
+            TransactionRequest::default().to(Address::random()).value(U256::from(100)).nonce(i);
+        let tx = WithOtherFields::new(tx);
+        let pending_receipt =
+            provider.send_transaction(tx).await.unwrap().register().await.unwrap();
+        hashes.push_back(*pending_receipt.tx_hash());
     }
 
     api.mine_one().await;
@@ -485,11 +399,8 @@ async fn can_call_ots_get_block_transactions() {
 
         result.receipts.iter().enumerate().for_each(|(i, receipt)| {
             let expected = hashes.pop_front();
-            assert_eq!(expected, receipt.transaction_hash.map(|h| h.to_ethers()));
-            assert_eq!(
-                expected.map(|h| h.to_alloy()),
-                result.fullblock.block.transactions.hashes().nth(i).copied(),
-            );
+            assert_eq!(expected, Some(receipt.transaction_hash));
+            assert_eq!(expected, result.fullblock.block.transactions.hashes().nth(i).copied());
         });
     }
 
@@ -497,126 +408,125 @@ async fn can_call_ots_get_block_transactions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_search_transactions_before() {
+async fn ots_search_transactions_before() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
-
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let sender = wallet.address();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
 
     let mut hashes = vec![];
 
     for i in 0..7 {
-        let tx = TransactionRequest::new().to(Address::random()).value(100u64).nonce(i);
-        let receipt = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+        let tx =
+            TransactionRequest::default().to(Address::random()).value(U256::from(100)).nonce(i);
+        let tx = WithOtherFields::new(tx);
+        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
         hashes.push(receipt.transaction_hash);
     }
 
     let page_size = 2;
     let mut block = 0;
-    for _ in 0..4 {
-        let result =
-            api.ots_search_transactions_before(sender.to_alloy(), block, page_size).await.unwrap();
+    for i in 0..4 {
+        let result = api.ots_search_transactions_before(sender, block, page_size).await.unwrap();
 
-        assert!(result.txs.len() <= page_size);
+        assert_eq!(result.first_page, i == 0);
+        assert_eq!(result.last_page, i == 3);
 
         // check each individual hash
         result.txs.iter().for_each(|tx| {
-            assert_eq!(hashes.pop(), Some(tx.hash.to_ethers()));
+            assert_eq!(hashes.pop(), Some(tx.hash));
         });
 
-        block = result.txs.last().unwrap().block_number.unwrap().to::<u64>() - 1;
+        block = result.txs.last().unwrap().block_number.unwrap();
     }
 
     assert!(hashes.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_search_transactions_after() {
+async fn ots_search_transactions_after() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
-
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let sender = wallet.address();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
 
     let mut hashes = VecDeque::new();
 
     for i in 0..7 {
-        let tx = TransactionRequest::new().to(Address::random()).value(100u64).nonce(i);
-        let receipt = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+        let tx =
+            TransactionRequest::default().to(Address::random()).value(U256::from(100)).nonce(i);
+        let tx = WithOtherFields::new(tx);
+        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
         hashes.push_front(receipt.transaction_hash);
     }
 
     let page_size = 2;
     let mut block = 0;
-    for _ in 0..4 {
-        let result =
-            api.ots_search_transactions_after(sender.to_alloy(), block, page_size).await.unwrap();
+    for i in 0..4 {
+        let result = api.ots_search_transactions_after(sender, block, page_size).await.unwrap();
 
-        assert!(result.txs.len() <= page_size);
+        assert_eq!(result.first_page, i == 3);
+        assert_eq!(result.last_page, i == 0);
 
         // check each individual hash
-        result.txs.iter().for_each(|tx| {
-            assert_eq!(hashes.pop_back(), Some(tx.hash.to_ethers()));
+        result.txs.iter().rev().for_each(|tx| {
+            assert_eq!(hashes.pop_back(), Some(tx.hash));
         });
 
-        block = result.txs.last().unwrap().block_number.unwrap().to::<u64>() + 1;
+        block = result.txs.first().unwrap().block_number.unwrap();
     }
 
     assert!(hashes.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_transaction_by_sender_and_nonce() {
+async fn ots_get_transaction_by_sender_and_nonce() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
-    api.mine_one().await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let sender = wallet.address();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let tx1 = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(sender)
+            .to(Address::random())
+            .value(U256::from(100))
+            .nonce(0),
+    );
+    let tx2 = WithOtherFields::new(
+        TransactionRequest::default()
+            .from(sender)
+            .to(Address::random())
+            .value(U256::from(100))
+            .nonce(1),
+    );
 
-    let tx1 = TransactionRequest::new().to(Address::random()).value(100u64);
-    let tx2 = TransactionRequest::new().to(Address::random()).value(100u64);
+    let receipt1 = provider.send_transaction(tx1).await.unwrap().get_receipt().await.unwrap();
+    let receipt2 = provider.send_transaction(tx2).await.unwrap().get_receipt().await.unwrap();
 
-    let receipt1 = client.send_transaction(tx1, None).await.unwrap().await.unwrap().unwrap();
-    let receipt2 = client.send_transaction(tx2, None).await.unwrap().await.unwrap().unwrap();
+    let result1 =
+        api.ots_get_transaction_by_sender_and_nonce(sender, U256::from(0)).await.unwrap().unwrap();
+    let result2 =
+        api.ots_get_transaction_by_sender_and_nonce(sender, U256::from(1)).await.unwrap().unwrap();
 
-    let result1 = api
-        .ots_get_transaction_by_sender_and_nonce(sender.to_alloy(), rU256::from(0))
-        .await
-        .unwrap();
-    let result2 = api
-        .ots_get_transaction_by_sender_and_nonce(sender.to_alloy(), rU256::from(1))
-        .await
-        .unwrap();
-
-    assert_eq!(result1.unwrap().hash, receipt1.transaction_hash.to_alloy());
-    assert_eq!(result2.unwrap().hash, receipt2.transaction_hash.to_alloy());
+    assert_eq!(result1, receipt1.transaction_hash);
+    assert_eq!(result2, receipt2.transaction_hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_ots_get_contract_creator() {
+async fn ots_get_contract_creator() {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = ethers_http_provider(&handle.http_endpoint());
-    api.mine_one().await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
 
-    let wallet = handle.dev_wallets().next().unwrap().to_ethers();
-    let sender = wallet.address();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let receipt = MulticallContract::deploy_builder(&provider)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract_address = receipt.contract_address.unwrap();
 
-    let mut deploy_tx = MulticallContract::deploy(Arc::clone(&client), ()).unwrap().deployer.tx;
-    deploy_tx.set_nonce(0);
+    let creator = api.ots_get_contract_creator(contract_address).await.unwrap().unwrap();
 
-    let pending_contract_address = get_contract_address(sender, deploy_tx.nonce().unwrap());
-
-    let receipt = client.send_transaction(deploy_tx, None).await.unwrap().await.unwrap().unwrap();
-
-    let creator =
-        api.ots_get_contract_creator(pending_contract_address.to_alloy()).await.unwrap().unwrap();
-
-    assert_eq!(creator.creator, sender.to_alloy());
-    assert_eq!(creator.hash, receipt.transaction_hash.to_alloy());
+    assert_eq!(creator.creator, sender);
+    assert_eq!(creator.hash, receipt.transaction_hash);
 }

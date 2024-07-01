@@ -1,17 +1,14 @@
-use alloy_dyn_abi::{DynSolValue, JsonAbiExt, ResolveSolType};
+use alloy_chains::Chain;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
-use alloy_primitives::{Address, Bytes};
+use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
+use alloy_primitives::{hex, Address, Bytes};
+use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
+use alloy_serde::WithOtherFields;
+use alloy_signer::Signer;
+use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
-use ethers_contract::ContractError;
-use ethers_core::{
-    abi::InvalidOutputType,
-    types::{
-        transaction::eip2718::TypedTransaction, BlockNumber, Chain, Eip1559TransactionRequest,
-        TransactionReceipt, TransactionRequest,
-    },
-};
-use ethers_middleware::SignerMiddleware;
-use ethers_providers::Middleware;
 use eyre::{Context, Result};
 use forge_verify::RetryArgs;
 use foundry_cli::{
@@ -19,12 +16,10 @@ use foundry_cli::{
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
 use foundry_common::{
-    compile::ProjectCompiler,
+    compile::{self},
     fmt::parse_tokens,
-    provider::ethers::estimate_eip1559_fees,
-    types::{ToAlloy, ToEthers},
 };
-use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalized};
+use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize};
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
 
@@ -91,15 +86,17 @@ impl CreateArgs {
     pub async fn run(mut self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
+
+        let target_path = if let Some(ref mut path) = self.contract.path {
+            canonicalize(project.root().join(path))?
+        } else {
+            project.find_contract_path(&self.contract.name)?
+        };
+
         let mut output =
-            ProjectCompiler::new().quiet_if(self.json || self.opts.silent).compile(&project)?;
+            compile::compile_target(&target_path, &project, self.json || self.opts.silent)?;
 
-        if let Some(ref mut path) = self.contract.path {
-            // paths are absolute in the project's output
-            *path = canonicalized(project.root().join(&path)).to_string_lossy().to_string();
-        }
-
-        let (abi, bin, _) = remove_contract(&mut output, &self.contract)?;
+        let (abi, bin, _) = remove_contract(&mut output, &target_path, &self.contract.name)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
@@ -136,18 +133,20 @@ impl CreateArgs {
         let chain_id = if let Some(chain_id) = self.chain_id() {
             chain_id
         } else {
-            provider.get_chainid().await?.as_u64()
+            provider.get_chain_id().await?
         };
         if self.unlocked {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
-            let provider = provider.with_sender(sender.to_ethers());
-            self.deploy(abi, bin, params, provider, chain_id).await
+            self.deploy(abi, bin, params, provider, chain_id, sender).await
         } else {
             // Deploy with signer
             let signer = self.eth.wallet.signer().await?;
-            let provider = SignerMiddleware::new_with_provider_chain(provider, signer).await?;
-            self.deploy(abi, bin, params, provider, chain_id).await
+            let deployer = signer.address();
+            let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
+                .wallet(EthereumWallet::new(signer))
+                .on_provider(provider);
+            self.deploy(abi, bin, params, provider, chain_id, deployer).await
         }
     }
 
@@ -171,7 +170,7 @@ impl CreateArgs {
         // since we don't know the address yet.
         let mut verify = forge_verify::VerifyArgs {
             address: Default::default(),
-            contract: self.contract.clone(),
+            contract: Some(self.contract.clone()),
             compiler_version: None,
             constructor_args,
             constructor_args_path: None,
@@ -186,7 +185,7 @@ impl CreateArgs {
             skip_is_verified_check: true,
             watch: true,
             retry: self.retry,
-            libraries: vec![],
+            libraries: self.opts.libraries.clone(),
             root: None,
             verifier: self.verifier.clone(),
             via_ir: self.opts.via_ir,
@@ -201,21 +200,22 @@ impl CreateArgs {
         verify.etherscan.key =
             config.get_etherscan_config_with_chain(Some(chain.into()))?.map(|c| c.key);
 
-        verify.verification_provider()?.preflight_check(verify).await?;
+        let context = verify.resolve_context().await?;
+
+        verify.verification_provider()?.preflight_check(verify, context).await?;
         Ok(())
     }
 
     /// Deploys the contract
-    async fn deploy<M: Middleware + 'static>(
+    async fn deploy<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
         self,
         abi: JsonAbi,
         bin: BytecodeObject,
         args: Vec<DynSolValue>,
-        provider: M,
+        provider: P,
         chain: u64,
+        deployer_address: Address,
     ) -> Result<()> {
-        let deployer_address =
-            provider.default_sender().expect("no sender address set for provider");
         let bin = bin.into_bytes().unwrap_or_else(|| {
             panic!("no bytecode found in bin object for {}", self.contract.name)
         });
@@ -223,7 +223,7 @@ impl CreateArgs {
         let factory = ContractFactory::new(abi.clone(), bin.clone(), provider.clone());
 
         let is_args_empty = args.is_empty();
-        let deployer =
+        let mut deployer =
             factory.deploy_tokens(args.clone()).context("failed to deploy contract").map_err(|e| {
                 if is_args_empty {
                     e.wrap_err("no arguments provided for contract constructor; consider --constructor-args or --constructor-args-path")
@@ -231,57 +231,53 @@ impl CreateArgs {
                     e
                 }
             })?;
-        let is_legacy = self.tx.legacy ||
-            Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
-        let mut deployer = if is_legacy { deployer.legacy() } else { deployer };
+        let is_legacy = self.tx.legacy || Chain::from(chain).is_legacy();
+
+        deployer.tx.set_from(deployer_address);
+        deployer.tx.set_chain_id(chain);
+        // `to` field must be set explicitly, cannot be None.
+        if deployer.tx.to.is_none() {
+            deployer.tx.set_create();
+        }
+        deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
+            Ok(nonce.to())
+        } else {
+            provider.get_transaction_count(deployer_address).await
+        }?);
 
         // set tx value if specified
         if let Some(value) = self.tx.value {
-            deployer.tx.set_value(value.to_ethers());
+            deployer.tx.set_value(value);
         }
 
-        // fill tx first because if you target a lower gas than current base, eth_estimateGas
-        // will fail and create will fail
-        provider.fill_transaction(&mut deployer.tx, None).await?;
+        deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
+            Ok(gas_limit.to())
+        } else {
+            provider.estimate_gas(&deployer.tx).await
+        }?);
 
-        // the max
-        let mut priority_fee = self.tx.priority_gas_price;
-
-        // set gas price if specified
-        if let Some(gas_price) = self.tx.gas_price {
-            deployer.tx.set_gas_price(gas_price.to_ethers());
-        } else if !is_legacy {
-            // estimate EIP1559 fees
-            let (max_fee, max_priority_fee) = estimate_eip1559_fees(&provider, Some(chain))
-                .await
-                .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
-            deployer.tx.set_gas_price(max_fee);
-            if priority_fee.is_none() {
-                priority_fee = Some(max_priority_fee.to_alloy());
-            }
-        }
-
-        // set gas limit if specified
-        if let Some(gas_limit) = self.tx.gas_limit {
-            deployer.tx.set_gas(gas_limit.to_ethers());
-        }
-
-        // set nonce if specified
-        if let Some(nonce) = self.tx.nonce {
-            deployer.tx.set_nonce(nonce.to_ethers());
-        }
-
-        // set priority fee if specified
-        if let Some(priority_fee) = priority_fee {
-            if is_legacy {
-                eyre::bail!("there is no priority fee for legacy txs");
-            }
-            deployer.tx = match deployer.tx {
-                TypedTransaction::Eip1559(eip1559_tx_request) => TypedTransaction::Eip1559(
-                    eip1559_tx_request.max_priority_fee_per_gas(priority_fee.to_ethers()),
-                ),
-                _ => deployer.tx,
+        if is_legacy {
+            let gas_price = if let Some(gas_price) = self.tx.gas_price {
+                gas_price.to()
+            } else {
+                provider.get_gas_price().await?
             };
+            deployer.tx.set_gas_price(gas_price);
+        } else {
+            let estimate = provider.estimate_eip1559_fees(None).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+            let priority_fee = if let Some(priority_fee) = self.tx.priority_gas_price {
+                priority_fee.to()
+            } else {
+                estimate.max_priority_fee_per_gas
+            };
+            let max_fee = if let Some(max_fee) = self.tx.gas_price {
+                max_fee.to()
+            } else {
+                estimate.max_fee_per_gas
+            };
+
+            deployer.tx.set_max_fee_per_gas(max_fee);
+            deployer.tx.set_max_priority_fee_per_gas(priority_fee);
         }
 
         // Before we actually deploy the contract we try check if the verify settings are valid
@@ -304,13 +300,13 @@ impl CreateArgs {
         let address = deployed_contract;
         if self.json {
             let output = json!({
-                "deployer": deployer_address.to_alloy().to_string(),
+                "deployer": deployer_address.to_string(),
                 "deployedTo": address.to_string(),
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
-            println!("Deployer: {}", deployer_address.to_alloy());
+            println!("Deployer: {deployer_address}");
             println!("Deployed to: {address}");
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
@@ -325,7 +321,7 @@ impl CreateArgs {
             if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
         let verify = forge_verify::VerifyArgs {
             address,
-            contract: self.contract,
+            contract: Some(self.contract),
             compiler_version: None,
             constructor_args,
             constructor_args_path: None,
@@ -337,7 +333,7 @@ impl CreateArgs {
             skip_is_verified_check: false,
             watch: true,
             retry: self.retry,
-            libraries: vec![],
+            libraries: self.opts.libraries.clone(),
             root: None,
             verifier: self.verifier,
             via_ir: self.opts.via_ir,
@@ -367,7 +363,7 @@ impl CreateArgs {
             params.push((ty, arg));
         }
         let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
-        parse_tokens(params)
+        parse_tokens(params).map_err(Into::into)
     }
 }
 
@@ -376,7 +372,7 @@ impl CreateArgs {
 /// compatibility with less-abstract Contracts.
 ///
 /// For full usage docs, see [`DeploymentTxFactory`].
-pub type ContractFactory<M> = DeploymentTxFactory<Arc<M>, M>;
+pub type ContractFactory<P, T> = DeploymentTxFactory<Arc<P>, P, T>;
 
 /// Helper which manages the deployment transaction of a smart contract. It
 /// wraps a deployment transaction, and retrieves the contract address output
@@ -385,26 +381,26 @@ pub type ContractFactory<M> = DeploymentTxFactory<Arc<M>, M>;
 /// Currently, we recommend using the [`ContractDeployer`] type alias.
 #[derive(Debug)]
 #[must_use = "ContractDeploymentTx does nothing unless you `send` it"]
-pub struct ContractDeploymentTx<B, M, C> {
+pub struct ContractDeploymentTx<B, P, T, C> {
     /// the actual deployer, exposed for overriding the defaults
-    pub deployer: Deployer<B, M>,
+    pub deployer: Deployer<B, P, T>,
     /// marker for the `Contract` type to create afterwards
     ///
     /// this type will be used to construct it via `From::from(Contract)`
     _contract: PhantomData<C>,
 }
 
-impl<B, M, C> Clone for ContractDeploymentTx<B, M, C>
+impl<B, P, T, C> Clone for ContractDeploymentTx<B, P, T, C>
 where
     B: Clone,
 {
     fn clone(&self) -> Self {
-        ContractDeploymentTx { deployer: self.deployer.clone(), _contract: self._contract }
+        Self { deployer: self.deployer.clone(), _contract: self._contract }
     }
 }
 
-impl<B, M, C> From<Deployer<B, M>> for ContractDeploymentTx<B, M, C> {
-    fn from(deployer: Deployer<B, M>) -> Self {
+impl<B, P, T, C> From<Deployer<B, P, T>> for ContractDeploymentTx<B, P, T, C> {
+    fn from(deployer: Deployer<B, P, T>) -> Self {
         Self { deployer, _contract: PhantomData }
     }
 }
@@ -412,73 +408,58 @@ impl<B, M, C> From<Deployer<B, M>> for ContractDeploymentTx<B, M, C> {
 /// Helper which manages the deployment transaction of a smart contract
 #[derive(Debug)]
 #[must_use = "Deployer does nothing unless you `send` it"]
-pub struct Deployer<B, M> {
+pub struct Deployer<B, P, T> {
     /// The deployer's transaction, exposed for overriding the defaults
-    pub tx: TypedTransaction,
+    pub tx: WithOtherFields<TransactionRequest>,
     abi: JsonAbi,
     client: B,
     confs: usize,
-    block: BlockNumber,
-    _m: PhantomData<M>,
+    _p: PhantomData<P>,
+    _t: PhantomData<T>,
 }
 
-impl<B, M> Clone for Deployer<B, M>
+impl<B, P, T> Clone for Deployer<B, P, T>
 where
     B: Clone,
 {
     fn clone(&self) -> Self {
-        Deployer {
+        Self {
             tx: self.tx.clone(),
             abi: self.abi.clone(),
             client: self.client.clone(),
             confs: self.confs,
-            block: self.block,
-            _m: PhantomData,
+            _p: PhantomData,
+            _t: PhantomData,
         }
     }
 }
 
-impl<B, M> Deployer<B, M>
+impl<B, P, T> Deployer<B, P, T>
 where
-    B: Borrow<M> + Clone,
-    M: Middleware,
+    B: Borrow<P> + Clone,
+    P: Provider<T, AnyNetwork>,
+    T: Transport + Clone,
 {
-    /// Uses a Legacy transaction instead of an EIP-1559 one to do the deployment
-    pub fn legacy(mut self) -> Self {
-        self.tx = match self.tx {
-            TypedTransaction::Eip1559(inner) => {
-                let tx: TransactionRequest = inner.into();
-                TypedTransaction::Legacy(tx)
-            }
-            other => other,
-        };
-        self
-    }
-
     /// Broadcasts the contract deployment transaction and after waiting for it to
     /// be sufficiently confirmed (default: 1), it returns a tuple with
     /// the [`Contract`](crate::Contract) struct at the deployed contract's address
-    /// and the corresponding [`TransactionReceipt`].
+    /// and the corresponding [`AnyReceipt`].
     pub async fn send_with_receipt(
         self,
-    ) -> Result<(Address, TransactionReceipt), ContractError<M>> {
-        let pending_tx = self
+    ) -> Result<(Address, AnyTransactionReceipt), ContractDeploymentError> {
+        let receipt = self
             .client
             .borrow()
-            .send_transaction(self.tx, Some(self.block.into()))
-            .await
-            .map_err(ContractError::from_middleware_error)?;
+            .send_transaction(self.tx)
+            .await?
+            .with_required_confirmations(self.confs as u64)
+            .get_receipt()
+            .await?;
 
-        // TODO: Should this be calculated "optimistically" by address/nonce?
-        let receipt = pending_tx
-            .confirmations(self.confs)
-            .await
-            .ok()
-            .flatten()
-            .ok_or(ContractError::ContractNotDeployed)?;
-        let address = receipt.contract_address.ok_or(ContractError::ContractNotDeployed)?;
+        let address =
+            receipt.contract_address.ok_or(ContractDeploymentError::ContractNotDeployed)?;
 
-        Ok((address.to_alloy(), receipt))
+        Ok((address, receipt))
     }
 }
 
@@ -519,55 +500,59 @@ where
 /// # Ok(())
 /// # }
 #[derive(Debug)]
-pub struct DeploymentTxFactory<B, M> {
+pub struct DeploymentTxFactory<B, P, T> {
     client: B,
     abi: JsonAbi,
     bytecode: Bytes,
-    _m: PhantomData<M>,
+    _p: PhantomData<P>,
+    _t: PhantomData<T>,
 }
 
-impl<B, M> Clone for DeploymentTxFactory<B, M>
+impl<B, P, T> Clone for DeploymentTxFactory<B, P, T>
 where
     B: Clone,
 {
     fn clone(&self) -> Self {
-        DeploymentTxFactory {
+        Self {
             client: self.client.clone(),
             abi: self.abi.clone(),
             bytecode: self.bytecode.clone(),
-            _m: PhantomData,
+            _p: PhantomData,
+            _t: PhantomData,
         }
     }
 }
 
-impl<B, M> DeploymentTxFactory<B, M>
+impl<P, T, B> DeploymentTxFactory<B, P, T>
 where
-    B: Borrow<M> + Clone,
-    M: Middleware,
+    B: Borrow<P> + Clone,
+    P: Provider<T, AnyNetwork>,
+    T: Transport + Clone,
 {
     /// Creates a factory for deployment of the Contract with bytecode, and the
     /// constructor defined in the abi. The client will be used to send any deployment
     /// transaction.
     pub fn new(abi: JsonAbi, bytecode: Bytes, client: B) -> Self {
-        Self { client, abi, bytecode, _m: PhantomData }
+        Self { client, abi, bytecode, _p: PhantomData, _t: PhantomData }
     }
 
     /// Create a deployment tx using the provided tokens as constructor
     /// arguments
-    pub fn deploy_tokens(self, params: Vec<DynSolValue>) -> Result<Deployer<B, M>, ContractError<M>>
+    pub fn deploy_tokens(
+        self,
+        params: Vec<DynSolValue>,
+    ) -> Result<Deployer<B, P, T>, ContractDeploymentError>
     where
         B: Clone,
     {
         // Encode the constructor args & concatenate with the bytecode if necessary
         let data: Bytes = match (self.abi.constructor(), params.is_empty()) {
-            (None, false) => return Err(ContractError::ConstructorError),
+            (None, false) => return Err(ContractDeploymentError::ConstructorError),
             (None, true) => self.bytecode.clone(),
             (Some(constructor), _) => {
                 let input: Bytes = constructor
                     .abi_encode_input(&params)
-                    .map_err(|f| {
-                        ContractError::DetokenizationError(InvalidOutputType(f.to_string()))
-                    })?
+                    .map_err(ContractDeploymentError::DetokenizationError)?
                     .into();
                 // Concatenate the bytecode and abi-encoded constructor call.
                 self.bytecode.iter().copied().chain(input).collect()
@@ -575,25 +560,30 @@ where
         };
 
         // create the tx object. Since we're deploying a contract, `to` is `None`
-        // We default to EIP1559 transactions, but the sender can convert it back
-        // to a legacy one.
-        let tx = Eip1559TransactionRequest {
-            to: None,
-            data: Some(data.to_ethers()),
-            ..Default::default()
-        };
-
-        let tx = tx.into();
+        let tx = WithOtherFields::new(TransactionRequest::default().input(data.into()));
 
         Ok(Deployer {
             client: self.client.clone(),
             abi: self.abi,
             tx,
             confs: 1,
-            block: BlockNumber::Latest,
-            _m: PhantomData,
+            _p: PhantomData,
+            _t: PhantomData,
         })
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+/// An Error which is thrown when interacting with a smart contract
+pub enum ContractDeploymentError {
+    #[error("constructor is not defined in the ABI")]
+    ConstructorError,
+    #[error(transparent)]
+    DetokenizationError(#[from] alloy_dyn_abi::Error),
+    #[error("contract was not deployed")]
+    ContractNotDeployed,
+    #[error(transparent)]
+    RpcError(#[from] TransportError),
 }
 
 #[cfg(test)]

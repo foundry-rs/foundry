@@ -1,3 +1,4 @@
+use alloy_primitives::hex;
 use clap::Parser;
 use comfy_table::Table;
 use eyre::Result;
@@ -6,7 +7,7 @@ use foundry_cli::{
     utils::FoundryPathExt,
 };
 use foundry_common::{
-    compile::ProjectCompiler,
+    compile::{compile_target, ProjectCompiler},
     selectors::{import_selectors, SelectorImportData},
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
@@ -60,7 +61,7 @@ pub enum SelectorsSubcommands {
 impl SelectorsSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            SelectorsSubcommands::Upload { contract, all, project_paths } => {
+            Self::Upload { contract, all, project_paths } => {
                 let build_args = CoreBuildArgs {
                     project_paths: project_paths.clone(),
                     compiler: CompilerArgs {
@@ -71,13 +72,17 @@ impl SelectorsSubcommands {
                 };
 
                 let project = build_args.project()?;
-                let output = ProjectCompiler::new().quiet(true).compile(&project)?;
+                let output = if let Some(name) = &contract {
+                    let target_path = project.find_contract_path(name)?;
+                    compile_target(&target_path, &project, false)?
+                } else {
+                    ProjectCompiler::new().compile(&project)?
+                };
                 let artifacts = if all {
                     output
                         .into_artifacts_with_files()
                         .filter(|(file, _, _)| {
-                            let is_sources_path = file
-                                .starts_with(&project.paths.sources.to_string_lossy().to_string());
+                            let is_sources_path = file.starts_with(&project.paths.sources);
                             let is_test = file.is_sol_test();
 
                             is_sources_path && !is_test
@@ -114,7 +119,7 @@ impl SelectorsSubcommands {
                     }
                 }
             }
-            SelectorsSubcommands::Collision { mut first_contract, mut second_contract, build } => {
+            Self::Collision { mut first_contract, mut second_contract, build } => {
                 // Compile the project with the two contracts included
                 let project = build.project()?;
                 let mut compiler = ProjectCompiler::new().quiet(true);
@@ -170,10 +175,10 @@ impl SelectorsSubcommands {
                     println!("{table}");
                 }
             }
-            SelectorsSubcommands::List { contract, project_paths } => {
+            Self::List { contract, project_paths } => {
                 println!("Listing selectors for contracts in the project...");
                 let build_args = CoreBuildArgs {
-                    project_paths: project_paths.clone(),
+                    project_paths,
                     compiler: CompilerArgs {
                         extra_output: vec![ContractOutputSelection::Abi],
                         ..Default::default()
@@ -195,7 +200,7 @@ impl SelectorsSubcommands {
                             let suggestion = if let Some(suggestion) = foundry_cli::utils::did_you_mean(&contract, candidates).pop() {
                                 format!("\nDid you mean `{suggestion}`?")
                             } else {
-                                "".to_string()
+                                String::new()
                             };
                             eyre::eyre!(
                                 "Could not find artifact `{contract}` in the compiled artifacts{suggestion}",
@@ -207,8 +212,7 @@ impl SelectorsSubcommands {
                     outcome
                         .into_artifacts_with_files()
                         .filter(|(file, _, _)| {
-                            let is_sources_path = file
-                                .starts_with(&project.paths.sources.to_string_lossy().to_string());
+                            let is_sources_path = file.starts_with(&project.paths.sources);
                             let is_test = file.is_sol_test();
 
                             is_sources_path && !is_test

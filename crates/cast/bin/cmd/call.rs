@@ -1,22 +1,18 @@
-use alloy_primitives::U256;
-use cast::{Cast, TxBuilder};
+use crate::tx::CastTxBuilder;
+use alloy_primitives::{TxKind, U256};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use cast::{traces::TraceKind, Cast};
 use clap::Parser;
-use ethers_core::types::{BlockId, NameOrAddress};
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::{
-    runtime_client::RuntimeClient,
-    types::{ToAlloy, ToEthers},
-};
-use foundry_compilers::EvmVersion;
+use foundry_common::ens::NameOrAddress;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
 use std::str::FromStr;
-
-type Provider = ethers_providers::Provider<RuntimeClient>;
 
 /// CLI arguments for `cast call`.
 #[derive(Debug, Parser)]
@@ -99,12 +95,11 @@ pub enum CallSubcommands {
 
 impl CallArgs {
     pub async fn run(self) -> Result<()> {
-        let CallArgs {
+        let Self {
             to,
-            sig,
-            args,
-            data,
-            tx,
+            mut sig,
+            mut args,
+            mut tx,
             eth,
             command,
             block,
@@ -112,140 +107,89 @@ impl CallArgs {
             evm_version,
             debug,
             labels,
+            data,
         } = self;
 
-        let config = Config::from(&eth);
+        if let Some(data) = data {
+            sig = Some(data);
+        }
+
+        let mut config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
-        let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        let mut builder: TxBuilder<'_, Provider> =
-            TxBuilder::new(&provider, sender.to_ethers(), to, chain, tx.legacy).await?;
-
-        builder
-            .gas(tx.gas_limit)
-            .etherscan_api_key(config.get_etherscan_api_key(Some(chain)))
-            .gas_price(tx.gas_price)
-            .priority_gas_price(tx.priority_gas_price)
-            .nonce(tx.nonce);
-
-        match command {
-            Some(CallSubcommands::Create { code, sig, args, value }) => {
-                if trace {
-                    let figment = Config::figment_with_root(find_project_root_path(None).unwrap())
-                        .merge(eth.rpc);
-
-                    let evm_opts = figment.extract::<EvmOpts>()?;
-
-                    let (env, fork, chain) =
-                        TracingExecutor::get_fork_material(&config, evm_opts).await?;
-
-                    let mut executor = TracingExecutor::new(env, fork, evm_version, debug);
-
-                    let trace = match executor.deploy(
-                        sender,
-                        code.into_bytes().into(),
-                        value.unwrap_or(U256::ZERO),
-                        None,
-                    ) {
-                        Ok(deploy_result) => TraceResult::from(deploy_result),
-                        Err(evm_err) => TraceResult::try_from(evm_err)?,
-                    };
-
-                    handle_traces(trace, &config, chain, labels, debug).await?;
-
-                    return Ok(());
-                }
-
-                // fill the builder after the conditional so we dont move values
-                fill_create(&mut builder, value, code, sig, args).await?;
-            }
-            _ => {
-                // fill first here because we need to use the builder in the conditional
-                fill_tx(&mut builder, tx.value, sig, args, data).await?;
-
-                if trace {
-                    let figment = Config::figment_with_root(find_project_root_path(None).unwrap())
-                        .merge(eth.rpc);
-
-                    let evm_opts = figment.extract::<EvmOpts>()?;
-
-                    let (env, fork, chain) =
-                        TracingExecutor::get_fork_material(&config, evm_opts).await?;
-
-                    let mut executor = TracingExecutor::new(env, fork, evm_version, debug);
-
-                    let (tx, _) = builder.build();
-
-                    let trace = TraceResult::from(executor.call_raw_committing(
-                        sender,
-                        tx.to_addr().copied().expect("an address to be here").to_alloy(),
-                        tx.data().cloned().unwrap_or_default().to_vec().into(),
-                        tx.value().copied().unwrap_or_default().to_alloy(),
-                    )?);
-
-                    handle_traces(trace, &config, chain, labels, debug).await?;
-
-                    return Ok(());
-                }
-            }
+        let tx_kind = if let Some(to) = to {
+            TxKind::Call(to.resolve(&provider).await?)
+        } else {
+            TxKind::Create
         };
 
-        let builder_output = builder.build();
-        println!("{}", Cast::new(provider).call(builder_output, block).await?);
+        let code = if let Some(CallSubcommands::Create {
+            code,
+            sig: create_sig,
+            args: create_args,
+            value,
+        }) = command
+        {
+            sig = create_sig;
+            args = create_args;
+            if let Some(value) = value {
+                tx.value = Some(value);
+            }
+            Some(code)
+        } else {
+            None
+        };
+
+        let (tx, func) = CastTxBuilder::new(&provider, tx, &config)
+            .await?
+            .with_tx_kind(tx_kind)
+            .with_code_sig_and_args(code, sig, args)
+            .await?
+            .build_raw(sender)
+            .await?;
+
+        if trace {
+            let figment =
+                Config::figment_with_root(find_project_root_path(None).unwrap()).merge(eth.rpc);
+            let evm_opts = figment.extract::<EvmOpts>()?;
+            if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
+                // Override Config `fork_block_number` (if set) with CLI value.
+                config.fork_block_number = Some(block_number);
+            }
+
+            let (env, fork, chain) = TracingExecutor::get_fork_material(&config, evm_opts).await?;
+            let mut executor = TracingExecutor::new(env, fork, evm_version, debug);
+
+            let value = tx.value.unwrap_or_default();
+            let input = tx.inner.input.into_input().unwrap_or_default();
+
+            let trace = match tx_kind {
+                TxKind::Create => {
+                    let deploy_result = executor.deploy(sender, input, value, None);
+                    TraceResult::try_from(deploy_result)?
+                }
+                TxKind::Call(to) => TraceResult::from_raw(
+                    executor.transact_raw(sender, to, input, value)?,
+                    TraceKind::Execution,
+                ),
+            };
+
+            handle_traces(trace, &config, chain, labels, debug).await?;
+
+            return Ok(());
+        }
+
+        println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block).await?);
 
         Ok(())
     }
 }
 
-/// fills the builder from create arg
-async fn fill_create(
-    builder: &mut TxBuilder<'_, Provider>,
-    value: Option<U256>,
-    code: String,
-    sig: Option<String>,
-    args: Vec<String>,
-) -> Result<()> {
-    builder.value(value);
-
-    let mut data = hex::decode(code)?;
-
-    if let Some(s) = sig {
-        let (mut sigdata, _func) = builder.create_args(&s, args).await?;
-        data.append(&mut sigdata);
-    }
-
-    builder.set_data(data);
-
-    Ok(())
-}
-
-/// fills the builder from args
-async fn fill_tx(
-    builder: &mut TxBuilder<'_, Provider>,
-    value: Option<U256>,
-    sig: Option<String>,
-    args: Vec<String>,
-    data: Option<String>,
-) -> Result<()> {
-    builder.value(value);
-
-    if let Some(sig) = sig {
-        builder.set_args(sig.as_str(), args).await?;
-    }
-
-    if let Some(data) = data {
-        // Note: `sig+args` and `data` are mutually exclusive
-        builder.set_data(hex::decode(data).wrap_err("Expected hex encoded function data")?);
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Address;
+    use alloy_primitives::{hex, Address};
 
     #[test]
     fn can_parse_call_data() {

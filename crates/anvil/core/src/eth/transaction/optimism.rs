@@ -1,9 +1,9 @@
-use alloy_consensus::TxType;
-use alloy_network::{Transaction, TxKind};
-use alloy_primitives::{Address, Bytes, ChainId, Signature, B256, U256};
+use alloy_consensus::{SignableTransaction, Signed, Transaction, TxType};
+use alloy_primitives::{keccak256, Address, Bytes, ChainId, Signature, TxKind, B256, U256};
 use alloy_rlp::{
     length_of_length, Decodable, Encodable, Error as DecodeError, Header as RlpHeader,
 };
+use serde::{Deserialize, Serialize};
 use std::mem;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,7 +13,7 @@ pub struct DepositTransactionRequest {
     pub kind: TxKind,
     pub mint: U256,
     pub value: U256,
-    pub gas_limit: U256,
+    pub gas_limit: u128,
     pub is_system_tx: bool,
     pub input: Bytes,
 }
@@ -108,7 +108,6 @@ impl DepositTransactionRequest {
     }
 
     /// Calculates a heuristic for the in-memory size of the [DepositTransaction] transaction.
-    #[inline]
     pub fn size(&self) -> usize {
         mem::size_of::<B256>() + // source_hash
         mem::size_of::<Address>() + // from
@@ -134,108 +133,74 @@ impl DepositTransactionRequest {
         1 + length_of_length(payload_length) + payload_length
     }
 
-    /// Outputs the signature hash of the transaction by first encoding without a signature, then
-    /// hashing.
-    pub(crate) fn signature_hash(&self) -> B256 {
-        let mut buf = Vec::with_capacity(self.payload_len_for_signature());
-        self.encode_for_signing(&mut buf);
-        alloy_primitives::utils::keccak256(&buf)
+    fn encoded_len_with_signature(&self, signature: &Signature) -> usize {
+        // this counts the tx fields and signature fields
+        let payload_length = self.fields_len() + signature.rlp_vrs_len();
+
+        // this counts:
+        // * tx type byte
+        // * inner header length
+        // * inner payload length
+        1 + alloy_rlp::Header { list: true, payload_length }.length() + payload_length
     }
 }
 
 impl Transaction for DepositTransactionRequest {
-    type Signature = Signature;
-
-    fn chain_id(&self) -> Option<ChainId> {
-        None
-    }
-
-    fn gas_limit(&self) -> u64 {
-        self.gas_limit.to::<u64>()
-    }
-
-    fn nonce(&self) -> u64 {
-        u64::MAX
-    }
-
-    fn decode_signed(buf: &mut &[u8]) -> alloy_rlp::Result<alloy_network::Signed<Self>>
-    where
-        Self: Sized,
-    {
-        let header = alloy_rlp::Header::decode(buf)?;
-        if !header.list {
-            return Err(alloy_rlp::Error::UnexpectedString);
-        }
-
-        let tx = Self::decode_inner(buf)?;
-        let signature = Signature::decode_rlp_vrs(buf)?;
-
-        Ok(tx.into_signed(signature))
-    }
-
-    fn encode_signed(&self, signature: &Signature, out: &mut dyn bytes::BufMut) {
-        self.encode_with_signature(signature, out)
-    }
-
-    fn gas_price(&self) -> Option<U256> {
-        None
-    }
-
     fn input(&self) -> &[u8] {
         &self.input
     }
 
-    fn input_mut(&mut self) -> &mut Bytes {
-        &mut self.input
-    }
-
-    fn into_signed(self, signature: Signature) -> alloy_network::Signed<Self, Self::Signature>
-    where
-        Self: Sized,
-    {
-        alloy_network::Signed::new_unchecked(self.clone(), signature, self.signature_hash())
-    }
-
-    fn set_chain_id(&mut self, _chain_id: ChainId) {}
-
-    fn set_gas_limit(&mut self, limit: u64) {
-        self.gas_limit = U256::from(limit);
-    }
-
-    fn set_gas_price(&mut self, _price: U256) {}
-
-    fn set_input(&mut self, data: Bytes) {
-        self.input = data;
-    }
-
-    fn set_nonce(&mut self, _nonce: u64) {}
-
-    fn set_to(&mut self, to: TxKind) {
-        self.kind = to;
-    }
-
-    fn set_value(&mut self, value: U256) {
-        self.value = value;
-    }
-
-    fn signature_hash(&self) -> B256 {
-        self.signature_hash()
-    }
-
+    /// Get `to`.
     fn to(&self) -> TxKind {
         self.kind
     }
 
+    /// Get `value`.
     fn value(&self) -> U256 {
         self.value
     }
 
-    fn encode_for_signing(&self, out: &mut dyn alloy_rlp::BufMut) {
-        self.encode_for_signing(out)
+    /// Get `chain_id`.
+    fn chain_id(&self) -> Option<ChainId> {
+        None
     }
+
+    /// Get `nonce`.
+    fn nonce(&self) -> u64 {
+        u64::MAX
+    }
+
+    /// Get `gas_limit`.
+    fn gas_limit(&self) -> u128 {
+        self.gas_limit
+    }
+
+    /// Get `gas_price`.
+    fn gas_price(&self) -> Option<u128> {
+        None
+    }
+}
+
+impl SignableTransaction<Signature> for DepositTransactionRequest {
+    fn set_chain_id(&mut self, _chain_id: ChainId) {}
 
     fn payload_len_for_signature(&self) -> usize {
         self.payload_len_for_signature()
+    }
+
+    fn into_signed(self, signature: Signature) -> Signed<Self> {
+        let mut buf = Vec::with_capacity(self.encoded_len_with_signature(&signature));
+        self.encode_with_signature(&signature, &mut buf);
+        let hash = keccak256(&buf);
+
+        // Drop any v chain id value to ensure the signature format is correct at the time of
+        // combination for an EIP-4844 transaction. V should indicate the y-parity of the
+        // signature.
+        Signed::new_unchecked(self, signature.with_parity_bool(), hash)
+    }
+
+    fn encode_for_signing(&self, out: &mut dyn alloy_rlp::BufMut) {
+        self.encode_for_signing(out);
     }
 }
 
@@ -263,21 +228,21 @@ impl Encodable for DepositTransactionRequest {
 
 /// An op-stack deposit transaction.
 /// See <https://github.com/ethereum-optimism/optimism/blob/develop/specs/deposits.md#the-deposited-transaction-type>
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DepositTransaction {
-    pub nonce: U256,
+    pub nonce: u64,
     pub source_hash: B256,
     pub from: Address,
     pub kind: TxKind,
     pub mint: U256,
     pub value: U256,
-    pub gas_limit: U256,
+    pub gas_limit: u128,
     pub is_system_tx: bool,
     pub input: Bytes,
 }
 
 impl DepositTransaction {
-    pub fn nonce(&self) -> &U256 {
+    pub fn nonce(&self) -> &u64 {
         &self.nonce
     }
 
@@ -321,7 +286,7 @@ impl DepositTransaction {
         len
     }
 
-    /// Decodes the inner [TxDeposit] fields from RLP bytes.
+    /// Decodes the inner fields from RLP bytes
     ///
     /// NOTE: This assumes a RLP header has already been decoded, and _just_ decodes the following
     /// RLP fields in the following order:
@@ -336,7 +301,7 @@ impl DepositTransaction {
     /// - `input`
     pub fn decode_inner(buf: &mut &[u8]) -> Result<Self, DecodeError> {
         Ok(Self {
-            nonce: U256::ZERO,
+            nonce: 0,
             source_hash: Decodable::decode(buf)?,
             from: Decodable::decode(buf)?,
             kind: Decodable::decode(buf)?,

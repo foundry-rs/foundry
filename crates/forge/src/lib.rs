@@ -1,3 +1,6 @@
+#![doc = include_str!("../README.md")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+
 #[macro_use]
 extern crate tracing;
 
@@ -15,12 +18,13 @@ pub mod coverage;
 
 pub mod gas_report;
 
-mod multi_runner;
+pub mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
 mod runner;
 pub use runner::ContractRunner;
 
+mod progress;
 pub mod result;
 
 // TODO: remove
@@ -91,10 +95,7 @@ impl TestOptions {
     /// - `contract_id` is the id of the test contract, expressed as a relative path from the
     ///   project root.
     /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn fuzz_runner<S>(&self, contract_id: S, test_fn: S) -> TestRunner
-    where
-        S: Into<String>,
-    {
+    pub fn fuzz_runner(&self, contract_id: &str, test_fn: &str) -> TestRunner {
         let fuzz_config = self.fuzz_config(contract_id, test_fn).clone();
         let failure_persist_path = fuzz_config
             .failure_persist_dir
@@ -116,10 +117,7 @@ impl TestOptions {
     /// - `contract_id` is the id of the test contract, expressed as a relative path from the
     ///   project root.
     /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn invariant_runner<S>(&self, contract_id: S, test_fn: S) -> TestRunner
-    where
-        S: Into<String>,
-    {
+    pub fn invariant_runner(&self, contract_id: &str, test_fn: &str) -> TestRunner {
         let invariant = self.invariant_config(contract_id, test_fn);
         self.fuzzer_with_cases(invariant.runs, None)
     }
@@ -131,10 +129,7 @@ impl TestOptions {
     /// - `contract_id` is the id of the test contract, expressed as a relative path from the
     ///   project root.
     /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn fuzz_config<S>(&self, contract_id: S, test_fn: S) -> &FuzzConfig
-    where
-        S: Into<String>,
-    {
+    pub fn fuzz_config(&self, contract_id: &str, test_fn: &str) -> &FuzzConfig {
         self.inline_fuzz.get(contract_id, test_fn).unwrap_or(&self.fuzz)
     }
 
@@ -145,10 +140,7 @@ impl TestOptions {
     /// - `contract_id` is the id of the test contract, expressed as a relative path from the
     ///   project root.
     /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn invariant_config<S>(&self, contract_id: S, test_fn: S) -> &InvariantConfig
-    where
-        S: Into<String>,
-    {
+    pub fn invariant_config(&self, contract_id: &str, test_fn: &str) -> &InvariantConfig {
         self.inline_invariant.get(contract_id, test_fn).unwrap_or(&self.invariant)
     }
 
@@ -161,6 +153,9 @@ impl TestOptions {
             failure_persistence: file_failure_persistence,
             cases,
             max_global_rejects: self.fuzz.max_test_rejects,
+            // Disable proptest shrink: for fuzz tests we provide single counterexample,
+            // for invariant tests we shrink outside proptest.
+            max_shrink_iters: 0,
             ..Default::default()
         };
 

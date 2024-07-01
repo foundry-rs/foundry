@@ -9,34 +9,48 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
-alloy-primitives.workspace = true
-
-ethers-core.workspace = true
-ethers-providers.workspace = true
-ethers-signers = { workspace = true, features = ["aws", "ledger", "trezor"] }
-
-rusoto_core = { version = "0.48", default-features = false }
-rusoto_kms = { version = "0.48", default-features = false }
-
 foundry-config.workspace = true
-foundry-common.workspace = true
 
-async-trait = "0.1"
+alloy-primitives.workspace = true
+alloy-signer = { workspace = true, features = ["eip712"] }
+alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
+alloy-signer-ledger = { workspace = true, features = ["eip712"] }
+alloy-signer-trezor.workspace = true
+alloy-network.workspace = true
+alloy-consensus.workspace = true
+alloy-sol-types.workspace = true
+alloy-dyn-abi.workspace = true
+
+# aws-kms
+alloy-signer-aws = { workspace = true, features = ["eip712"], optional = true }
+aws-config = { version = "1", optional = true } # default-features are necessary
+aws-sdk-kms = { version = "1", default-features = false, optional = true }
+
+# gcp-kms
+alloy-signer-gcp = { workspace = true, features = ["eip712"], optional = true }
+gcloud-sdk = { version = "0.24", features = [
+  "google-cloud-kms-v1",
+  "google-longrunning",
+], optional = true }
+
+async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 derive_builder = "0.20.0"
 eyre.workspace = true
-hex = { workspace = true, features = ["serde"] }
-itertools.workspace = true
 rpassword = "7"
 serde.workspace = true
-thiserror = "1"
+thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros"] }
+tokio = { workspace = true, features = ["macros"] }
 
 [features]
 default = ["rustls"]
-rustls = ["ethers-providers/rustls", "rusoto_core/rustls"]
-openssl = ["ethers-providers/openssl"]
+rustls = ["aws-sdk-kms?/rustls"]
+aws-kms = ["dep:alloy-signer-aws", "dep:aws-config", "dep:aws-sdk-kms"]
+gcp-kms = ["dep:alloy-signer-gcp", "dep:gcloud-sdk"]

@@ -1,5 +1,5 @@
 use super::{
-    backend::mem::{state, BlockRequest},
+    backend::mem::{state, BlockRequest, State},
     sign::build_typed_transaction,
 };
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
-        fees::{FeeDetails, FeeHistoryCache},
+        fees::{FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
@@ -28,43 +28,44 @@ use crate::{
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
-    revm::primitives::Output,
+    revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::TxLegacy;
+use alloy_consensus::{transaction::eip4844::TxEip4844Variant, TxEnvelope};
 use alloy_dyn_abi::TypedData;
-use alloy_network::{Signed, TxKind};
-use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
-use alloy_rlp::Decodable;
-use alloy_rpc_trace_types::{
-    geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
-    parity::LocalizedTransactionTrace,
-};
+use alloy_eips::eip2718::Encodable2718;
+use alloy_network::eip2718::Decodable2718;
+use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, B64, U256, U64};
 use alloy_rpc_types::{
+    anvil::{
+        ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
+    },
     request::TransactionRequest,
     state::StateOverride,
+    trace::{
+        geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
+        parity::LocalizedTransactionTrace,
+    },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
     AccessList, AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber,
-    BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Log,
-    Transaction, TransactionReceipt,
+    BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
+    Transaction,
 };
+use alloy_serde::WithOtherFields;
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
         block::BlockInfo,
         transaction::{
-            transaction_request_to_typed, PendingTransaction, TypedTransaction,
+            transaction_request_to_typed, PendingTransaction, ReceiptResponse, TypedTransaction,
             TypedTransactionRequest,
         },
         EthRequest,
     },
-    types::{
-        AnvilMetadata, EvmMineOptions, ForkedNetwork, Forking, Index, NodeEnvironment,
-        NodeForkConfig, NodeInfo, Work,
-    },
+    types::Work,
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use foundry_common::provider::alloy::ProviderBuilder;
+use foundry_common::provider::ProviderBuilder;
 use foundry_evm::{
     backend::DatabaseError,
     decode::RevertDecoder,
@@ -90,7 +91,7 @@ pub struct EthApi {
     pool: Arc<Pool>,
     /// Holds all blockchain related data
     /// In-Memory only for now
-    pub(super) backend: Arc<backend::mem::Backend>,
+    pub backend: Arc<backend::mem::Backend>,
     /// Whether this node is mining
     is_mining: bool,
     /// available signers
@@ -115,8 +116,6 @@ pub struct EthApi {
     /// The instance ID. Changes on every reset.
     instance_id: Arc<RwLock<B256>>,
 }
-
-// === impl Eth RPC API ===
 
 impl EthApi {
     /// Creates a new instance
@@ -148,7 +147,7 @@ impl EthApi {
         }
     }
 
-    /// Executes the [EthRequest] and returns an RPC [RpcResponse]
+    /// Executes the [EthRequest] and returns an RPC [ResponseResult].
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
         match request {
@@ -170,6 +169,7 @@ impl EthApi {
             EthRequest::EthMaxPriorityFeePerGas(_) => {
                 self.gas_max_priority_fee_per_gas().to_rpc_result()
             }
+            EthRequest::EthBlobBaseFee(_) => self.blob_base_fee().to_rpc_result(),
             EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
             EthRequest::EthBlockNumber(_) => self.block_number().to_rpc_result(),
             EthRequest::EthGetStorageAt(addr, slot, block) => {
@@ -235,6 +235,15 @@ impl EthApi {
             EthRequest::EthEstimateGas(call, block, overrides) => {
                 self.estimate_gas(call, block, overrides).await.to_rpc_result()
             }
+            EthRequest::EthGetRawTransactionByHash(hash) => {
+                self.raw_transaction(hash).await.to_rpc_result()
+            }
+            EthRequest::EthGetRawTransactionByBlockHashAndIndex(hash, index) => {
+                self.raw_transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
+            }
+            EthRequest::EthGetRawTransactionByBlockNumberAndIndex(num, index) => {
+                self.raw_transaction_by_block_number_and_index(num, index).await.to_rpc_result()
+            }
             EthRequest::EthGetTransactionByBlockHashAndIndex(hash, index) => {
                 self.transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
             }
@@ -265,7 +274,10 @@ impl EthApi {
             EthRequest::EthFeeHistory(count, newest, reward_percentiles) => {
                 self.fee_history(count, newest, reward_percentiles).await.to_rpc_result()
             }
-
+            // non eth-standard rpc calls
+            EthRequest::DebugGetRawTransaction(hash) => {
+                self.raw_transaction(hash).await.to_rpc_result()
+            }
             // non eth-standard rpc calls
             EthRequest::DebugTraceTransaction(tx, opts) => {
                 self.debug_trace_transaction(tx, opts).await.to_rpc_result()
@@ -297,6 +309,9 @@ impl EthApi {
             }
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
+            }
+            EthRequest::DropAllTransactions() => {
+                self.anvil_drop_all_transactions().await.to_rpc_result()
             }
             EthRequest::Reset(fork) => {
                 self.anvil_reset(fork.and_then(|p| p.params)).await.to_rpc_result()
@@ -413,6 +428,9 @@ impl EthApi {
             EthRequest::OtsGetContractCreator(address) => {
                 self.ots_get_contract_creator(address).await.to_rpc_result()
             }
+            EthRequest::RemovePoolTransactions(address) => {
+                self.anvil_remove_pool_transactions(address).await.to_rpc_result()
+            }
         }
     }
 
@@ -444,11 +462,6 @@ impl EthApi {
         Err(BlockchainError::NoSignerAvailable)
     }
 
-    /// Queries the current gas limit
-    fn current_gas_limit(&self) -> Result<U256> {
-        Ok(self.backend.gas_limit())
-    }
-
     async fn block_request(&self, block_number: Option<BlockId>) -> Result<BlockRequest> {
         let block_request = match block_number {
             Some(BlockId::Number(BlockNumber::Pending)) => {
@@ -461,6 +474,19 @@ impl EthApi {
             }
         };
         Ok(block_request)
+    }
+
+    async fn inner_raw_transaction(&self, hash: B256) -> Result<Option<Bytes>> {
+        match self.pool.get_transaction(hash) {
+            Some(tx) => Ok(Some(tx.transaction.encoded_2718().into())),
+            None => match self.backend.transaction_by_hash(hash).await? {
+                Some(tx) => TxEnvelope::try_from(tx.inner)
+                    .map_or(Err(BlockchainError::FailedToDecodeTransaction), |tx| {
+                        Ok(Some(tx.encoded_2718().into()))
+                    }),
+                None => Ok(None),
+            },
+        }
     }
 
     /// Returns the current client version.
@@ -542,12 +568,21 @@ impl EthApi {
     /// Returns the current gas price
     fn eth_gas_price(&self) -> Result<U256> {
         node_info!("eth_gasPrice");
-        self.gas_price()
+        Ok(U256::from(self.gas_price()))
     }
 
     /// Returns the current gas price
-    pub fn gas_price(&self) -> Result<U256> {
-        Ok(self.backend.gas_price())
+    pub fn gas_price(&self) -> u128 {
+        if self.backend.is_eip1559() {
+            self.backend.base_fee().saturating_add(self.lowest_suggestion_tip())
+        } else {
+            self.backend.fees().raw_gas_price()
+        }
+    }
+
+    /// Returns the excess blob gas and current blob gas price
+    pub fn excess_blob_gas_and_price(&self) -> Result<Option<BlobExcessGasAndPrice>> {
+        Ok(self.backend.excess_blob_gas_and_price())
     }
 
     /// Returns a fee per gas that is an estimate of how much you can pay as a priority fee, or
@@ -555,12 +590,19 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn gas_max_priority_fee_per_gas(&self) -> Result<U256> {
-        Ok(self.backend.max_priority_fee_per_gas())
+        self.max_priority_fee_per_gas()
+    }
+
+    /// Returns the base fee per blob required to send a EIP-4844 tx.
+    ///
+    /// Handler for ETH RPC call: `eth_blobBaseFee`
+    pub fn blob_base_fee(&self) -> Result<U256> {
+        Ok(U256::from(self.backend.fees().base_fee_per_blob_gas()))
     }
 
     /// Returns the block gas limit
     pub fn gas_limit(&self) -> U256 {
-        self.backend.gas_limit()
+        U256::from(self.backend.gas_limit())
     }
 
     /// Returns the accounts list
@@ -687,7 +729,7 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_getTransactionCount");
-        self.get_transaction_count(address, block_number).await
+        self.get_transaction_count(address, block_number).await.map(U256::from)
     }
 
     /// Returns the number of transactions in a block with given hash.
@@ -842,7 +884,10 @@ impl EthApi {
     /// Signs a transaction
     ///
     /// Handler for ETH RPC call: `eth_signTransaction`
-    pub async fn sign_transaction(&self, mut request: TransactionRequest) -> Result<String> {
+    pub async fn sign_transaction(
+        &self,
+        mut request: WithOtherFields<TransactionRequest>,
+    ) -> Result<String> {
         node_info!("eth_signTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
@@ -854,22 +899,23 @@ impl EthApi {
         if request.gas.is_none() {
             // estimate if not provided
             if let Ok(gas) = self.estimate_gas(request.clone(), None, None).await {
-                request.gas = Some(gas);
+                request.gas = Some(gas.to());
             }
         }
 
         let request = self.build_typed_tx_request(request, nonce)?;
 
-        let signer = self.get_signer(from).ok_or(BlockchainError::NoSignerAvailable)?;
-        let signature =
-            alloy_primitives::hex::encode(signer.sign_transaction(request, &from)?.as_bytes());
-        Ok(format!("0x{signature}"))
+        let signed_transaction = self.sign_request(&from, request)?.encoded_2718();
+        Ok(alloy_primitives::hex::encode_prefixed(signed_transaction))
     }
 
     /// Sends a transaction
     ///
     /// Handler for ETH RPC call: `eth_sendTransaction`
-    pub async fn send_transaction(&self, mut request: TransactionRequest) -> Result<TxHash> {
+    pub async fn send_transaction(
+        &self,
+        mut request: WithOtherFields<TransactionRequest>,
+    ) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
@@ -880,11 +926,12 @@ impl EthApi {
         if request.gas.is_none() {
             // estimate if not provided
             if let Ok(gas) = self.estimate_gas(request.clone(), None, None).await {
-                request.gas = Some(gas);
+                request.gas = Some(gas.to());
             }
         }
 
         let request = self.build_typed_tx_request(request, nonce)?;
+
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
@@ -901,7 +948,7 @@ impl EthApi {
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
         let requires = required_marker(nonce, on_chain_nonce, from);
-        let provides = vec![to_marker(nonce.to::<u64>(), from)];
+        let provides = vec![to_marker(nonce, from)];
         debug_assert!(requires != provides);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
@@ -916,26 +963,11 @@ impl EthApi {
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
-        let transaction = if data[0] > 0x7f {
-            // legacy transaction
-            match Signed::<TxLegacy>::decode(&mut data) {
-                Ok(transaction) => TypedTransaction::Legacy(transaction),
-                Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
-            }
-        } else {
-            // the [TypedTransaction] requires a valid rlp input,
-            // but EIP-1559 prepends a version byte, so we need to encode the data first to get a
-            // valid rlp and then rlp decode impl of `TypedTransaction` will remove and check the
-            // version byte
-            let extend = alloy_rlp::encode(data);
-            let tx = match TypedTransaction::decode(&mut &extend[..]) {
-                Ok(transaction) => transaction,
-                Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
-            };
+        let transaction = TypedTransaction::decode_2718(&mut data)
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
-            self.ensure_typed_transaction_supported(&tx)?;
-            tx
-        };
+        self.ensure_typed_transaction_supported(&transaction)?;
+
         let pending_transaction = PendingTransaction::new(transaction)?;
 
         // pre-validate
@@ -949,7 +981,7 @@ impl EthApi {
         let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction = PoolTransaction {
             requires,
-            provides: vec![to_marker(nonce.to::<u64>(), *pending_transaction.sender())],
+            provides: vec![to_marker(nonce, *pending_transaction.sender())],
             pending_transaction,
             priority,
         };
@@ -964,7 +996,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_call`
     pub async fn call(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
     ) -> Result<Bytes> {
@@ -988,6 +1020,7 @@ impl EthApi {
             request.gas_price,
             request.max_fee_per_gas,
             request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
         // this can be blocking for a bit, especially in forking mode
@@ -1017,7 +1050,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_createAccessList`
     pub async fn create_access_list(
         &self,
-        mut request: TransactionRequest,
+        mut request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
     ) -> Result<AccessListWithGasUsed> {
         node_info!("eth_createAccessList");
@@ -1066,7 +1099,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_estimateGas`
     pub async fn estimate_gas(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
     ) -> Result<U256> {
@@ -1077,6 +1110,7 @@ impl EthApi {
             overrides,
         )
         .await
+        .map(U256::from)
     }
 
     /// Get transaction by its hash.
@@ -1085,7 +1119,10 @@ impl EthApi {
     /// this will also scan the mempool for a matching pending transaction
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
-    pub async fn transaction_by_hash(&self, hash: B256) -> Result<Option<Transaction>> {
+    pub async fn transaction_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<WithOtherFields<Transaction>>> {
         node_info!("eth_getTransactionByHash");
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
             let from = *pending.sender();
@@ -1115,7 +1152,7 @@ impl EthApi {
         &self,
         hash: B256,
         index: Index,
-    ) -> Result<Option<Transaction>> {
+    ) -> Result<Option<WithOtherFields<Transaction>>> {
         node_info!("eth_getTransactionByBlockHashAndIndex");
         self.backend.transaction_by_block_hash_and_index(hash, index).await
     }
@@ -1127,7 +1164,7 @@ impl EthApi {
         &self,
         block: BlockNumber,
         idx: Index,
-    ) -> Result<Option<Transaction>> {
+    ) -> Result<Option<WithOtherFields<Transaction>>> {
         node_info!("eth_getTransactionByBlockNumberAndIndex");
         self.backend.transaction_by_block_number_and_index(block, idx).await
     }
@@ -1135,7 +1172,7 @@ impl EthApi {
     /// Returns transaction receipt by transaction hash.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
-    pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<TransactionReceipt>> {
+    pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<ReceiptResponse>> {
         node_info!("eth_getTransactionReceipt");
         let tx = self.pool.get_transaction(hash);
         if tx.is_some() {
@@ -1150,7 +1187,7 @@ impl EthApi {
     pub async fn block_receipts(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<Vec<TransactionReceipt>>> {
+    ) -> Result<Option<Vec<ReceiptResponse>>> {
         node_info!("eth_getBlockReceipts");
         self.backend.block_receipts(number).await
     }
@@ -1187,7 +1224,7 @@ impl EthApi {
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.uncle_by_block_number_and_index(number, idx.into()).await?);
+                return Ok(fork.uncle_by_block_number_and_index(number, idx.into()).await?)
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -1234,7 +1271,7 @@ impl EthApi {
         Err(BlockchainError::RpcUnimplemented)
     }
 
-    /// Introduced in EIP-1159 for getting information on the appropriate priority fee to use.
+    /// Introduced in EIP-1559 for getting information on the appropriate priority fee to use.
     ///
     /// Handler for ETH RPC call: `eth_feeHistory`
     pub async fn fee_history(
@@ -1263,14 +1300,14 @@ impl EthApi {
             // efficiently, instead we fetch it from the fork
             if fork.predates_fork_inclusive(number) {
                 return fork
-                    .fee_history(block_count, BlockNumber::Number(number), &reward_percentiles)
+                    .fee_history(block_count.to(), BlockNumber::Number(number), &reward_percentiles)
                     .await
                     .map_err(BlockchainError::AlloyForkProvider);
             }
         }
 
         const MAX_BLOCK_COUNT: u64 = 1024u64;
-        let block_count = block_count.to::<u64>().max(MAX_BLOCK_COUNT);
+        let block_count = block_count.to::<u64>().min(MAX_BLOCK_COUNT);
 
         // highest and lowest block num in the requested range
         let highest = number;
@@ -1282,7 +1319,7 @@ impl EthApi {
         }
 
         let mut response = FeeHistory {
-            oldest_block: U256::from(lowest),
+            oldest_block: lowest,
             base_fee_per_gas: Vec::new(),
             gas_used_ratio: Vec::new(),
             reward: Some(Default::default()),
@@ -1298,7 +1335,9 @@ impl EthApi {
             for n in lowest..=highest {
                 // <https://eips.ethereum.org/EIPS/eip-1559>
                 if let Some(block) = fee_history.get(&n) {
-                    response.base_fee_per_gas.push(U256::from(block.base_fee));
+                    response.base_fee_per_gas.push(block.base_fee);
+                    response.base_fee_per_blob_gas.push(block.base_fee_per_blob_gas.unwrap_or(0));
+                    response.blob_gas_used_ratio.push(block.blob_gas_used_ratio);
                     response.gas_used_ratio.push(block.gas_used_ratio);
 
                     // requested percentiles
@@ -1308,11 +1347,7 @@ impl EthApi {
                         for p in &reward_percentiles {
                             let p = p.clamp(0.0, 100.0);
                             let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
-                            let reward = if let Some(r) = block.rewards.get(index as usize) {
-                                U256::from(*r)
-                            } else {
-                                U256::ZERO
-                            };
+                            let reward = block.rewards.get(index as usize).map_or(0, |r| *r);
                             block_rewards.push(reward);
                         }
                         rewards.push(block_rewards);
@@ -1323,30 +1358,16 @@ impl EthApi {
 
         response.reward = Some(rewards);
 
-        // calculate next base fee
+        // add the next block's base fee to the response
         // The spec states that `base_fee_per_gas` "[..] includes the next block after the
         // newest of the returned range, because this value can be derived from the
         // newest block"
-        if let (Some(last_gas_used), Some(last_fee_per_gas)) =
-            (response.gas_used_ratio.last(), response.base_fee_per_gas.last())
-        {
-            let elasticity = self.backend.elasticity();
-            let last_fee_per_gas = last_fee_per_gas.to::<u64>() as f64;
-            if last_gas_used > &0.5 {
-                // increase base gas
-                let increase = ((last_gas_used - 0.5) * 2f64) * elasticity;
-                let new_base_fee = (last_fee_per_gas + (last_fee_per_gas * increase)) as u64;
-                response.base_fee_per_gas.push(U256::from(new_base_fee));
-            } else if last_gas_used < &0.5 {
-                // decrease gas
-                let increase = ((0.5 - last_gas_used) * 2f64) * elasticity;
-                let new_base_fee = (last_fee_per_gas - (last_fee_per_gas * increase)) as u64;
-                response.base_fee_per_gas.push(U256::from(new_base_fee));
-            } else {
-                // same base gas
-                response.base_fee_per_gas.push(U256::from(last_fee_per_gas as u64));
-            }
-        }
+        response.base_fee_per_gas.push(self.backend.fees().base_fee());
+
+        // Same goes for the `base_fee_per_blob_gas`:
+        // > [..] includes the next block after the newest of the returned range, because this
+        // > value can be derived from the newest block.
+        response.base_fee_per_blob_gas.push(self.backend.fees().base_fee_per_blob_gas());
 
         Ok(response)
     }
@@ -1359,7 +1380,22 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
         node_info!("eth_maxPriorityFeePerGas");
-        Ok(self.backend.max_priority_fee_per_gas())
+        Ok(U256::from(self.lowest_suggestion_tip()))
+    }
+
+    /// Returns the suggested fee cap.
+    ///
+    /// Returns at least [MIN_SUGGESTED_PRIORITY_FEE]
+    fn lowest_suggestion_tip(&self) -> u128 {
+        let block_number = self.backend.best_number();
+        let latest_cached_block = self.fee_history_cache.lock().get(&block_number).cloned();
+
+        match latest_cached_block {
+            Some(block) => block.rewards.iter().copied().min(),
+            None => self.fee_history_cache.lock().values().flat_map(|b| b.rewards.clone()).min(),
+        }
+        .map(|fee| fee.max(MIN_SUGGESTED_PRIORITY_FEE))
+        .unwrap_or(MIN_SUGGESTED_PRIORITY_FEE)
     }
 
     /// Creates a filter object, based on filter options, to notify when the state changes (logs).
@@ -1427,6 +1463,44 @@ impl EthApi {
         Ok(self.filters.uninstall_filter(id).await.is_some())
     }
 
+    /// Returns EIP-2718 encoded raw transaction
+    ///
+    /// Handler for RPC call: `debug_getRawTransaction`
+    pub async fn raw_transaction(&self, hash: B256) -> Result<Option<Bytes>> {
+        node_info!("debug_getRawTransaction");
+        self.inner_raw_transaction(hash).await
+    }
+
+    /// Returns EIP-2718 encoded raw transaction by block hash and index
+    ///
+    /// Handler for RPC call: `eth_getRawTransactionByBlockHashAndIndex`
+    pub async fn raw_transaction_by_block_hash_and_index(
+        &self,
+        block_hash: B256,
+        index: Index,
+    ) -> Result<Option<Bytes>> {
+        node_info!("eth_getRawTransactionByBlockHashAndIndex");
+        match self.backend.transaction_by_block_hash_and_index(block_hash, index).await? {
+            Some(tx) => self.inner_raw_transaction(tx.hash).await,
+            None => Ok(None),
+        }
+    }
+
+    /// Returns EIP-2718 encoded raw transaction by block number and index
+    ///
+    /// Handler for RPC call: `eth_getRawTransactionByBlockNumberAndIndex`
+    pub async fn raw_transaction_by_block_number_and_index(
+        &self,
+        block_number: BlockNumber,
+        index: Index,
+    ) -> Result<Option<Bytes>> {
+        node_info!("eth_getRawTransactionByBlockNumberAndIndex");
+        match self.backend.transaction_by_block_number_and_index(block_number, index).await? {
+            Some(tx) => self.inner_raw_transaction(tx.hash).await,
+            None => Ok(None),
+        }
+    }
+
     /// Returns traces for the transaction hash for geth's tracing endpoint
     ///
     /// Handler for RPC call: `debug_traceTransaction`
@@ -1444,7 +1518,7 @@ impl EthApi {
     /// Handler for RPC call: `debug_traceCall`
     pub async fn debug_trace_call(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
         opts: GethDefaultTracingOptions,
     ) -> Result<DefaultFrame> {
@@ -1454,6 +1528,7 @@ impl EthApi {
             request.gas_price,
             request.max_fee_per_gas,
             request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
 
@@ -1585,6 +1660,15 @@ impl EthApi {
         Ok(self.pool.drop_transaction(tx_hash).map(|tx| tx.hash()))
     }
 
+    /// Removes all transactions from the pool
+    ///
+    /// Handler for RPC call: `anvil_dropAllTransactions`
+    pub async fn anvil_drop_all_transactions(&self) -> Result<()> {
+        node_info!("anvil_dropAllTransactions");
+        self.pool.clear();
+        Ok(())
+    }
+
     /// Reset the fork to a fresh forked state, and optionally update the fork config.
     ///
     /// If `forking` is `None` then this will disable forking entirely.
@@ -1668,7 +1752,7 @@ impl EthApi {
             )
             .into());
         }
-        self.backend.set_gas_price(gas);
+        self.backend.set_gas_price(gas.to());
         Ok(())
     }
 
@@ -1683,7 +1767,7 @@ impl EthApi {
             )
             .into());
         }
-        self.backend.set_base_fee(basefee);
+        self.backend.set_base_fee(basefee.to());
         Ok(())
     }
 
@@ -1728,21 +1812,22 @@ impl EthApi {
         let env = self.backend.env().read();
         let fork_config = self.backend.get_fork();
         let tx_order = self.transaction_order.read();
+        let hard_fork: &str = env.handler_cfg.spec_id.into();
 
         Ok(NodeInfo {
-            current_block_number: U64::from(self.backend.best_number()),
+            current_block_number: self.backend.best_number(),
             current_block_timestamp: env.block.timestamp.try_into().unwrap_or(u64::MAX),
             current_block_hash: self.backend.best_hash(),
-            hard_fork: env.handler_cfg.spec_id,
+            hard_fork: hard_fork.to_string(),
             transaction_order: match *tx_order {
                 TransactionOrder::Fifo => "fifo".to_string(),
                 TransactionOrder::Fees => "fees".to_string(),
             },
             environment: NodeEnvironment {
-                base_fee: self.backend.base_fee(),
+                base_fee: U256::from(self.backend.base_fee()),
                 chain_id: self.backend.chain_id().to::<u64>(),
-                gas_limit: self.backend.gas_limit(),
-                gas_price: self.backend.gas_price(),
+                gas_limit: U256::from(self.backend.gas_limit()),
+                gas_price: U256::from(self.gas_price()),
             },
             fork_config: fork_config
                 .map(|fork| {
@@ -1761,13 +1846,13 @@ impl EthApi {
     /// Retrieves metadata about the Anvil instance.
     ///
     /// Handler for RPC call: `anvil_metadata`
-    pub async fn anvil_metadata(&self) -> Result<AnvilMetadata> {
+    pub async fn anvil_metadata(&self) -> Result<Metadata> {
         node_info!("anvil_metadata");
         let fork_config = self.backend.get_fork();
         let snapshots = self.backend.list_snapshots();
 
-        Ok(AnvilMetadata {
-            client_version: CLIENT_VERSION,
+        Ok(Metadata {
+            client_version: CLIENT_VERSION.to_string(),
             chain_id: self.backend.chain_id().to::<u64>(),
             latest_block_hash: self.backend.best_hash(),
             latest_block_number: self.backend.best_number(),
@@ -1779,6 +1864,12 @@ impl EthApi {
             }),
             snapshots,
         })
+    }
+
+    pub async fn anvil_remove_pool_transactions(&self, address: Address) -> Result<()> {
+        node_info!("anvil_removePoolTransactions");
+        self.pool.remove_transactions_by_address(address);
+        Ok(())
     }
 
     /// Snapshot the state of the blockchain at the current block.
@@ -1833,7 +1924,7 @@ impl EthApi {
     /// Handler for RPC call: `evm_setBlockGasLimit`
     pub fn evm_set_block_gas_limit(&self, gas_limit: U256) -> Result<bool> {
         node_info!("evm_setBlockGasLimit");
-        self.backend.set_gas_limit(gas_limit);
+        self.backend.set_gas_limit(gas_limit.to());
         Ok(true)
     }
 
@@ -1860,7 +1951,7 @@ impl EthApi {
     ///
     /// This will mine the blocks regardless of the configured mining mode.
     /// **Note**: ganache returns `0x0` here as placeholder for additional meta-data in the future.
-    pub async fn evm_mine(&self, opts: Option<EvmMineOptions>) -> Result<String> {
+    pub async fn evm_mine(&self, opts: Option<MineOptions>) -> Result<String> {
         node_info!("evm_mine");
 
         self.do_evm_mine(opts).await?;
@@ -1877,7 +1968,7 @@ impl EthApi {
     /// **Note**: This behaves exactly as [Self::evm_mine] but returns different output, for
     /// compatibility reasons, this is a separate call since `evm_mine` is not an anvil original.
     /// and `ganache` may change the `0x0` placeholder.
-    pub async fn evm_mine_detailed(&self, opts: Option<EvmMineOptions>) -> Result<Vec<Block>> {
+    pub async fn evm_mine_detailed(&self, opts: Option<MineOptions>) -> Result<Vec<Block>> {
         node_info!("evm_mine_detailed");
 
         let mined_blocks = self.do_evm_mine(opts).await?;
@@ -1898,7 +1989,14 @@ impl EthApi {
                     if let Some(receipt) = self.backend.mined_transaction_receipt(tx.hash) {
                         if let Some(output) = receipt.out {
                             // insert revert reason if failure
-                            if receipt.inner.status_code.unwrap_or_default().to::<u64>() == 0 {
+                            if !receipt
+                                .inner
+                                .inner
+                                .as_receipt_with_bloom()
+                                .receipt
+                                .status
+                                .coerce_status()
+                            {
                                 if let Some(reason) =
                                     RevertDecoder::new().maybe_decode(&output, None)
                                 {
@@ -1971,7 +2069,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
     pub async fn eth_send_unsigned_transaction(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
         // either use the impersonated account of the request's `from` field
@@ -1992,7 +2090,7 @@ impl EthApi {
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
         let requires = required_marker(nonce, on_chain_nonce, from);
-        let provides = vec![to_marker(nonce.to::<u64>(), from)];
+        let provides = vec![to_marker(nonce, from)];
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -2067,7 +2165,7 @@ impl EthApi {
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
             tx.from = from;
-            tx
+            tx.inner
         }
 
         for pending in self.pool.ready_transactions() {
@@ -2084,8 +2182,6 @@ impl EthApi {
         Ok(content)
     }
 }
-
-// === impl EthApi utility functions ===
 
 impl EthApi {
     /// Executes the future on a new blocking task.
@@ -2108,13 +2204,13 @@ impl EthApi {
     }
 
     /// Executes the `evm_mine` and returns the number of blocks mined
-    async fn do_evm_mine(&self, opts: Option<EvmMineOptions>) -> Result<u64> {
+    async fn do_evm_mine(&self, opts: Option<MineOptions>) -> Result<u64> {
         let mut blocks_to_mine = 1u64;
 
         if let Some(opts) = opts {
             let timestamp = match opts {
-                EvmMineOptions::Timestamp(timestamp) => timestamp,
-                EvmMineOptions::Options { timestamp, blocks } => {
+                MineOptions::Timestamp(timestamp) => timestamp,
+                MineOptions::Options { timestamp, blocks } => {
                     if let Some(blocks) = blocks {
                         blocks_to_mine = blocks;
                     }
@@ -2137,10 +2233,10 @@ impl EthApi {
 
     async fn do_estimate_gas(
         &self,
-        request: TransactionRequest,
+        request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
-    ) -> Result<U256> {
+    ) -> Result<u128> {
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request {
@@ -2171,22 +2267,28 @@ impl EthApi {
 
     /// Estimates the gas usage of the `request` with the state.
     ///
-    /// This will execute the [CallRequest] and find the best gas limit via binary search
+    /// This will execute the transaction request and find the best gas limit via binary search.
     fn do_estimate_gas_with_state<D>(
         &self,
-        mut request: TransactionRequest,
+        mut request: WithOtherFields<TransactionRequest>,
         state: D,
         block_env: BlockEnv,
-    ) -> Result<U256>
+    ) -> Result<u128>
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
         // If the request is a simple native token transfer we can optimize
         // We assume it's a transfer if we have no input data.
-        let likely_transfer = request.input.clone().into_input().is_none();
-        if likely_transfer {
-            if let Some(to) = request.to {
-                if let Ok(target_code) = self.backend.get_code_with_state(&state, to) {
+        let to = request.to.as_ref().and_then(TxKind::to);
+
+        // check certain fields to see if the request could be a simple transfer
+        let maybe_transfer = request.input.input().is_none() &&
+            request.access_list.is_none() &&
+            request.blob_versioned_hashes.is_none();
+
+        if maybe_transfer {
+            if let Some(to) = to {
+                if let Ok(target_code) = self.backend.get_code_with_state(&state, *to) {
                     if target_code.as_ref().is_empty() {
                         return Ok(MIN_TRANSACTION_GAS);
                     }
@@ -2198,17 +2300,18 @@ impl EthApi {
             request.gas_price,
             request.max_fee_per_gas,
             request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit);
+        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit.to());
 
-        // check with the funds of the sender
-        if let Some(from) = request.from {
-            let gas_price = fees.gas_price.unwrap_or_default();
-            if gas_price > U256::ZERO {
+        let gas_price = fees.gas_price.unwrap_or_default();
+        // If we have non-zero gas price, cap gas limit by sender balance
+        if gas_price > 0 {
+            if let Some(from) = request.from {
                 let mut available_funds = self.backend.get_balance_with_state(&state, from)?;
                 if let Some(value) = request.value {
                     if value > available_funds {
@@ -2218,92 +2321,47 @@ impl EthApi {
                     available_funds -= value;
                 }
                 // amount of gas the sender can afford with the `gas_price`
-                let allowance = available_funds.checked_div(gas_price).unwrap_or_default();
-                if highest_gas_limit > allowance {
-                    trace!(target: "node", "eth_estimateGas capped by limited user funds");
-                    highest_gas_limit = allowance;
-                }
+                let allowance =
+                    available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
+                highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
             }
         }
 
-        // if the provided gas limit is less than computed cap, use that
-        let gas_limit = std::cmp::min(request.gas.unwrap_or(highest_gas_limit), highest_gas_limit);
         let mut call_to_estimate = request.clone();
-        call_to_estimate.gas = Some(gas_limit);
+        call_to_estimate.gas = Some(highest_gas_limit);
 
         // execute the call without writing to db
         let ethres =
             self.backend.call_with_state(&state, call_to_estimate, fees.clone(), block_env.clone());
 
-        // Exceptional case: init used too much gas, we need to increase the gas limit and try
-        // again
-        if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(_))) =
-            ethres
-        {
-            // if price or limit was included in the request then we can execute the request
-            // again with the block's gas limit to check if revert is gas related or not
-            if request.gas.is_some() || request.gas_price.is_some() {
-                return Err(map_out_of_gas_err(
-                    request,
-                    state,
-                    self.backend.clone(),
-                    block_env,
-                    fees,
-                    gas_limit,
-                ));
+        let gas_used = match ethres.try_into()? {
+            GasEstimationCallResult::Success(gas) => Ok(gas),
+            GasEstimationCallResult::OutOfGas => {
+                Err(InvalidTransactionError::BasicOutOfGas(highest_gas_limit).into())
             }
-        }
-
-        let (exit, out, gas, _) = ethres?;
-        match exit {
-            return_ok!() => {
-                // succeeded
+            GasEstimationCallResult::Revert(output) => {
+                Err(InvalidTransactionError::Revert(output).into())
             }
-            InstructionResult::OutOfGas | InstructionResult::OutOfFunds => {
-                return Err(InvalidTransactionError::BasicOutOfGas(gas_limit).into())
+            GasEstimationCallResult::EvmError(err) => {
+                warn!(target: "node", "estimation failed due to {:?}", err);
+                Err(BlockchainError::EvmError(err))
             }
-            // need to check if the revert was due to lack of gas or unrelated reason
-            // we're also checking for InvalidFEOpcode here because this can be used to trigger an error <https://github.com/foundry-rs/foundry/issues/6138> common usage in openzeppelin <https://github.com/OpenZeppelin/openzeppelin-contracts/blob/94697be8a3f0dfcd95dfb13ffbd39b5973f5c65d/contracts/metatx/ERC2771Forwarder.sol#L360-L367>
-            return_revert!() | InstructionResult::InvalidFEOpcode => {
-                // if price or limit was included in the request then we can execute the request
-                // again with the max gas limit to check if revert is gas related or not
-                return if request.gas.is_some() || request.gas_price.is_some() {
-                    Err(map_out_of_gas_err(
-                        request,
-                        state,
-                        self.backend.clone(),
-                        block_env,
-                        fees,
-                        gas_limit,
-                    ))
-                } else {
-                    // the transaction did fail due to lack of gas from the user
-                    Err(InvalidTransactionError::Revert(Some(convert_transact_out(&out).0.into()))
-                        .into())
-                };
-            }
-            reason => {
-                warn!(target: "node", "estimation failed due to {:?}", reason);
-                return Err(BlockchainError::EvmError(reason));
-            }
-        }
+        }?;
 
         // at this point we know the call succeeded but want to find the _best_ (lowest) gas the
         // transaction succeeds with. we find this by doing a binary search over the
         // possible range NOTE: this is the gas the transaction used, which is less than the
         // transaction requires to succeed
-        let gas: U256 = U256::from(gas);
+
         // Get the starting lowest gas needed depending on the transaction kind.
         let mut lowest_gas_limit = determine_base_gas_by_kind(&request);
 
         // pick a point that's close to the estimated gas
-        let mut mid_gas_limit = std::cmp::min(
-            gas * U256::from(3),
-            (highest_gas_limit + lowest_gas_limit) / U256::from(2),
-        );
+        let mut mid_gas_limit =
+            std::cmp::min(gas_used * 3, (highest_gas_limit + lowest_gas_limit) / 2);
 
         // Binary search for the ideal gas limit
-        while (highest_gas_limit - lowest_gas_limit) > U256::from(1) {
+        while (highest_gas_limit - lowest_gas_limit) > 1 {
             request.gas = Some(mid_gas_limit);
             let ethres = self.backend.call_with_state(
                 &state,
@@ -2312,54 +2370,27 @@ impl EthApi {
                 block_env.clone(),
             );
 
-            // Exceptional case: init used too much gas, we need to increase the gas limit and try
-            // again
-            if let Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(
-                _,
-            ))) = ethres
-            {
-                // increase the lowest gas limit
-                lowest_gas_limit = mid_gas_limit;
-
-                // new midpoint
-                mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / U256::from(2);
-                continue;
-            }
-
-            match ethres {
-                Ok((exit, _, _gas, _)) => match exit {
+            match ethres.try_into()? {
+                GasEstimationCallResult::Success(_) => {
                     // If the transaction succeeded, we can set a ceiling for the highest gas limit
                     // at the current midpoint, as spending any more gas would
                     // make no sense (as the TX would still succeed).
-                    return_ok!() => {
-                        highest_gas_limit = mid_gas_limit;
-                    }
-                    // If the transaction failed due to lack of gas, we can set a floor for the
-                    // lowest gas limit at the current midpoint, as spending any
-                    // less gas would make no sense (as the TX would still revert due to lack of
-                    // gas).
-                    InstructionResult::Revert |
-                    InstructionResult::OutOfGas |
-                    InstructionResult::OutOfFunds |
-                    // we're also checking for InvalidFEOpcode here because this can be used to trigger an error <https://github.com/foundry-rs/foundry/issues/6138> common usage in openzeppelin <https://github.com/OpenZeppelin/openzeppelin-contracts/blob/94697be8a3f0dfcd95dfb13ffbd39b5973f5c65d/contracts/metatx/ERC2771Forwarder.sol#L360-L367>
-                    InstructionResult::InvalidFEOpcode => {
-                        lowest_gas_limit = mid_gas_limit;
-                    }
-                    // The tx failed for some other reason.
-                    reason => {
-                        warn!(target: "node", "estimation failed due to {:?}", reason);
-                        return Err(BlockchainError::EvmError(reason))
-                    }
-                },
-                // We've already checked for the exceptional GasTooHigh case above, so this is a
-                // real error.
-                Err(reason) => {
-                    warn!(target: "node", "estimation failed due to {:?}", reason);
-                    return Err(reason);
+                    highest_gas_limit = mid_gas_limit;
                 }
-            }
+                GasEstimationCallResult::OutOfGas |
+                GasEstimationCallResult::Revert(_) |
+                GasEstimationCallResult::EvmError(_) => {
+                    // If the transaction failed, we can set a floor for the lowest gas limit at the
+                    // current midpoint, as spending any less gas would make no
+                    // sense (as the TX would still revert due to lack of gas).
+                    //
+                    // We don't care about the reason here, as we known that trasaction is correct
+                    // as it succeeded earlier
+                    lowest_gas_limit = mid_gas_limit;
+                }
+            };
             // new midpoint
-            mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / U256::from(2);
+            mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
         }
 
         trace!(target : "node", "Estimated Gas for call {:?}", highest_gas_limit);
@@ -2460,7 +2491,7 @@ impl EthApi {
                 Some(info),
                 Some(base_fee),
             );
-            block_transactions.push(tx);
+            block_transactions.push(tx.inner);
         }
 
         Some(partial_block.into_full_block(block_transactions))
@@ -2468,48 +2499,74 @@ impl EthApi {
 
     fn build_typed_tx_request(
         &self,
-        request: TransactionRequest,
-        nonce: U256,
+        request: WithOtherFields<TransactionRequest>,
+        nonce: u64,
     ) -> Result<TypedTransactionRequest> {
-        let chain_id = request.chain_id.map(|c| c.to::<u64>()).unwrap_or_else(|| self.chain_id());
+        let chain_id = request.chain_id.unwrap_or_else(|| self.chain_id());
         let max_fee_per_gas = request.max_fee_per_gas;
+        let max_fee_per_blob_gas = request.max_fee_per_blob_gas;
         let gas_price = request.gas_price;
 
-        let gas_limit = request.gas.map(Ok).unwrap_or_else(|| self.current_gas_limit())?;
+        let gas_limit = request.gas.unwrap_or(self.backend.gas_limit());
 
         let request = match transaction_request_to_typed(request) {
             Some(TypedTransactionRequest::Legacy(mut m)) => {
-                m.nonce = nonce.to::<u64>();
+                m.nonce = nonce;
                 m.chain_id = Some(chain_id);
-                m.gas_limit = gas_limit.to::<u64>();
+                m.gas_limit = gas_limit;
                 if gas_price.is_none() {
-                    m.gas_price = self.gas_price().unwrap_or_default().to::<u128>();
+                    m.gas_price = self.gas_price();
                 }
                 TypedTransactionRequest::Legacy(m)
             }
             Some(TypedTransactionRequest::EIP2930(mut m)) => {
-                m.nonce = nonce.to::<u64>();
+                m.nonce = nonce;
                 m.chain_id = chain_id;
-                m.gas_limit = gas_limit.to::<u64>();
+                m.gas_limit = gas_limit;
                 if gas_price.is_none() {
-                    m.gas_price = self.gas_price().unwrap_or_default().to::<u128>();
+                    m.gas_price = self.gas_price();
                 }
                 TypedTransactionRequest::EIP2930(m)
             }
             Some(TypedTransactionRequest::EIP1559(mut m)) => {
-                m.nonce = nonce.to::<u64>();
+                m.nonce = nonce;
                 m.chain_id = chain_id;
-                m.gas_limit = gas_limit.to::<u64>();
+                m.gas_limit = gas_limit;
                 if max_fee_per_gas.is_none() {
-                    m.max_fee_per_gas = self.gas_price().unwrap_or_default().to::<u128>();
+                    m.max_fee_per_gas = self.gas_price();
                 }
                 TypedTransactionRequest::EIP1559(m)
+            }
+            Some(TypedTransactionRequest::EIP4844(m)) => {
+                TypedTransactionRequest::EIP4844(match m {
+                    // We only accept the TxEip4844 variant which has the sidecar.
+                    TxEip4844Variant::TxEip4844WithSidecar(mut m) => {
+                        m.tx.nonce = nonce;
+                        m.tx.chain_id = chain_id;
+                        m.tx.gas_limit = gas_limit;
+                        if max_fee_per_gas.is_none() {
+                            m.tx.max_fee_per_gas = self.gas_price();
+                        }
+                        if max_fee_per_blob_gas.is_none() {
+                            m.tx.max_fee_per_blob_gas = self
+                                .excess_blob_gas_and_price()
+                                .unwrap_or_default()
+                                .map_or(0, |g| g.blob_gasprice)
+                        }
+                        TxEip4844Variant::TxEip4844WithSidecar(m)
+                    }
+                    // It is not valid to receive a TxEip4844 without a sidecar, therefore
+                    // we must reject it.
+                    TxEip4844Variant::TxEip4844(_) => {
+                        return Err(BlockchainError::FailedToDecodeTransaction)
+                    }
+                })
             }
             Some(TypedTransactionRequest::Deposit(mut m)) => {
                 m.gas_limit = gas_limit;
                 TypedTransactionRequest::Deposit(m)
             }
-            _ => return Err(BlockchainError::FailedToDecodeTransaction),
+            None => return Err(BlockchainError::FailedToDecodeTransaction),
         };
         Ok(request)
     }
@@ -2524,20 +2581,18 @@ impl EthApi {
         &self,
         address: Address,
         block_number: Option<BlockId>,
-    ) -> Result<U256> {
+    ) -> Result<u64> {
         let block_request = self.block_request(block_number).await?;
 
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number) {
-                    return Ok(fork.get_nonce(address, number).await?);
+                    return Ok(fork.get_nonce(address, number).await?)
                 }
             }
         }
 
-        let nonce = self.backend.get_nonce(address, block_request).await?;
-
-        Ok(nonce)
+        self.backend.get_nonce(address, block_request).await
     }
 
     /// Returns the nonce for this request
@@ -2551,10 +2606,10 @@ impl EthApi {
         &self,
         request: &TransactionRequest,
         from: Address,
-    ) -> Result<(U256, U256)> {
+    ) -> Result<(u64, u64)> {
         let highest_nonce =
             self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await?;
-        let nonce = request.nonce.map(|n| n.to::<U256>()).unwrap_or(highest_nonce);
+        let nonce = request.nonce.unwrap_or(highest_nonce);
 
         Ok((nonce, highest_nonce))
     }
@@ -2592,13 +2647,13 @@ impl EthApi {
     }
 }
 
-fn required_marker(provided_nonce: U256, on_chain_nonce: U256, from: Address) -> Vec<TxMarker> {
+fn required_marker(provided_nonce: u64, on_chain_nonce: u64, from: Address) -> Vec<TxMarker> {
     if provided_nonce == on_chain_nonce {
         return Vec::new();
     }
-    let prev_nonce = provided_nonce.saturating_sub(U256::from(1));
+    let prev_nonce = provided_nonce.saturating_sub(1);
     if on_chain_nonce <= prev_nonce {
-        vec![to_marker(prev_nonce.to::<u64>(), from)]
+        vec![to_marker(prev_nonce, from)]
     } else {
         Vec::new()
     }
@@ -2622,45 +2677,8 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
     }
 }
 
-/// Executes the requests again after an out of gas error to check if the error is gas related or
-/// not
-#[inline]
-fn map_out_of_gas_err<D>(
-    mut request: TransactionRequest,
-    state: D,
-    backend: Arc<backend::mem::Backend>,
-    block_env: BlockEnv,
-    fees: FeeDetails,
-    gas_limit: U256,
-) -> BlockchainError
-where
-    D: DatabaseRef<Error = DatabaseError>,
-{
-    request.gas = Some(backend.gas_limit());
-    let (exit, out, _, _) = match backend.call_with_state(&state, request, fees, block_env) {
-        Ok(res) => res,
-        Err(err) => return err,
-    };
-    match exit {
-        return_ok!() => {
-            // transaction succeeded by manually increasing the gas limit to
-            // highest, which means the caller lacks funds to pay for the tx
-            InvalidTransactionError::BasicOutOfGas(gas_limit).into()
-        }
-        return_revert!() => {
-            // reverted again after bumping the limit
-            InvalidTransactionError::Revert(Some(convert_transact_out(&out).0.into())).into()
-        }
-        reason => {
-            warn!(target: "node", "estimation failed due to {:?}", reason);
-            BlockchainError::EvmError(reason)
-        }
-    }
-}
-
 /// Determines the minimum gas needed for a transaction depending on the transaction kind.
-#[inline]
-fn determine_base_gas_by_kind(request: &TransactionRequest) -> U256 {
+fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> u128 {
     match transaction_request_to_typed(request.clone()) {
         Some(request) => match request {
             TypedTransactionRequest::Legacy(req) => match req.to {
@@ -2675,10 +2693,7 @@ fn determine_base_gas_by_kind(request: &TransactionRequest) -> U256 {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },
-            TypedTransactionRequest::EIP4844(req) => match req.tx().to {
-                TxKind::Call(_) => MIN_TRANSACTION_GAS,
-                TxKind::Create => MIN_CREATE_GAS,
-            },
+            TypedTransactionRequest::EIP4844(_) => MIN_TRANSACTION_GAS,
             TypedTransactionRequest::Deposit(req) => match req.kind {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
@@ -2687,5 +2702,68 @@ fn determine_base_gas_by_kind(request: &TransactionRequest) -> U256 {
         // Tighten the gas limit upwards if we don't know the transaction type to avoid deployments
         // failing.
         _ => MIN_CREATE_GAS,
+    }
+}
+
+/// Keeps result of a call to revm EVM used for gas estimation
+enum GasEstimationCallResult {
+    Success(u128),
+    OutOfGas,
+    Revert(Option<Bytes>),
+    EvmError(InstructionResult),
+}
+
+/// Converts the result of a call to revm EVM into a [`GasEstimationCallResult`].
+impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEstimationCallResult {
+    type Error = BlockchainError;
+
+    fn try_from(res: Result<(InstructionResult, Option<Output>, u128, State)>) -> Result<Self> {
+        match res {
+            // Exceptional case: init used too much gas, treated as out of gas error
+            Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(_))) => {
+                Ok(Self::OutOfGas)
+            }
+            Err(err) => Err(err),
+            Ok((exit, output, gas, _)) => match exit {
+                return_ok!() | InstructionResult::CallOrCreate => Ok(Self::Success(gas)),
+
+                InstructionResult::Revert => Ok(Self::Revert(output.map(|o| o.into_data()))),
+
+                InstructionResult::OutOfGas |
+                InstructionResult::MemoryOOG |
+                InstructionResult::MemoryLimitOOG |
+                InstructionResult::PrecompileOOG |
+                InstructionResult::InvalidOperandOOG => Ok(Self::OutOfGas),
+
+                InstructionResult::OpcodeNotFound |
+                InstructionResult::CallNotAllowedInsideStatic |
+                InstructionResult::StateChangeDuringStaticCall |
+                InstructionResult::InvalidEFOpcode |
+                InstructionResult::InvalidJump |
+                InstructionResult::NotActivated |
+                InstructionResult::StackUnderflow |
+                InstructionResult::StackOverflow |
+                InstructionResult::OutOfOffset |
+                InstructionResult::CreateCollision |
+                InstructionResult::OverflowPayment |
+                InstructionResult::PrecompileError |
+                InstructionResult::NonceOverflow |
+                InstructionResult::CreateContractSizeLimit |
+                InstructionResult::CreateContractStartingWithEF |
+                InstructionResult::CreateInitCodeSizeLimit |
+                InstructionResult::FatalExternalError |
+                InstructionResult::OutOfFunds |
+                InstructionResult::CallTooDeep => Ok(Self::EvmError(exit)),
+
+                // Handle Revm EOF InstructionResults: Not supported yet
+                InstructionResult::ReturnContractInNotInitEOF |
+                InstructionResult::EOFOpcodeDisabledInLegacy |
+                InstructionResult::EOFFunctionStackOverflow |
+                InstructionResult::CreateInitCodeStartingEF00 |
+                InstructionResult::InvalidEOFInitCode |
+                InstructionResult::EofAuxDataOverflow |
+                InstructionResult::EofAuxDataTooSmall => Ok(Self::EvmError(exit)),
+            },
+        }
     }
 }

@@ -10,32 +10,37 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-config.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
-
 serde_json.workspace = true
-hex.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
+alloy-rpc-types.workspace = true
+revm-primitives.workspace = true
 serde.workspace = true
 eyre.workspace = true
-ethers-providers.workspace = true
+alloy-provider.workspace = true
 tracing.workspace = true
 foundry-compilers = { workspace = true, features = ["full"] }
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-reqwest = { version = "0.11", default-features = false, features = ["json"] }
-async-trait = "0.1"
-futures = "0.3"
-semver = "1"
+reqwest = { workspace = true, features = ["json"] }
+async-trait.workspace = true
+futures.workspace = true
+semver.workspace = true
 regex = { version = "1", default-features = false }
-once_cell = "1"
+once_cell.workspace = true
+yansi.workspace = true
+itertools.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros"] }
+tokio = { workspace = true, features = ["macros"] }
 foundry-test-utils.workspace = true
-tempfile = "3"
+tempfile.workspace = true

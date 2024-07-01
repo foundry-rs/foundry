@@ -8,12 +8,11 @@ use crossterm::{
 };
 use eyre::Result;
 use foundry_common::{compile::ContractSources, evm::Breakpoints};
-use foundry_evm_core::{debug::DebugNodeFlat, utils::PcIcMap};
+use foundry_evm_core::utils::PcIcMap;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
 };
-use revm::primitives::SpecId;
 use std::{
     collections::{BTreeMap, HashMap},
     io,
@@ -29,6 +28,8 @@ pub use builder::DebuggerBuilder;
 mod context;
 use context::DebuggerContext;
 
+use crate::DebugNode;
+
 mod draw;
 
 type DebuggerTerminal = Terminal<CrosstermBackend<io::Stdout>>;
@@ -42,7 +43,7 @@ pub enum ExitReason {
 
 /// The TUI debugger.
 pub struct Debugger {
-    debug_arena: Vec<DebugNodeFlat>,
+    debug_arena: Vec<DebugNode>,
     identified_contracts: HashMap<Address, String>,
     /// Source map of contract sources
     contracts_sources: ContractSources,
@@ -60,19 +61,19 @@ impl Debugger {
 
     /// Creates a new debugger.
     pub fn new(
-        debug_arena: Vec<DebugNodeFlat>,
+        debug_arena: Vec<DebugNode>,
         identified_contracts: HashMap<Address, String>,
         contracts_sources: ContractSources,
         breakpoints: Breakpoints,
     ) -> Self {
         let pc_ic_maps = contracts_sources
             .entries()
-            .filter_map(|(contract_name, (_, contract))| {
+            .filter_map(|(name, artifact, _)| {
                 Some((
-                    contract_name.clone(),
+                    name.to_owned(),
                     (
-                        PcIcMap::new(SpecId::LATEST, contract.bytecode.bytes()?),
-                        PcIcMap::new(SpecId::LATEST, contract.deployed_bytecode.bytes()?),
+                        PcIcMap::new(artifact.bytecode.bytecode.bytes()?),
+                        PcIcMap::new(artifact.bytecode.deployed_bytecode.bytes()?),
                     ),
                 ))
             })
@@ -115,16 +116,13 @@ impl Debugger {
             .spawn(move || Self::event_listener(tx))
             .expect("failed to spawn thread");
 
-        // Draw the initial state.
-        cx.draw(terminal)?;
-
         // Start the event loop.
         loop {
+            cx.draw(terminal)?;
             match cx.handle_event(rx.recv()?) {
                 ControlFlow::Continue(()) => {}
                 ControlFlow::Break(reason) => return Ok(reason),
             }
-            cx.draw(terminal)?;
         }
     }
 

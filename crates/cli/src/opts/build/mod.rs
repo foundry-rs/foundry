@@ -1,5 +1,5 @@
 use clap::Parser;
-use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
+use foundry_compilers::artifacts::{output_selection::ContractOutputSelection, EvmVersion};
 use serde::Serialize;
 
 mod core;
@@ -39,7 +39,7 @@ pub struct CompilerArgs {
     ///
     /// Example keys: evm.assembly, ewasm, ir, irOptimized, metadata
     ///
-    /// For a full description, see https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description
+    /// For a full description, see <https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description>
     #[arg(long, num_args(1..), value_name = "SELECTOR")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_output: Vec<ContractOutputSelection>,

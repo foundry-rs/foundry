@@ -1,25 +1,54 @@
 use crate::{init_tracing, TestCommand};
-use alloy_primitives::{Address, U256};
-use ethers_core::types::NameOrAddress;
-use ethers_providers::Middleware;
+use alloy_primitives::Address;
+use alloy_provider::Provider;
 use eyre::Result;
-use foundry_common::{
-    provider::ethers::{get_http_provider, RetryProvider},
-    types::{ToAlloy, ToEthers},
+use foundry_common::provider::{get_http_provider, RetryProvider};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    str::FromStr,
 };
-use std::{collections::BTreeMap, fs, path::Path, str::FromStr};
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata");
 
+fn init_script_cmd(
+    cmd: &mut TestCommand,
+    project_root: &Path,
+    target_contract: &str,
+    endpoint: Option<&str>,
+) {
+    cmd.forge_fuse();
+    cmd.set_current_dir(project_root);
+
+    cmd.args([
+        "script",
+        "-R",
+        "ds-test/=lib/",
+        "-R",
+        "cheats/=cheats/",
+        target_contract,
+        "--root",
+        project_root.to_str().unwrap(),
+        "-vvvvv",
+    ]);
+
+    if let Some(rpc_url) = endpoint {
+        cmd.args(["--fork-url", rpc_url]);
+    }
+}
 /// A helper struct to test forge script scenarios
 pub struct ScriptTester {
     pub accounts_pub: Vec<Address>,
     pub accounts_priv: Vec<String>,
     pub provider: Option<RetryProvider>,
-    pub nonces: BTreeMap<u32, U256>,
-    pub address_nonces: BTreeMap<Address, U256>,
+    pub nonces: BTreeMap<u32, u64>,
+    pub address_nonces: BTreeMap<Address, u64>,
     pub cmd: TestCommand,
+    pub project_root: PathBuf,
+    pub target_contract: String,
+    pub endpoint: Option<String>,
 }
 
 impl ScriptTester {
@@ -31,26 +60,15 @@ impl ScriptTester {
         target_contract: &str,
     ) -> Self {
         init_tracing();
-        ScriptTester::copy_testdata(project_root).unwrap();
-        cmd.set_current_dir(project_root);
-
-        cmd.args([
-            "script",
-            "-R",
-            "ds-test/=lib/",
-            target_contract,
-            "--root",
-            project_root.to_str().unwrap(),
-            "-vvvvv",
-        ]);
+        Self::copy_testdata(project_root).unwrap();
+        init_script_cmd(&mut cmd, project_root, target_contract, endpoint);
 
         let mut provider = None;
         if let Some(endpoint) = endpoint {
-            cmd.args(["--fork-url", endpoint]);
             provider = Some(get_http_provider(endpoint))
         }
 
-        ScriptTester {
+        Self {
             accounts_pub: vec![
                 Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap(),
                 Address::from_str("0x70997970C51812dc3A010C7d01b50e0d17dc79C8").unwrap(),
@@ -65,6 +83,9 @@ impl ScriptTester {
             nonces: BTreeMap::default(),
             address_nonces: BTreeMap::default(),
             cmd,
+            project_root: project_root.to_path_buf(),
+            target_contract: target_contract.to_string(),
+            endpoint: endpoint.map(|s| s.to_string()),
         }
     }
 
@@ -75,7 +96,7 @@ impl ScriptTester {
 
         // copy the broadcast test
         fs::copy(
-            Self::testdata_path().join("cheats/Broadcast.t.sol"),
+            Self::testdata_path().join("default/cheats/Broadcast.t.sol"),
             project_root.join(BROADCAST_TEST_PATH),
         )
         .expect("Failed to initialize broadcast contract");
@@ -90,8 +111,11 @@ impl ScriptTester {
 
         // copy the broadcast test
         let testdata = Self::testdata_path();
-        fs::copy(testdata.join("cheats/Broadcast.t.sol"), project_root.join(BROADCAST_TEST_PATH))
-            .expect("Failed to initialize broadcast contract");
+        fs::copy(
+            testdata.join("default/cheats/Broadcast.t.sol"),
+            project_root.join(BROADCAST_TEST_PATH),
+        )
+        .expect("Failed to initialize broadcast contract");
 
         Self::new(cmd, None, project_root, &target_contract)
     }
@@ -104,7 +128,8 @@ impl ScriptTester {
     /// Initialises the test contracts by copying them into the workspace
     fn copy_testdata(current_dir: &Path) -> Result<()> {
         let testdata = Self::testdata_path();
-        fs::copy(testdata.join("cheats/Vm.sol"), current_dir.join("src/Vm.sol"))?;
+        fs::create_dir_all(current_dir.join("cheats"))?;
+        fs::copy(testdata.join("cheats/Vm.sol"), current_dir.join("cheats/Vm.sol"))?;
         fs::copy(testdata.join("lib/ds-test/src/test.sol"), current_dir.join("lib/test.sol"))?;
         Ok(())
     }
@@ -115,13 +140,10 @@ impl ScriptTester {
 
             if let Some(provider) = &self.provider {
                 let nonce = provider
-                    .get_transaction_count(
-                        NameOrAddress::Address(self.accounts_pub[index as usize].to_ethers()),
-                        None,
-                    )
+                    .get_transaction_count(self.accounts_pub[index as usize])
                     .await
                     .unwrap();
-                self.nonces.insert(index, nonce.to_alloy());
+                self.nonces.insert(index, nonce);
             }
         }
         self
@@ -129,14 +151,9 @@ impl ScriptTester {
 
     pub async fn load_addresses(&mut self, addresses: &[Address]) -> &mut Self {
         for &address in addresses {
-            let nonce = self
-                .provider
-                .as_ref()
-                .unwrap()
-                .get_transaction_count(NameOrAddress::Address(address.to_ethers()), None)
-                .await
-                .unwrap();
-            self.address_nonces.insert(address, nonce.to_alloy());
+            let nonce =
+                self.provider.as_ref().unwrap().get_transaction_count(address).await.unwrap();
+            self.address_nonces.insert(address, nonce);
         }
         self
     }
@@ -175,18 +192,12 @@ impl ScriptTester {
     pub async fn assert_nonce_increment(&mut self, keys_indexes: &[(u32, u32)]) -> &mut Self {
         for &(private_key_slot, expected_increment) in keys_indexes {
             let addr = self.accounts_pub[private_key_slot as usize];
-            let nonce = self
-                .provider
-                .as_ref()
-                .unwrap()
-                .get_transaction_count(NameOrAddress::Address(addr.to_ethers()), None)
-                .await
-                .unwrap();
+            let nonce = self.provider.as_ref().unwrap().get_transaction_count(addr).await.unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
 
             assert_eq!(
                 nonce,
-                (prev_nonce + U256::from(expected_increment)).to_ethers(),
+                (*prev_nonce + expected_increment as u64),
                 "nonce not incremented correctly for {addr}: \
                  {prev_nonce} + {expected_increment} != {nonce}"
             );
@@ -200,16 +211,11 @@ impl ScriptTester {
         address_indexes: &[(Address, u32)],
     ) -> &mut Self {
         for (address, expected_increment) in address_indexes {
-            let nonce = self
-                .provider
-                .as_ref()
-                .unwrap()
-                .get_transaction_count(NameOrAddress::Address(address.to_ethers()), None)
-                .await
-                .unwrap();
+            let nonce =
+                self.provider.as_ref().unwrap().get_transaction_count(*address).await.unwrap();
             let prev_nonce = self.address_nonces.get(address).unwrap();
 
-            assert_eq!(nonce, (prev_nonce + U256::from(*expected_increment)).to_ethers());
+            assert_eq!(nonce, *prev_nonce + *expected_increment as u64);
         }
         self
     }
@@ -243,6 +249,17 @@ impl ScriptTester {
         self.cmd.args(args);
         self
     }
+
+    pub fn clear(&mut self) {
+        init_script_cmd(
+            &mut self.cmd,
+            &self.project_root,
+            &self.target_contract,
+            self.endpoint.as_deref(),
+        );
+        self.nonces.clear();
+        self.address_nonces.clear();
+    }
 }
 
 /// Various `forge` script results
@@ -258,6 +275,7 @@ pub enum ScriptOutcome {
     ScriptFailed,
     UnsupportedLibraries,
     ErrorSelectForkOnBroadcast,
+    OkRun,
 }
 
 impl ScriptOutcome {
@@ -273,21 +291,23 @@ impl ScriptOutcome {
             Self::ScriptFailed => "script failed: ",
             Self::UnsupportedLibraries => "Multi chain deployment does not support library linking at the moment.",
             Self::ErrorSelectForkOnBroadcast => "cannot select forks during a broadcast",
+            Self::OkRun => "Script ran successfully",
         }
     }
 
     pub fn is_err(&self) -> bool {
         match self {
-            ScriptOutcome::OkNoEndpoint |
-            ScriptOutcome::OkSimulation |
-            ScriptOutcome::OkBroadcast |
-            ScriptOutcome::WarnSpecifyDeployer => false,
-            ScriptOutcome::MissingSender |
-            ScriptOutcome::MissingWallet |
-            ScriptOutcome::StaticCallNotAllowed |
-            ScriptOutcome::UnsupportedLibraries |
-            ScriptOutcome::ErrorSelectForkOnBroadcast |
-            ScriptOutcome::ScriptFailed => true,
+            Self::OkNoEndpoint |
+            Self::OkSimulation |
+            Self::OkBroadcast |
+            Self::WarnSpecifyDeployer |
+            Self::OkRun => false,
+            Self::MissingSender |
+            Self::MissingWallet |
+            Self::StaticCallNotAllowed |
+            Self::UnsupportedLibraries |
+            Self::ErrorSelectForkOnBroadcast |
+            Self::ScriptFailed => true,
         }
     }
 }

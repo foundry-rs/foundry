@@ -36,7 +36,7 @@ use crate::{
     },
     mem::storage::MinedBlockOutcome,
 };
-use alloy_primitives::{TxHash, U64};
+use alloy_primitives::{Address, TxHash, U64};
 use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
 use futures::channel::mpsc::{channel, Receiver, Sender};
@@ -75,8 +75,8 @@ impl Pool {
     /// Returns the number of tx that are ready and queued for further execution
     pub fn txpool_status(&self) -> TxpoolStatus {
         // Note: naming differs here compared to geth's `TxpoolStatus`
-        let pending = U64::from(self.ready_transactions().count());
-        let queued = U64::from(self.inner.read().pending_transactions.len());
+        let pending: u64 = self.ready_transactions().count().try_into().unwrap_or(0);
+        let queued: u64 = self.inner.read().pending_transactions.len().try_into().unwrap_or(0);
         TxpoolStatus { pending, queued }
     }
 
@@ -141,6 +141,11 @@ impl Pool {
         self.inner.write().remove_invalid(tx_hashes)
     }
 
+    /// Remove transactions by sender
+    pub fn remove_transactions_by_address(&self, sender: Address) -> Vec<Arc<PoolTransaction>> {
+        self.inner.write().remove_transactions_by_address(sender)
+    }
+
     /// Removes a single transaction from the pool
     ///
     /// This is similar to `[Pool::remove_invalid()]` but for a single transaction.
@@ -159,6 +164,12 @@ impl Pool {
             dropped = removed.into_iter().find(|t| *t.pending_transaction.hash() == tx);
         }
         dropped
+    }
+
+    /// Removes all transactions from the pool
+    pub fn clear(&self) {
+        let mut pool = self.inner.write();
+        pool.clear();
     }
 
     /// notifies all listeners about the transaction
@@ -206,6 +217,12 @@ impl PoolInner {
         self.ready_transactions.get_transactions()
     }
 
+    /// Clears
+    fn clear(&mut self) {
+        self.ready_transactions.clear();
+        self.pending_transactions.clear();
+    }
+
     /// checks both pools for the matching transaction
     ///
     /// Returns `None` if the transaction does not exist in the pool
@@ -216,6 +233,24 @@ impl PoolInner {
         Some(
             self.ready_transactions.get(&hash)?.transaction.transaction.pending_transaction.clone(),
         )
+    }
+
+    /// Returns an iterator over all transactions in the pool filtered by the sender
+    pub fn transactions_by_sender(
+        &self,
+        sender: Address,
+    ) -> impl Iterator<Item = Arc<PoolTransaction>> + '_ {
+        let pending_txs = self
+            .pending_transactions
+            .transactions()
+            .filter(move |tx| tx.pending_transaction.sender().eq(&sender));
+
+        let ready_txs = self
+            .ready_transactions
+            .get_transactions()
+            .filter(move |tx| tx.pending_transaction.sender().eq(&sender));
+
+        pending_txs.chain(ready_txs)
     }
 
     /// Returns true if this pool already contains the transaction
@@ -342,6 +377,25 @@ impl PoolInner {
 
         removed
     }
+
+    /// Remove transactions by sender address
+    pub fn remove_transactions_by_address(&mut self, sender: Address) -> Vec<Arc<PoolTransaction>> {
+        let tx_hashes =
+            self.transactions_by_sender(sender).map(move |tx| tx.hash()).collect::<Vec<TxHash>>();
+
+        if tx_hashes.is_empty() {
+            return vec![]
+        }
+
+        trace!(target: "txpool", "Removing transactions: {:?}", tx_hashes);
+
+        let mut removed = self.ready_transactions.remove_with_markers(tx_hashes.clone(), None);
+        removed.extend(self.pending_transactions.remove(tx_hashes));
+
+        trace!(target: "txpool", "Removed transactions: {:?}", removed);
+
+        removed
+    }
 }
 
 /// Represents the outcome of a prune
@@ -410,8 +464,8 @@ pub enum AddedTransaction {
 impl AddedTransaction {
     pub fn hash(&self) -> &TxHash {
         match self {
-            AddedTransaction::Ready(tx) => &tx.hash,
-            AddedTransaction::Pending { hash } => hash,
+            Self::Ready(tx) => &tx.hash,
+            Self::Pending { hash } => hash,
         }
     }
 }

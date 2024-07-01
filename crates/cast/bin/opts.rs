@@ -5,10 +5,11 @@ use crate::cmd::{
     wallet::WalletSubcommands,
 };
 use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
-use ethers_core::types::{BlockId, NameOrAddress};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, RpcOpts};
+use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
 const VERSION_MESSAGE: &str = concat!(
@@ -121,6 +122,13 @@ pub enum CastSubcommand {
     /// Convert hex data to an ASCII string.
     #[command(visible_aliases = &["--to-ascii", "tas", "2as"])]
     ToAscii {
+        /// The hex data to convert.
+        hexdata: Option<String>,
+    },
+
+    /// Convert hex data to a utf-8 string.
+    #[command(visible_aliases = &["--to-utf8", "tu8", "2u8"])]
+    ToUtf8 {
         /// The hex data to convert.
         hexdata: Option<String>,
     },
@@ -322,6 +330,8 @@ pub enum CastSubcommand {
     /// Get the latest block number.
     #[command(visible_alias = "bn")]
     BlockNumber {
+        /// The hash or tag to query. If not specified, the latest number is returned.
+        block: Option<BlockId>,
         #[command(flatten)]
         rpc: RpcOpts,
     },
@@ -423,7 +433,7 @@ pub enum CastSubcommand {
 
         /// The number of confirmations until the receipt is fetched
         #[arg(long, default_value = "1")]
-        confirmations: usize,
+        confirmations: u64,
 
         /// Exit immediately if the transaction was not found.
         #[arg(id = "async", long = "async", env = "CAST_ASYNC", alias = "cast-async")]
@@ -516,6 +526,16 @@ pub enum CastSubcommand {
 
         /// The storage slot of the mapping.
         slot_number: String,
+    },
+
+    /// Compute storage slots as specified by `ERC-7201: Namespaced Storage Layout`.
+    #[command(name = "index-erc7201", alias = "index-erc-7201", visible_aliases = &["index7201", "in7201"])]
+    IndexErc7201 {
+        /// The arbitrary identifier.
+        id: Option<String>,
+        /// The formula ID. Currently the only supported formula is `erc7201`.
+        #[arg(long, default_value = "erc7201")]
+        formula_id: String,
     },
 
     /// Fetch the EIP-1967 implementation account
@@ -706,7 +726,7 @@ pub enum CastSubcommand {
     },
 
     /// Hash arbitrary data using Keccak-256.
-    #[command(visible_alias = "k")]
+    #[command(visible_aliases = &["k", "keccak256"])]
     Keccak {
         /// The data to hash.
         data: Option<String>,
@@ -788,8 +808,12 @@ pub enum CastSubcommand {
         /// The contract's address.
         address: String,
 
-        /// The output directory to expand source tree into.
-        #[arg(short, value_hint = ValueHint::DirPath)]
+        /// Whether to flatten the source code.
+        #[arg(long, short)]
+        flatten: bool,
+
+        /// The output directory/file to expand source tree into.
+        #[arg(short, value_hint = ValueHint::DirPath, alias = "path")]
         directory: Option<PathBuf>,
 
         #[command(flatten)]
@@ -906,9 +930,9 @@ pub fn parse_slot(s: &str) -> Result<B256> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_rpc_types::{BlockNumberOrTag, RpcBlockHash};
     use cast::SimpleCast;
     use clap::CommandFactory;
-    use ethers_core::types::BlockNumber;
 
     #[test]
     fn verify_cli() {
@@ -997,30 +1021,34 @@ mod tests {
         let test_cases = [
             TestCase {
                 input: "0".to_string(),
-                expect: BlockId::Number(BlockNumber::Number(0u64.into())),
+                expect: BlockId::Number(BlockNumberOrTag::Number(0u64)),
             },
             TestCase {
                 input: "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a"
                     .to_string(),
-                expect: BlockId::Hash(
+                expect: BlockId::Hash(RpcBlockHash::from_hash(
                     "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a"
                         .parse()
                         .unwrap(),
-                ),
+                    None,
+                )),
             },
-            TestCase { input: "latest".to_string(), expect: BlockId::Number(BlockNumber::Latest) },
+            TestCase {
+                input: "latest".to_string(),
+                expect: BlockId::Number(BlockNumberOrTag::Latest),
+            },
             TestCase {
                 input: "earliest".to_string(),
-                expect: BlockId::Number(BlockNumber::Earliest),
+                expect: BlockId::Number(BlockNumberOrTag::Earliest),
             },
             TestCase {
                 input: "pending".to_string(),
-                expect: BlockId::Number(BlockNumber::Pending),
+                expect: BlockId::Number(BlockNumberOrTag::Pending),
             },
-            TestCase { input: "safe".to_string(), expect: BlockId::Number(BlockNumber::Safe) },
+            TestCase { input: "safe".to_string(), expect: BlockId::Number(BlockNumberOrTag::Safe) },
             TestCase {
                 input: "finalized".to_string(),
-                expect: BlockId::Number(BlockNumber::Finalized),
+                expect: BlockId::Number(BlockNumberOrTag::Finalized),
             },
         ];
 

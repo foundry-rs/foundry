@@ -1,14 +1,15 @@
-use cast::{Cast, TxBuilder};
+use crate::tx::CastTxBuilder;
+use alloy_primitives::TxKind;
+use alloy_rpc_types::BlockId;
+use cast::Cast;
 use clap::Parser;
-use ethers_core::types::{BlockId, NameOrAddress};
-use ethers_providers::Middleware;
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
-use foundry_common::types::ToEthers;
-use foundry_config::{Chain, Config};
+use foundry_common::ens::NameOrAddress;
+use foundry_config::Config;
 use std::str::FromStr;
 
 /// CLI arguments for `cast access-list`.
@@ -29,14 +30,6 @@ pub struct AccessListArgs {
     #[arg(value_name = "ARGS")]
     args: Vec<String>,
 
-    /// The data for the transaction.
-    #[arg(
-        long,
-        value_name = "DATA",
-        conflicts_with_all = &["sig", "args"]
-    )]
-    data: Option<String>,
-
     /// The block height to query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
@@ -56,59 +49,32 @@ pub struct AccessListArgs {
 
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
-        let AccessListArgs { to, sig, args, data, tx, eth, block, json: to_json } = self;
+        let Self { to, sig, args, tx, eth, block, json: to_json } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
-        let chain = utils::get_chain(config.chain, &provider).await?;
         let sender = eth.wallet.sender().await;
 
-        access_list(&provider, sender.to_ethers(), to, sig, args, data, tx, chain, block, to_json)
+        let tx_kind = if let Some(to) = to {
+            TxKind::Call(to.resolve(&provider).await?)
+        } else {
+            TxKind::Create
+        };
+
+        let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
+            .await?
+            .with_tx_kind(tx_kind)
+            .with_code_sig_and_args(None, sig, args)
+            .await?
+            .build_raw(sender)
             .await?;
+
+        let cast = Cast::new(&provider);
+
+        let access_list: String = cast.access_list(&tx, block, to_json).await?;
+
+        println!("{access_list}");
+
         Ok(())
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn access_list<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
-    provider: M,
-    from: F,
-    to: Option<T>,
-    sig: Option<String>,
-    args: Vec<String>,
-    data: Option<String>,
-    tx: TransactionOpts,
-    chain: Chain,
-    block: Option<BlockId>,
-    to_json: bool,
-) -> Result<()>
-where
-    M::Error: 'static,
-{
-    let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
-    builder
-        .gas(tx.gas_limit)
-        .gas_price(tx.gas_price)
-        .priority_gas_price(tx.priority_gas_price)
-        .nonce(tx.nonce);
-
-    builder.value(tx.value);
-
-    if let Some(sig) = sig {
-        builder.set_args(sig.as_str(), args).await?;
-    }
-    if let Some(data) = data {
-        // Note: `sig+args` and `data` are mutually exclusive
-        builder.set_data(hex::decode(data).wrap_err("Expected hex encoded function data")?);
-    }
-
-    let builder_output = builder.peek();
-
-    let cast = Cast::new(&provider);
-
-    let access_list: String = cast.access_list(builder_output, block, to_json).await?;
-
-    println!("{}", access_list);
-
-    Ok(())
 }

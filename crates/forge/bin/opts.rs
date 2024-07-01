@@ -1,12 +1,12 @@
 use crate::cmd::{
-    bind::BindArgs, build::BuildArgs, cache::CacheArgs, config, coverage, create::CreateArgs,
-    debug::DebugArgs, doc::DocArgs, flatten, fmt::FmtArgs, geiger, generate, init::InitArgs,
-    inspect, install::InstallArgs, remappings::RemappingArgs, remove::RemoveArgs,
-    selectors::SelectorsSubcommands, snapshot, test, tree, update,
+    bind::BindArgs, build::BuildArgs, cache::CacheArgs, clone::CloneArgs, config, coverage,
+    create::CreateArgs, debug::DebugArgs, doc::DocArgs, flatten, fmt::FmtArgs, geiger, generate,
+    init::InitArgs, inspect, install::InstallArgs, remappings::RemappingArgs, remove::RemoveArgs,
+    selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
-use forge_verify::{VerifyArgs, VerifyCheckArgs};
+use forge_verify::{bytecode::VerifyBytecodeArgs, VerifyArgs, VerifyCheckArgs};
 use std::path::PathBuf;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -51,6 +51,9 @@ pub enum ForgeSubcommand {
     /// Build the project's smart contracts.
     #[command(visible_aliases = ["b", "compile"])]
     Build(BuildArgs),
+
+    /// Clone a contract from Etherscan.
+    Clone(CloneArgs),
 
     /// Debugs a single smart contract as a script.
     #[command(visible_alias = "d")]
@@ -154,6 +157,13 @@ pub enum ForgeSubcommand {
 
     /// Generate scaffold files.
     Generate(generate::GenerateArgs),
+
+    /// Verify the deployed bytecode against its source.
+    #[clap(visible_alias = "vb")]
+    VerifyBytecode(VerifyBytecodeArgs),
+
+    /// Soldeer dependency manager.
+    Soldeer(soldeer::SoldeerArgs),
 }
 
 #[cfg(test)]

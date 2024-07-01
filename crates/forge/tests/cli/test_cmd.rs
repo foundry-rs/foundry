@@ -1,7 +1,11 @@
-//! Contains various tests for checking `forge test`
-use foundry_common::rpc;
-use foundry_config::Config;
-use foundry_test_utils::util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION};
+//! Contains various tests for `forge test`.
+
+use alloy_primitives::U256;
+use foundry_config::{Config, FuzzConfig};
+use foundry_test_utils::{
+    rpc,
+    util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
+};
 use std::{path::PathBuf, str::FromStr};
 
 // tests that test filters are handled correctly
@@ -207,6 +211,7 @@ contract MyTest is DSTest {
 });
 
 // checks that forge test repeatedly produces the same output
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_test_repeatedly, |_prj, cmd| {
     cmd.arg("test");
     cmd.assert_non_empty_stdout();
@@ -262,8 +267,10 @@ contract ContractTest is DSTest {
 });
 
 // tests that libraries are handled correctly in multiforking mode
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.wipe_contracts();
+
     prj.add_source(
         "Contract.sol",
         r"
@@ -360,10 +367,10 @@ interface IERC20 {
     function name() external view returns (string memory);
 }
 
-contract USDCCallingTest is Test {
+contract USDTCallingTest is Test {
     function test() public {
         vm.createSelectFork("<url>");
-        IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48).name();
+        IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7).name();
     }
 }
    "#
@@ -528,3 +535,106 @@ contract GasLimitTest is Test {
 
     cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
 });
+
+forgetest!(test_match_path, |prj, cmd| {
+    prj.add_source(
+        "dummy",
+        r"  
+contract Dummy {
+    function testDummy() public {}
+}
+",
+    )
+    .unwrap();
+
+    cmd.args(["test", "--match-path", "src/dummy.sol"]);
+    cmd.assert_success()
+});
+
+forgetest_init!(should_not_shrink_fuzz_failure, |prj, cmd| {
+    prj.wipe_contracts();
+
+    // deterministic test so we always have 54 runs until test fails with overflow
+    let config = Config {
+        fuzz: { FuzzConfig { runs: 256, seed: Some(U256::from(100)), ..Default::default() } },
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    prj.add_test(
+        "CounterFuzz.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Test} from "forge-std/Test.sol";
+
+contract Counter {
+    uint256 public number = 0;
+
+    function addOne(uint256 x) external pure returns (uint256) {
+        return x + 100_000_000;
+    }
+}
+
+contract CounterTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function testAddOne(uint256 x) public view {
+        assertEq(counter.addOne(x), x + 100_000_000);
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]);
+    let (stderr, _) = cmd.unchecked_output_lossy();
+    // make sure there are only 61 runs (with proptest shrinking same test results in 298 runs)
+    assert_eq!(extract_number_of_runs(stderr), 61);
+});
+
+forgetest_init!(should_exit_early_on_invariant_failure, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "CounterInvariant.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Test} from "forge-std/Test.sol";
+
+contract Counter {
+    uint256 public number = 0;
+
+    function inc() external {
+        number += 1;
+    }
+}
+
+contract CounterTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function invariant_early_exit() public view {
+        assertTrue(counter.number() == 10, "wrong count");
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]);
+    let (stderr, _) = cmd.unchecked_output_lossy();
+    // make sure invariant test exit early with 0 runs
+    assert_eq!(extract_number_of_runs(stderr), 0);
+});
+
+fn extract_number_of_runs(stderr: String) -> usize {
+    let runs = stderr.find("runs:").and_then(|start_runs| {
+        let runs_split = &stderr[start_runs + 6..];
+        runs_split.find(',').map(|end_runs| &runs_split[..end_runs])
+    });
+    runs.unwrap().parse::<usize>().unwrap()
+}

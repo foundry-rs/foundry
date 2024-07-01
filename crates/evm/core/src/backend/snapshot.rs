@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use revm::{
-    primitives::{AccountInfo, Env, HashMap as Map},
+    primitives::{AccountInfo, Env, HashMap},
     JournaledState,
 };
 use serde::{Deserialize, Serialize};
@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 /// A minimal abstraction of a state at a certain point in time
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct StateSnapshot {
-    pub accounts: Map<Address, AccountInfo>,
-    pub storage: Map<Address, Map<U256, U256>>,
-    pub block_hashes: Map<U256, B256>,
+    pub accounts: HashMap<Address, AccountInfo>,
+    pub storage: HashMap<Address, HashMap<U256, U256>>,
+    pub block_hashes: HashMap<U256, B256>,
 }
 
 /// Represents a snapshot taken during evm execution
@@ -22,8 +22,6 @@ pub struct BackendSnapshot<T> {
     /// Contains the env at the time of the snapshot
     pub env: Env,
 }
-
-// === impl BackendSnapshot ===
 
 impl<T> BackendSnapshot<T> {
     /// Takes a new snapshot
@@ -58,6 +56,6 @@ pub enum RevertSnapshotAction {
 impl RevertSnapshotAction {
     /// Returns `true` if the action is to keep the snapshot
     pub fn is_keep(&self) -> bool {
-        matches!(self, RevertSnapshotAction::RevertKeep)
+        matches!(self, Self::RevertKeep)
     }
 }

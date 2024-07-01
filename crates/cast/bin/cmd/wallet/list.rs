@@ -1,7 +1,7 @@
 use clap::Parser;
 use eyre::Result;
 
-use foundry_common::{fs, types::ToAlloy};
+use foundry_common::fs;
 use foundry_config::Config;
 use foundry_wallets::multi_wallet::MultiWalletOptsBuilder;
 
@@ -22,7 +22,7 @@ pub struct ListArgs {
     trezor: bool,
 
     /// List accounts from AWS KMS.
-    #[arg(long)]
+    #[arg(long, hide = !cfg!(feature = "aws-kms"))]
     aws: bool,
 
     /// List all configured accounts.
@@ -61,7 +61,7 @@ impl ListArgs {
                                 .available_senders(self.max_senders.unwrap())
                                 .await?
                                 .iter()
-                                .for_each(|sender| println!("{} ({})", sender.to_alloy(), $label));
+                                .for_each(|sender| println!("{} ({})", sender, $label));
                         }
                     }
                     Err(e) => {
@@ -91,17 +91,17 @@ impl ListArgs {
             dunce::canonicalize(keystore_path)?
         };
 
-        // list files within keystore dir
-        std::fs::read_dir(keystore_dir)?.flatten().for_each(|entry| {
-            let path = entry.path();
-            if path.is_file() && path.extension().is_none() {
+        // List all files within the keystore directory.
+        for entry in std::fs::read_dir(keystore_dir)? {
+            let path = entry?.path();
+            if path.is_file() {
                 if let Some(file_name) = path.file_name() {
                     if let Some(name) = file_name.to_str() {
-                        println!("{} (Local)", name);
+                        println!("{name} (Local)");
                     }
                 }
             }
-        });
+        }
 
         Ok(())
     }

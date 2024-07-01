@@ -1,9 +1,10 @@
 use clap::{Parser, ValueHint};
-use eyre::Result;
-use forge_fmt::{format_to, parse, print_diagnostics_report};
+use eyre::{Context, Result};
+use forge_fmt::{format_to, parse};
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
-use foundry_common::{fs, glob::expand_globs, term::cli_warn};
-use foundry_config::impl_figment_convert_basic;
+use foundry_common::{fs, term::cli_warn};
+use foundry_compilers::{compilers::solc::SolcLanguage, solc::SOLC_EXTENSIONS};
+use foundry_config::{filter::expand_globs, impl_figment_convert_basic};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -12,7 +13,7 @@ use std::{
     io::{Read, Write as _},
     path::{Path, PathBuf},
 };
-use yansi::Color;
+use yansi::{Color, Paint, Style};
 
 /// CLI arguments for `forge fmt`.
 #[derive(Clone, Debug, Parser)]
@@ -42,14 +43,12 @@ pub struct FmtArgs {
 
 impl_figment_convert_basic!(FmtArgs);
 
-// === impl FmtArgs ===
-
 impl FmtArgs {
     pub fn run(self) -> Result<()> {
         let config = self.try_load_config_emit_warnings()?;
 
         // Expand ignore globs and canonicalize from the get go
-        let ignored = expand_globs(&config.__root.0, config.fmt.ignore.iter())?
+        let ignored = expand_globs(&config.root.0, config.fmt.ignore.iter())?
             .iter()
             .flat_map(foundry_common::fs::canonicalize_path)
             .collect::<Vec<_>>();
@@ -59,7 +58,7 @@ impl FmtArgs {
             [] => {
                 // Retrieve the project paths, and filter out the ignored ones.
                 let project_paths: Vec<PathBuf> = config
-                    .project_paths()
+                    .project_paths::<SolcLanguage>()
                     .input_files_iter()
                     .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
                     .collect();
@@ -81,7 +80,10 @@ impl FmtArgs {
                     }
 
                     if path.is_dir() {
-                        inputs.extend(foundry_compilers::utils::source_files_iter(path));
+                        inputs.extend(foundry_compilers::utils::source_files_iter(
+                            path,
+                            SOLC_EXTENSIONS,
+                        ));
                     } else if path.is_sol() {
                         inputs.push(path.to_path_buf());
                     } else {
@@ -95,14 +97,13 @@ impl FmtArgs {
         let format = |source: String, path: Option<&Path>| -> Result<_> {
             let name = match path {
                 Some(path) => {
-                    path.strip_prefix(&config.__root.0).unwrap_or(path).display().to_string()
+                    path.strip_prefix(&config.root.0).unwrap_or(path).display().to_string()
                 }
                 None => "stdin".to_string(),
             };
 
-            let parsed = parse(&source).map_err(|diagnostics| {
-                let _ = print_diagnostics_report(&source, path, diagnostics);
-                eyre::eyre!("Failed to parse Solidity code for {name}. Leaving source unchanged.")
+            let parsed = parse(&source).wrap_err_with(|| {
+                format!("Failed to parse Solidity code for {name}. Leaving source unchanged.")
             })?;
 
             if !parsed.invalid_inline_config_items.is_empty() {
@@ -201,10 +202,7 @@ impl fmt::Display for Line {
     }
 }
 
-fn format_diff_summary<'a, 'b, 'r>(name: &str, diff: &'r TextDiff<'a, 'b, '_, str>) -> String
-where
-    'r: 'a + 'b,
-{
+fn format_diff_summary<'a>(name: &str, diff: &'a TextDiff<'a, 'a, '_, str>) -> String {
     let cap = 128;
     let mut diff_summary = String::with_capacity(cap);
 
@@ -217,24 +215,24 @@ where
         }
         for op in group {
             for change in diff.iter_inline_changes(&op) {
-                let dimmed = Color::Default.style().dimmed();
+                let dimmed = Style::new().dim();
                 let (sign, s) = match change.tag() {
-                    ChangeTag::Delete => ("-", Color::Red.style()),
-                    ChangeTag::Insert => ("+", Color::Green.style()),
+                    ChangeTag::Delete => ("-", Color::Red.foreground()),
+                    ChangeTag::Insert => ("+", Color::Green.foreground()),
                     ChangeTag::Equal => (" ", dimmed),
                 };
 
                 let _ = write!(
                     diff_summary,
                     "{}{} |{}",
-                    dimmed.paint(Line(change.old_index())),
-                    dimmed.paint(Line(change.new_index())),
-                    s.bold().paint(sign),
+                    Line(change.old_index()).paint(dimmed),
+                    Line(change.new_index()).paint(dimmed),
+                    sign.paint(s.bold()),
                 );
 
                 for (emphasized, value) in change.iter_strings_lossy() {
                     let s = if emphasized { s.underline().bg(Color::Black) } else { s };
-                    let _ = write!(diff_summary, "{}", s.paint(value));
+                    let _ = write!(diff_summary, "{}", value.paint(s));
                 }
 
                 if change.missing_newline() {

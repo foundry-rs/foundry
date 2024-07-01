@@ -1,3 +1,4 @@
+use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::U256;
 use proptest::{
     strategy::{NewTree, Strategy, ValueTree},
@@ -6,7 +7,6 @@ use proptest::{
 use rand::Rng;
 
 /// Value tree for unsigned ints (up to uint256).
-/// This is very similar to [proptest::BinarySearch]
 pub struct UintValueTree {
     /// Lower base
     lo: U256,
@@ -68,15 +68,23 @@ impl ValueTree for UintValueTree {
 /// Value tree for unsigned ints (up to uint256).
 /// The strategy combines 3 different strategies, each assigned a specific weight:
 /// 1. Generate purely random value in a range. This will first choose bit size uniformly (up `bits`
-/// param). Then generate a value for this bit size.
+///    param). Then generate a value for this bit size.
 /// 2. Generate a random value around the edges (+/- 3 around 0 and max possible value)
 /// 3. Generate a value from a predefined fixtures set
+///
+/// To define uint fixtures:
+/// - return an array of possible values for a parameter named `amount` declare a function `function
+///   fixture_amount() public returns (uint32[] memory)`.
+/// - use `amount` named parameter in fuzzed test in order to include fixtures in fuzzed values
+///   `function testFuzz_uint32(uint32 amount)`.
+///
+/// If fixture is not a valid uint type then error is raised and random value generated.
 #[derive(Debug)]
 pub struct UintStrategy {
     /// Bit size of uint (e.g. 256)
     bits: usize,
     /// A set of fixtures to be generated
-    fixtures: Vec<U256>,
+    fixtures: Vec<DynSolValue>,
     /// The weight for edge cases (+/- 3 around 0 and max possible value)
     edge_weight: usize,
     /// The weight for fixtures
@@ -90,10 +98,10 @@ impl UintStrategy {
     /// #Arguments
     /// * `bits` - Size of uint in bits
     /// * `fixtures` - A set of fixed values to be generated (according to fixtures weight)
-    pub fn new(bits: usize, fixtures: Vec<U256>) -> Self {
+    pub fn new(bits: usize, fixtures: Option<&[DynSolValue]>) -> Self {
         Self {
             bits,
-            fixtures,
+            fixtures: Vec::from(fixtures.unwrap_or_default()),
             edge_weight: 10usize,
             fixtures_weight: 40usize,
             random_weight: 50usize,
@@ -105,19 +113,27 @@ impl UintStrategy {
         // Choose if we want values around 0 or max
         let is_min = rng.gen_bool(0.5);
         let offset = U256::from(rng.gen_range(0..4));
-        let max =
-            if self.bits < 256 { (U256::from(1) << self.bits) - U256::from(1) } else { U256::MAX };
-        let start = if is_min { offset } else { max.saturating_sub(offset) };
+        let start = if is_min { offset } else { self.type_max().saturating_sub(offset) };
         Ok(UintValueTree::new(start, false))
     }
 
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
-        // generate edge cases if there's no fixtures
+        // generate random cases if there's no fixtures
         if self.fixtures.is_empty() {
-            return self.generate_edge_tree(runner)
+            return self.generate_random_tree(runner)
         }
-        let idx = runner.rng().gen_range(0..self.fixtures.len());
-        Ok(UintValueTree::new(self.fixtures[idx], false))
+
+        // Generate value tree from fixture.
+        let fixture = &self.fixtures[runner.rng().gen_range(0..self.fixtures.len())];
+        if let Some(uint_fixture) = fixture.as_uint() {
+            if uint_fixture.1 == self.bits {
+                return Ok(UintValueTree::new(uint_fixture.0, false));
+            }
+        }
+
+        // If fixture is not a valid type, raise error and generate random value.
+        error!("{:?} is not a valid {} fixture", fixture, DynSolType::Uint(self.bits));
+        self.generate_random_tree(runner)
     }
 
     fn generate_random_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
@@ -151,6 +167,14 @@ impl UintStrategy {
 
         Ok(UintValueTree::new(start, false))
     }
+
+    fn type_max(&self) -> U256 {
+        if self.bits < 256 {
+            (U256::from(1) << self.bits) - U256::from(1)
+        } else {
+            U256::MAX
+        }
+    }
 }
 
 impl Strategy for UintStrategy {
@@ -165,5 +189,21 @@ impl Strategy for UintStrategy {
             x if x < self.edge_weight + self.fixtures_weight => self.generate_fixtures_tree(runner),
             _ => self.generate_random_tree(runner),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::strategies::uint::UintValueTree;
+    use alloy_primitives::U256;
+    use proptest::strategy::ValueTree;
+
+    #[test]
+    fn test_uint_tree_complicate_max() {
+        let mut uint_tree = UintValueTree::new(U256::MAX, false);
+        assert_eq!(uint_tree.hi, U256::MAX);
+        assert_eq!(uint_tree.curr, U256::MAX);
+        uint_tree.complicate();
+        assert_eq!(uint_tree.lo, U256::MIN);
     }
 }

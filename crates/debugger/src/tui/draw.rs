@@ -3,18 +3,19 @@
 use super::context::{BufferKind, DebuggerContext};
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
-use foundry_compilers::sourcemap::SourceElement;
-use foundry_evm_core::debug::Instruction;
+use foundry_compilers::{
+    artifacts::sourcemap::SourceElement, compilers::multi::MultiCompilerLanguage,
+};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     terminal::Frame,
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use revm::interpreter::opcode;
 use revm_inspectors::tracing::types::CallKind;
-use std::{cmp, collections::VecDeque, fmt::Write, io};
+use std::{collections::VecDeque, fmt::Write, io};
 
 impl DebuggerContext<'_> {
     /// Draws the TUI layout and subcomponents to the given terminal.
@@ -92,25 +93,25 @@ impl DebuggerContext<'_> {
         // constraints, so the `else` branch is unreachable.
 
         // Split off footer.
-        let [app, footer] = Layout::new()
-            .constraints([Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)])
-            .direction(Direction::Vertical)
-            .split(area)[..]
-        else {
+        let [app, footer] = Layout::new(
+            Direction::Vertical,
+            [Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)],
+        )
+        .split(area)[..] else {
             unreachable!()
         };
 
         // Split the app in 4 vertically to construct all the panes.
-        let [op_pane, stack_pane, memory_pane, src_pane] = Layout::new()
-            .direction(Direction::Vertical)
-            .constraints([
+        let [op_pane, stack_pane, memory_pane, src_pane] = Layout::new(
+            Direction::Vertical,
+            [
                 Constraint::Ratio(1, 6),
                 Constraint::Ratio(1, 6),
                 Constraint::Ratio(1, 6),
                 Constraint::Ratio(3, 6),
-            ])
-            .split(app)[..]
-        else {
+            ],
+        )
+        .split(app)[..] else {
             unreachable!()
         };
 
@@ -139,37 +140,34 @@ impl DebuggerContext<'_> {
         let h_height = if self.show_shortcuts { 4 } else { 0 };
 
         // Split off footer.
-        let [app, footer] = Layout::new()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)])
-            .split(area)[..]
-        else {
+        let [app, footer] = Layout::new(
+            Direction::Vertical,
+            [Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)],
+        )
+        .split(area)[..] else {
             unreachable!()
         };
 
         // Split app in 2 horizontally.
-        let [app_left, app_right] = Layout::new()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
-            .split(app)[..]
+        let [app_left, app_right] =
+            Layout::new(Direction::Horizontal, [Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
+                .split(app)[..]
         else {
             unreachable!()
         };
 
         // Split left pane in 2 vertically to opcode list and source.
-        let [op_pane, src_pane] = Layout::new()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)])
-            .split(app_left)[..]
+        let [op_pane, src_pane] =
+            Layout::new(Direction::Vertical, [Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)])
+                .split(app_left)[..]
         else {
             unreachable!()
         };
 
         // Split right pane horizontally to construct stack and memory.
-        let [stack_pane, memory_pane] = Layout::new()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)])
-            .split(app_right)[..]
+        let [stack_pane, memory_pane] =
+            Layout::new(Direction::Vertical, [Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)])
+                .split(app_right)[..]
         else {
             unreachable!()
         };
@@ -195,31 +193,37 @@ impl DebuggerContext<'_> {
     }
 
     fn draw_src(&self, f: &mut Frame<'_>, area: Rect) {
-        let text_output = self.src_text(area);
-        let title = match self.call_kind() {
+        let (text_output, source_name) = self.src_text(area);
+        let call_kind_text = match self.call_kind() {
             CallKind::Create | CallKind::Create2 => "Contract creation",
             CallKind::Call => "Contract call",
             CallKind::StaticCall => "Contract staticcall",
             CallKind::CallCode => "Contract callcode",
             CallKind::DelegateCall => "Contract delegatecall",
+            CallKind::AuthCall => "Contract authcall",
         };
+        let title = format!(
+            "{} {} ",
+            call_kind_text,
+            source_name.map(|s| format!("| {s}")).unwrap_or_default()
+        );
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text_output).block(block).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
     }
 
-    fn src_text(&self, area: Rect) -> Text<'_> {
-        let (source_element, source_code) = match self.src_map() {
+    fn src_text(&self, area: Rect) -> (Text<'_>, Option<&str>) {
+        let (source_element, source_code, source_file) = match self.src_map() {
             Ok(r) => r,
-            Err(e) => return Text::from(e),
+            Err(e) => return (Text::from(e), None),
         };
 
         // We are handed a vector of SourceElements that give us a span of sourcecode that is
         // currently being executed. This includes an offset and length.
         // This vector is in instruction pointer order, meaning the location of the instruction
         // minus `sum(push_bytes[..pc])`.
-        let offset = source_element.offset;
-        let len = source_element.length;
+        let offset = source_element.offset() as usize;
+        let len = source_element.length() as usize;
         let max = source_code.len();
 
         // Split source into before, relevant, and after chunks, split by line, for formatting.
@@ -325,10 +329,19 @@ impl DebuggerContext<'_> {
             lines.push(u_num, line, u_text);
         }
 
-        Text::from(lines.lines)
+        // pad with empty to each line to ensure the previous text is cleared
+        for line in &mut lines.lines {
+            // note that the \n is not included in the line length
+            if area.width as usize > line.width() + 1 {
+                line.push_span(Span::raw(" ".repeat(area.width as usize - line.width() - 1)));
+            }
+        }
+
+        (Text::from(lines.lines), Some(source_file))
     }
 
-    fn src_map(&self) -> Result<(SourceElement, &str), String> {
+    /// Returns source map, source code and source name of the current line.
+    fn src_map(&self) -> Result<(SourceElement, &str, &str), String> {
         let address = self.address();
         let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
@@ -346,165 +359,151 @@ impl DebuggerContext<'_> {
 
         let is_create = matches!(self.call_kind(), CallKind::Create | CallKind::Create2);
         let pc = self.current_step().pc;
-        let Some((source_element, source_code)) =
-            files_source_code.find_map(|(file_id, (source_code, contract_source))| {
+        let Some((source_element, source_code, source_file)) =
+            files_source_code.find_map(|(artifact, source)| {
                 let bytecode = if is_create {
-                    &contract_source.bytecode
+                    &artifact.bytecode.bytecode
                 } else {
-                    contract_source.deployed_bytecode.bytecode.as_ref()?
+                    artifact.bytecode.deployed_bytecode.bytecode.as_ref()?
                 };
-                let mut source_map = bytecode.source_map()?.ok()?;
+                let source_map = bytecode.source_map()?.expect("failed to parse");
 
                 let pc_ic_map = if is_create { create_map } else { rt_map };
                 let ic = pc_ic_map.get(pc)?;
-                let source_element = source_map.swap_remove(ic);
+
+                // Solc indexes source maps by instruction counter, but Vyper indexes by program
+                // counter.
+                let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
+                    source_map.get(ic)?
+                } else {
+                    source_map.get(pc)?
+                };
                 // if the source element has an index, find the sourcemap for that index
-                source_element
-                    .index
-                    .and_then(|index|
+                let res = source_element
+                    .index()
                     // if index matches current file_id, return current source code
-                    (index == file_id).then(|| (source_element.clone(), source_code)))
+                    .and_then(|index| {
+                        (index == artifact.file_id)
+                            .then(|| (source_element.clone(), source.source.as_str(), &source.name))
+                    })
                     .or_else(|| {
                         // otherwise find the source code for the element's index
                         self.debugger
                             .contracts_sources
                             .sources_by_id
-                            .get(&(source_element.index?))
-                            .map(|(source_code, _)| (source_element.clone(), source_code))
-                    })
+                            .get(&artifact.build_id)?
+                            .get(&source_element.index()?)
+                            .map(|source| {
+                                (source_element.clone(), source.source.as_str(), &source.name)
+                            })
+                    });
+
+                res
             })
         else {
             return Err(format!("No source map for contract {contract_name}"));
         };
 
-        Ok((source_element, source_code))
+        Ok((source_element, source_code, source_file))
     }
 
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {
-        let height = area.height as i32;
-        let extra_top_lines = height / 2;
-        // Absolute minimum start line
-        let abs_min_start = 0;
-        // Adjust for weird scrolling for max top line
-        let abs_max_start = (self.opcode_list.len() as i32 - 1) - (height / 2);
-        // actual minimum start line
-        let mut min_start =
-            cmp::max(self.current_step as i32 - height + extra_top_lines, abs_min_start) as usize;
-
-        // actual max start line
-        let mut max_start = cmp::max(
-            cmp::min(self.current_step as i32 - extra_top_lines, abs_max_start),
-            abs_min_start,
-        ) as usize;
-
-        // Sometimes, towards end of file, maximum and minim lines have swapped values. Swap if the
-        // case
-        if min_start > max_start {
-            std::mem::swap(&mut min_start, &mut max_start);
-        }
-
-        let prev_start = *self.draw_memory.current_startline.borrow();
-        let display_start = prev_start.clamp(min_start, max_start);
-        *self.draw_memory.current_startline.borrow_mut() = display_start;
-
-        let max_pc = self.debug_steps().iter().map(|step| step.pc).max().unwrap_or(0);
+        let debug_steps = self.debug_steps();
+        let max_pc = debug_steps.iter().map(|step| step.pc).max().unwrap_or(0);
         let max_pc_len = hex_digits(max_pc);
 
-        let debug_steps = self.debug_steps();
-        let mut lines = Vec::new();
-        let mut add_new_line = |line_number: usize| {
-            let mut line = String::with_capacity(64);
-
-            let is_current_step = line_number == self.current_step;
-            if line_number < self.debug_steps().len() {
-                let step = &debug_steps[line_number];
-                write!(line, "{:0>max_pc_len$x}|", step.pc).unwrap();
-                line.push_str(if is_current_step { "▶" } else { " " });
-                if let Some(op) = self.opcode_list.get(line_number) {
-                    line.push_str(op);
+        let items = debug_steps
+            .iter()
+            .enumerate()
+            .map(|(i, step)| {
+                let mut content = String::with_capacity(64);
+                write!(content, "{:0>max_pc_len$x}|", step.pc).unwrap();
+                if let Some(op) = self.opcode_list.get(i) {
+                    content.push_str(op);
                 }
-            } else {
-                line.push_str("END CALL");
-            }
-
-            let bg_color = if is_current_step { Color::DarkGray } else { Color::Reset };
-            let style = Style::new().fg(Color::White).bg(bg_color);
-            lines.push(Line::from(Span::styled(line, style)));
-        };
-
-        for number in display_start..self.opcode_list.len() {
-            add_new_line(number);
-        }
-
-        // Add one more "phantom" line so we see line where current segment execution ends
-        add_new_line(self.opcode_list.len());
+                ListItem::new(Span::styled(content, Style::new().fg(Color::White)))
+            })
+            .collect::<Vec<_>>();
 
         let title = format!(
             "Address: {} | PC: {} | Gas used in call: {}",
             self.address(),
             self.current_step().pc,
-            self.current_step().total_gas_used,
+            self.current_step().gas_used,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
-        let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: true });
-        f.render_widget(paragraph, area);
+        let list = List::new(items)
+            .block(block)
+            .highlight_symbol("▶")
+            .highlight_style(Style::new().fg(Color::White).bg(Color::DarkGray))
+            .scroll_padding(1);
+        let mut state = ListState::default().with_selected(Some(self.current_step));
+        f.render_stateful_widget(list, area, &mut state);
     }
 
     fn draw_stack(&self, f: &mut Frame<'_>, area: Rect) {
         let step = self.current_step();
-        let stack = &step.stack;
+        let stack = step.stack.as_ref();
+        let stack_len = stack.map_or(0, |s| s.len());
 
-        let min_len = decimal_digits(stack.len()).max(2);
+        let min_len = decimal_digits(stack_len).max(2);
 
-        let params =
-            if let Instruction::OpCode(op) = step.instruction { OpcodeParam::of(op) } else { &[] };
+        let params = OpcodeParam::of(step.op.get());
 
-        let text: Vec<Line> = stack
-            .iter()
-            .rev()
-            .enumerate()
-            .skip(self.draw_memory.current_stack_startline)
-            .map(|(i, stack_item)| {
-                let param = params.iter().find(|param| param.index == i);
+        let text: Vec<Line<'_>> = stack
+            .map(|stack| {
+                stack
+                    .iter()
+                    .rev()
+                    .enumerate()
+                    .skip(self.draw_memory.current_stack_startline)
+                    .map(|(i, stack_item)| {
+                        let param = params.iter().find(|param| param.index == i);
 
-                let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
+                        let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
 
-                // Stack index.
-                spans.push(Span::styled(format!("{i:0min_len$}| "), Style::new().fg(Color::White)));
+                        // Stack index.
+                        spans.push(Span::styled(
+                            format!("{i:0min_len$}| "),
+                            Style::new().fg(Color::White),
+                        ));
 
-                // Item hex bytes.
-                hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| {
-                    if param.is_some() {
-                        Style::new().fg(Color::Cyan)
-                    } else {
-                        Style::new().fg(Color::White)
-                    }
-                });
+                        // Item hex bytes.
+                        hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| {
+                            if param.is_some() {
+                                Style::new().fg(Color::Cyan)
+                            } else {
+                                Style::new().fg(Color::White)
+                            }
+                        });
 
-                if self.stack_labels {
-                    if let Some(param) = param {
-                        spans.push(Span::raw("| "));
-                        spans.push(Span::raw(param.name));
-                    }
-                }
+                        if self.stack_labels {
+                            if let Some(param) = param {
+                                spans.push(Span::raw("| "));
+                                spans.push(Span::raw(param.name));
+                            }
+                        }
 
-                spans.push(Span::raw("\n"));
+                        spans.push(Span::raw("\n"));
 
-                Line::from(spans)
+                        Line::from(spans)
+                    })
+                    .collect()
             })
-            .collect();
+            .unwrap_or_default();
 
-        let title = format!("Stack: {}", stack.len());
+        let title = format!("Stack: {stack_len}");
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
+        let call = self.debug_call();
         let step = self.current_step();
         let buf = match self.active_buffer {
-            BufferKind::Memory => step.memory.as_ref(),
-            BufferKind::Calldata => step.calldata.as_ref(),
+            BufferKind::Memory => step.memory.as_ref().unwrap().as_ref(),
+            BufferKind::Calldata => call.calldata.as_ref(),
             BufferKind::Returndata => step.returndata.as_ref(),
         };
 
@@ -516,10 +515,10 @@ impl DebuggerContext<'_> {
         let mut write_offset = None;
         let mut write_size = None;
         let mut color = None;
-        if let Instruction::OpCode(op) = step.instruction {
-            let stack_len = step.stack.len();
-            if stack_len > 0 {
-                if let Some(accesses) = get_buffer_accesses(op, &step.stack) {
+        let stack_len = step.stack.as_ref().map_or(0, |s| s.len());
+        if stack_len > 0 {
+            if let Some(stack) = step.stack.as_ref() {
+                if let Some(accesses) = get_buffer_accesses(step.op.get(), stack) {
                     if let Some(read_access) = accesses.read {
                         offset = Some(read_access.1.offset);
                         size = Some(read_access.1.size);
@@ -542,9 +541,9 @@ impl DebuggerContext<'_> {
         if self.current_step > 0 {
             let prev_step = self.current_step - 1;
             let prev_step = &self.debug_steps()[prev_step];
-            if let Instruction::OpCode(op) = prev_step.instruction {
+            if let Some(stack) = prev_step.stack.as_ref() {
                 if let Some(write_access) =
-                    get_buffer_accesses(op, &prev_step.stack).and_then(|a| a.write)
+                    get_buffer_accesses(prev_step.op.get(), stack).and_then(|a| a.write)
                 {
                     if self.active_buffer == BufferKind::Memory {
                         offset = Some(write_access.offset);
@@ -558,7 +557,7 @@ impl DebuggerContext<'_> {
         let height = area.height as usize;
         let end_line = self.draw_memory.current_buf_startline + height;
 
-        let text: Vec<Line> = buf
+        let text: Vec<Line<'_>> = buf
             .chunks(32)
             .enumerate()
             .skip(self.draw_memory.current_buf_startline)

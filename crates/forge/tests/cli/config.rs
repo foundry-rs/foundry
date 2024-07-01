@@ -2,7 +2,10 @@
 
 use alloy_primitives::{Address, B256, U256};
 use foundry_cli::utils as forge_utils;
-use foundry_compilers::artifacts::{OptimizerDetails, RevertStrings, YulDetails};
+use foundry_compilers::{
+    artifacts::{BytecodeHash, OptimizerDetails, RevertStrings, YulDetails},
+    solc::Solc,
+};
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -10,11 +13,11 @@ use foundry_config::{
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
-    foundry_compilers::{remappings::Remapping, EvmVersion},
+    foundry_compilers::artifacts::{remappings::Remapping, EvmVersion},
     util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
 };
 use path_slash::PathBufExt;
-use pretty_assertions::assert_eq;
+use similar_asserts::assert_eq;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -26,7 +29,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
     // explicitly set all values
     let input = Config {
         profile: Config::DEFAULT_PROFILE,
-        __root: Default::default(),
+        root: Default::default(),
         src: "test-src".into(),
         test: "test-test".into(),
         script: "test-script".into(),
@@ -70,9 +73,14 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             failure_persist_file: Some("failures".to_string()),
             ..Default::default()
         },
-        invariant: InvariantConfig { runs: 256, ..Default::default() },
+        invariant: InvariantConfig {
+            runs: 256,
+            failure_persist_dir: Some("test-cache/fuzz".into()),
+            ..Default::default()
+        },
         ffi: true,
         always_use_create_2_factory: false,
+        prompt_timeout: 0,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
         initial_balance: U256::from(0xffffffffffffffffffffffffu128),
@@ -124,14 +132,21 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         doc: Default::default(),
         fs_permissions: Default::default(),
         labels: Default::default(),
-        cancun: true,
+        prague: true,
         isolate: true,
-        __non_exhaustive: (),
-        __warnings: vec![],
+        unchecked_cheatcode_artifacts: false,
+        create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
+        vyper: Default::default(),
+        skip: vec![],
+        dependencies: Default::default(),
+        warnings: vec![],
+        assertions_revert: true,
+        legacy_assertions: false,
+        _non_exhaustive: (),
     };
     prj.write_config(input.clone());
     let config = cmd.config();
-    pretty_assertions::assert_eq!(input, config);
+    similar_asserts::assert_eq!(input, config);
 });
 
 // tests config gets printed to std out
@@ -304,8 +319,10 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
 
 // checks that we can set various config values
 forgetest_init!(can_set_config_values, |prj, _cmd| {
-    let config = prj.config_from_output(["--via-ir"]);
+    let config = prj.config_from_output(["--via-ir", "--no-metadata"]);
     assert!(config.via_ir);
+    assert_eq!(config.cbor_metadata, false);
+    assert_eq!(config.bytecode_hash, BytecodeHash::None);
 });
 
 // tests that solc can be explicitly set
@@ -350,12 +367,10 @@ contract Foo {}
 
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
-    assert!(cmd.stderr_lossy().contains("this/solc/does/not/exist does not exist"));
+    assert!(cmd.stderr_lossy().contains("`solc` this/solc/does/not/exist does not exist"));
 
     // `OTHER_SOLC_VERSION` was installed in previous step, so we can use the path to this directly
-    let local_solc = foundry_compilers::Solc::find_svm_installed_version(OTHER_SOLC_VERSION)
-        .unwrap()
-        .expect("solc is installed");
+    let local_solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
     cmd.forge_fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
     let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));
@@ -435,8 +450,7 @@ forgetest!(can_set_gas_price, |prj, cmd| {
 forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
-    dbg!(&remappings);
-    pretty_assertions::assert_eq!(
+    similar_asserts::assert_eq!(
         remappings,
         vec![
             // global
@@ -454,7 +468,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
 
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(
+    similar_asserts::assert_eq!(
         remappings,
         vec![
             // default
@@ -477,7 +491,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     let another_config = cmd.config();
     let remappings =
         another_config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(
+    similar_asserts::assert_eq!(
         remappings,
         vec![
             // local to the lib
@@ -495,7 +509,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(
+    similar_asserts::assert_eq!(
         remappings,
         vec![
             // local to the lib
@@ -525,7 +539,7 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
 
     let config = cmd.config();
     let remappings = config.get_all_remappings().collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(
+    similar_asserts::assert_eq!(
         remappings,
         vec![
             "dep1/=lib/dep1/src/".parse().unwrap(),
