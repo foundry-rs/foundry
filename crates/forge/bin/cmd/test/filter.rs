@@ -39,9 +39,9 @@ pub struct FilterArgs {
     )]
     pub path_pattern_inverse: Option<GlobMatcher>,
 
-    /// Only show coverage for files that do not match the specified glob pattern.
+    /// Only show coverage for files that do not match the specified regex pattern.
     #[arg(long = "no-match-coverage", visible_alias = "nmco", value_name = "GLOB")]
-    pub coverage_pattern_inverse: Option<GlobMatcher>,
+    pub coverage_pattern_inverse: Option<regex::Regex>,
 }
 
 impl FilterArgs {
@@ -146,10 +146,11 @@ impl TestFilter for FilterArgs {
 impl CoverageFilter for FilterArgs {
     /// Returns true if the file path does not match the ignore coverage pattern.
     fn matches_file_path(&self, path: &Path) -> bool {
-        if let Some(glob) = &self.coverage_pattern_inverse {
-            return !glob.is_match(path);
+        let mut ok = true;
+        if let Some(re) = &self.coverage_pattern_inverse {
+            ok = ok && !re.is_match(&path.to_string_lossy());
         }
-        true
+        ok
     }
 }
 
@@ -174,7 +175,7 @@ impl fmt::Display for FilterArgs {
             writeln!(f, "\tno-match-path: `{}`", p.as_str())?;
         }
         if let Some(p) = &self.coverage_pattern_inverse {
-            writeln!(f, "\tignore-coverage-path: `{}`", p.as_str())?;
+            writeln!(f, "\tno-match-coverage: `{}`", p.as_str())?;
         }
         Ok(())
     }
