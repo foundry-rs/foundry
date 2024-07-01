@@ -17,7 +17,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     ops::{AddAssign, Deref, DerefMut},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -163,7 +163,7 @@ impl CoverageReport {
                 .filter(|item| {
                     self.source_paths
                         .get(&(version.clone(), item.loc.source_id))
-                        .map(|path| filter.matches_file_path(Path::new(path)))
+                        .map(|path| filter.matches_file_path(path))
                         .unwrap_or(false)
                 })
                 .cloned()
