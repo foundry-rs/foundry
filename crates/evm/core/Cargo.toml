@@ -33,7 +33,7 @@ alloy-rpc-types.workspace = true
 alloy-serde.workspace = true
 alloy-sol-types.workspace = true
 alloy-transport.workspace = true
-alloy-fork-db.workspace = true
+foundry-fork-db.workspace = true
 
 revm = { workspace = true, features = [
     "std",

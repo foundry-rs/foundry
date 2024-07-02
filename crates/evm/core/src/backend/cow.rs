@@ -8,7 +8,7 @@ use crate::{
     fork::{CreateFork, ForkId},
     InspectorExt,
 };
-use alloy_fork_db::DatabaseError;
+use foundry_fork_db::DatabaseError;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
 use eyre::WrapErr;

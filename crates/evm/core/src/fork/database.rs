@@ -4,7 +4,7 @@ use crate::{
     backend::{RevertSnapshotAction, StateSnapshot},
     snapshot::Snapshots,
 };
-use alloy_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
+use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use parking_lot::Mutex;

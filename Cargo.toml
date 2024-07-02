@@ -159,6 +159,7 @@ foundry-linking = { path = "crates/linking" }
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.5.0", default-features = false }
 foundry-compilers = { version = "0.9.0", default-features = false }
+foundry-fork-db = "0.1"
 solang-parser = "=0.3.3"
 
 ## revm
@@ -193,8 +194,6 @@ alloy-transport = { version = "0.1.2", default-features = false }
 alloy-transport-http = { version = "0.1.2", default-features = false }
 alloy-transport-ipc = { version = "0.1.2", default-features = false }
 alloy-transport-ws = { version = "0.1.2", default-features = false }
-
-alloy-fork-db = { git = "https://github.com/klkvr/alloy-fork-db", rev = "10225cd" }
 
 alloy-dyn-abi = "0.7.3"
 alloy-json-abi = "0.7.3"

@@ -7,13 +7,13 @@ use crate::{
     utils::configure_tx_env,
     InspectorExt,
 };
-pub use alloy_fork_db::{cache::BlockchainDbMeta, BlockchainDb, SharedBackend};
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{keccak256, uint, Address, B256, U256};
 use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
 use alloy_serde::WithOtherFields;
 use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+pub use foundry_fork_db::{cache::BlockchainDbMeta, BlockchainDb, SharedBackend};
 use revm::{
     db::{CacheDB, DatabaseRef},
     inspectors::NoOpInspector,
@@ -1887,11 +1887,11 @@ fn apply_state_changeset(
 #[cfg(test)]
 mod tests {
     use crate::{backend::Backend, fork::CreateFork, opts::EvmOpts};
-    use alloy_fork_db::cache::{BlockchainDb, BlockchainDbMeta};
     use alloy_primitives::{Address, U256};
     use alloy_provider::Provider;
     use foundry_common::provider::get_http_provider;
     use foundry_config::{Config, NamedChain};
+    use foundry_fork_db::cache::{BlockchainDb, BlockchainDbMeta};
     use revm::DatabaseRef;
 
     const ENDPOINT: Option<&str> = option_env!("ETH_RPC_URL");
