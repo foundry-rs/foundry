@@ -685,7 +685,7 @@ interface Vm {
 
     /// takes a signed transaction as bytes and executes it
     #[cheatcode(group = Evm, safety = Safe)]
-    function sendRawTransaction(bytes calldata data) external;
+    function broadcastRawTransaction(bytes calldata data) external;
 
     // ======== Test Assertions and Utilities ========
 

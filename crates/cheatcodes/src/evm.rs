@@ -571,15 +571,16 @@ impl Cheatcode for stopAndReturnStateDiffCall {
     }
 }
 
-impl Cheatcode for sendRawTransactionCall {
+impl Cheatcode for broadcastRawTransactionCall {
     fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
         &self,
         ccx: &mut CheatsCtxt<DB>,
         executor: &mut E,
     ) -> Result {
         let mut data = self.data.as_ref();
-        let tx = TxEnvelope::decode(&mut data)
-            .map_err(|err| fmt_err!("sendRawTransaction: error decoding transaction ({err})"))?;
+        let tx = TxEnvelope::decode(&mut data).map_err(|err| {
+            fmt_err!("broadcastRawTransaction: error decoding transaction ({err})")
+        })?;
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
