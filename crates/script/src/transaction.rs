@@ -1,7 +1,6 @@
 use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::{hex, Address, Bytes, TxKind, B256};
-use alloy_rpc_types::request::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, ContractData, TransactionMaybeSigned, SELECTOR_LEN};

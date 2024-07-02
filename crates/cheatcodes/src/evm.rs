@@ -1,6 +1,8 @@
 //! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
-use crate::{BroadcastableTransaction, Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use crate::{
+    BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*,
+};
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -570,7 +572,11 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 }
 
 impl Cheatcode for sendRawTransactionCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let mut data = self.data.as_ref();
         let tx = TxEnvelope::decode(&mut data)
             .map_err(|err| fmt_err!("sendRawTransaction: error decoding transaction ({err})"))?;
@@ -586,7 +592,7 @@ impl Cheatcode for sendRawTransactionCall {
             tx.into(),
             &ccx.ecx.env,
             &mut ccx.ecx.journaled_state,
-            ccx.state,
+            &mut executor.get_inspector(ccx.state),
         )?;
 
         Ok(Default::default())

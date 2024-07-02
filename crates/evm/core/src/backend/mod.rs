@@ -8,9 +8,9 @@ use crate::{
     InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{b256, keccak256, Address, TxKind, B256, U256};
+use alloy_primitives::{keccak256, uint, Address, TxKind, B256, U256};
 use alloy_rpc_types::{
-    Block, BlockNumberOrTag, BlockTransactions, Transaction, TransactionRequest, WithOtherFields,
+    Block, BlockNumberOrTag, BlockTransactions, Transaction, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
 use eyre::Context;
@@ -22,7 +22,7 @@ use revm::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
         Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, EvmState, EvmStorageSlot,
-        HashMap as Map, Log, ResultAndState, SpecId, TxKind, KECCAK_EMPTY,
+        HashMap as Map, Log, ResultAndState, SpecId, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, JournaledState,
 };
@@ -205,15 +205,13 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     ) -> eyre::Result<()>;
 
     /// Executes a given TransactionRequest, commits the new state to the DB
-    fn transact_from_tx<I: InspectorExt<Backend>>(
+    fn transact_from_tx(
         &mut self,
         transaction: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut I,
-    ) -> eyre::Result<()>
-    where
-        Self: Sized;
+        inspector: &mut dyn InspectorExt<Backend>,
+    ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork_id(&self) -> Option<LocalForkId>;
@@ -1233,12 +1231,12 @@ impl DatabaseExt for Backend {
         )
     }
 
-    fn transact_from_tx<I: InspectorExt<Self>>(
+    fn transact_from_tx(
         &mut self,
         tx: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut I,
+        inspector: &mut dyn InspectorExt<Self>,
     ) -> eyre::Result<()> {
         trace!(?tx, "execute signed transaction");
 
@@ -1270,11 +1268,8 @@ impl DatabaseExt for Backend {
         env.tx.value =
             tx.value.ok_or_else(|| eyre::eyre!("transact_from_tx: No `value` field found"))?;
         env.tx.data = tx.input.into_input().unwrap_or_default();
-        env.tx.transact_to = match tx.to {
-            Some(TxKind::Call(a)) => TransactTo::Call(a),
-            Some(TxKind::Create) => TransactTo::create(),
-            None => TransactTo::create(),
-        };
+        env.tx.transact_to =
+            tx.to.ok_or_else(|| eyre::eyre!("transact_from_tx: No `to` field found"))?;
         env.tx.chain_id = tx.chain_id;
 
         self.commit(journaled_state.state.clone());

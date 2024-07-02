@@ -4,7 +4,7 @@ use crate::{
     verify::VerifyBundle,
 };
 use alloy_primitives::{hex, Address, TxHash};
-use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::AnyTransactionReceipt;
 use alloy_serde::WithOtherFields;
 use eyre::{ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;

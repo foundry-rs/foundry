@@ -8,7 +8,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
-use alloy_rpc_types::{IntoTransactionRequest, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
@@ -40,7 +40,7 @@ where
     // set in the request and omit the estimate altogether, so we remove it here
     tx.gas = None;
 
-    let t = tx.clone().into_transaction_request();
+    let t: WithOtherFields<TransactionRequest> = WithOtherFields::new(tx.inner.clone().into());
     tx.set_gas_limit(
         provider.estimate_gas(&t).await.wrap_err("Failed to estimate gas for tx")? *
             estimate_multiplier as u128 /
@@ -86,12 +86,16 @@ pub async fn send_transaction(
             debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
 
             // Submit the transaction
-            provider.send_transaction(tx.into_transaction_request()).await?
+            let t: WithOtherFields<TransactionRequest> =
+                WithOtherFields::new(tx.inner.clone().into());
+            provider.send_transaction(t).await?
         }
         SendTransactionKind::Raw(signer) => {
             debug!("sending transaction: {:?}", tx);
 
-            let signed = tx.into_transaction_request().build(signer).await?;
+            let t: WithOtherFields<TransactionRequest> =
+                WithOtherFields::new(tx.inner.clone().into());
+            let signed = t.build(signer).await?;
 
             // Submit the raw transaction
             provider.send_raw_transaction(signed.encoded_2718().as_ref()).await?
@@ -109,7 +113,7 @@ pub async fn send_transaction(
 #[derive(Clone)]
 pub enum SendTransactionKind<'a> {
     Unlocked(Address),
-    Raw(&'a EthereumSigner),
+    Raw(&'a EthereumWallet),
     Signed(TxEnvelope),
 }
 
@@ -118,7 +122,7 @@ pub enum SendTransactionsKind {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(HashSet<Address>),
     /// Send a signed transaction via `eth_sendRawTransaction`
-    Raw(HashMap<Address, EthereumSigner>, Vec<TxEnvelope>),
+    Raw(HashMap<Address, EthereumWallet>, Vec<TxEnvelope>),
 }
 
 impl SendTransactionsKind {
@@ -213,12 +217,11 @@ impl BundledState {
                 .sequences()
                 .iter()
                 .flat_map(|sequence| {
-                    sequence.transactions().map(|tx| {
-                        if tx.signed_tx.is_some() {
-                            (None, tx.signed_tx.clone())
-                        } else {
+                    sequence.transactions().map(|tx| match &tx.inner {
+                        TransactionMaybeSigned::NotSigned(tx) => {
                             (Some(tx.from.expect("No sender for onchain transaction!")), None)
                         }
+                        TransactionMaybeSigned::Signed(_, signed) => (None, Some(signed.clone())),
                     })
                 })
                 .unzip();
