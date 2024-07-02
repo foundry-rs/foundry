@@ -1,0 +1,106 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Anvil"><title>anvil - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../static.files/rustdoc-dd39b87e5fcfba68.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="anvil" data-themes="" data-resource-suffix="" data-rustdoc-version="1.81.0-nightly (cf2df68d1 2024-07-01)" data-channel="nightly" data-search-js="search-0fe7219eb170c82e.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../anvil/index.html">anvil</a><span class="version">0.2.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section><ul class="block"><li><a href="#modules">Modules</a></li><li><a href="#structs">Structs</a></li><li><a href="#enums">Enums</a></li><li><a href="#constants">Constants</a></li><li><a href="#traits">Traits</a></li><li><a href="#functions">Functions</a></li><li><a href="#types">Type Aliases</a></li></ul></section></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1>Crate <a class="mod" href="#">anvil</a><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><span class="out-of-band"><a class="src" href="../src/anvil/lib.rs.html#1-447">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h3 id="anvil"><a class="doc-anchor" href="#anvil">§</a>Anvil</h3>
+<p>A local Ethereum node, akin to Ganache, designed for development with <a href="../../bin/forge"><strong>Forge</strong></a>.</p>
+<h3 id="features"><a class="doc-anchor" href="#features">§</a>Features</h3>
+<ul>
+<li>Network forking: fork any EVM-compatible blockchain, same as in <code>forge</code></li>
+<li><a href="https://ethereum.org/developers/docs/apis/json-rpc/">Ethereum JSON-RPC</a> support</li>
+<li>Additional JSON-RPC endpoints, compatible with ganache and hardhat
+<ul>
+<li>snapshot/revert state</li>
+<li>mining modes: auto, interval, manual, none</li>
+<li>…</li>
+</ul>
+</li>
+</ul>
+<h3 id="supported-versions"><a class="doc-anchor" href="#supported-versions">§</a>Supported Versions</h3>
+<ul>
+<li><strong>anvil</strong>:
+<ul>
+<li><strong>evm</strong>: Cancun</li>
+</ul>
+</li>
+<li><strong>forge</strong>:
+<ul>
+<li><strong>solc</strong>: Latest</li>
+<li><strong>evm</strong>: Cancun</li>
+</ul>
+</li>
+</ul>
+<h3 id="installation"><a class="doc-anchor" href="#installation">§</a>Installation</h3>
+<p><code>anvil</code> binary is available via <a href="../../README.md#installation"><code>foundryup</code></a>.</p>
+<h4 id="installing-from-source"><a class="doc-anchor" href="#installing-from-source">§</a>Installing from source</h4><div class="example-wrap"><pre class="language-sh"><code>cargo install --git https://github.com/foundry-rs/foundry --locked --force
+</code></pre></div><h3 id="getting-started"><a class="doc-anchor" href="#getting-started">§</a>Getting started</h3><div class="example-wrap"><pre class="language-console"><code>$ anvil
+
+                             _   _
+                            (_) | |
+      __ _   _ __   __   __  _  | |
+     / _` | | &#39;_ \  \ \ / / | | | |
+    | (_| | | | | |  \ V /  | | | |
+     \__,_| |_| |_|   \_/   |_| |_|
+
+    0.1.0 (8d507b4 2023-08-05T00:20:34.048397801Z)
+    https://github.com/foundry-rs/foundry
+
+Available Accounts
+==================
+
+(0) &quot;0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266&quot; (10000.000000000000000000 ETH)
+(1) &quot;0x70997970C51812dc3A010C7d01b50e0d17dc79C8&quot; (10000.000000000000000000 ETH)
+(2) &quot;0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC&quot; (10000.000000000000000000 ETH)
+(3) &quot;0x90F79bf6EB2c4f870365E785982E1f101E93b906&quot; (10000.000000000000000000 ETH)
+(4) &quot;0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65&quot; (10000.000000000000000000 ETH)
+(5) &quot;0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc&quot; (10000.000000000000000000 ETH)
+(6) &quot;0x976EA74026E726554dB657fA54763abd0C3a0aa9&quot; (10000.000000000000000000 ETH)
+(7) &quot;0x14dC79964da2C08b23698B3D3cc7Ca32193d9955&quot; (10000.000000000000000000 ETH)
+(8) &quot;0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f&quot; (10000.000000000000000000 ETH)
+(9) &quot;0xa0Ee7A142d267C1f36714E4a8F75612F20a79720&quot; (10000.000000000000000000 ETH)
+
+Private Keys
+==================
+
+(0) 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+(1) 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+(2) 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+(3) 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6
+(4) 0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a
+(5) 0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba
+(6) 0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e
+(7) 0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356
+(8) 0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97
+(9) 0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
+
+Wallet
+==================
+Mnemonic:          test test test test test test test test test test test junk
+Derivation path:   m/44&#39;/60&#39;/0&#39;/0/
+
+
+Chain ID
+==================
+
+31337
+
+Base Fee
+==================
+
+1000000000
+
+Gas Limit
+==================
+
+30000000
+
+Genesis Timestamp
+==================
+
+1692087429
+
+Listening on 127.0.0.1:8545
+</code></pre></div></div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="cmd/index.html" title="mod anvil::cmd">cmd</a><span class="stab portability" title="Available on crate feature `cmd` only"><code>cmd</code></span></div><div class="desc docblock-short">contains cli command</div></li><li><div class="item-name"><a class="mod" href="config/index.html" title="mod anvil::config">config</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="eth/index.html" title="mod anvil::eth">eth</a></div><div class="desc docblock-short">ethereum related implementations</div></li><li><div class="item-name"><a class="mod" href="evm/index.html" title="mod anvil::evm">evm</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Evm related abstractions</div></li><li><div class="item-name"><a class="mod" href="filter/index.html" title="mod anvil::filter">filter</a></div><div class="desc docblock-short">support for polling filters
+Support for polling based filters</div></li><li><div class="item-name"><a class="mod" href="hardfork/index.html" title="mod anvil::hardfork">hardfork</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="logging/index.html" title="mod anvil::logging">logging</a></div><div class="desc docblock-short">commandline output
+User facing Logger</div></li><li><div class="item-name"><a class="mod" href="pubsub/index.html" title="mod anvil::pubsub">pubsub</a></div><div class="desc docblock-short">types for subscriptions</div></li><li><div class="item-name"><a class="mod" href="server/index.html" title="mod anvil::server">server</a></div><div class="desc docblock-short">axum RPC server implementations
+Contains the code to launch an Ethereum RPC server.</div></li><li><div class="item-name"><a class="mod" href="service/index.html" title="mod anvil::service">service</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">contains the background service that drives the node
+background service</div></li><li><div class="item-name"><a class="mod" href="shutdown/index.html" title="mod anvil::shutdown">shutdown</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Futures for shutdown signal
+Helper for shutdown signals</div></li><li><div class="item-name"><a class="mod" href="tasks/index.html" title="mod anvil::tasks">tasks</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">additional task management
+Task management support</div></li></ul><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.AccountGenerator.html" title="struct anvil::AccountGenerator">AccountGenerator</a></div><div class="desc docblock-short">Can create dev accounts</div></li><li><div class="item-name"><a class="struct" href="struct.NodeConfig.html" title="struct anvil::NodeConfig">NodeConfig</a></div><div class="desc docblock-short">Configurations of the EVM node</div></li><li><div class="item-name"><a class="struct" href="struct.NodeHandle.html" title="struct anvil::NodeHandle">NodeHandle</a></div><div class="desc docblock-short">A handle to the spawned node and server tasks</div></li></ul><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.ForkChoice.html" title="enum anvil::ForkChoice">ForkChoice</a></div><div class="desc docblock-short">Fork delimiter used to specify which block or transaction to fork from</div></li><li><div class="item-name"><a class="enum" href="enum.Hardfork.html" title="enum anvil::Hardfork">Hardfork</a></div></li></ul><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.CHAIN_ID.html" title="constant anvil::CHAIN_ID">CHAIN_ID</a></div><div class="desc docblock-short">Default chain id of the node</div></li><li><div class="item-name"><a class="constant" href="constant.VERSION_MESSAGE.html" title="constant anvil::VERSION_MESSAGE">VERSION_MESSAGE</a></div><div class="desc docblock-short"><code>anvil 0.1.0 (f01b232bc 2022-04-13T23:28:39.493201+00:00)</code></div></li></ul><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="trait" href="trait.PrecompileFactory.html" title="trait anvil::PrecompileFactory">PrecompileFactory</a></div><div class="desc docblock-short">Object-safe trait that enables injecting extra precompiles when using
+<code>anvil</code> as a library.</div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.inject_precompiles.html" title="fn anvil::inject_precompiles">inject_precompiles</a></div><div class="desc docblock-short">Appends a handler register to <code>evm</code> that injects the given <code>precompiles</code>.</div></li><li><div class="item-name"><a class="fn" href="fn.spawn.html" title="fn anvil::spawn">spawn</a></div><div class="desc docblock-short">Creates the node and runs the server.</div></li><li><div class="item-name"><a class="fn" href="fn.try_spawn.html" title="fn anvil::try_spawn">try_spawn</a></div><div class="desc docblock-short">Creates the node and runs the server</div></li></ul><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="type" href="type.IpcTask.html" title="type anvil::IpcTask">IpcTask</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul></section></div></main></body></html>

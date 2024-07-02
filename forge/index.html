@@ -1,0 +1,457 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="`forge`"><title>forge - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../static.files/rustdoc-dd39b87e5fcfba68.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="forge" data-themes="" data-resource-suffix="" data-rustdoc-version="1.81.0-nightly (cf2df68d1 2024-07-01)" data-channel="nightly" data-search-js="search-0fe7219eb170c82e.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../forge/index.html">forge</a><span class="version">0.2.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section><ul class="block"><li><a href="#reexports">Re-exports</a></li><li><a href="#modules">Modules</a></li><li><a href="#macros">Macros</a></li><li><a href="#structs">Structs</a></li><li><a href="#traits">Traits</a></li></ul></section></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1>Crate <a class="mod" href="#">forge</a><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><span class="out-of-band"><a class="src" href="../src/forge/lib.rs.html#1-219">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="forge"><a class="doc-anchor" href="#forge">§</a><code>forge</code></h2>
+<p>Forge is a fast and flexible Ethereum testing framework, inspired by
+<a href="https://github.com/dapphub/dapptools/tree/master/src/dapp">Dapp</a>.</p>
+<p>If you are looking into how to consume the software as an end user, check the
+<a href="../cli/README.md">CLI README</a>.</p>
+<p>For more context on how the package works under the hood, look in the
+<a href="./src/lib.rs">code docs</a>.</p>
+<p><strong>Need help with Forge? Read the <a href="https://book.getfoundry.sh/forge/">📖 Foundry Book (Forge Guide)</a> (WIP)!</strong></p>
+<h3 id="why"><a class="doc-anchor" href="#why">§</a>Why?</h3><h4 id="write-your-tests-in-solidity-to-minimize-context-switching"><a class="doc-anchor" href="#write-your-tests-in-solidity-to-minimize-context-switching">§</a>Write your tests in Solidity to minimize context switching</h4>
+<p>Writing tests in Javascript/Typescript while writing your smart contracts in
+Solidity can be confusing. Forge lets you write your tests in Solidity, so you
+can focus on what matters.</p>
+<div class="example-wrap"><pre class="language-solidity"><code>contract Foo {
+    uint256 public x = 1;
+    function set(uint256 _x) external {
+        x = _x;
+    }
+
+    function double() external {
+        x = 2 * x;
+    }
+}
+
+contract FooTest {
+    Foo foo;
+
+    // The state of the contract gets reset before each
+    // test is run, with the `setUp()` function being called
+    // each time after deployment.
+    function setUp() public {
+        foo = new Foo();
+    }
+
+    // A simple unit test
+    function testDouble() public {
+        require(foo.x() == 1);
+        foo.double();
+        require(foo.x() == 2);
+    }
+}
+</code></pre></div><h4 id="fuzzing-go-beyond-unit-testing"><a class="doc-anchor" href="#fuzzing-go-beyond-unit-testing">§</a>Fuzzing: Go beyond unit testing</h4>
+<p>When testing smart contracts, fuzzing can uncover edge cases which would be hard
+to manually detect with manual unit testing. We support fuzzing natively, where
+any test function that takes &gt;0 arguments will be fuzzed, using the
+<a href="https://docs.rs/proptest/1.0.0/proptest/">proptest</a> crate.</p>
+<p>An example of how a fuzzed test would look like can be seen below:</p>
+<div class="example-wrap"><pre class="language-solidity"><code>function testDoubleWithFuzzing(uint256 x) public {
+    foo.set(x);
+    require(foo.x() == x);
+    foo.double();
+    require(foo.x() == 2 * x);
+}
+</code></pre></div><h3 id="features"><a class="doc-anchor" href="#features">§</a>Features</h3>
+<ul>
+<li><input disabled="" type="checkbox"/>
+test
+<ul>
+<li><input disabled="" type="checkbox" checked=""/>
+Simple unit tests
+<ul>
+<li><input disabled="" type="checkbox" checked=""/>
+Gas costs</li>
+<li><input disabled="" type="checkbox" checked=""/>
+DappTools style test output</li>
+<li><input disabled="" type="checkbox" checked=""/>
+JSON test output</li>
+<li><input disabled="" type="checkbox" checked=""/>
+Matching on regex</li>
+<li><input disabled="" type="checkbox" checked=""/>
+DSTest-style assertions support</li>
+</ul>
+</li>
+<li><input disabled="" type="checkbox" checked=""/>
+Fuzzing</li>
+<li><input disabled="" type="checkbox"/>
+Symbolic execution</li>
+<li><input disabled="" type="checkbox"/>
+Coverage</li>
+<li><input disabled="" type="checkbox" checked=""/>
+HEVM-style Solidity cheatcodes</li>
+<li><input disabled="" type="checkbox"/>
+Structured tracing with abi decoding</li>
+<li><input disabled="" type="checkbox"/>
+Per-line gas profiling</li>
+<li><input disabled="" type="checkbox" checked=""/>
+Forking mode</li>
+<li><input disabled="" type="checkbox" checked=""/>
+Automatic solc selection</li>
+</ul>
+</li>
+<li><input disabled="" type="checkbox" checked=""/>
+build
+<ul>
+<li><input disabled="" type="checkbox" checked=""/>
+Can read DappTools-style .sol.json artifacts</li>
+<li><input disabled="" type="checkbox" checked=""/>
+Manual remappings</li>
+<li><input disabled="" type="checkbox" checked=""/>
+Automatic remappings</li>
+<li><input disabled="" type="checkbox" checked=""/>
+Multiple compiler versions</li>
+<li><input disabled="" type="checkbox" checked=""/>
+Incremental compilation</li>
+<li><input disabled="" type="checkbox"/>
+Can read Hardhat-style artifacts</li>
+<li><input disabled="" type="checkbox"/>
+Can read Truffle-style artifacts</li>
+</ul>
+</li>
+<li><input disabled="" type="checkbox" checked=""/>
+install</li>
+<li><input disabled="" type="checkbox" checked=""/>
+update</li>
+<li><input disabled="" type="checkbox"/>
+debug</li>
+<li><input disabled="" type="checkbox" checked=""/>
+CLI Tracing with <code>RUST_LOG=forge=trace</code></li>
+</ul>
+<h4 id="gas-report"><a class="doc-anchor" href="#gas-report">§</a>Gas Report</h4>
+<p>Foundry will show you a comprehensive gas report about your contracts. It returns the <code>min</code>, <code>average</code>, <code>median</code> and, <code>max</code> gas cost for every function.</p>
+<p>It looks at <strong>all</strong> the tests that make a call to a given function and records the associated gas costs. For example, if something calls a function and it reverts, that’s probably the <code>min</code> value. Another example is the <code>max</code> value that is generated usually during the first call of the function (as it has to initialise storage, variables, etc.)</p>
+<p>Usually, the <code>median</code> value is what your users will probably end up paying. <code>max</code> and <code>min</code> concern edge cases that you might want to explicitly test against, but users will probably never encounter.</p>
+<img width="626" alt="image" src="https://user-images.githubusercontent.com/13405632/155415392-3ef61d67-8952-40e1-a509-24a8bf18fa80.png">
+<h4 id="cheat-codes"><a class="doc-anchor" href="#cheat-codes">§</a>Cheat codes</h4>
+<p><em>The below is modified from
+<a href="https://github.com/dapphub/dapptools/blob/master/src/hevm/README.md#cheat-codes">Dapp’s README</a></em></p>
+<p>We allow modifying blockchain state with “cheat codes”. These can be accessed by
+calling into a contract at address <code>0x7109709ECfa91a80626fF3989D68f67F5b1DD12D</code>,
+which implements the following methods:</p>
+<ul>
+<li>
+<p><code>function warp(uint x) public</code> Sets the block timestamp to <code>x</code>.</p>
+</li>
+<li>
+<p><code>function difficulty(uint x) public</code> Sets the block difficulty to <code>x</code>.</p>
+</li>
+<li>
+<p><code>function roll(uint x) public</code> Sets the block number to <code>x</code>.</p>
+</li>
+<li>
+<p><code>function coinbase(address c) public</code> Sets the block coinbase to <code>c</code>.</p>
+</li>
+<li>
+<p><code>function store(address c, bytes32 loc, bytes32 val) public</code> Sets the slot
+<code>loc</code> of contract <code>c</code> to <code>val</code>.</p>
+</li>
+<li>
+<p><code>function load(address c, bytes32 loc) public returns (bytes32 val)</code> Reads the
+slot <code>loc</code> of contract <code>c</code>.</p>
+</li>
+<li>
+<p><code>function sign(uint sk, bytes32 digest) public returns (uint8 v, bytes32 r, bytes32 s)</code>
+Signs the <code>digest</code> using the private key <code>sk</code>. Note that signatures produced
+via <code>hevm.sign</code> will leak the private key.</p>
+</li>
+<li>
+<p><code>function addr(uint sk) public returns (address addr)</code> Derives an ethereum
+address from the private key <code>sk</code>. Note that <code>hevm.addr(0)</code> will fail with
+<code>BadCheatCode</code> as <code>0</code> is an invalid ECDSA private key. <code>sk</code> values above the
+secp256k1 curve order, near the max uint256 value will also fail.</p>
+</li>
+<li>
+<p><code>function ffi(string[] calldata) external returns (bytes memory)</code> Executes the
+arguments as a command in the system shell and returns stdout. Note that this
+cheatcode means test authors can execute arbitrary code on user machines as
+part of a call to <code>forge test</code>, for this reason all calls to <code>ffi</code> will fail
+unless the <code>--ffi</code> flag is passed.</p>
+</li>
+<li>
+<p><code>function deal(address who, uint256 amount)</code>: Sets an account’s balance</p>
+</li>
+<li>
+<p><code>function etch(address where, bytes memory what)</code>: Sets the contract code at
+some address contract code</p>
+</li>
+<li>
+<p><code>function prank(address sender)</code>: Performs the next smart contract call as another address (prank just changes msg.sender. Tx still occurs as normal)</p>
+</li>
+<li>
+<p><code>function prank(address sender, address origin)</code>: Performs the next smart contract call setting both <code>msg.sender</code> and <code>tx.origin</code>.</p>
+</li>
+<li>
+<p><code>function startPrank(address sender)</code>: Performs smart contract calls as another address. The account impersonation lasts until the end of the transaction, or until <code>stopPrank</code> is called.</p>
+</li>
+<li>
+<p><code>function startPrank(address sender, address origin)</code>: Performs smart contract calls as another address, while also setting <code>tx.origin</code>. The account impersonation lasts until the end of the transaction, or until <code>stopPrank</code> is called.</p>
+</li>
+<li>
+<p><code>function stopPrank()</code>: Stop calling smart contracts with the address set at <code>startPrank</code></p>
+</li>
+<li>
+<p><code>function expectRevert(&lt;overloaded&gt; expectedError)</code>:
+Tells the evm to expect that the next call reverts with specified error bytes. Valid input types: <code>bytes</code>, and <code>bytes4</code>. Implicitly, strings get converted to bytes except when shorter than 4, in which case you will need to cast explicitly to <code>bytes</code>.</p>
+</li>
+<li>
+<p><code>function expectEmit(bool,bool,bool,bool) external</code>: Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.</p>
+</li>
+<li>
+<p><code>function expectEmit(bool,bool,bool,bool,address) external</code>: Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same. Also checks supplied address against address of originating contract.</p>
+</li>
+<li>
+<p><code>function getCode(string calldata) external returns (bytes memory)</code>: Fetches bytecode from a contract artifact. The parameter can either be in the form <code>ContractFile.sol</code> (if the filename and contract name are the same), <code>ContractFile.sol:ContractName</code>, or <code>./path/to/artifact.json</code>.</p>
+</li>
+<li>
+<p><code>function label(address addr, string calldata label) external</code>: Label an address in test traces.</p>
+</li>
+<li>
+<p><code>function assume(bool) external</code>: When fuzzing, generate new inputs if conditional not met</p>
+</li>
+<li>
+<p><code>function setNonce(address account, uint64 nonce) external</code>: Set nonce for an account, increment only.</p>
+</li>
+<li>
+<p><code>function getNonce(address account)</code>: Get nonce for an account.</p>
+</li>
+<li>
+<p><code>function chainId(uint x) public</code> Sets the block chainid to <code>x</code>.</p>
+</li>
+</ul>
+<p>The below example uses the <code>warp</code> cheatcode to override the timestamp &amp; <code>expectRevert</code> to expect a specific revert string:</p>
+<div class="example-wrap"><pre class="language-solidity"><code>interface Vm {
+    function warp(uint256 x) external;
+    function expectRevert(bytes calldata) external;
+}
+
+contract Foo {
+    function bar(uint256 a) public returns (uint256) {
+        require(a &lt; 100, &quot;My expected revert string&quot;);
+        return a;
+    }
+}
+
+contract MyTest {
+    Vm vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    function testWarp() public {
+        vm.warp(100);
+        require(block.timestamp == 100);
+    }
+
+    function testBarExpectedRevert() public {
+        vm.expectRevert(&quot;My expected revert string&quot;);
+        // This would fail *if* we didnt expect revert. Since we expect the revert,
+        // it doesn&#39;t, unless the revert string is wrong.
+        foo.bar(101);
+    }
+
+    function testFailBar() public {
+        // this call would revert, causing this test to pass
+        foo.bar(101);
+    }
+}
+</code></pre></div>
+<p>Below is another example using the <code>expectEmit</code> cheatcode to check events:</p>
+<div class="example-wrap"><pre class="language-solidity"><code>interface Vm {
+    function expectEmit(bool,bool,bool,bool) external;
+    function expectEmit(bool,bool,bool,bool,address) external;
+}
+
+contract T is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    event Transfer(address indexed from,address indexed to, uint256 amount);
+    function testExpectEmit() public {
+        ExpectEmit emitter = new ExpectEmit();
+        // check topic 1, topic 2, and data are the same as the following emitted event
+        vm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+        emitter.t();
+    }
+
+    function testExpectEmitWithAddress() public {
+        ExpectEmit emitter = new ExpectEmit();
+        // do the same as above and check emitting address
+        vm.expectEmit(true,true,false,true,address(emitter));
+        emit Transfer(address(this), address(1337), 1337);
+        emitter.t();
+    }
+}
+
+contract ExpectEmit {
+    event Transfer(address indexed from,address indexed to, uint256 amount);
+    function t() public {
+        emit Transfer(msg.sender, address(1337), 1337);
+    }
+}
+</code></pre></div>
+<p>A full interface for all cheatcodes is here:</p>
+<div class="example-wrap"><pre class="language-solidity"><code>interface Hevm {
+    // Set block.timestamp (newTimestamp)
+    function warp(uint256) external;
+    // Set block.height (newHeight)
+    function roll(uint256) external;
+    // Set block.basefee (newBasefee)
+    function fee(uint256) external;
+    // Set block.coinbase (who)
+    function coinbase(address) external;
+    // Loads a storage slot from an address (who, slot)
+    function load(address,bytes32) external returns (bytes32);
+    // Stores a value to an address&#39; storage slot, (who, slot, value)
+    function store(address,bytes32,bytes32) external;
+    // Signs data, (privateKey, digest) =&gt; (v, r, s)
+    function sign(uint256,bytes32) external returns (uint8,bytes32,bytes32);
+    // Gets address for a given private key, (privateKey) =&gt; (address)
+    function addr(uint256) external returns (address);
+    // Performs a foreign function call via terminal, (stringInputs) =&gt; (result)
+    function ffi(string[] calldata) external returns (bytes memory);
+    // Sets the *next* call&#39;s msg.sender to be the input address
+    function prank(address) external;
+    // Sets all subsequent calls&#39; msg.sender to be the input address until `stopPrank` is called
+    function startPrank(address) external;
+    // Sets the *next* call&#39;s msg.sender to be the input address, and the tx.origin to be the second input
+    function prank(address,address) external;
+    // Sets all subsequent calls&#39; msg.sender to be the input address until `stopPrank` is called, and the tx.origin to be the second input
+    function startPrank(address,address) external;
+    // Resets subsequent calls&#39; msg.sender to be `address(this)`
+    function stopPrank() external;
+    // Sets an address&#39; balance, (who, newBalance)
+    function deal(address, uint256) external;
+    // Sets an address&#39; code, (who, newCode)
+    function etch(address, bytes calldata) external;
+    // Expects an error on next call
+    function expectRevert() external;
+    function expectRevert(bytes calldata) external;
+    function expectRevert(bytes4) external;
+    // Record all storage reads and writes
+    function record() external;
+    // Gets all accessed reads and write slot from a recording session, for a given address
+    function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
+    // Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData).
+    // Call this function, then emit an event, then call a function. Internally after the call, we check if
+    // logs were emitted in the expected order with the expected topics and data (as specified by the booleans)
+    function expectEmit(bool,bool,bool,bool) external;
+    // Mocks a call to an address, returning specified data.
+    // Calldata can either be strict or a partial match, e.g. if you only
+    // pass a Solidity selector to the expected calldata, then the entire Solidity
+    // function will be mocked.
+    function mockCall(address,bytes calldata,bytes calldata) external;
+    // Mocks a call to an address with a specific msg.value, returning specified data.
+    // Calldata match takes precedence over msg.value in case of ambiguity.
+    function mockCall(address,uint256,bytes calldata,bytes calldata) external;
+    // Reverts a call to an address with specified revert data.
+    function mockCallRevert(address, bytes calldata, bytes calldata) external;
+    // Reverts a call to an address with a specific msg.value, with specified revert data.
+    function mockCallRevert(address, uint256 msgValue, bytes calldata, bytes calldata) external;
+    // Clears all mocked and reverted mocked calls
+    function clearMockedCalls() external;
+    // Expect a call to an address with the specified calldata.
+    // Calldata can either be strict or a partial match
+    function expectCall(address, bytes calldata) external;
+    // Expect given number of calls to an address with the specified calldata.
+    // Calldata can either be strict or a partial match
+    function expectCall(address, bytes calldata, uint64) external;
+    // Expect a call to an address with the specified msg.value and calldata
+    function expectCall(address, uint256, bytes calldata) external;
+    // Expect a given number of calls to an address with the specified msg.value and calldata
+    function expectCall(address, uint256, bytes calldata, uint64) external;
+    // Expect a call to an address with the specified msg.value, gas, and calldata.
+    function expectCall(address, uint256, uint64, bytes calldata) external;
+    // Expect a given number of calls to an address with the specified msg.value, gas, and calldata.
+    function expectCall(address, uint256, uint64, bytes calldata, uint64) external;
+    // Expect a call to an address with the specified msg.value and calldata, and a *minimum* amount of gas.
+    function expectCallMinGas(address, uint256, uint64, bytes calldata) external;
+    // Expect a given number of calls to an address with the specified msg.value and calldata, and a *minimum* amount of gas.
+    function expectCallMinGas(address, uint256, uint64, bytes calldata, uint64) external;
+
+    // Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the current subcontext. If any other
+    // memory is written to, the test will fail.
+    function expectSafeMemory(uint64, uint64) external;
+    // Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the next created subcontext.
+    // If any other memory is written to, the test will fail.
+    function expectSafeMemoryCall(uint64, uint64) external;
+    // Fetches the contract bytecode from its artifact file
+    function getCode(string calldata) external returns (bytes memory);
+    // Label an address in test traces
+    function label(address addr, string calldata label) external;
+    // When fuzzing, generate new inputs if conditional not met
+    function assume(bool) external;
+    // Set nonce for an account, increment only
+    function setNonce(address,uint64) external;
+    // Get nonce for an account
+    function getNonce(address) external returns(uint64);
+}
+</code></pre></div><h4 id="consolelog"><a class="doc-anchor" href="#consolelog">§</a><code>console.log</code></h4>
+<p>We support the logging functionality from Hardhat’s <code>console.log</code>.</p>
+<p>If you are on a hardhat project, <code>import hardhat/console.sol</code> should just work if you use <code>forge test --hh</code>.</p>
+<p>If no, there is an implementation contract <a href="https://raw.githubusercontent.com/NomicFoundation/hardhat/master/packages/hardhat-core/console.sol">here</a>. We currently recommend that you copy this contract, place it in your <code>test</code> folder, and import it into the contract where you wish to use <code>console.log</code>, though there should be more streamlined functionality soon.</p>
+<p>Usage follows the same format as <a href="https://hardhat.org/hardhat-network/reference/#console-log">Hardhat</a>:</p>
+<div class="example-wrap"><pre class="language-solidity"><code>import &quot;./console.sol&quot;;
+...
+console.log(someValue);
+
+</code></pre></div>
+<p>Note: to make logs visible in <code>stdout</code>, you must use at least level 2 verbosity.</p>
+<div class="example-wrap"><pre class="language-bash"><code>$&gt; forge test -vv
+[PASS] test1() (gas: 7683)
+...
+Logs:
+  &lt;your log string or event&gt;
+  ...
+</code></pre></div><h3 id="remappings"><a class="doc-anchor" href="#remappings">§</a>Remappings</h3>
+<p>If you are working in a repo with NPM-style imports, like</p>
+<div class="example-wrap"><pre class="language-solidity"><code>import &quot;@openzeppelin/contracts/access/Ownable.sol&quot;;
+</code></pre></div>
+<p>then you will need to create a <code>remappings.txt</code> file at the top level of your project directory, so that Forge knows where to find these dependencies.</p>
+<p>For example, if you have <code>@openzeppelin</code> imports, you would</p>
+<ol>
+<li><code>forge install openzeppelin/openzeppelin-contracts</code> (this will add the repo to <code>lib/openzepplin-contracts</code>)</li>
+<li>Create a remappings file: <code>touch remappings.txt</code></li>
+<li>Add this line to <code>remappings.txt</code></li>
+</ol>
+<div class="example-wrap"><pre class="language-text"><code>@openzeppelin/=lib/openzeppelin-contracts/
+</code></pre></div><h3 id="github-actions-ci"><a class="doc-anchor" href="#github-actions-ci">§</a>Github Actions CI</h3>
+<p>We recommend using the <a href="https://book.getfoundry.sh/config/continuous-integration">Github Actions CI setup</a> from the <a href="https://book.getfoundry.sh/index.html">📖 Foundry Book</a>.</p>
+<h3 id="future-features"><a class="doc-anchor" href="#future-features">§</a>Future Features</h3><h4 id="dapptools-feature-parity"><a class="doc-anchor" href="#dapptools-feature-parity">§</a>Dapptools feature parity</h4>
+<p>Over the next months, we intend to add the following features which are
+available in upstream dapptools:</p>
+<ol>
+<li>Stack Traces: Currently we do not provide any debug information when a call
+fails. We intend to add a structured printer (something like
+<a href="https://twitter.com/gakonst/status/1434337110111182848">this</a> which will
+show all the calls, logs and arguments passed across intermediate smart
+contract calls, which should help with debugging.</li>
+<li><a href="https://github.com/dapphub/dapptools/blob/master/src/dapp/README.md#invariant-testing">Invariant Tests</a></li>
+<li><a href="https://github.com/dapphub/dapptools/blob/master/src/hevm/README.md#interactive-debugger-key-bindings">Interactive Debugger</a></li>
+<li><a href="https://twitter.com/dapptools/status/1435973810545729536">Code coverage</a></li>
+<li><a href="https://github.com/dapphub/dapptools/pull/850/files">Gas snapshots</a></li>
+<li><a href="https://fv.ethereum.org/2020/07/28/symbolic-hevm-release/">Symbolic EVM</a></li>
+</ol>
+<h4 id="unique-features"><a class="doc-anchor" href="#unique-features">§</a>Unique features?</h4>
+<p>We also intend to add features which are not available in dapptools:</p>
+<ol>
+<li>Even faster tests with parallel EVM execution that produces state diffs
+instead of modifying the state</li>
+<li>Improved UX for assertions:
+<ol>
+<li>Check revert error or reason on a Solidity call</li>
+<li>Check that an event was emitted with expected arguments</li>
+</ol>
+</li>
+<li>Support more EVM backends (<a href="https://github.com/bluealloy/revm/">revm</a>, geth’s
+evm, hevm etc.) &amp; benchmark performance across them</li>
+<li>Declarative deployment system based on a config file</li>
+<li>Formatting &amp; Linting (maybe powered by
+<a href="https://github.com/hyperledger-labs/solang">Solang</a>)
+<ol>
+<li><code>forge fmt</code>, an automatic code formatter according to standard rules (like
+<a href="https://github.com/prettier-solidity/prettier-plugin-solidity"><code>prettier-plugin-solidity</code></a>)</li>
+<li><code>forge lint</code>, a linter + static analyzer, like a combination of
+<a href="https://github.com/protofire/solhint"><code>solhint</code></a> and
+<a href="https://github.com/crytic/slither/">slither</a></li>
+</ol>
+</li>
+<li>Flamegraphs for gas profiling</li>
+</ol>
+</div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name" id="reexport.MultiContractRunner"><code>pub use multi_runner::<a class="struct" href="multi_runner/struct.MultiContractRunner.html" title="struct forge::multi_runner::MultiContractRunner">MultiContractRunner</a>;</code></div></li><li><div class="item-name" id="reexport.MultiContractRunnerBuilder"><code>pub use multi_runner::<a class="struct" href="multi_runner/struct.MultiContractRunnerBuilder.html" title="struct forge::multi_runner::MultiContractRunnerBuilder">MultiContractRunnerBuilder</a>;</code></div></li></ul><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="backend/index.html" title="mod forge::backend">backend</a></div><div class="desc docblock-short">Foundry’s main executor backend abstraction and implementation.</div></li><li><div class="item-name"><a class="mod" href="constants/index.html" title="mod forge::constants">constants</a></div></li><li><div class="item-name"><a class="mod" href="coverage/index.html" title="mod forge::coverage">coverage</a></div><div class="desc docblock-short">Coverage reports.</div></li><li><div class="item-name"><a class="mod" href="decode/index.html" title="mod forge::decode">decode</a></div><div class="desc docblock-short">Various utilities to decode test results.</div></li><li><div class="item-name"><a class="mod" href="executors/index.html" title="mod forge::executors">executors</a></div><div class="desc docblock-short">EVM executor abstractions, which can execute calls.</div></li><li><div class="item-name"><a class="mod" href="fork/index.html" title="mod forge::fork">fork</a></div></li><li><div class="item-name"><a class="mod" href="fuzz/index.html" title="mod forge::fuzz">fuzz</a></div><div class="desc docblock-short">foundry-evm-fuzz</div></li><li><div class="item-name"><a class="mod" href="gas_report/index.html" title="mod forge::gas_report">gas_report</a></div><div class="desc docblock-short">Gas reports.</div></li><li><div class="item-name"><a class="mod" href="inspectors/index.html" title="mod forge::inspectors">inspectors</a></div><div class="desc docblock-short">EVM inspectors.</div></li><li><div class="item-name"><a class="mod" href="multi_runner/index.html" title="mod forge::multi_runner">multi_runner</a></div><div class="desc docblock-short">Forge test runner for multiple contracts.</div></li><li><div class="item-name"><a class="mod" href="opts/index.html" title="mod forge::opts">opts</a></div></li><li><div class="item-name"><a class="mod" href="progress/index.html" title="mod forge::progress">progress</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="result/index.html" title="mod forge::result">result</a></div><div class="desc docblock-short">Test outcomes.</div></li><li><div class="item-name"><a class="mod" href="revm/index.html" title="mod forge::revm">revm</a></div><div class="desc docblock-short">Revm is a Rust EVM implementation.</div></li><li><div class="item-name"><a class="mod" href="runner/index.html" title="mod forge::runner">runner</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">The Forge test runner.</div></li><li><div class="item-name"><a class="mod" href="traces/index.html" title="mod forge::traces">traces</a></div><div class="desc docblock-short">foundry-evm-traces</div></li><li><div class="item-name"><a class="mod" href="utils/index.html" title="mod forge::utils">utils</a></div></li></ul><h2 id="macros" class="section-header">Macros<a href="#macros" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="macro" href="macro.call_inspectors.html" title="macro forge::call_inspectors">call_inspectors</a></div><div class="desc docblock-short">Helper macro to call the same method on multiple inspectors without resorting to dynamic
+dispatch.</div></li></ul><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.ContractRunner.html" title="struct forge::ContractRunner">ContractRunner</a></div><div class="desc docblock-short">A type that executes all tests of a contract</div></li><li><div class="item-name"><a class="struct" href="struct.TestOptions.html" title="struct forge::TestOptions">TestOptions</a></div><div class="desc docblock-short">Metadata on how to run fuzz/invariant tests</div></li><li><div class="item-name"><a class="struct" href="struct.TestOptionsBuilder.html" title="struct forge::TestOptionsBuilder">TestOptionsBuilder</a></div><div class="desc docblock-short">Builder utility to create a <a href="struct.TestOptions.html" title="struct forge::TestOptions"><code>TestOptions</code></a> instance.</div></li></ul><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="trait" href="trait.InspectorExt.html" title="trait forge::InspectorExt">InspectorExt</a></div><div class="desc docblock-short">An extension trait that allows us to add additional hooks to Inspector for later use in
+handlers.</div></li><li><div class="item-name"><a class="trait" href="trait.TestFilter.html" title="trait forge::TestFilter">TestFilter</a></div><div class="desc docblock-short">Test filter.</div></li></ul></section></div></main></body></html>

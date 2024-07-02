@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["call_inspectors_adjust_depth"],"struct":["InnerContextData","InspectorData","InspectorStack","InspectorStackBuilder","InspectorStackInner","InspectorStackRefMut"]};

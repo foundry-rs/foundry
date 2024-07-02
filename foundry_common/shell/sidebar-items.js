@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ShellOut","Verbosity"],"fn":["eprintln","print_json","println","set_shell","verbosity","with_shell"],"static":["SHELL"],"struct":["InstallError","Shell","WriteShellOut"],"trait":["ShellWrite"]};

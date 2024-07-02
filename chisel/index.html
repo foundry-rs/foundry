@@ -1,0 +1,161 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="`chisel`"><title>chisel - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../static.files/rustdoc-dd39b87e5fcfba68.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="chisel" data-themes="" data-resource-suffix="" data-rustdoc-version="1.81.0-nightly (cf2df68d1 2024-07-01)" data-channel="nightly" data-search-js="search-0fe7219eb170c82e.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../chisel/index.html">chisel</a><span class="version">0.2.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section><ul class="block"><li><a href="#modules">Modules</a></li></ul></section></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1>Crate <a class="mod" href="#">chisel</a><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><span class="out-of-band"><a class="src" href="../src/chisel/lib.rs.html#1-24">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="chisel"><a class="doc-anchor" href="#chisel">§</a><code>chisel</code></h2>
+<p>Chisel is a fast, utilitarian, and verbose Solidity REPL. It is heavily inspired by the incredible work done in <a href="https://github.com/jpopesculian/soli">soli</a> and <a href="https://github.com/tintinweb/solidity-shell">solidity-shell</a>!</p>
+<p><img src="./assets/preview.gif" alt="preview" /></p>
+<h3 id="why"><a class="doc-anchor" href="#why">§</a>Why?</h3>
+<p>Ever wanted to quickly test a small feature in solidity?</p>
+<p>Perhaps to test how custom errors work, or how to write inline assembly?</p>
+<p>Chisel is a fully-functional Solidity REPL, allowing you to write, execute, and debug Solidity directly in the command line.</p>
+<p>Once you finish testing, Chisel even lets you export your code to a new solidity file!</p>
+<p>In this sense, Chisel even serves as a Foundry script generator.</p>
+<h3 id="feature-completion"><a class="doc-anchor" href="#feature-completion">§</a>Feature Completion</h3>
+<p><a href="https://github.com/jpopesculian/soli">soli</a> and <a href="https://github.com/tintinweb/solidity-shell">solidity-shell</a> both provide a great solidity REPL, achieving:</p>
+<ul>
+<li>Statement support</li>
+<li>Custom events, errors, functions, imports</li>
+<li>Inspecting variables</li>
+<li>Forking remote chains</li>
+<li>Session caching</li>
+</ul>
+<p>Chisel aims to improve upon existing Solidity REPLs by integrating with foundry as well as offering additional functionality:</p>
+<ul>
+<li>More verbose variable / state inspection</li>
+<li>Improved error messages</li>
+<li>Foundry-style call traces</li>
+<li>In-depth environment configuration</li>
+<li>… and many more future features!</li>
+</ul>
+<h4 id="migrating-from-soli-or-solidity-shell"><a class="doc-anchor" href="#migrating-from-soli-or-solidity-shell">§</a>Migrating from <a href="https://github.com/jpopesculian/soli">soli</a> or <a href="https://github.com/tintinweb/solidity-shell">solidity-shell</a></h4>
+<p>Migration from existing Solidity REPLs such as <a href="https://github.com/jpopesculian/soli">soli</a> or <a href="https://github.com/tintinweb/solidity-shell">solidity-shell</a> is as
+simple as installing Chisel via <code>foundryup</code>. For information on features, usage, and configuration, see the <a href="#usage">Usage</a> section as well as the chisel manpage (<code>man chisel</code> or <code>chisel --help</code>).</p>
+<h3 id="installation"><a class="doc-anchor" href="#installation">§</a>Installation</h3>
+<p>To install <code>chisel</code>, simply run <code>foundryup</code>!</p>
+<p>If you do not have <code>foundryup</code> installed, reference the Foundry <a href="../../README.md#installation">installation guide</a>.</p>
+<h3 id="usage"><a class="doc-anchor" href="#usage">§</a>Usage</h3><h4 id="repl-commands"><a class="doc-anchor" href="#repl-commands">§</a>REPL Commands</h4><div class="example-wrap"><pre class="language-text"><code>⚒️ Chisel help
+=============
+General
+        !help | !h - Display all commands
+        !quit | !q - Quit Chisel
+        !exec &lt;command&gt; [args] | !e &lt;command&gt; [args] - Execute a shell command and print the output
+
+Session
+        !clear | !c - Clear current session source
+        !source | !so - Display the source code of the current session
+        !save [id] | !s [id] - Save the current session to cache
+        !load &lt;id&gt; | !l &lt;id&gt; - Load a previous session ID from cache
+        !list | !ls - List all cached sessions
+        !clearcache | !cc - Clear the chisel cache of all stored sessions
+        !export | !ex - Export the current session source to a script file
+        !fetch &lt;addr&gt; &lt;name&gt; | !fe &lt;addr&gt; &lt;name&gt; - Fetch the interface of a verified contract on Etherscan
+        !edit - Open the current session in an editor
+
+Environment
+        !fork &lt;url&gt; | !f &lt;url&gt; - Fork an RPC for the current session. Supply 0 arguments to return to a local network
+        !traces | !t - Enable / disable traces for the current session
+        !calldata [data] | !cd [data] - Set calldata (`msg.data`) for the current session (appended after function selector). Clears it if no argument provided.
+
+Debug
+        !memdump | !md - Dump the raw memory of the current state
+        !stackdump | !sd - Dump the raw stack of the current state
+        !rawstack &lt;var&gt; | !rs &lt;var&gt; - Display the raw value of a variable&#39;s stack allocation. For variables that are &gt; 32 bytes in length, this will display their memory pointer.
+</code></pre></div><h4 id="cache-session"><a class="doc-anchor" href="#cache-session">§</a>Cache Session</h4>
+<p>While chisel sessions are not persistent by default, they can be saved to the cache via the builtin <code>save</code> command from within the REPL.</p>
+<p>Sessions can also be named by supplying a single argument to the <code>save</code> command, i.e. <code>!save my_session</code>.</p>
+<div class="example-wrap"><pre class="language-text"><code>$ chisel
+➜ uint a = 1;
+➜ uint b = a &lt;&lt; 0x08;
+➜ !save
+Saved session to cache with ID = 0.
+</code></pre></div><h4 id="loading-a-previous-session"><a class="doc-anchor" href="#loading-a-previous-session">§</a>Loading a Previous Session</h4>
+<p>Chisel allows you to load a previous session from your history.</p>
+<p>To view your history, you can run <code>chisel list</code> or <code>!list</code>. This will print a list of your previous sessions, identifiable by their index.</p>
+<p>You can also run <code>chisel view &lt;id&gt;</code> or <code>!view &lt;id&gt;</code> to view the contents of a specific session.</p>
+<p>To load a session, run <code>chisel load &lt;id&gt;</code> or use the <code>!load &lt;id&gt;</code> where <code>&lt;id&gt;</code> is a valid session index (eg 2 in the example below).</p>
+<div class="example-wrap"><pre class="language-text"><code>$ chisel list
+⚒️ Chisel Sessions
+&quot;2022-10-27 14:46:29&quot; - chisel-0.json
+&quot;2022-10-27 14:46:29&quot; - chisel-1.json
+$ chisel view 1
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.17;
+
+contract REPL {
+    event KeccakEvent(bytes32 hash);
+
+    function run() public {
+      emit KeccakEvent(keccak256(abi.encode(&quot;Hello, world!&quot;)));
+    }
+}
+$ chisel load 1
+➜ ...
+</code></pre></div><h4 id="clearing-the-cache"><a class="doc-anchor" href="#clearing-the-cache">§</a>Clearing the Cache</h4>
+<p>To clear Chisel’s cache (stored in <code>~/.foundry/cache/chisel</code>), use the <code>chisel clear-cache</code> or <code>!clearcache</code> command.</p>
+<div class="example-wrap"><pre class="language-text"><code>➜ !clearcache
+Cleared chisel cache!
+</code></pre></div><h4 id="toggling-traces"><a class="doc-anchor" href="#toggling-traces">§</a>Toggling Traces</h4>
+<p>By default, traces will only be shown if an input causes the call to the REPL contract to revert. To turn traces on
+regardless of the call result, use the <code>!traces</code> command or pass in a verbosity option of any level (<code>-v&lt;vvvv&gt;</code>) to
+the chisel binary.</p>
+<div class="example-wrap"><pre class="language-text"><code>➜ uint a
+➜ contract Test {
+    function get() external view returns (uint) {
+       return 256;
+    }
+}
+➜ Test t = new Test()
+➜ !traces
+Successfully enabled traces!
+➜ a = t.get()
+Traces:
+  [69808] 0xBd770416a3345F91E4B34576cb804a576fa48EB1::run()
+    ├─ [36687] → new &lt;Unknown&gt;@0xf4D9599aFd90B5038b18e3B551Bc21a97ed21c37
+    │   └─ ← 183 bytes of code
+    ├─ [315] 0xf4D9599aFd90B5038b18e3B551Bc21a97ed21c37::get() [staticcall]
+    │   └─ ← 0x0000000000000000000000000000000000000000000000000000000000000100
+    └─ ← ()
+
+➜ a
+Type: uint
+├ Hex: 0x100
+└ Decimal: 256
+</code></pre></div><h4 id="forking-a-network"><a class="doc-anchor" href="#forking-a-network">§</a>Forking a Network</h4>
+<p>To fork a network within your chisel session, use the <code>!fork &lt;rpc-url&gt;</code> command or supply a <code>--fork-url &lt;url&gt;</code> flag
+to the chisel binary. The <code>!fork</code> command also accepts aliases from the <code>[rpc_endpoints]</code> section of your <code>foundry.toml</code>
+if chisel was launched in the root of a foundry project (ex. <code>!fork mainnet</code>), as well as interpolated environment variables
+(ex. <code>!fork https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}</code>).</p>
+<h4 id="fetching-an-interface-of-a-verified-contract"><a class="doc-anchor" href="#fetching-an-interface-of-a-verified-contract">§</a>Fetching an Interface of a Verified Contract</h4>
+<p>To fetch an interface of a verified contract on Etherscan, use the <code>!fetch</code> / <code>!f</code> command.</p>
+<blockquote>
+<p><strong>Note</strong>
+At the moment, only contracts that are deployed and verified on mainnet can be fetched. Support for other
+networks with Etherscan explorers coming soon.</p>
+</blockquote>
+<div class="example-wrap"><pre class="language-text"><code>➜ !fetch 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 IWETH
+Added 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&#39;s interface to source as `IWETH`
+</code></pre></div><h4 id="executing-a-shell-command"><a class="doc-anchor" href="#executing-a-shell-command">§</a>Executing a Shell Command</h4>
+<p>Shell commands can be executed within Chisel with the <code>!exec</code> / <code>!e</code> command.</p>
+<div class="example-wrap"><pre class="language-text"><code>➜ !e ls
+anvil
+binder
+Cargo.lock
+Cargo.toml
+cast
+chisel
+cli
+common
+config
+CONTRIBUTING.md
+Dockerfile
+docs
+evm
+fmt
+forge
+foundryup
+LICENSE-APACHE
+LICENSE-MIT
+README.md
+rustfmt.toml
+target
+testdata
+ui
+utils
+</code></pre></div></div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="cmd/index.html" title="mod chisel::cmd">cmd</a></div><div class="desc docblock-short">ChiselCommand</div></li><li><div class="item-name"><a class="mod" href="dispatcher/index.html" title="mod chisel::dispatcher">dispatcher</a></div><div class="desc docblock-short">Dispatcher</div></li><li><div class="item-name"><a class="mod" href="executor/index.html" title="mod chisel::executor">executor</a></div><div class="desc docblock-short">Executor</div></li><li><div class="item-name"><a class="mod" href="history/index.html" title="mod chisel::history">history</a></div><div class="desc docblock-short">chisel history file</div></li><li><div class="item-name"><a class="mod" href="prelude/index.html" title="mod chisel::prelude">prelude</a></div></li><li><div class="item-name"><a class="mod" href="runner/index.html" title="mod chisel::runner">runner</a></div><div class="desc docblock-short">ChiselRunner</div></li><li><div class="item-name"><a class="mod" href="session/index.html" title="mod chisel::session">session</a></div><div class="desc docblock-short">ChiselSession</div></li><li><div class="item-name"><a class="mod" href="session_source/index.html" title="mod chisel::session_source">session_source</a></div><div class="desc docblock-short">Session Source</div></li><li><div class="item-name"><a class="mod" href="solidity_helper/index.html" title="mod chisel::solidity_helper">solidity_helper</a></div><div class="desc docblock-short">SolidityHelper</div></li></ul></section></div></main></body></html>
