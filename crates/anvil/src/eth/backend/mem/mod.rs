@@ -166,6 +166,7 @@ pub struct Backend {
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
+    print_logs: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
@@ -187,6 +188,7 @@ impl Backend {
         fees: FeeManager,
         fork: Arc<RwLock<Option<ClientFork>>>,
         enable_steps_tracing: bool,
+        print_logs: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         transaction_block_keeper: Option<usize>,
         automine_block_time: Option<Duration>,
@@ -239,6 +241,7 @@ impl Backend {
             genesis,
             active_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
+            print_logs,
             prune_state_history_config,
             transaction_block_keeper,
             node_config,
@@ -898,6 +901,7 @@ impl Backend {
             gas_used: 0,
             blob_gas_used: 0,
             enable_steps_tracing: self.enable_steps_tracing,
+            print_logs: self.print_logs,
             precompile_factory: self.precompile_factory.clone(),
         };
 
@@ -969,6 +973,7 @@ impl Backend {
                     gas_used: 0,
                     blob_gas_used: 0,
                     enable_steps_tracing: self.enable_steps_tracing,
+                    print_logs: self.print_logs,
                     precompile_factory: self.precompile_factory.clone(),
                 };
                 let executed_tx = executor.execute();
