@@ -118,6 +118,11 @@ impl ClientFork {
         self.config.read().block_number
     }
 
+    /// Returns the transaction hash we forked off of, if any.
+    pub fn transaction_hash(&self) -> Option<B256> {
+        self.config.read().transaction_hash
+    }
+
     pub fn total_difficulty(&self) -> U256 {
         self.config.read().total_difficulty
     }
@@ -579,6 +584,8 @@ pub struct ClientForkConfig {
     pub block_number: u64,
     /// The hash of the forked block
     pub block_hash: B256,
+    /// The transaction hash we forked off of, if any.
+    pub transaction_hash: Option<B256>,
     // TODO make provider agnostic
     pub provider: Arc<RetryProvider>,
     pub chain_id: u64,

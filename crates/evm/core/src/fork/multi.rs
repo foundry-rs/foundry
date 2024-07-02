@@ -3,11 +3,12 @@
 //! The design is similar to the single `SharedBackend`, `BackendHandler` but supports multiple
 //! concurrently active pairs at once.
 
-use crate::fork::{BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend};
+use super::CreateFork;
 use foundry_common::provider::{
     runtime_transport::RuntimeTransport, tower::RetryBackoffService, ProviderBuilder, RetryProvider,
 };
 use foundry_config::Config;
+use foundry_fork_db::{cache::BlockchainDbMeta, BackendHandler, BlockchainDb, SharedBackend};
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::{Fuse, Stream},

@@ -61,7 +61,7 @@ use anvil_core::eth::{
 use anvil_rpc::error::RpcError;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
-    backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
+    backend::{BackendError, BackendResult, DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
@@ -166,6 +166,7 @@ pub struct Backend {
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
+    print_logs: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
@@ -187,6 +188,7 @@ impl Backend {
         fees: FeeManager,
         fork: Arc<RwLock<Option<ClientFork>>>,
         enable_steps_tracing: bool,
+        print_logs: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         transaction_block_keeper: Option<usize>,
         automine_block_time: Option<Duration>,
@@ -239,6 +241,7 @@ impl Backend {
             genesis,
             active_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
+            print_logs,
             prune_state_history_config,
             transaction_block_keeper,
             node_config,
@@ -270,7 +273,7 @@ impl Backend {
     /// Applies the configured genesis settings
     ///
     /// This will fund, create the genesis accounts
-    async fn apply_genesis(&self) -> DatabaseResult<()> {
+    async fn apply_genesis(&self) -> BackendResult<()> {
         trace!(target: "backend", "setting genesis balances");
 
         if self.fork.read().is_some() {
@@ -284,7 +287,7 @@ impl Backend {
                 genesis_accounts_futures.push(tokio::task::spawn(async move {
                     let db = db.read().await;
                     let info = db.basic_ref(address)?.unwrap_or_default();
-                    Ok::<_, DatabaseError>((address, info))
+                    Ok::<_, BackendError>((address, info))
                 }));
             }
 
@@ -299,7 +302,7 @@ impl Backend {
             fork_genesis_infos.clear();
 
             for res in genesis_accounts {
-                let (address, mut info) = res.map_err(DatabaseError::display)??;
+                let (address, mut info) = res.map_err(BackendError::display)??;
                 info.balance = self.genesis.balance;
                 db.insert_account(address, info.clone());
 
@@ -326,26 +329,25 @@ impl Backend {
     /// Sets the account to impersonate
     ///
     /// Returns `true` if the account is already impersonated
-    pub async fn impersonate(&self, addr: Address) -> DatabaseResult<bool> {
+    pub fn impersonate(&self, addr: Address) -> bool {
         if self.cheats.impersonated_accounts().contains(&addr) {
-            return Ok(true);
+            return true
         }
         // Ensure EIP-3607 is disabled
         let mut env = self.env.write();
         env.cfg.disable_eip3607 = true;
-        Ok(self.cheats.impersonate(addr))
+        self.cheats.impersonate(addr)
     }
 
     /// Removes the account that from the impersonated set
     ///
     /// If the impersonated `addr` is a contract then we also reset the code here
-    pub async fn stop_impersonating(&self, addr: Address) -> DatabaseResult<()> {
+    pub fn stop_impersonating(&self, addr: Address) {
         self.cheats.stop_impersonating(&addr);
-        Ok(())
     }
 
     /// If set to true will make every account impersonated
-    pub async fn auto_impersonate_account(&self, enabled: bool) {
+    pub fn auto_impersonate_account(&self, enabled: bool) {
         self.cheats.set_auto_impersonate_account(enabled);
     }
 
@@ -898,6 +900,7 @@ impl Backend {
             gas_used: 0,
             blob_gas_used: 0,
             enable_steps_tracing: self.enable_steps_tracing,
+            print_logs: self.print_logs,
             precompile_factory: self.precompile_factory.clone(),
         };
 
@@ -969,6 +972,7 @@ impl Backend {
                     gas_used: 0,
                     blob_gas_used: 0,
                     enable_steps_tracing: self.enable_steps_tracing,
+                    print_logs: self.print_logs,
                     precompile_factory: self.precompile_factory.clone(),
                 };
                 let executed_tx = executor.execute();

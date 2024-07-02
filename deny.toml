@@ -61,6 +61,8 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
     { allow = ["CC0-1.0"], name = "constant_time_eq" },
+    { allow = ["CC0-1.0"], name = "secp256k1" },
+    { allow = ["CC0-1.0"], name = "secp256k1-sys" },
 ]
 #copyleft = "deny"
 

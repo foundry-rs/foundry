@@ -57,7 +57,33 @@ all = "warn"
 # NOTE: Debuggers may provide less useful information with this setting.
 # Uncomment this section if you're using a debugger.
 [profile.dev]
-debug = 1
+# https://davidlattimore.github.io/posts/2024/02/04/speeding-up-the-rust-edit-build-run-cycle.html
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+debug = "line-tables-only"
+strip = "symbols"
+panic = "abort"
+codegen-units = 16
+
+# Use the `--profile profiling` flag to show symbols in release mode.
+# e.g. `cargo build --profile profiling`
+[profile.profiling]
+inherits = "release"
+debug = 2
+split-debuginfo = "unpacked"
+strip = false
+
+[profile.bench]
+inherits = "profiling"
+
+[profile.maxperf]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
 
 # Speed up tests and dev build.
 [profile.dev.package]
@@ -95,26 +121,10 @@ axum.opt-level = 3
 # keystores
 scrypt.opt-level = 3
 
-[profile.release]
-opt-level = 3
-lto = "thin"
-debug = "line-tables-only"
-strip = true
-panic = "abort"
-codegen-units = 16
-
-# Use the `--profile profiling` flag to show symbols in release mode.
-# e.g. `cargo build --profile profiling`
-[profile.profiling]
-inherits = "release"
-debug = 1
-strip = false
-
 # Override packages which aren't perf-sensitive for faster compilation speed.
 [profile.release.package]
 mdbook.opt-level = 1
 protobuf.opt-level = 1
-toml_edit.opt-level = 1
 trezor-client.opt-level = 1
 
 [workspace.dependencies]
@@ -149,6 +159,7 @@ foundry-linking = { path = "crates/linking" }
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.5.0", default-features = false }
 foundry-compilers = { version = "0.9.0", default-features = false }
+foundry-fork-db = "0.1"
 solang-parser = "=0.3.3"
 
 ## revm
