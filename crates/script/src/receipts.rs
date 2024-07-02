@@ -38,13 +38,20 @@ pub async fn check_tx_status(
             return Ok(receipt.into());
         }
 
-        while provider.get_transaction_by_hash(hash).await?.is_some() {
+        loop {
             if let Ok(receipt) = PendingTransactionBuilder::new(provider, hash)
-                .with_timeout(Some(Duration::from_secs(10)))
+                .with_timeout(Some(Duration::from_secs(120)))
                 .get_receipt()
                 .await
             {
                 return Ok(receipt.into())
+            }
+
+            if provider.get_transaction_by_hash(hash).await?.is_some() {
+                trace!("tx is still known to the node, waiting for receipt");
+            } else {
+                trace!("eth_getTransactionByHash returned null, assuming dropped");
+                break
             }
         }
 
