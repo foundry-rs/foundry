@@ -11,7 +11,7 @@ use alloy_rpc_types::{
             OtsReceipt, OtsTransactionReceipt, TraceEntry, TransactionsWithReceipts,
         },
         parity::{
-            Action, CallAction, CreateAction, CreateOutput, LocalizedTransactionTrace,
+            Action, CallAction, CallType, CreateAction, CreateOutput, LocalizedTransactionTrace,
             RewardAction, TraceOutput,
         },
     },
@@ -46,7 +46,16 @@ pub fn batch_build_ots_traces(traces: Vec<LocalizedTransactionTrace>) -> Vec<Tra
         .into_iter()
         .filter_map(|trace| match trace.trace.action {
             Action::Call(call) => {
-                let ots_type = serde_json::to_string(&call.call_type).unwrap();
+                // let ots_type = serde_json::to_string(&call.call_type).unwrap();
+                let ots_type = match call.call_type {
+                    CallType::Call => "CALL",
+                    CallType::CallCode => "CALLCODE",
+                    CallType::DelegateCall => "DELEGATECALL",
+                    CallType::StaticCall => "STATICCALL",
+                    CallType::AuthCall => "AUTHCALL",
+                    CallType::None => "NONE",
+                }
+                .to_string();
                 Some(TraceEntry {
                     r#type: ots_type,
                     depth: trace.trace.trace_address.len() as u32,
