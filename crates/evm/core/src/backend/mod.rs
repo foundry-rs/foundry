@@ -2,10 +2,13 @@
 
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
-    fork::{CreateFork, ForkId, MultiFork, SharedBackend},
+    fork::{CreateFork, ForkId, MultiFork},
     snapshot::Snapshots,
     utils::configure_tx_env,
     InspectorExt,
+};
+pub use alloy_fork_db::{
+    cache::BlockchainDbMeta, BlockchainDb, DatabaseError, DatabaseResult, SharedBackend,
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{keccak256, uint, Address, B256, U256};
@@ -30,9 +33,6 @@ use std::{
 
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
-
-mod error;
-pub use error::{DatabaseError, DatabaseResult};
 
 mod cow;
 pub use cow::CowBackend;

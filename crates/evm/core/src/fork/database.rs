@@ -1,10 +1,10 @@
 //! A revm database that forks off a remote client
 
 use crate::{
-    backend::{DatabaseError, RevertSnapshotAction, StateSnapshot},
-    fork::{BlockchainDb, SharedBackend},
+    backend::{RevertSnapshotAction, StateSnapshot},
     snapshot::Snapshots,
 };
+use alloy_fork_db::{error::DatabaseError, BlockchainDb, SharedBackend};
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use parking_lot::Mutex;

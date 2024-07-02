@@ -2,12 +2,12 @@
 
 use crate::{
     backend::{
-        diagnostic::RevertDiagnostic, error::DatabaseError, Backend, DatabaseExt, LocalForkId,
-        RevertSnapshotAction,
+        diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId, RevertSnapshotAction,
     },
     fork::{CreateFork, ForkId},
     InspectorExt,
 };
+use alloy_fork_db::error::DatabaseError;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
 use eyre::WrapErr;

@@ -8,8 +8,8 @@ use crate::{
 use alloy_primitives::{Address, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
-    backend::{DatabaseResult, RevertSnapshotAction, StateSnapshot},
-    fork::{database::ForkDbSnapshot, BlockchainDb},
+    backend::{BlockchainDb, DatabaseResult, RevertSnapshotAction, StateSnapshot},
+    fork::database::ForkDbSnapshot,
     revm::Database,
 };
 
