@@ -35,6 +35,9 @@ pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
 pub mod debug;
 
+pub mod folded_stack_trace;
+use folded_stack_trace::FoldedStackTrace;
+
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
 #[derive(Default, Debug, Eq, PartialEq)]
@@ -81,10 +84,10 @@ const RETURN: &str = "← ";
 /// Render a collection of call traces.
 ///
 /// The traces will be decoded using the given decoder, if possible.
-pub async fn render_trace_arena(
+pub async fn render_trace_arena<'a>(
     arena: &CallTraceArena,
     decoder: &CallTraceDecoder,
-) -> Result<String, std::fmt::Error> {
+) -> Result<(String, Vec<String>), std::fmt::Error> {
     decoder.prefetch_signatures(arena.nodes()).await;
 
     let identified_internals = &decoder.identify_arena_steps(arena);
@@ -95,6 +98,7 @@ pub async fn render_trace_arena(
         decoder: &'a CallTraceDecoder,
         identified_internals: &'a [Vec<DecodedTraceStep>],
         s: &'a mut String,
+        folded_stack_traces: &'a mut FoldedStackTrace,
         node_idx: usize,
         mut ordering_idx: usize,
         internal_end_step_idx: Option<usize>,
@@ -126,6 +130,7 @@ pub async fn render_trace_arena(
                             decoder,
                             &identified_internals,
                             s,
+                            folded_stack_traces,
                             node.children[*index],
                             left,
                             right,
@@ -153,6 +158,8 @@ pub async fn render_trace_arena(
                                     .map(|v| format!("({})", v.join(", ")))
                                     .unwrap_or_default()
                             )?;
+                            folded_stack_traces
+                                .enter(decoded.function_name.to_string(), decoded.gas_used);
                             let left_prefix = format!("{right}{BRANCH}");
                             let right_prefix = format!("{right}{PIPE}");
                             ordering_idx = render_items(
@@ -160,6 +167,7 @@ pub async fn render_trace_arena(
                                 decoder,
                                 identified_internals,
                                 s,
+                                folded_stack_traces,
                                 node_idx,
                                 ordering_idx + 1,
                                 decoded.end_step_idx,
@@ -175,6 +183,7 @@ pub async fn render_trace_arena(
                             }
 
                             writeln!(s)?;
+                            folded_stack_traces.exit();
                         }
                     }
                 }
@@ -186,11 +195,13 @@ pub async fn render_trace_arena(
         .boxed()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn inner<'a>(
         arena: &'a [CallTraceNode],
         decoder: &'a CallTraceDecoder,
         identified_internals: &'a [Vec<DecodedTraceStep>],
         s: &'a mut String,
+        folded_stack_traces: &'a mut FoldedStackTrace,
         idx: usize,
         left: &'a str,
         child: &'a str,
@@ -199,7 +210,8 @@ pub async fn render_trace_arena(
             let node = &arena[idx];
 
             // Display trace header
-            let (trace, return_data) = render_trace(&node.trace, decoder).await?;
+            let (trace, return_data) =
+                render_trace(&node.trace, decoder, folded_stack_traces).await?;
             writeln!(s, "{left}{trace}")?;
 
             // Display logs and subcalls
@@ -208,6 +220,7 @@ pub async fn render_trace_arena(
                 decoder,
                 identified_internals,
                 s,
+                folded_stack_traces,
                 idx,
                 0,
                 None,
@@ -234,14 +247,28 @@ pub async fn render_trace_arena(
             }?;
             writeln!(s)?;
 
+            folded_stack_traces.exit();
             Ok(())
         }
         .boxed()
     }
 
     let mut s = String::new();
-    inner(arena.nodes(), decoder, identified_internals, &mut s, 0, "  ", "  ").await?;
-    Ok(s)
+    let mut folded_stack_traces = FoldedStackTrace::default();
+    inner(
+        arena.nodes(),
+        decoder,
+        identified_internals,
+        &mut s,
+        &mut folded_stack_traces,
+        0,
+        "  ",
+        "  ",
+    )
+    .await?;
+
+    let folded = folded_stack_traces.fold();
+    Ok((s, folded))
 }
 
 /// Render a call trace.
@@ -250,6 +277,7 @@ pub async fn render_trace_arena(
 pub async fn render_trace(
     trace: &CallTrace,
     decoder: &CallTraceDecoder,
+    folded_stack_traces: &mut FoldedStackTrace,
 ) -> Result<(String, Option<String>), std::fmt::Error> {
     let mut s = String::new();
     write!(&mut s, "[{}] ", trace.gas_used)?;
@@ -265,6 +293,10 @@ pub async fn render_trace(
             decoded.label.as_deref().unwrap_or("<unknown>"),
             address
         )?;
+        folded_stack_traces.enter(
+            decoded.label.as_deref().unwrap_or("<unknown>").to_string(),
+            trace.gas_used as i64,
+        );
     } else {
         let (func_name, inputs) = match &decoded.func {
             Some(DecodedCallData { signature, args }) => {
@@ -304,6 +336,10 @@ pub async fn render_trace(
             },
             action = action.yellow(),
         )?;
+        folded_stack_traces.enter(
+            format!("{addr}::{func_name}", addr = decoded.label.as_deref().unwrap_or(&address),),
+            trace.gas_used as i64,
+        );
     }
 
     Ok((s, decoded.return_data))

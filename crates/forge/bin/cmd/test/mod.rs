@@ -10,7 +10,7 @@ use forge::{
     traces::{
         debug::{ContractSources, DebugTraceIdentifier},
         identifier::SignaturesIdentifier,
-        CallTraceDecoderBuilder, TraceKind,
+        CallTraceDecoderBuilder, CallTraceNode, DecodedCallTrace, TraceKind,
     },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
@@ -38,6 +38,7 @@ use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    io::Read,
     path::PathBuf,
     sync::{mpsc::channel, Arc},
     time::Instant,
@@ -76,6 +77,10 @@ pub struct TestArgs {
     /// For more fine-grained control of which fuzz case is run, see forge run.
     #[arg(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
+
+    /// Generate flamegraph for a test function. Works similar to debug flag.
+    #[arg(long, value_name = "TEST_FUNCTION")]
+    flamegraph: Option<Regex>,
 
     /// Whether to identify internal functions in traces.
     #[arg(long)]
@@ -289,16 +294,22 @@ impl TestArgs {
             .profiles(profiles)
             .build(&output, project_root)?;
 
+        // Prepare the test builder
+        let should_debug = self.debug.is_some();
+        let should_flamegraph = self.flamegraph.is_some();
+
         // Determine print verbosity and executor verbosity
         let verbosity = evm_opts.verbosity;
-        if self.gas_report && evm_opts.verbosity < 3 {
+        if (self.gas_report && evm_opts.verbosity < 3) || should_flamegraph {
             evm_opts.verbosity = 3;
         }
 
         let env = evm_opts.evm_env().await?;
 
-        // Prepare the test builder
-        let should_debug = self.debug.is_some();
+        // Clone the output only if we actually need it later for the debugger.
+        let output_clone =
+            (should_debug || should_flamegraph || self.decode_internal).then(|| output.clone());
+
         let config = Arc::new(config);
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
@@ -311,19 +322,80 @@ impl TestArgs {
             .enable_isolation(evm_opts.isolate)
             .build(project_root, &output, env, evm_opts)?;
 
-        if let Some(debug_test_pattern) = &self.debug {
+        if should_debug && should_flamegraph {
+            eyre::bail!("Cannot specify both --debug and --flamegraph.");
+        }
+
+        let mut set_test_pattern = |new_test_pattern: &Regex, flag_name| {
             let test_pattern = &mut filter.args_mut().test_pattern;
             if test_pattern.is_some() {
                 eyre::bail!(
-                    "Cannot specify both --debug and --match-test. \
-                     Use --match-contract and --match-path to further limit the search instead."
+                    "Cannot specify both --{} and --match-test. \
+                     Use --match-contract and --match-path to further limit the search instead.",
+                    flag_name
                 );
             }
-            *test_pattern = Some(debug_test_pattern.clone());
+            *test_pattern = Some(new_test_pattern.clone());
+            Ok(())
+        };
+
+        if let Some(debug_test_pattern) = &self.debug {
+            set_test_pattern(debug_test_pattern, "debug")?;
+        }
+
+        if let Some(flamegraph_test_pattern) = &self.flamegraph {
+            set_test_pattern(flamegraph_test_pattern, "flamegraph")?;
         }
 
         let libraries = runner.libraries.clone();
         let outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
+
+        if should_flamegraph {
+            let (_, test_result) = outcome
+                .results
+                .iter()
+                .find(|(_, r)| !r.test_results.is_empty())
+                .map(|(_, r)| (r, r.test_results.values().next().unwrap()))
+                .unwrap();
+
+            let arena = test_result
+                .traces
+                .iter()
+                .find_map(
+                    |(kind, arena)| {
+                        if *kind == TraceKind::Execution {
+                            Some(arena)
+                        } else {
+                            None
+                        }
+                    },
+                )
+                .unwrap();
+
+            let decoder = outcome.last_run_decoder.as_ref().unwrap();
+            decoder.prefetch_signatures(arena.nodes()).await;
+
+            let mut folded_stack_lines = render_trace_arena(arena, decoder).await?.1;
+            folded_stack_lines.reverse();
+
+            let file_name = "flamegraph.svg";
+            let writer = std::fs::File::create(file_name).unwrap();
+
+            let mut options = inferno::flamegraph::Options::default();
+            options.flame_chart = true;
+            inferno::flamegraph::from_lines(
+                &mut options,
+                folded_stack_lines.iter().map(|s| s.as_str()),
+                writer,
+            )
+            .unwrap();
+
+            let mut buf = String::new();
+            let mut file = std::fs::File::open(file_name).unwrap();
+            file.read_to_string(&mut buf).expect("failed to read flamegraph file");
+            let buf = buf.replace("samples", "gas");
+            std::fs::write(file_name, buf).expect("failed to write flamegraph file");
+        }
 
         if should_debug {
             // Get first non-empty suite result. We will have only one such entry
@@ -374,11 +446,12 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         let num_filtered = runner.matching_test_functions(filter).count();
-        if self.debug.is_some() && num_filtered != 1 {
+        if (self.debug.is_some() || self.flamegraph.is_some()) && num_filtered != 1 {
             eyre::bail!(
-                "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\
+                "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to {action}.\n\n\
                  Use --match-contract and --match-path to further limit the search.\n\
-                 Filter used:\n{filter}"
+                 Filter used:\n{filter}",
+                action = if self.debug.is_some() {"run the debugger"} else {"generate a flamegraph"},
             );
         }
 
@@ -444,7 +517,10 @@ impl TestArgs {
             decoder.clear_addresses();
 
             // We identify addresses if we're going to print *any* trace or gas report.
-            let identify_addresses = verbosity >= 3 || self.gas_report || self.debug.is_some();
+            let identify_addresses = verbosity >= 3 ||
+                self.gas_report ||
+                self.debug.is_some() ||
+                self.flamegraph.is_some();
 
             // Print suite header.
             println!();
@@ -507,7 +583,7 @@ impl TestArgs {
                     };
 
                     if should_include {
-                        decoded_traces.push(render_trace_arena(arena, &decoder).await?);
+                        decoded_traces.push(render_trace_arena(arena, &decoder).await?.0);
                     }
                 }
 

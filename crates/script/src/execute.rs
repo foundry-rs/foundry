@@ -428,7 +428,7 @@ impl PreSimulationState {
                 } || !result.success;
 
                 if should_include {
-                    shell::println(render_trace_arena(trace, decoder).await?)?;
+                    shell::println(render_trace_arena(trace, decoder).await?.0)?;
                 }
             }
             shell::println(String::new())?;

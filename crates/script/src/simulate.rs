@@ -161,7 +161,7 @@ impl PreSimulationState {
                 for (_, trace) in &traces {
                     println!(
                         "{}",
-                        render_trace_arena(trace, &self.execution_artifacts.decoder).await?
+                        render_trace_arena(trace, &self.execution_artifacts.decoder).await?.0
                     );
                 }
             }
