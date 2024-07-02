@@ -4,10 +4,7 @@ use crate::abi::MulticallContract;
 use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    trace::{
-        otterscan::{InternalOperation, OperationType, TraceEntry},
-        parity::CallType,
-    },
+    trace::otterscan::{InternalOperation, OperationType, TraceEntry},
     BlockNumberOrTag, BlockTransactions, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
