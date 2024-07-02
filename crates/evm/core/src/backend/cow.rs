@@ -1,5 +1,6 @@
 //! A wrapper around `Backend` that is clone-on-write used for fuzzing.
 
+use super::BackendError;
 use crate::{
     backend::{
         diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId, RevertSnapshotAction,
@@ -7,7 +8,7 @@ use crate::{
     fork::{CreateFork, ForkId},
     InspectorExt,
 };
-use alloy_fork_db::error::DatabaseError;
+use alloy_fork_db::DatabaseError;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
 use eyre::WrapErr;
@@ -217,7 +218,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         &mut self,
         allocs: &BTreeMap<Address, GenesisAccount>,
         journaled_state: &mut JournaledState,
-    ) -> Result<(), DatabaseError> {
+    ) -> Result<(), BackendError> {
         self.backend_mut(&Env::default()).load_allocs(allocs, journaled_state)
     }
 

@@ -1,6 +1,7 @@
 //! In-memory database.
 
-use crate::{backend::DatabaseError, snapshot::Snapshots};
+use crate::snapshot::Snapshots;
+use alloy_fork_db::DatabaseError;
 use alloy_primitives::{Address, B256, U256};
 use revm::{
     db::{CacheDB, DatabaseRef, EmptyDB},

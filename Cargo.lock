@@ -151,6 +151,7 @@ dependencies = [
 [[package]]
 name = "alloy-fork-db"
 version = "0.1.0"
+source = "git+https://github.com/klkvr/alloy-fork-db?rev=981dbb8#981dbb8eb08926b6847d95d4d324f6950e5aadab"
 dependencies = [
  "alloy-primitives",
  "alloy-provider",
@@ -3940,6 +3941,7 @@ dependencies = [
  "rustc-hash 2.0.0",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "tracing",
 ]
