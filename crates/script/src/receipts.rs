@@ -38,13 +38,17 @@ pub async fn check_tx_status(
             return Ok(receipt.into());
         }
 
-        // If the tx is present in the mempool, run the pending tx future, and
-        // assume the next drop is really really real
-        Ok(PendingTransactionBuilder::new(provider, hash)
-            .with_timeout(Some(Duration::from_secs(180)))
-            .get_receipt()
-            .await
-            .map_or(TxStatus::Dropped, |r| r.into()))
+        while provider.get_transaction_by_hash(hash).await?.is_some() {
+            if let Ok(receipt) = PendingTransactionBuilder::new(provider, hash)
+                .with_timeout(Some(Duration::from_secs(10)))
+                .get_receipt()
+                .await
+            {
+                return Ok(receipt.into())
+            }
+        }
+
+        Ok(TxStatus::Dropped)
     }
     .await;
 
