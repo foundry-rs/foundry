@@ -1,12 +1,13 @@
 //! Implementations of [`Json`](spec::Group::Json) cheatcodes.
 
 use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
-use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver};
 use alloy_primitives::{hex, Address, B256, I256};
 use alloy_sol_types::SolValue;
 use foundry_common::fs;
+use foundry_compilers::resolver::parse;
 use foundry_config::fs_permissions::FsAccessKind;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::{borrow::Cow, collections::BTreeMap, fmt::Write};
 
 impl Cheatcode for keyExistsCall {
@@ -47,7 +48,7 @@ impl Cheatcode for parseJsonUintCall {
 impl Cheatcode for parseJsonUintArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Uint(256))
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Uint(256))))
     }
 }
 
@@ -61,7 +62,7 @@ impl Cheatcode for parseJsonIntCall {
 impl Cheatcode for parseJsonIntArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Int(256))
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Int(256))))
     }
 }
 
@@ -75,7 +76,7 @@ impl Cheatcode for parseJsonBoolCall {
 impl Cheatcode for parseJsonBoolArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Bool)
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bool)))
     }
 }
 
@@ -89,7 +90,7 @@ impl Cheatcode for parseJsonAddressCall {
 impl Cheatcode for parseJsonAddressArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Address)
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Address)))
     }
 }
 
@@ -103,7 +104,7 @@ impl Cheatcode for parseJsonStringCall {
 impl Cheatcode for parseJsonStringArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::String)
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::String)))
     }
 }
 
@@ -117,7 +118,7 @@ impl Cheatcode for parseJsonBytesCall {
 impl Cheatcode for parseJsonBytesArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Bytes)
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bytes)))
     }
 }
 
@@ -131,7 +132,7 @@ impl Cheatcode for parseJsonBytes32Call {
 impl Cheatcode for parseJsonBytes32ArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::FixedBytes(32))
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
     }
 }
 
@@ -298,27 +299,62 @@ pub(super) fn parse_json(json: &str, path: &str) -> Result {
 }
 
 pub(super) fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Result {
-    let value = parse_json_str(json)?;
-    let values = select(&value, path)?;
-    ensure!(!values.is_empty(), "no matching value found at {path:?}");
+    let json = parse_json_str(json)?;
+    let [value] = select(&json, path)?[..] else {
+        bail!("path {path:?} must return exactly one JSON value");
+    };
 
-    ensure!(
-        values.iter().all(|value| !value.is_object()),
-        "values at {path:?} must not be JSON objects"
-    );
+    parse_json_as(&value, ty).map(|v| v.abi_encode())
+}
 
+pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValue> {
     let to_string = |v: &Value| {
         let mut s = v.to_string();
         s.retain(|c: char| c != '"');
         s
     };
-    if let Some(array) = values[0].as_array() {
+
+    if let Some(array) = value.as_array() {
         debug!(target: "cheatcodes", %ty, "parsing array");
-        string::parse_array(array.iter().map(to_string), ty)
+        parse_json_array(array, ty)
+    } else if let Some(object) = value.as_object() {
+        debug!(target: "cheatcodes", %ty, "parsing object");
+        parse_json_map(object, ty)
     } else {
         debug!(target: "cheatcodes", %ty, "parsing string");
-        string::parse(&to_string(values[0]), ty)
+        string::parse_value(&to_string(value), ty)
     }
+}
+
+pub(super) fn parse_json_array(array: &[Value], ty: &DynSolType) -> Result<DynSolValue> {
+    let (inner, fixed_len) = match ty {
+        DynSolType::FixedArray(inner, len) => (inner, Some(*len)),
+        DynSolType::Array(inner) => (inner, None),
+        _ => bail!("expected array type"),
+    };
+
+    let values = array.iter().map(|e| parse_json_as(e, inner)).collect::<Result<Vec<_>>>()?;
+
+    if let Some(len) = fixed_len {
+        ensure!(values.len() == len, "array length mismatch");
+        Ok(DynSolValue::FixedArray(values))
+    } else {
+        Ok(DynSolValue::Array(values))
+    }
+}
+
+pub(super) fn parse_json_map(map: &Map<String, Value>, ty: &DynSolType) -> Result<DynSolValue> {
+    let Some((name, fields, types)) = ty.as_custom_struct() else {
+        bail!("expected struct type");
+    };
+
+    let mut values = Vec::with_capacity(fields.len());
+    for (field, ty) in fields.iter().zip(types.iter()) {
+        let Some(value) = map.get(field) else { bail!("field {field:?} not found in JSON object") };
+        values.push(parse_json_as(value, ty)?);
+    }
+
+    Ok(DynSolValue::Tuple(values))
 }
 
 pub(super) fn parse_json_keys(json: &str, key: &str) -> Result {
@@ -512,4 +548,16 @@ where
     }
     s.push(']');
     s
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+struct StructSchema {
+    resolver: Resolver,
+    type_name: String,
+}
+
+impl StructSchema {
+    fn resolve(&self) -> alloy_dyn_abi::Result<DynSolType> {
+        self.resolver.resolve(self.type_name.as_str())
+    }
 }
