@@ -431,6 +431,7 @@ interface Vm {
     function getBlobBaseFee() external view returns (uint256 blobBaseFee);
 
     /// Set blockhash for the current block.
+    /// It only sets the blockhash for blocks where `block.number - 256 <= number < block.number`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
 
