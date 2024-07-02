@@ -8,10 +8,10 @@ use crate::{
     fork::{CreateFork, ForkId},
     InspectorExt,
 };
-use foundry_fork_db::DatabaseError;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
 use eyre::WrapErr;
+use foundry_fork_db::DatabaseError;
 use revm::{
     db::DatabaseRef,
     primitives::{
