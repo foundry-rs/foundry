@@ -1,11 +1,10 @@
 //! Implementations of [`Json`](spec::Group::Json) cheatcodes.
 
 use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
-use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver};
+use alloy_dyn_abi::{parser::RootType, DynSolType, DynSolValue, Resolver, Specifier};
 use alloy_primitives::{hex, Address, B256, I256};
 use alloy_sol_types::SolValue;
 use foundry_common::fs;
-use foundry_compilers::resolver::parse;
 use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::{Map, Value};
 use std::{borrow::Cow, collections::BTreeMap, fmt::Write};
@@ -133,6 +132,28 @@ impl Cheatcode for parseJsonBytes32ArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
+    }
+}
+
+impl Cheatcode for parseJsonType_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { json, typeDescription } = self;
+        parse_json_coerce(json, "$", &resolve_type(&typeDescription)?).map(|v| v.abi_encode())
+    }
+}
+
+impl Cheatcode for parseJsonType_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { json, key, typeDescription } = self;
+        parse_json_coerce(json, key, &resolve_type(&typeDescription)?).map(|v| v.abi_encode())
+    }
+}
+
+impl Cheatcode for parseJsonTypeArrayCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { json, key, typeDescription } = self;
+        let ty = resolve_type(&typeDescription)?;
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(ty))).map(|v| v.abi_encode())
     }
 }
 
@@ -344,7 +365,7 @@ pub(super) fn parse_json_array(array: &[Value], ty: &DynSolType) -> Result<DynSo
 }
 
 pub(super) fn parse_json_map(map: &Map<String, Value>, ty: &DynSolType) -> Result<DynSolValue> {
-    let Some((name, fields, types)) = ty.as_custom_struct() else {
+    let Some((_, fields, types)) = ty.as_custom_struct() else {
         bail!("expected struct type");
     };
 
@@ -548,6 +569,15 @@ where
     }
     s.push(']');
     s
+}
+
+fn resolve_type(type_description: &str) -> Result<DynSolType> {
+    if let Ok(ty) = DynSolType::parse(type_description) {
+        return Ok(ty);
+    };
+
+    let struct_schema: StructSchema = serde_json::from_str(type_description)?;
+    Ok(struct_schema.resolve()?)
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]

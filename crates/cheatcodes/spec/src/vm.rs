@@ -1878,6 +1878,19 @@ interface Vm {
         pure
         returns (bytes32[] memory);
 
+    /// Parses a string of JSON data and coerces it to type corresponding to `typeDescription`.
+    #[cheatcode(group = Json)]
+    function parseJsonType(string calldata json, string calldata typeDescription) external pure returns (bytes memory);
+    /// Parses a string of JSON data at `key` and coerces it to type corresponding to `typeDescription`.
+    #[cheatcode(group = Json)]
+    function parseJsonType(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
+    /// Parses a string of JSON data at `key` and coerces it to type array corresponding to `typeDescription`.
+    #[cheatcode(group = Json)]
+    function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription)
+        external
+        pure
+        returns (bytes memory);
+
     /// Returns an array of all the keys in a JSON object.
     #[cheatcode(group = Json)]
     function parseJsonKeys(string calldata json, string calldata key) external pure returns (string[] memory keys);
