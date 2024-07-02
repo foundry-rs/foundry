@@ -509,7 +509,7 @@ pub struct AnvilEvmArgs {
     pub steps_tracing: bool,
 
     /// Disable printing of `console.log` invocations to stdout.
-    #[arg(long), alias = "no-console-log"]
+    #[arg(long, visible_alias = "no-console-log")]
     pub disable_console_log: bool,
 
     /// Enable autoImpersonate on startup
