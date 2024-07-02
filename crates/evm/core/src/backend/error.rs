@@ -57,9 +57,9 @@ impl<T: Into<Self>> From<EVMError<T>> for BackendError {
     fn from(err: EVMError<T>) -> Self {
         match err {
             EVMError::Database(err) => err.into(),
-            EVMError::Custom(err) => Self::msg(err.to_string()),
+            EVMError::Custom(err) => Self::msg(err),
             EVMError::Header(err) => Self::msg(err.to_string()),
-            EVMError::Precompile(err) => Self::msg(err.to_string()),
+            EVMError::Precompile(err) => Self::msg(err),
             EVMError::Transaction(err) => Self::msg(err.to_string()),
         }
     }

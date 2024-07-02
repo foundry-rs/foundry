@@ -1883,3 +1883,65 @@ fn apply_state_changeset(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{backend::Backend, fork::CreateFork, opts::EvmOpts};
+    use alloy_fork_db::cache::{BlockchainDb, BlockchainDbMeta};
+    use alloy_primitives::{Address, U256};
+    use alloy_provider::Provider;
+    use foundry_common::provider::get_http_provider;
+    use foundry_config::{Config, NamedChain};
+    use revm::DatabaseRef;
+
+    const ENDPOINT: Option<&str> = option_env!("ETH_RPC_URL");
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn can_read_write_cache() {
+        let Some(endpoint) = ENDPOINT else { return };
+
+        let provider = get_http_provider(endpoint);
+
+        let block_num = provider.get_block_number().await.unwrap();
+
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_block_number = Some(block_num);
+
+        let (env, _block) = evm_opts.fork_evm_env(endpoint).await.unwrap();
+
+        let fork = CreateFork {
+            enable_caching: true,
+            url: endpoint.to_string(),
+            env: env.clone(),
+            evm_opts,
+        };
+
+        let backend = Backend::spawn(Some(fork));
+
+        // some rng contract from etherscan
+        let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
+
+        let idx = U256::from(0u64);
+        let _value = backend.storage_ref(address, idx);
+        let _account = backend.basic_ref(address);
+
+        // fill some slots
+        let num_slots = 10u64;
+        for idx in 1..num_slots {
+            let _ = backend.storage_ref(address, U256::from(idx));
+        }
+        drop(backend);
+
+        let meta =
+            BlockchainDbMeta { cfg_env: env.cfg, block_env: env.block, hosts: Default::default() };
+
+        let db = BlockchainDb::new(
+            meta,
+            Some(Config::foundry_block_cache_dir(NamedChain::Mainnet, block_num).unwrap()),
+        );
+        assert!(db.accounts().read().contains_key(&address));
+        assert!(db.storage().read().contains_key(&address));
+        assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);
+    }
+}

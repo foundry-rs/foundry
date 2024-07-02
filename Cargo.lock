@@ -151,7 +151,7 @@ dependencies = [
 [[package]]
 name = "alloy-fork-db"
 version = "0.1.0"
-source = "git+https://github.com/klkvr/alloy-fork-db?rev=981dbb8#981dbb8eb08926b6847d95d4d324f6950e5aadab"
+source = "git+https://github.com/klkvr/alloy-fork-db?rev=10225cd#10225cddf1e99a0fbdae1bc02035d9ed48a955a2"
 dependencies = [
  "alloy-primitives",
  "alloy-provider",

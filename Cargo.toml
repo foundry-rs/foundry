@@ -194,7 +194,7 @@ alloy-transport-http = { version = "0.1.2", default-features = false }
 alloy-transport-ipc = { version = "0.1.2", default-features = false }
 alloy-transport-ws = { version = "0.1.2", default-features = false }
 
-alloy-fork-db = { git = "https://github.com/klkvr/alloy-fork-db", rev = "981dbb8" }
+alloy-fork-db = { git = "https://github.com/klkvr/alloy-fork-db", rev = "10225cd" }
 
 alloy-dyn-abi = "0.7.3"
 alloy-json-abi = "0.7.3"

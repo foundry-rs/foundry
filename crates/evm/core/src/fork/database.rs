@@ -264,7 +264,7 @@ impl DatabaseRef for ForkDbSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fork::BlockchainDbMeta;
+    use crate::backend::BlockchainDbMeta;
     use foundry_common::provider::get_http_provider;
     use std::collections::BTreeSet;
 
