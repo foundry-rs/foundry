@@ -8,7 +8,7 @@ use tracing_subscriber::{layer::Context, Layer};
 /// The target that identifies the events intended to be logged to stdout
 pub(crate) const NODE_USER_LOG_TARGET: &str = "node::user";
 
-/// The target that identifies the events coming from the `console.log` invocations.`
+/// The target that identifies the events coming from the `console.log` invocations.
 pub(crate) const EVM_CONSOLE_LOG_TARGET: &str = "node::console";
 
 /// A logger that listens for node related events and displays them.

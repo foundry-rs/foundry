@@ -30,7 +30,9 @@ impl Inspector {
     ///
     /// This will log all `console.sol` logs
     pub fn print_logs(&self) {
-        self.log_collector.as_ref().map(|collector| print_logs(&collector.logs));
+        if let Some(collector) = &self.log_collector {
+            print_logs(&collector.logs);
+        }
     }
 
     /// Configures the `Tracer` [`revm::Inspector`]
