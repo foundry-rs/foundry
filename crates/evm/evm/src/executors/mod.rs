@@ -17,7 +17,7 @@ use foundry_evm_core::{
     backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
-        DEFAULT_CREATE2_DEPLOYER_CODE,
+        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::RevertDecoder,
     utils::StateChangeset,
@@ -164,14 +164,14 @@ impl Executor {
             .basic_ref(DEFAULT_CREATE2_DEPLOYER)?
             .ok_or_else(|| DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
-        // if the deployer is not currently deployed, deploy the default one
+        // If the deployer is not currently deployed, deploy the default one.
         if create2_deployer_account.code.map_or(true, |code| code.is_empty()) {
-            let creator = "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse().unwrap();
+            let creator = DEFAULT_CREATE2_DEPLOYER_DEPLOYER;
 
             // Probably 0, but just in case.
             let initial_balance = self.get_balance(creator)?;
-
             self.set_balance(creator, U256::MAX)?;
+
             let res =
                 self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
             trace!(create2=?res.address, "deployed local create2 deployer");
