@@ -1,7 +1,7 @@
 //! Implementations of [`Json`](spec::Group::Json) cheatcodes.
 
 use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
-use alloy_dyn_abi::{parser::RootType, DynSolType, DynSolValue, Resolver, Specifier};
+use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver};
 use alloy_primitives::{hex, Address, B256, I256};
 use alloy_sol_types::SolValue;
 use foundry_common::fs;
@@ -576,18 +576,15 @@ fn resolve_type(type_description: &str) -> Result<DynSolType> {
         return Ok(ty);
     };
 
-    let struct_schema: StructSchema = serde_json::from_str(type_description)?;
-    Ok(struct_schema.resolve()?)
-}
+    if let Ok(encoded) = EncodeType::parse(type_description) {
+        let main_type = encoded.types[0].type_name;
+        let mut resolver = Resolver::default();
+        for t in encoded.types {
+            resolver.ingest(t.to_owned());
+        }
 
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-struct StructSchema {
-    resolver: Resolver,
-    type_name: String,
-}
+        return Ok(resolver.resolve(main_type)?)
+    };
 
-impl StructSchema {
-    fn resolve(&self) -> alloy_dyn_abi::Result<DynSolType> {
-        self.resolver.resolve(self.type_name.as_str())
-    }
+    bail!("type description should be a valid Solidity type or a EIP712 `encodeType` string")
 }

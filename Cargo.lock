@@ -3573,7 +3573,6 @@ dependencies = [
  "revm",
  "rustc-hash 2.0.0",
  "semver 1.0.23",
- "serde",
  "serde_json",
  "thiserror",
  "toml 0.8.14",
