@@ -7434,7 +7434,7 @@
     {
       "func": {
         "id": "setBlockhash",
-        "description": "Set blockhash for the current block.",
+        "description": "Set blockhash for the current block.\nIt only sets the blockhash for blocks where `block.number - 256 <= number < block.number`.",
         "declaration": "function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;",
         "visibility": "external",
         "mutability": "",
