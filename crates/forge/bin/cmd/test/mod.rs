@@ -231,15 +231,15 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn execute_tests(self) -> Result<TestOutcome> {
+        // Merge all configs
+        let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+
         // Set number of max threads to execute tests.
         // If not specified then the number of threads determined by rayon will be used.
-        if let Some(test_threads) = self.max_threads {
+        if let Some(test_threads) = config.max_threads {
             trace!(target: "forge::test", "execute tests with {} max threads", test_threads);
             rayon::ThreadPoolBuilder::new().num_threads(test_threads as usize).build_global()?;
         }
-
-        // Merge all configs
-        let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         // Explicitly enable isolation for gas reports for more correct gas accounting
         if self.gas_report {
@@ -385,7 +385,7 @@ impl TestArgs {
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
-        let show_progress = self.show_progress;
+        let show_progress = config.show_progress;
         let handle = tokio::task::spawn_blocking({
             let filter = filter.clone();
             move || runner.test(&filter, tx, show_progress)
@@ -612,6 +612,14 @@ impl Provider for TestArgs {
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
         {
             dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
+        }
+
+        if self.show_progress {
+            dict.insert("show_progress".to_string(), true.into());
+        }
+
+        if let Some(max_threads) = self.max_threads {
+            dict.insert("max_threads".to_string(), max_threads.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
