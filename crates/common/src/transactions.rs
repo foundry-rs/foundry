@@ -147,7 +147,7 @@ mod tests {
     }
 }
 
-/// TODO: Remove when https://github.com/alloy-rs/alloy/pull/1006 is included
+/// TODO: Remove when <https://github.com/alloy-rs/alloy/pull/1006> is included
 macro_rules! delegate_to_tx {
     ($envelope:ident, $method:ident) => {
         match $envelope {

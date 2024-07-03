@@ -105,7 +105,7 @@ impl PreSimulationState {
                         tx.from()
                             .expect("transaction doesn't have a `from` address at execution time"),
                         to,
-                        tx.input().map(|s| Bytes::copy_from_slice(s)),
+                        tx.input().map(Bytes::copy_from_slice),
                         tx.value(),
                     )
                     .wrap_err("Internal EVM error during simulation")?;

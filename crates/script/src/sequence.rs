@@ -284,7 +284,7 @@ impl ScriptSequence {
 
                 // Verify contract created directly from the transaction
                 if let (Some(address), Some(data)) = (receipt.contract_address, tx.tx().input()) {
-                    match verify.get_verify_args(address, offset, &data, &self.libraries) {
+                    match verify.get_verify_args(address, offset, data, &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
                         None => unverifiable_contracts.push(address),
                     };

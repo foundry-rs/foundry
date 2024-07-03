@@ -41,7 +41,7 @@ where
     tx.gas = None;
 
     tx.set_gas_limit(
-        provider.estimate_gas(&tx).await.wrap_err("Failed to estimate gas for tx")? *
+        provider.estimate_gas(tx).await.wrap_err("Failed to estimate gas for tx")? *
             estimate_multiplier as u128 /
             100,
     );
