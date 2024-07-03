@@ -196,7 +196,7 @@ impl Resolver {
             }
             TypeName::UserDefinedTypeName(ty) => {
                 if let Some(name) = self.simple_types.get(&(ty.referenced_declaration as usize)) {
-                    return Ok(Some(name.clone()))
+                    Ok(Some(name.clone()))
                 } else if let Some(def) = self.structs.get(&(ty.referenced_declaration as usize)) {
                     let name =
                         // If we've already seen struct with this ID, just use assigned name.

@@ -138,21 +138,21 @@ impl Cheatcode for parseJsonBytes32ArrayCall {
 impl Cheatcode for parseJsonType_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, typeDescription } = self;
-        parse_json_coerce(json, "$", &resolve_type(&typeDescription)?).map(|v| v.abi_encode())
+        parse_json_coerce(json, "$", &resolve_type(typeDescription)?).map(|v| v.abi_encode())
     }
 }
 
 impl Cheatcode for parseJsonType_1Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key, typeDescription } = self;
-        parse_json_coerce(json, key, &resolve_type(&typeDescription)?).map(|v| v.abi_encode())
+        parse_json_coerce(json, key, &resolve_type(typeDescription)?).map(|v| v.abi_encode())
     }
 }
 
 impl Cheatcode for parseJsonTypeArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key, typeDescription } = self;
-        let ty = resolve_type(&typeDescription)?;
+        let ty = resolve_type(typeDescription)?;
         parse_json_coerce(json, key, &DynSolType::Array(Box::new(ty))).map(|v| v.abi_encode())
     }
 }
@@ -325,7 +325,7 @@ pub(super) fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Resu
         bail!("path {path:?} must return exactly one JSON value");
     };
 
-    parse_json_as(&value, ty).map(|v| v.abi_encode())
+    parse_json_as(value, ty).map(|v| v.abi_encode())
 }
 
 /// Parses given [serde_json::Value] as a [DynSolValue].
