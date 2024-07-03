@@ -113,8 +113,8 @@ pub struct TestArgs {
 
     /// Max concurrent threads to use.
     /// Default value is the number of available CPUs.
-    #[arg(long)]
-    pub max_threads: Option<u64>,
+    #[arg(long, short, visible_alias = "jobs")]
+    pub threads: Option<u64>,
 
     #[command(flatten)]
     filter: FilterArgs,
@@ -236,7 +236,7 @@ impl TestArgs {
 
         // Set number of max threads to execute tests.
         // If not specified then the number of threads determined by rayon will be used.
-        if let Some(test_threads) = config.max_threads {
+        if let Some(test_threads) = config.threads {
             trace!(target: "forge::test", "execute tests with {} max threads", test_threads);
             rayon::ThreadPoolBuilder::new().num_threads(test_threads as usize).build_global()?;
         }
@@ -618,8 +618,8 @@ impl Provider for TestArgs {
             dict.insert("show_progress".to_string(), true.into());
         }
 
-        if let Some(max_threads) = self.max_threads {
-            dict.insert("max_threads".to_string(), max_threads.into());
+        if let Some(threads) = self.threads {
+            dict.insert("threads".to_string(), threads.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

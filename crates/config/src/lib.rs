@@ -255,8 +255,8 @@ pub struct Config {
     /// Only show coverage for files that do not match the specified regex pattern.
     #[serde(rename = "no_match_coverage")]
     pub coverage_pattern_inverse: Option<RegexWrapper>,
-    /// Max concurrent threads to use for tests.
-    pub max_threads: Option<u64>,
+    /// Max concurrent threads to use.
+    pub threads: Option<u64>,
     /// Whether to show test execution progress.
     pub show_progress: bool,
     /// Configuration for fuzz testing
@@ -2080,7 +2080,7 @@ impl Default for Config {
             contract_pattern_inverse: None,
             path_pattern: None,
             path_pattern_inverse: None,
-            max_threads: None,
+            threads: None,
             show_progress: false,
             coverage_pattern_inverse: None,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
