@@ -7,8 +7,9 @@ use alloy_rpc_types::BlockId;
 use anvil_core::eth::{block::Block, transaction::TypedTransaction};
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
-    backend::{DatabaseError, DatabaseResult, MemDb, RevertSnapshotAction, StateSnapshot},
-    fork::BlockchainDb,
+    backend::{
+        BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertSnapshotAction, StateSnapshot,
+    },
     revm::{
         db::{CacheDB, DatabaseRef, DbAccount},
         primitives::{BlockEnv, Bytecode, HashMap, KECCAK_EMPTY},

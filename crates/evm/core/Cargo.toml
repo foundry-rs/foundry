@@ -33,6 +33,7 @@ alloy-rpc-types.workspace = true
 alloy-serde.workspace = true
 alloy-sol-types.workspace = true
 alloy-transport.workspace = true
+foundry-fork-db.workspace = true
 
 revm = { workspace = true, features = [
     "std",
@@ -58,7 +59,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
-url.workspace = true
 
 [dev-dependencies]
 foundry-test-utils.workspace = true

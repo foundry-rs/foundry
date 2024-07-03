@@ -1560,7 +1560,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `anvil_impersonateAccount`
     pub async fn anvil_impersonate_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_impersonateAccount");
-        self.backend.impersonate(address).await?;
+        self.backend.impersonate(address);
         Ok(())
     }
 
@@ -1569,7 +1569,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `anvil_stopImpersonatingAccount`
     pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_stopImpersonatingAccount");
-        self.backend.stop_impersonating(address).await?;
+        self.backend.stop_impersonating(address);
         Ok(())
     }
 
@@ -1578,7 +1578,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `anvil_autoImpersonateAccount`
     pub async fn anvil_auto_impersonate_account(&self, enabled: bool) -> Result<()> {
         node_info!("anvil_autoImpersonateAccount");
-        self.backend.auto_impersonate_account(enabled).await;
+        self.backend.auto_impersonate_account(enabled);
         Ok(())
     }
 
