@@ -36,15 +36,12 @@ checksum = "0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"
     assert_eq!(lock_contents, actual_lock_contents);
 
     // Making sure the foundry contents are the right ones
-    let foundry_contents = r#"
-# Full reference https://github.com/foundry-rs/foundry/tree/master/crates/config
-
-[profile.default]
-script = "script"
-solc = "0.8.26"
+    let foundry_contents = r#"[profile.default]
 src = "src"
-test = "test"
-libs = ["dependencies"]
+out = "out"
+libs = ["lib"]
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
 [dependencies]
 forge-std = "1.8.1"
