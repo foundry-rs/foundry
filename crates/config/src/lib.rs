@@ -432,6 +432,9 @@ pub struct Config {
     /// Whether `failed()` should be invoked to check if the test have failed.
     pub legacy_assertions: bool,
 
+    /// File path to the environment file
+    pub env_path: Option<PathBuf>,
+
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
@@ -2137,6 +2140,7 @@ impl Default for Config {
             dependencies: Default::default(),
             assertions_revert: true,
             legacy_assertions: false,
+            env_path: None,
             warnings: vec![],
             _non_exhaustive: (),
         }

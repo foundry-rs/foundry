@@ -185,10 +185,16 @@ macro_rules! p_println {
 ///
 /// Similarly, we could just use `eprintln!`, but colors are off limits otherwise dotenv is implied
 /// to not be able to configure the colors. It would also mess up the JSON output.
-pub fn load_dotenv() {
+pub fn load_dotenv(path: &Option<PathBuf>) {
     let load = |p: &Path| {
         dotenvy::from_path(p.join(".env")).ok();
     };
+
+    // if path is set, use it
+    if let Some(path) = path {
+        load(path);
+        return;
+    }
 
     // we only want the .env file of the cwd and project root
     // `find_project_root_path` calls `current_dir` internally so both paths are either both `Ok` or
@@ -623,10 +629,32 @@ mod tests {
 
         let cwd = env::current_dir().unwrap();
         env::set_current_dir(nested).unwrap();
-        load_dotenv();
+        load_dotenv(&None);
         env::set_current_dir(cwd).unwrap();
 
         assert_eq!(env::var("TESTCWDKEY").unwrap(), "cwd_val");
+        assert_eq!(env::var("TESTPRJKEY").unwrap(), "prj_val");
+    }
+
+    // loads .env from the given path, and not from the cwd or project dir
+    #[test]
+    fn can_load_dotenv_from_path() {
+        let temp = tempdir().unwrap();
+        let cwd_env = temp.path().join(".env");
+        let nested = temp.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+
+        let mut cwd_file = File::create(cwd_env).unwrap();
+        let mut prj_file = File::create(nested.join(".env")).unwrap();
+
+        cwd_file.write_all("TESTCWDKEY=cwd_val".as_bytes()).unwrap();
+        cwd_file.sync_all().unwrap();
+
+        prj_file.write_all("TESTPRJKEY=prj_val".as_bytes()).unwrap();
+        prj_file.sync_all().unwrap();
+
+        load_dotenv(&Some(nested));
+        assert!(matches!(env::var("TESTCWDKEY"), Err(env::VarError::NotPresent)));
         assert_eq!(env::var("TESTPRJKEY").unwrap(), "prj_val");
     }
 }

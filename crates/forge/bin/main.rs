@@ -19,7 +19,8 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() -> Result<()> {
     handler::install();
-    utils::load_dotenv();
+    let config = utils::load_config();
+    utils::load_dotenv(&config.env_path);
     utils::subscriber();
     utils::enable_paint();
 

@@ -35,7 +35,7 @@ pub enum AnvilSubcommand {
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    utils::load_dotenv();
+    utils::load_dotenv(&None);
 
     let mut app = Anvil::parse();
     app.node.evm_opts.resolve_rpc_alias();
