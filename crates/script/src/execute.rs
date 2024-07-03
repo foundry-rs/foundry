@@ -430,7 +430,7 @@ impl PreSimulationState {
 
                 if should_include {
                     decode_trace_arena(&mut trace.clone(), decoder).await?;
-                    shell::println(render_trace_arena(&trace))?;
+                    shell::println(render_trace_arena(trace))?;
                 }
             }
             shell::println(String::new())?;
