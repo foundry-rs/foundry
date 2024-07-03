@@ -622,7 +622,7 @@ impl CallTraceDecoder {
             }
         }
 
-        return DecodedItem {
+        DecodedItem {
             label: None,
             contract_name: None,
             call_data: None,
