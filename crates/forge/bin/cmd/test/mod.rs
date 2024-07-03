@@ -85,7 +85,7 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Output test results in JSON format.
-    #[arg(long, short, help_heading = "Display options")]
+    #[arg(long, help_heading = "Display options")]
     json: bool,
 
     /// Stop running tests after the first failure.
@@ -113,7 +113,7 @@ pub struct TestArgs {
 
     /// Max concurrent threads to use.
     /// Default value is the number of available CPUs.
-    #[arg(long, short, visible_alias = "jobs")]
+    #[arg(long, short = 'j', visible_alias = "jobs")]
     pub threads: Option<u64>,
 
     #[command(flatten)]
