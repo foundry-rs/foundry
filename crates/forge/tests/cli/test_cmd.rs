@@ -674,7 +674,7 @@ contract ReplayFailuresTest is Test {
 
     // Perform only the 2 failing tests from last run.
     cmd.forge_fuse();
-    cmd.args(["test", "--run-failures"]).unchecked_output().stdout_matches_path(
+    cmd.args(["test", "--rerun"]).unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/replay_last_run_failures.stdout"),
     );

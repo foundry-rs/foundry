@@ -126,7 +126,7 @@ pub struct TestArgs {
     /// Re-run recorded test failures from last run.
     /// If no failure recorded then regular test run is performed.
     #[arg(long)]
-    pub run_failures: bool,
+    pub rerun: bool,
 
     #[command(flatten)]
     evm_opts: EvmArgs,
@@ -580,7 +580,7 @@ impl TestArgs {
     /// Loads and applies filter from file if only last test run failures performed.
     pub fn filter(&self, config: &Config) -> ProjectPathsAwareFilter {
         let mut filter = self.filter.clone();
-        if self.run_failures {
+        if self.rerun {
             filter.test_pattern = last_run_failures(config);
         }
         filter.merge_with_config(config)
@@ -667,9 +667,11 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut filter = String::new();
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
-            filter.push_str(test_name.split("(").next().unwrap());
-            if failures.peek().is_some() {
-                filter.push('|');
+            if let Some(test_match) = test_name.split("(").next() {
+                filter.push_str(test_match);
+                if failures.peek().is_some() {
+                    filter.push('|');
+                }
             }
         }
         let _ = fs::write(&config.test_failures_file, filter);
