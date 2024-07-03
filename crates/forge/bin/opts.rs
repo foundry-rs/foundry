@@ -1,8 +1,8 @@
 use crate::cmd::{
     bind::BindArgs, build::BuildArgs, cache::CacheArgs, clone::CloneArgs, config, coverage,
-    create::CreateArgs, debug::DebugArgs, doc::DocArgs, flatten, fmt::FmtArgs, geiger, generate,
-    init::InitArgs, inspect, install::InstallArgs, remappings::RemappingArgs, remove::RemoveArgs,
-    selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
+    create::CreateArgs, debug::DebugArgs, doc::DocArgs, eip712, flatten, fmt::FmtArgs, geiger,
+    generate, init::InitArgs, inspect, install::InstallArgs, remappings::RemappingArgs,
+    remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -164,6 +164,9 @@ pub enum ForgeSubcommand {
 
     /// Soldeer dependency manager.
     Soldeer(soldeer::SoldeerArgs),
+
+    /// Generate EIP-712 struct encodings for structs from a given file.
+    Eip712(eip712::Eip712Args),
 }
 
 #[cfg(test)]
