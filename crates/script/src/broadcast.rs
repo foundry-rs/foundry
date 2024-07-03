@@ -218,7 +218,7 @@ impl BundledState {
                 .iter()
                 .flat_map(|sequence| {
                     sequence.transactions().map(|tx| match &tx.inner {
-                        TransactionMaybeSigned::NotSigned(tx) => {
+                        TransactionMaybeSigned::UnSigned(tx) => {
                             (Some(tx.from.expect("No sender for onchain transaction!")), None)
                         }
                         TransactionMaybeSigned::Signed(_, signed) => (None, Some(signed.clone())),

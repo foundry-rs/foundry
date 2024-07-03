@@ -162,11 +162,8 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendTransaction", with = "sequence"))]
     EthSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "eth_broadcastRawTransaction", with = "sequence")
-    )]
-    EthBroadcastRawTransaction(Bytes),
+    #[cfg_attr(feature = "serde", serde(rename = "eth_sendRawTransaction", with = "sequence"))]
+    EthSendRawTransaction(Bytes),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_call"))]
     EthCall(

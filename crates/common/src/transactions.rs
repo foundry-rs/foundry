@@ -152,20 +152,20 @@ mod tests {
 /// or a TxEnvelope, already signed
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TransactionMaybeSigned {
-    NotSigned(TransactionRequest),
+    UnSigned(TransactionRequest),
     Signed(TransactionRequest, TxEnvelope),
 }
 
 impl Default for TransactionMaybeSigned {
     fn default() -> Self {
-        Self::NotSigned(TransactionRequest::default())
+        Self::UnSigned(TransactionRequest::default())
     }
 }
 
 impl TransactionMaybeSigned {
     /// Creates a new (unsigned) transaction for broadcast
     pub fn new(tx: TransactionRequest) -> Self {
-        Self::NotSigned(tx)
+        Self::UnSigned(tx)
     }
 
     /// Creates a new signed transaction for broadcast
@@ -189,7 +189,7 @@ impl From<TxEnvelope> for TransactionMaybeSigned {
 impl From<TransactionMaybeSigned> for TransactionRequest {
     fn from(val: TransactionMaybeSigned) -> Self {
         match val {
-            TransactionMaybeSigned::NotSigned(tx) => tx,
+            TransactionMaybeSigned::UnSigned(tx) => tx,
             TransactionMaybeSigned::Signed(tx, _) => tx,
         }
     }
@@ -199,7 +199,7 @@ impl Deref for TransactionMaybeSigned {
     type Target = TransactionRequest;
     fn deref(&self) -> &Self::Target {
         match self {
-            TransactionMaybeSigned::NotSigned(tx) => tx,
+            TransactionMaybeSigned::UnSigned(tx) => tx,
             TransactionMaybeSigned::Signed(tx, _) => tx,
         }
     }
@@ -208,7 +208,7 @@ impl Deref for TransactionMaybeSigned {
 impl DerefMut for TransactionMaybeSigned {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            TransactionMaybeSigned::NotSigned(tx) => tx,
+            TransactionMaybeSigned::UnSigned(tx) => tx,
             TransactionMaybeSigned::Signed(tx, _) => tx,
         }
     }
