@@ -2,7 +2,7 @@ use crate::{
     identifier::{
         AddressIdentity, LocalTraceIdentifier, SingleSignaturesIdentifier, TraceIdentifier,
     },
-    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedCallLog, DecodedCallTrace,
+    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedItem,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
@@ -298,32 +298,29 @@ impl CallTraceDecoder {
         for node in traces {
             let decoded = self.decode_function(&node.trace).await;
             node.trace.decoded.label = decoded.label;
-            node.trace.decoded.call_data = decoded.func;
+            node.trace.decoded.call_data = decoded.call_data;
             node.trace.decoded.return_data = decoded.return_data;
 
             for log in node.logs.iter_mut() {
                 let decoded = self.decode_event(&log.raw_log).await;
-
-                match decoded {
-                    DecodedCallLog::Decoded(name, params) => {
-                        log.decoded.name = Some(name);
-                        log.decoded.params = Some(params);
-                    }
-                    DecodedCallLog::Raw(_) => {}
-                }
+                log.decoded.name = decoded.event_name;
+                log.decoded.params = decoded.event_data;
             }
         }
     }
 
     /// Decodes a call trace.
-    pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
+    pub async fn decode_function(&self, trace: &CallTrace) -> DecodedItem<'_> {
         // Decode precompile
-        if let Some((label, func)) = precompiles::decode(trace, 1) {
-            return DecodedCallTrace {
+        if let Some((label, call_data)) = precompiles::decode(trace, 1) {
+            return DecodedItem {
                 label: Some(label),
+                contract_name: None,
+                call_data: Some(call_data),
                 return_data: None,
-                contract: None,
-                func: Some(func),
+                log_data: None,
+                event_name: None,
+                event_data: None,
             };
         }
 
@@ -331,16 +328,19 @@ impl CallTraceDecoder {
         let label = self.labels.get(&trace.address).cloned();
 
         // Set contract name
-        let contract = self.contracts.get(&trace.address).cloned();
+        let contract_name = self.contracts.get(&trace.address).cloned();
 
         let cdata = &trace.data;
         if trace.address == DEFAULT_CREATE2_DEPLOYER {
-            return DecodedCallTrace {
+            return DecodedItem {
                 label,
+                contract_name,
+                call_data: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
                 return_data: (!trace.status.is_ok())
                     .then(|| self.revert_decoder.decode(&trace.output, Some(trace.status))),
-                contract,
-                func: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
+                log_data: None,
+                event_name: None,
+                event_data: None,
             };
         }
 
@@ -361,29 +361,43 @@ impl CallTraceDecoder {
                 }
             };
             let [func, ..] = &functions[..] else {
-                return DecodedCallTrace { label, return_data: None, contract, func: None };
+                return DecodedItem {
+                    label,
+                    contract_name,
+                    call_data: None,
+                    return_data: None,
+                    log_data: None,
+                    event_name: None,
+                    event_data: None,
+                };
             };
 
-            DecodedCallTrace {
+            DecodedItem {
                 label,
-                func: Some(self.decode_function_input(trace, func)),
+                contract_name,
+                call_data: Some(self.decode_function_input(trace, func)),
                 return_data: self.decode_function_output(trace, functions),
-                contract,
+                log_data: None,
+                event_name: None,
+                event_data: None,
             }
         } else {
             let has_receive = self.receive_contracts.contains(&trace.address);
             let signature =
                 if cdata.is_empty() && has_receive { "receive()" } else { "fallback()" }.into();
             let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
-            DecodedCallTrace {
+            DecodedItem {
                 label,
+                contract_name,
+                call_data: Some(DecodedCallData { signature, args }),
                 return_data: if !trace.success {
                     Some(self.revert_decoder.decode(&trace.output, Some(trace.status)))
                 } else {
                     None
                 },
-                contract,
-                func: Some(DecodedCallData { signature, args }),
+                log_data: None,
+                event_name: None,
+                event_data: None,
             }
         }
     }
@@ -558,8 +572,18 @@ impl CallTraceDecoder {
     }
 
     /// Decodes an event.
-    pub async fn decode_event<'a>(&self, log: &'a LogData) -> DecodedCallLog<'a> {
-        let &[t0, ..] = log.topics() else { return DecodedCallLog::Raw(log) };
+    pub async fn decode_event<'a>(&self, log: &'a LogData) -> DecodedItem<'a> {
+        let &[t0, ..] = log.topics() else {
+            return DecodedItem {
+                label: None,
+                contract_name: None,
+                call_data: None,
+                return_data: None,
+                log_data: Some(log),
+                event_name: None,
+                event_data: None,
+            }
+        };
 
         let mut events = Vec::new();
         let events = match self.events.get(&(t0, log.topics().len() - 1)) {
@@ -576,22 +600,37 @@ impl CallTraceDecoder {
         for event in events {
             if let Ok(decoded) = event.decode_log(log, false) {
                 let params = reconstruct_params(event, &decoded);
-                return DecodedCallLog::Decoded(
-                    event.name.clone(),
-                    params
-                        .into_iter()
-                        .zip(event.inputs.iter())
-                        .map(|(param, input)| {
-                            // undo patched names
-                            let name = input.name.clone();
-                            (name, self.apply_label(&param))
-                        })
-                        .collect(),
-                );
+                return DecodedItem {
+                    label: None,
+                    contract_name: None,
+                    call_data: None,
+                    return_data: None,
+                    log_data: Some(log),
+                    event_name: Some(event.name.clone()),
+                    event_data: Some(
+                        params
+                            .into_iter()
+                            .zip(event.inputs.iter())
+                            .map(|(param, input)| {
+                                // undo patched names
+                                let name = input.name.clone();
+                                (name, self.apply_label(&param))
+                            })
+                            .collect(),
+                    ),
+                };
             }
         }
 
-        DecodedCallLog::Raw(log)
+        return DecodedItem {
+            label: None,
+            contract_name: None,
+            call_data: None,
+            return_data: None,
+            log_data: Some(log),
+            event_name: None,
+            event_data: None,
+        }
     }
 
     /// Prefetches function and event signatures into the identifier cache

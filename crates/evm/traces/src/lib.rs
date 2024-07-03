@@ -29,23 +29,27 @@ pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
+/// Unified type for decoded items.
+///
+/// Depending on the type of the item (`Log`, a decoded `Log` or a decoded `Call`), some fields are
+/// expected to be `None`.
 #[derive(Default, Debug)]
-pub struct DecodedCallTrace {
+pub struct DecodedItem<'a> {
+    /// The label of the trace.
     pub label: Option<String>,
+    /// The contract name of the trace.
+    pub contract_name: Option<String>,
+    /// If the item is a decoded `Call`, the decoded call data.
+    pub call_data: Option<DecodedCallData>,
+    /// If the item is a decoded `Call`, the decoded return data.
     pub return_data: Option<String>,
-    pub func: Option<DecodedCallData>,
-    pub contract: Option<String>,
-}
-
-#[derive(Debug)]
-pub enum DecodedCallLog<'a> {
-    /// A raw log.
-    Raw(&'a LogData),
-    /// A decoded log.
-    ///
-    /// The first member of the tuple is the event name, and the second is a vector of decoded
-    /// parameters.
-    Decoded(String, Vec<(String, String)>),
+    /// If the item is a (decoded) `Log`, the raw log data.
+    pub log_data: Option<&'a LogData>,
+    /// If the item is a decoded `Log`, the decoded event name.
+    pub event_name: Option<String>,
+    /// If the item is a decoded `Log`, the decoded event data. A vector of the parameter name
+    /// (e.g. foo) and the parameter value (e.g. 0x9d3...45ca).
+    pub event_data: Option<Vec<(String, String)>>,
 }
 
 /// Decode a collection of call traces.
