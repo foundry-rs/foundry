@@ -5,7 +5,6 @@ use crate::{
 };
 use alloy_primitives::{hex, Address, TxHash};
 use alloy_rpc_types::AnyTransactionReceipt;
-use alloy_serde::WithOtherFields;
 use eyre::{ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::{now, Git};
@@ -284,10 +283,8 @@ impl ScriptSequence {
                 }
 
                 // Verify contract created directly from the transaction
-                if let (Some(address), Some(data)) =
-                    (receipt.contract_address, tx.tx().input.input())
-                {
-                    match verify.get_verify_args(address, offset, &data.0, &self.libraries) {
+                if let (Some(address), Some(data)) = (receipt.contract_address, tx.tx().input()) {
+                    match verify.get_verify_args(address, offset, &data, &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
                         None => unverifiable_contracts.push(address),
                     };
@@ -353,7 +350,7 @@ impl ScriptSequence {
     }
 
     /// Returns the list of the transactions without the metadata.
-    pub fn transactions(&self) -> impl Iterator<Item = &WithOtherFields<TransactionMaybeSigned>> {
+    pub fn transactions(&self) -> impl Iterator<Item = &TransactionMaybeSigned> {
         self.transactions.iter().map(|tx| tx.tx())
     }
 

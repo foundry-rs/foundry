@@ -198,7 +198,7 @@ impl Context {
 }
 
 /// Helps collecting transactions from different forks.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct BroadcastableTransaction {
     /// The optional RPC URL.
     pub rpc: Option<String>,
