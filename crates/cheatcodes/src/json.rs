@@ -328,6 +328,7 @@ pub(super) fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Resu
     parse_json_as(&value, ty).map(|v| v.abi_encode())
 }
 
+/// Parses given [serde_json::Value] as a [DynSolValue].
 pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValue> {
     let to_string = |v: &Value| {
         let mut s = v.to_string();
@@ -351,7 +352,7 @@ pub(super) fn parse_json_array(array: &[Value], ty: &DynSolType) -> Result<DynSo
     let (inner, fixed_len) = match ty {
         DynSolType::FixedArray(inner, len) => (inner, Some(*len)),
         DynSolType::Array(inner) => (inner, None),
-        _ => bail!("expected array type"),
+        _ => bail!("expected {ty}, found array"),
     };
 
     let values = array.iter().map(|e| parse_json_as(e, inner)).collect::<Result<Vec<_>>>()?;
@@ -366,7 +367,7 @@ pub(super) fn parse_json_array(array: &[Value], ty: &DynSolType) -> Result<DynSo
 
 pub(super) fn parse_json_map(map: &Map<String, Value>, ty: &DynSolType) -> Result<DynSolValue> {
     let Some((_, fields, types)) = ty.as_custom_struct() else {
-        bail!("expected struct type");
+        bail!("expected {ty}, found JSON object");
     };
 
     let mut values = Vec::with_capacity(fields.len());
@@ -571,6 +572,7 @@ where
     s
 }
 
+/// Resolves a [DynSolType] from user input.
 fn resolve_type(type_description: &str) -> Result<DynSolType> {
     if let Ok(ty) = DynSolType::parse(type_description) {
         return Ok(ty);

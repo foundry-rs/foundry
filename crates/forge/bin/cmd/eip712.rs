@@ -74,6 +74,7 @@ impl Eip712Args {
     }
 }
 
+/// AST [Visitor] used for collecting struct definitions.
 #[derive(Debug, Clone, Default)]
 struct StructCollector(BTreeMap<usize, StructDefinition>);
 
@@ -86,7 +87,7 @@ impl Visitor for StructCollector {
 /// Collects mapping from AST id of type definition to representation of this type for EIP-712
 /// encoding.
 ///
-/// For now, maps contract definitions to address and enums to uint8
+/// For now, maps contract definitions to `address` and enums to `uint8`.
 #[derive(Debug, Clone, Default)]
 struct SimpleCustomTypesCollector(BTreeMap<usize, String>);
 
@@ -123,6 +124,10 @@ impl Resolver {
         Self { simple_types, structs }
     }
 
+    /// Converts a given struct definition into EIP-712 `encodeType` representation.
+    ///
+    /// Returns `None` if struct contains any fields that are not supported by EIP-712 (e.g.
+    /// mappings or function pointers).
     pub fn resolve_struct_eip712(
         &self,
         id: usize,
@@ -229,8 +234,8 @@ fn parse_array_length(type_description: &TypeDescriptions) -> Result<Option<&str
     };
 
     if inside_brackets.is_empty() {
-        return Ok(None)
+        Ok(None)
     } else {
-        return Ok(Some(inside_brackets))
+        Ok(Some(inside_brackets))
     }
 }
