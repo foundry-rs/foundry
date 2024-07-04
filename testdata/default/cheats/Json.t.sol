@@ -17,35 +17,35 @@ library JsonStructs {
     string constant schema_NestedJson =
         "NestedJson(FlatJson[] members,AnotherFlatJson inner,string name)AnotherFlatJson(bytes4 fixedBytes)FlatJson(uint256 a,int24[][] arr,string str,bytes b,address addr,bytes32 fixedBytes)";
 
-    function deserializeFlatJson(string memory json) public pure returns (ParseJsonTest.FlatJson memory) {
+    function deserializeFlatJson(string memory json) internal pure returns (ParseJsonTest.FlatJson memory) {
         return abi.decode(vm.parseJsonType(json, schema_FlatJson), (ParseJsonTest.FlatJson));
     }
 
-    function deserializeFlatJson(string memory json, string memory path) public pure returns (ParseJsonTest.FlatJson memory) {
+    function deserializeFlatJson(string memory json, string memory path) internal pure returns (ParseJsonTest.FlatJson memory) {
         return abi.decode(vm.parseJsonType(json, path, schema_FlatJson), (ParseJsonTest.FlatJson));
     }
 
-    function deserializeFlatJsonArray(string memory json, string memory path) public pure returns (ParseJsonTest.FlatJson[] memory) {
+    function deserializeFlatJsonArray(string memory json, string memory path) internal pure returns (ParseJsonTest.FlatJson[] memory) {
         return abi.decode(vm.parseJsonTypeArray(json, path, schema_FlatJson), (ParseJsonTest.FlatJson[]));
     }
 
-    function deserializeNestedJson(string memory json) public pure returns (ParseJsonTest.NestedJson memory) {
+    function deserializeNestedJson(string memory json) internal pure returns (ParseJsonTest.NestedJson memory) {
         return abi.decode(vm.parseJsonType(json, schema_NestedJson), (ParseJsonTest.NestedJson));
     }
 
-    function deserializeNestedJson(string memory json, string memory path) public pure returns (ParseJsonTest.NestedJson memory) {
+    function deserializeNestedJson(string memory json, string memory path) internal pure returns (ParseJsonTest.NestedJson memory) {
         return abi.decode(vm.parseJsonType(json, path, schema_NestedJson), (ParseJsonTest.NestedJson));
     }
 
-    function deserializeNestedJsonArray(string memory json, string memory path) public pure returns (ParseJsonTest.NestedJson[] memory) {
+    function deserializeNestedJsonArray(string memory json, string memory path) internal pure returns (ParseJsonTest.NestedJson[] memory) {
         return abi.decode(vm.parseJsonType(json, path, schema_NestedJson), (ParseJsonTest.NestedJson[]));
     }
 
-    function serialize(ParseJsonTest.FlatJson memory instance) public pure returns (string memory) {
+    function serialize(ParseJsonTest.FlatJson memory instance) internal pure returns (string memory) {
         return vm.serializeJsonType(schema_FlatJson, abi.encode(instance));
     }
 
-    function serialize(ParseJsonTest.NestedJson memory instance) public pure returns (string memory) {
+    function serialize(ParseJsonTest.NestedJson memory instance) internal pure returns (string memory) {
         return vm.serializeJsonType(schema_NestedJson, abi.encode(instance));
     }
 }
