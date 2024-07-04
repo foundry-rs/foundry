@@ -71,8 +71,9 @@ impl TestConfig {
                 {
                     let logs = decode_console_logs(&result.logs);
                     let outcome = if self.should_fail { "fail" } else { "pass" };
-                    let call_trace_decoder = CallTraceDecoderBuilder::default().build();
-
+                    let call_trace_decoder = CallTraceDecoderBuilder::default()
+                        .with_known_contracts(&self.runner.known_contracts)
+                        .build();
                     let decoded_traces = join_all(result.traces.iter_mut().map(|(_, arena)| {
                         let decoder = &call_trace_decoder;
                         async move {
@@ -85,7 +86,6 @@ impl TestConfig {
                     .await
                     .into_iter()
                     .collect::<Vec<String>>();
-
                     eyre::bail!(
                         "Test {} did not {} as expected.\nReason: {:?}\nLogs:\n{}\n\nTraces:\n{}",
                         test_name,

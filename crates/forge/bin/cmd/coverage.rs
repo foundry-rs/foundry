@@ -26,7 +26,11 @@ use foundry_config::{Config, SolcReq};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use semver::Version;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -247,10 +251,8 @@ impl CoverageArgs {
 
         let known_contracts = runner.known_contracts.clone();
 
-        let outcome = self
-            .test
-            .run_tests(runner, config.clone(), verbosity, &self.test.filter(&config))
-            .await?;
+        let filter = self.test.filter(&config);
+        let outcome = self.test.run_tests(runner, config.clone(), verbosity, &filter).await?;
 
         outcome.ensure_ok()?;
 
@@ -287,6 +289,15 @@ impl CoverageArgs {
                 )?;
             }
         }
+
+        // Filter out ignored sources from the report
+        let file_pattern = filter.args().coverage_pattern_inverse.as_ref();
+        let file_root = &filter.paths().root;
+        report.filter_out_ignored_sources(|path: &Path| {
+            file_pattern.map_or(true, |re| {
+                !re.is_match(&path.strip_prefix(file_root).unwrap_or(path).to_string_lossy())
+            })
+        });
 
         // Output final report
         for report_kind in self.report {

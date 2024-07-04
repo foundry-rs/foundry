@@ -114,6 +114,7 @@ match_contract = "Foo"
 no_match_contract = "Bar"
 match_path = "*/Foo*"
 no_match_path = "*/Bar*"
+no_match_coverage = "Baz"
 ffi = false
 always_use_create_2_factory = false
 prompt_timeout = 120

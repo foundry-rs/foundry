@@ -3908,6 +3908,7 @@ dependencies = [
  "foundry-common",
  "foundry-config",
  "foundry-evm-abi",
+ "foundry-fork-db",
  "foundry-test-utils",
  "futures",
  "itertools 0.13.0",
@@ -3920,7 +3921,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "url",
 ]
 
 [[package]]
@@ -3988,6 +3988,30 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "foundry-fork-db"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba3f9c9e02b19933218eb39c7234dcb0cc20e461258ced030f6fd6ac254a8637"
+dependencies = [
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-serde",
+ "alloy-transport",
+ "eyre",
+ "futures",
+ "parking_lot",
+ "revm",
+ "rustc-hash 2.0.0",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -7023,6 +7047,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c669c9b105dbb41133c17bf7f34d29368e358a7fee8fcc289e90dbfb024dfc4"
 dependencies = [
  "aurora-engine-modexp",
+ "blst",
  "c-kzg",
  "k256",
  "once_cell",
@@ -7948,9 +7973,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer"
-version = "0.2.15"
+version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfdc15c518ac6bcdc09565cfcda5d0926c65dd2153fea83fcaf1cd536b0d26f7"
+checksum = "ef46372c17d5650cb18b7f374c45732334fa0867de6c7f14c1fc6973559cd3ff"
 dependencies = [
  "chrono",
  "clap",
@@ -7971,6 +7996,7 @@ dependencies = [
  "uuid 1.9.1",
  "walkdir",
  "yansi",
+ "yash-fnmatch",
  "zip 2.1.3",
  "zip-extract",
 ]
@@ -9594,6 +9620,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 dependencies = [
  "is-terminal",
+]
+
+[[package]]
+name = "yash-fnmatch"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "697c20b479d2e6419e9a073bfdd20e90cbd8540d6c683ee46712e13de650e54f"
+dependencies = [
+ "regex",
+ "regex-syntax 0.8.4",
+ "thiserror",
 ]
 
 [[package]]

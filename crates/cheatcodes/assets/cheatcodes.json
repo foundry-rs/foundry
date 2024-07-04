@@ -7453,6 +7453,26 @@
     },
     {
       "func": {
+        "id": "setBlockhash",
+        "description": "Set blockhash for the current block.\nIt only sets the blockhash for blocks where `block.number - 256 <= number < block.number`.",
+        "declaration": "function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setBlockhash(uint256,bytes32)",
+        "selector": "0x5314b54a",
+        "selectorBytes": [
+          83,
+          20,
+          181,
+          74
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "setEnv",
         "description": "Sets environment variables.",
         "declaration": "function setEnv(string calldata name, string calldata value) external;",

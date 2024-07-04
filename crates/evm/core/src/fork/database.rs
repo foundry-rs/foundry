@@ -1,12 +1,12 @@
 //! A revm database that forks off a remote client
 
 use crate::{
-    backend::{DatabaseError, RevertSnapshotAction, StateSnapshot},
-    fork::{BlockchainDb, SharedBackend},
+    backend::{RevertSnapshotAction, StateSnapshot},
     snapshot::Snapshots,
 };
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
+use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
 use parking_lot::Mutex;
 use revm::{
     db::{CacheDB, DatabaseRef},
@@ -264,7 +264,7 @@ impl DatabaseRef for ForkDbSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fork::BlockchainDbMeta;
+    use crate::backend::BlockchainDbMeta;
     use foundry_common::provider::get_http_provider;
     use std::collections::BTreeSet;
 

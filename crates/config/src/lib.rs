@@ -252,6 +252,11 @@ pub struct Config {
     /// Only run tests in source files that do not match the specified glob pattern.
     #[serde(rename = "no_match_path", with = "from_opt_glob")]
     pub path_pattern_inverse: Option<globset::Glob>,
+    /// Only show coverage for files that do not match the specified regex pattern.
+    #[serde(rename = "no_match_coverage")]
+    pub coverage_pattern_inverse: Option<RegexWrapper>,
+    /// Path where last test run failures are recorded.
+    pub test_failures_file: PathBuf,
     /// Configuration for fuzz testing
     pub fuzz: FuzzConfig,
     /// Configuration for invariant testing
@@ -832,6 +837,9 @@ impl Config {
     /// Cleans the project.
     pub fn cleanup<C: Compiler>(&self, project: &Project<C>) -> Result<(), SolcError> {
         project.cleanup()?;
+
+        // Remove last test run failures file.
+        let _ = fs::remove_file(&self.test_failures_file);
 
         // Remove fuzz and invariant cache directories.
         let remove_test_dir = |test_dir: &Option<PathBuf>| {
@@ -2073,6 +2081,8 @@ impl Default for Config {
             contract_pattern_inverse: None,
             path_pattern: None,
             path_pattern_inverse: None,
+            coverage_pattern_inverse: None,
+            test_failures_file: "cache/test-failures".into(),
             fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
