@@ -17,7 +17,7 @@ use foundry_cli::{
 use foundry_common::{
     compile::{ContractSources, ProjectCompiler},
     evm::EvmArgs,
-    shell,
+    fs, shell,
 };
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
@@ -116,8 +116,17 @@ pub struct TestArgs {
     #[arg(long)]
     pub max_threads: Option<u64>,
 
+    /// Show test execution progress.
+    #[arg(long)]
+    pub show_progress: bool,
+
     #[command(flatten)]
     filter: FilterArgs,
+
+    /// Re-run recorded test failures from last run.
+    /// If no failure recorded then regular test run is performed.
+    #[arg(long)]
+    pub rerun: bool,
 
     #[command(flatten)]
     evm_opts: EvmArgs,
@@ -135,10 +144,6 @@ pub struct TestArgs {
     /// Print detailed test summary table.
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
-
-    /// Show test execution progress.
-    #[arg(long)]
-    pub show_progress: bool,
 }
 
 impl TestArgs {
@@ -565,12 +570,20 @@ impl TestArgs {
             }
         }
 
+        // Persist test run failures to enable replaying.
+        persist_run_failures(&config, &outcome);
+
         Ok(outcome)
     }
 
     /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`].
+    /// Loads and applies filter from file if only last test run failures performed.
     pub fn filter(&self, config: &Config) -> ProjectPathsAwareFilter {
-        self.filter.clone().merge_with_config(config)
+        let mut filter = self.filter.clone();
+        if self.rerun {
+            filter.test_pattern = last_run_failures(config);
+        }
+        filter.merge_with_config(config)
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
@@ -638,6 +651,31 @@ fn list(
         }
     }
     Ok(TestOutcome::empty(false))
+}
+
+/// Load persisted filter (with last test run failures) from file.
+fn last_run_failures(config: &Config) -> Option<regex::Regex> {
+    match fs::read_to_string(&config.test_failures_file) {
+        Ok(filter) => Some(Regex::new(&filter).unwrap()),
+        Err(_) => None,
+    }
+}
+
+/// Persist filter with last test run failures (only if there's any failure).
+fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
+    if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
+        let mut filter = String::new();
+        let mut failures = outcome.failures().peekable();
+        while let Some((test_name, _)) = failures.next() {
+            if let Some(test_match) = test_name.split("(").next() {
+                filter.push_str(test_match);
+                if failures.peek().is_some() {
+                    filter.push('|');
+                }
+            }
+        }
+        let _ = fs::write(&config.test_failures_file, filter);
+    }
 }
 
 #[cfg(test)]
