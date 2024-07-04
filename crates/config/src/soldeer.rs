@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// Soldeer dependencies config structure
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SoldeerDependency {
+pub struct MapDependency {
     /// The version of the dependency
     pub version: String,
 
@@ -17,10 +17,17 @@ pub struct SoldeerDependency {
 
 /// Type for Soldeer configs, under dependencies tag in the foundry.toml
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SoldeerConfig(BTreeMap<String, SoldeerDependency>);
+pub struct SoldeerConfig(BTreeMap<String, SoldeerDependencyValue>);
 
 impl AsRef<Self> for SoldeerConfig {
     fn as_ref(&self) -> &Self {
         self
     }
+}
+
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SoldeerDependencyValue {
+    Map(MapDependency),
+    Str(String),
 }
