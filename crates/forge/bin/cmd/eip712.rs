@@ -76,7 +76,7 @@ impl Eip712Args {
 
 /// AST [Visitor] used for collecting struct definitions.
 #[derive(Debug, Clone, Default)]
-struct StructCollector(BTreeMap<usize, StructDefinition>);
+pub struct StructCollector(pub BTreeMap<usize, StructDefinition>);
 
 impl Visitor for StructCollector {
     fn visit_struct_definition(&mut self, def: &StructDefinition) {

@@ -40,6 +40,7 @@
 //! ```
 
 pub mod bind;
+pub mod bind_json;
 pub mod build;
 pub mod cache;
 pub mod clone;

@@ -113,6 +113,7 @@ fn main() -> Result<()> {
         ForgeSubcommand::VerifyBytecode(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Soldeer(cmd) => cmd.run(),
         ForgeSubcommand::Eip712(cmd) => cmd.run(),
+        ForgeSubcommand::BindJson(cmd) => cmd.run(),
     }
 }
 
