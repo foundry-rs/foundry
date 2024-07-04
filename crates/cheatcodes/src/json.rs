@@ -7,7 +7,7 @@ use alloy_sol_types::SolValue;
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::{Map, Value};
-use std::{borrow::Cow, collections::BTreeMap, fmt::Write};
+use std::{borrow::Cow, collections::BTreeMap};
 
 impl Cheatcode for keyExistsCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
@@ -167,106 +167,165 @@ impl Cheatcode for parseJsonKeysCall {
 impl Cheatcode for serializeJsonCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, value } = self;
-        serialize_json(state, objectKey, None, value)
+        *state.serialized_jsons.entry(objectKey.into()).or_default() =
+            serde_json::from_str(&value)?;
+        Ok(value.abi_encode())
     }
 }
 
 impl Cheatcode for serializeBool_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
-        serialize_json(state, objectKey, Some(valueKey), &value.to_string())
+        serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
 impl Cheatcode for serializeUint_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
-        serialize_json(state, objectKey, Some(valueKey), &value.to_string())
+        serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
 impl Cheatcode for serializeInt_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
-        serialize_json(state, objectKey, Some(valueKey), &value.to_string())
+        serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
 impl Cheatcode for serializeAddress_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
-        serialize_json(state, objectKey, Some(valueKey), &value.to_string())
+        serialize_json(state, objectKey, valueKey, (*value).into())
     }
 }
 
 impl Cheatcode for serializeBytes32_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
-        serialize_json(state, objectKey, Some(valueKey), &value.to_string())
+        serialize_json(state, objectKey, valueKey, DynSolValue::FixedBytes(*value, 32))
     }
 }
 
 impl Cheatcode for serializeString_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
-        serialize_json(state, objectKey, Some(valueKey), value)
+        serialize_json(state, objectKey, valueKey, value.clone().into())
     }
 }
 
 impl Cheatcode for serializeBytes_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
-        serialize_json(state, objectKey, Some(valueKey), &hex::encode_prefixed(value))
+        serialize_json(state, objectKey, valueKey, value.to_vec().into())
     }
 }
 
 impl Cheatcode for serializeBool_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values, false))
+        serialize_json(
+            state,
+            objectKey,
+            valueKey,
+            DynSolValue::Array(values.into_iter().copied().map(DynSolValue::Bool).collect()),
+        )
     }
 }
 
 impl Cheatcode for serializeUint_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values, false))
+        serialize_json(
+            state,
+            objectKey,
+            valueKey,
+            DynSolValue::Array(values.into_iter().map(|v| DynSolValue::Uint(*v, 256)).collect()),
+        )
     }
 }
 
 impl Cheatcode for serializeInt_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values, false))
+        serialize_json(
+            state,
+            objectKey,
+            valueKey,
+            DynSolValue::Array(values.into_iter().map(|v| DynSolValue::Int(*v, 256)).collect()),
+        )
     }
 }
 
 impl Cheatcode for serializeAddress_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values, true))
+        serialize_json(
+            state,
+            objectKey,
+            valueKey,
+            DynSolValue::Array(values.into_iter().copied().map(DynSolValue::Address).collect()),
+        )
     }
 }
 
 impl Cheatcode for serializeBytes32_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values, true))
+        serialize_json(
+            state,
+            objectKey,
+            valueKey,
+            DynSolValue::Array(
+                values.into_iter().map(|v| DynSolValue::FixedBytes(*v, 32)).collect(),
+            ),
+        )
     }
 }
 
 impl Cheatcode for serializeString_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values, true))
+        serialize_json(
+            state,
+            objectKey,
+            valueKey,
+            DynSolValue::Array(values.into_iter().cloned().map(DynSolValue::String).collect()),
+        )
     }
 }
 
 impl Cheatcode for serializeBytes_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        let values = values.iter().map(hex::encode_prefixed);
-        serialize_json(state, objectKey, Some(valueKey), &array_str(values, true))
+        serialize_json(
+            state,
+            objectKey,
+            valueKey,
+            DynSolValue::Array(
+                values.into_iter().cloned().map(Into::into).map(DynSolValue::Bytes).collect(),
+            ),
+        )
+    }
+}
+
+impl Cheatcode for serializeJsonType_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { typeDescription, value } = self;
+        let ty = resolve_type(typeDescription)?;
+        let value = ty.abi_decode(&value)?;
+        let value = serialize_value_as_json(value)?;
+        Ok(value.to_string().abi_encode())
+    }
+}
+
+impl Cheatcode for serializeJsonType_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { objectKey, valueKey, typeDescription, value } = self;
+        let ty = resolve_type(typeDescription)?;
+        let value = ty.abi_decode(&value)?;
+        serialize_json(state, objectKey, valueKey, value)
     }
 }
 
@@ -274,7 +333,7 @@ impl Cheatcode for serializeUintToHexCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, value } = self;
         let hex = format!("0x{value:x}");
-        serialize_json(state, objectKey, Some(valueKey), &hex)
+        serialize_json(state, objectKey, valueKey, hex.into())
     }
 }
 
@@ -336,37 +395,43 @@ pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValu
         s
     };
 
-    if let Some(array) = value.as_array() {
-        debug!(target: "cheatcodes", %ty, "parsing array");
-        parse_json_array(array, ty)
-    } else if let Some(object) = value.as_object() {
-        debug!(target: "cheatcodes", %ty, "parsing object");
-        parse_json_map(object, ty)
-    } else {
-        debug!(target: "cheatcodes", %ty, "parsing string");
-        string::parse_value(&to_string(value), ty)
+    match (value, ty) {
+        (Value::Array(array), ty) => parse_json_array(array, ty),
+        (Value::Object(object), ty) => parse_json_map(object, ty),
+        (Value::String(s), DynSolType::String) => Ok(DynSolValue::String(s.clone())),
+        _ => string::parse_value(&to_string(value), ty),
     }
 }
 
 pub(super) fn parse_json_array(array: &[Value], ty: &DynSolType) -> Result<DynSolValue> {
-    let (inner, fixed_len) = match ty {
-        DynSolType::FixedArray(inner, len) => (inner, Some(*len)),
-        DynSolType::Array(inner) => (inner, None),
+    match ty {
+        DynSolType::Tuple(types) => {
+            ensure!(array.len() == types.len(), "array length mismatch");
+            let values = array
+                .iter()
+                .zip(types)
+                .map(|(e, ty)| parse_json_as(e, ty))
+                .collect::<Result<Vec<_>>>()?;
+
+            Ok(DynSolValue::Tuple(values))
+        }
+        DynSolType::Array(inner) => {
+            let values =
+                array.iter().map(|e| parse_json_as(e, inner)).collect::<Result<Vec<_>>>()?;
+            Ok(DynSolValue::Array(values))
+        }
+        DynSolType::FixedArray(inner, len) => {
+            ensure!(array.len() == *len, "array length mismatch");
+            let values =
+                array.iter().map(|e| parse_json_as(e, inner)).collect::<Result<Vec<_>>>()?;
+            Ok(DynSolValue::FixedArray(values))
+        }
         _ => bail!("expected {ty}, found array"),
-    };
-
-    let values = array.iter().map(|e| parse_json_as(e, inner)).collect::<Result<Vec<_>>>()?;
-
-    if let Some(len) = fixed_len {
-        ensure!(values.len() == len, "array length mismatch");
-        Ok(DynSolValue::FixedArray(values))
-    } else {
-        Ok(DynSolValue::Array(values))
     }
 }
 
 pub(super) fn parse_json_map(map: &Map<String, Value>, ty: &DynSolType) -> Result<DynSolValue> {
-    let Some((_, fields, types)) = ty.as_custom_struct() else {
+    let Some((name, fields, types)) = ty.as_custom_struct() else {
         bail!("expected {ty}, found JSON object");
     };
 
@@ -376,7 +441,11 @@ pub(super) fn parse_json_map(map: &Map<String, Value>, ty: &DynSolType) -> Resul
         values.push(parse_json_as(value, ty)?);
     }
 
-    Ok(DynSolValue::Tuple(values))
+    Ok(DynSolValue::CustomStruct {
+        name: name.to_string(),
+        prop_names: fields.to_vec(),
+        tuple: values,
+    })
 }
 
 pub(super) fn parse_json_keys(json: &str, key: &str) -> Result {
@@ -434,7 +503,8 @@ pub(super) fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
     }
 }
 
-/// Converts a JSON [`Value`] to a [`DynSolValue`].
+/// Converts a JSON [`Value`] to a [`DynSolValue`] by trying to guess encoded type. For safer
+/// decoding, use [`parse_json_as`].
 ///
 /// The function is designed to run recursively, so that in case of an object
 /// it will call itself to convert each of it's value and encode the whole as a
@@ -519,7 +589,50 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
     }
 }
 
-/// Serializes a key:value pair to a specific object. If the key is Some(valueKey), the value is
+/// Serializes given [DynSolValue] into a [serde_json::Value].
+fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
+    match value {
+        DynSolValue::Bool(b) => Ok(Value::Bool(b)),
+        DynSolValue::String(s) => {
+            // Strings are allowed to contain strigified JSON objects, so we try to parse it like
+            // one first.
+            if let Ok(map) = serde_json::from_str(&s) {
+                Ok(Value::Object(map))
+            } else {
+                Ok(Value::String(s))
+            }
+        }
+        DynSolValue::Bytes(b) => Ok(Value::String(hex::encode_prefixed(b))),
+        DynSolValue::FixedBytes(b, size) => Ok(Value::String(hex::encode_prefixed(&b[..size]))),
+        DynSolValue::Int(i, _) => {
+            // let serde handle number parsing
+            let n = serde_json::from_str(&i.to_string())?;
+            Ok(Value::Number(n))
+        }
+        DynSolValue::Uint(i, _) => {
+            // let serde handle number parsing
+            let n = serde_json::from_str(&i.to_string())?;
+            Ok(Value::Number(n))
+        }
+        DynSolValue::Address(a) => Ok(Value::String(a.to_string())),
+        DynSolValue::Array(e) | DynSolValue::FixedArray(e) => {
+            Ok(Value::Array(e.into_iter().map(serialize_value_as_json).collect::<Result<_>>()?))
+        }
+        DynSolValue::CustomStruct { name: _, prop_names, tuple } => {
+            let values =
+                tuple.into_iter().map(serialize_value_as_json).collect::<Result<Vec<_>>>()?;
+            let map = prop_names.into_iter().zip(values).collect();
+
+            Ok(Value::Object(map))
+        }
+        DynSolValue::Tuple(values) => Ok(Value::Array(
+            values.into_iter().map(serialize_value_as_json).collect::<Result<_>>()?,
+        )),
+        DynSolValue::Function(_) => bail!("cannot serialize function pointer"),
+    }
+}
+
+/// Serializes a key:value pair to a specific object. If the key is valueKey, the value is
 /// expected to be an object, which will be set as the root object for the provided object key,
 /// overriding the whole root object if the object key already exists. By calling this function
 /// multiple times, the user can serialize multiple KV pairs to the same object. The value can be of
@@ -530,46 +643,14 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
 fn serialize_json(
     state: &mut Cheatcodes,
     object_key: &str,
-    value_key: Option<&str>,
-    value: &str,
+    value_key: &str,
+    value: DynSolValue,
 ) -> Result {
+    let value = serialize_value_as_json(value)?;
     let map = state.serialized_jsons.entry(object_key.into()).or_default();
-    if let Some(value_key) = value_key {
-        let parsed_value =
-            serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.into()));
-        map.insert(value_key.into(), parsed_value);
-    } else {
-        *map = serde_json::from_str(value)
-            .map_err(|err| fmt_err!("failed to parse JSON object: {err}"))?;
-    }
+    map.insert(value_key.into(), value);
     let stringified = serde_json::to_string(map).unwrap();
     Ok(stringified.abi_encode())
-}
-
-fn array_str<I, T>(values: I, quoted: bool) -> String
-where
-    I: IntoIterator,
-    I::IntoIter: ExactSizeIterator<Item = T>,
-    T: std::fmt::Display,
-{
-    let iter = values.into_iter();
-    let mut s = String::with_capacity(2 + iter.len() * 32);
-    s.push('[');
-    for (i, item) in iter.enumerate() {
-        if i > 0 {
-            s.push(',');
-        }
-
-        if quoted {
-            s.push('"');
-        }
-        write!(s, "{item}").unwrap();
-        if quoted {
-            s.push('"');
-        }
-    }
-    s.push(']');
-    s
 }
 
 /// Resolves a [DynSolType] from user input.
@@ -589,4 +670,73 @@ fn resolve_type(type_description: &str) -> Result<DynSolType> {
     };
 
     bail!("type description should be a valid Solidity type or a EIP712 `encodeType` string")
+}
+
+/// TODO: enable once <https://github.com/alloy-rs/core/pull/683> is merged
+#[cfg(ignore)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::FixedBytes;
+    use proptest::strategy::Strategy;
+
+    fn contains_tuple(value: &DynSolValue) -> bool {
+        match value {
+            DynSolValue::Tuple(_) | DynSolValue::CustomStruct { .. } => true,
+            DynSolValue::Array(v) | DynSolValue::FixedArray(v) => {
+                v.first().map_or(false, contains_tuple)
+            }
+            _ => false,
+        }
+    }
+
+    /// [DynSolValue::Bytes] of length 32 and 20 are converted to [DynSolValue::FixedBytes] and
+    /// [DynSolValue::Address] respectively. Thus, we can't distinguish between address and bytes of
+    /// length 20 during decoding. Because of that, there are issues with handling of arrays of
+    /// those types.
+    fn fixup_guessable(value: DynSolValue) -> DynSolValue {
+        match value {
+            DynSolValue::Array(mut v) | DynSolValue::FixedArray(mut v) => {
+                if let Some(DynSolValue::Bytes(_)) = v.first() {
+                    v.retain(|v| {
+                        let len = v.as_bytes().unwrap().len();
+                        len != 32 && len != 20
+                    })
+                }
+                DynSolValue::Array(v.into_iter().map(fixup_guessable).collect())
+            }
+            DynSolValue::FixedBytes(v, _) => DynSolValue::FixedBytes(v, 32),
+            DynSolValue::Bytes(v) if v.len() == 32 => {
+                DynSolValue::FixedBytes(FixedBytes::from_slice(&v), 32)
+            }
+            DynSolValue::Bytes(v) if v.len() == 20 => DynSolValue::Address(Address::from_slice(&v)),
+            _ => value,
+        }
+    }
+
+    fn guessable_types() -> impl proptest::strategy::Strategy<Value = DynSolValue> {
+        proptest::arbitrary::any::<DynSolValue>()
+            .prop_map(fixup_guessable)
+            .prop_filter_map("tuples are not supported", |v| (!contains_tuple(&v)).then_some(v))
+    }
+
+    // Tests to ensure that conversion [DynSolValue] -> [serde_json::Value] -> [DynSolValue]
+    proptest::proptest! {
+        #[test]
+        fn test_json_roundtrip_guessed(v in guessable_types()) {
+            let json = serialize_value_as_json(v.clone()).unwrap();
+            let value = json_value_to_token(&json).unwrap();
+
+            // do additional abi_encode -> abi_decode to avoid zero signed integers getting decoded as unsigned and causing assert_eq to fail.
+            let decoded = v.as_type().unwrap().abi_decode(&value.abi_encode()).unwrap();
+            assert_eq!(decoded, v);
+        }
+
+        #[test]
+        fn test_json_roundtrip(v in proptest::arbitrary::any::<DynSolValue>()) {
+            let json = serialize_value_as_json(v.clone()).unwrap();
+            let value = parse_json_as(&json, &v.as_type().unwrap()).unwrap();
+            assert_eq!(value, v);
+        }
+    }
 }

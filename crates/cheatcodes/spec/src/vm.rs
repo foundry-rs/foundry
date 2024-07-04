@@ -1981,6 +1981,17 @@ interface Vm {
     function serializeBytes(string calldata objectKey, string calldata valueKey, bytes[] calldata values)
         external
         returns (string memory json);
+    /// See `serializeJson`.
+    #[cheatcode(group = Json)]
+    function serializeJsonType(string calldata typeDescription, bytes memory value)
+        external
+        pure
+        returns (string memory json);
+    /// See `serializeJson`.
+    #[cheatcode(group = Json)]
+    function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value)
+        external
+        returns (string memory json);
 
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/write-json to understand how
     // to use the JSON writing cheats.

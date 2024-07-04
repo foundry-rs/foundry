@@ -7413,6 +7413,46 @@
     },
     {
       "func": {
+        "id": "serializeJsonType_0",
+        "description": "See `serializeJson`.",
+        "declaration": "function serializeJsonType(string calldata typeDescription, bytes memory value) external pure returns (string memory json);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "serializeJsonType(string,bytes)",
+        "selector": "0x6d4f96a6",
+        "selectorBytes": [
+          109,
+          79,
+          150,
+          166
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "serializeJsonType_1",
+        "description": "See `serializeJson`.",
+        "declaration": "function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value) external returns (string memory json);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "serializeJsonType(string,string,string,bytes)",
+        "selector": "0x6f93bccb",
+        "selectorBytes": [
+          111,
+          147,
+          188,
+          203
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "serializeString_0",
         "description": "See `serializeJson`.",
         "declaration": "function serializeString(string calldata objectKey, string calldata valueKey, string calldata value) external returns (string memory json);",
