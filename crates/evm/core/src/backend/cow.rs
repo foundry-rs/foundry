@@ -245,6 +245,10 @@ impl<'a> DatabaseExt for CowBackend<'a> {
     fn has_cheatcode_access(&self, account: &Address) -> bool {
         self.backend.has_cheatcode_access(account)
     }
+
+    fn set_blockhash(&mut self, block_number: U256, block_hash: B256) {
+        self.backend.to_mut().set_blockhash(block_number, block_hash);
+    }
 }
 
 impl<'a> DatabaseRef for CowBackend<'a> {
