@@ -27,6 +27,7 @@ impl AsRef<Self> for SoldeerConfig {
 
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum SoldeerDependencyValue {
     Map(MapDependency),
     Str(String),
