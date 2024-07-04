@@ -490,7 +490,7 @@ impl<'a> InspectorStackRefMut<'a> {
         let result = outcome.result.result;
         call_inspectors_adjust_depth!(
             #[ret]
-            [&mut self.fuzzer, &mut self.tracer, &mut self.cheatcodes, &mut self.printer,],
+            [&mut self.fuzzer, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
                 let new_outcome = inspector.call_end(ecx, inputs, outcome.clone());
 
@@ -691,7 +691,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
 
         call_inspectors_adjust_depth!(
             #[ret]
-            [&mut self.fuzzer, &mut self.tracer, &mut self.log_collector, &mut self.printer,],
+            [&mut self.fuzzer, &mut self.tracer, &mut self.log_collector, &mut self.printer],
             |inspector| {
                 let mut out = None;
                 if let Some(output) = inspector.call(ecx, call) {
