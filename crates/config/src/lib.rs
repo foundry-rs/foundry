@@ -258,7 +258,7 @@ pub struct Config {
     /// Path where last test run failures are recorded.
     pub test_failures_file: PathBuf,
     /// Max concurrent threads to use.
-    pub threads: Option<u64>,
+    pub threads: Option<usize>,
     /// Whether to show test execution progress.
     pub show_progress: bool,
     /// Configuration for fuzz testing

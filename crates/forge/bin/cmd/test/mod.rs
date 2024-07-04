@@ -114,7 +114,7 @@ pub struct TestArgs {
     /// Max concurrent threads to use.
     /// Default value is the number of available CPUs.
     #[arg(long, short = 'j', visible_alias = "jobs")]
-    pub threads: Option<u64>,
+    pub threads: Option<usize>,
 
     /// Show test execution progress.
     #[arg(long)]
@@ -243,7 +243,7 @@ impl TestArgs {
         // If not specified then the number of threads determined by rayon will be used.
         if let Some(test_threads) = config.threads {
             trace!(target: "forge::test", "execute tests with {} max threads", test_threads);
-            rayon::ThreadPoolBuilder::new().num_threads(test_threads as usize).build_global()?;
+            rayon::ThreadPoolBuilder::new().num_threads(test_threads).build_global()?;
         }
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
