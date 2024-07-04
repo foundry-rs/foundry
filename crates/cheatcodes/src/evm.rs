@@ -567,6 +567,20 @@ impl Cheatcode for stopAndReturnStateDiffCall {
     }
 }
 
+impl Cheatcode for setBlockhashCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { blockNumber, blockHash } = *self;
+        ensure!(
+            blockNumber <= ccx.ecx.env.block.number,
+            "block number must be less than or equal to the current block number"
+        );
+
+        ccx.ecx.db.set_blockhash(blockNumber, blockHash);
+
+        Ok(Default::default())
+    }
+}
+
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
     let (account, _) = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
     Ok(account.info.nonce.abi_encode())
