@@ -8,12 +8,14 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::LogData;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use serde::{Deserialize, Serialize};
 
 pub use revm_inspectors::tracing::{
-    types::{CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData},
+    types::{
+        CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData, DecodedCallLog,
+        DecodedCallTrace,
+    },
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
     TraceWriter, TracingInspector, TracingInspectorConfig,
 };
@@ -29,29 +31,6 @@ pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
-/// Unified type for decoded items.
-///
-/// Depending on the type of the item (`Log`, a decoded `Log` or a decoded `Call`), some fields are
-/// expected to be `None`.
-#[derive(Default, Debug)]
-pub struct DecodedItem<'a> {
-    /// The label of the trace.
-    pub label: Option<String>,
-    /// The contract name of the trace.
-    pub contract_name: Option<String>,
-    /// If the item is a decoded `Call`, the decoded call data.
-    pub call_data: Option<DecodedCallData>,
-    /// If the item is a decoded `Call`, the decoded return data.
-    pub return_data: Option<String>,
-    /// If the item is a (decoded) `Log`, the raw log data.
-    pub log_data: Option<&'a LogData>,
-    /// If the item is a decoded `Log`, the decoded event name.
-    pub event_name: Option<String>,
-    /// If the item is a decoded `Log`, the decoded event data. A vector of the parameter name
-    /// (e.g. foo) and the parameter value (e.g. 0x9d3...45ca).
-    pub event_data: Option<Vec<(String, String)>>,
-}
-
 /// Decode a collection of call traces.
 ///
 /// The traces will be decoded using the given decoder, if possible.
@@ -65,9 +44,9 @@ pub async fn decode_trace_arena(
     Ok(())
 }
 
-/// Render a collection of call traces.
+/// Render a collection of call traces to a string.
 pub fn render_trace_arena(arena: &CallTraceArena) -> String {
-    let mut w = TraceWriter::new(Vec::<u8>::new()).use_colors(revm_inspectors::ColorChoice::Auto);
+    let mut w = TraceWriter::new(Vec::<u8>::new());
     w.write_arena(arena).expect("Failed to write traces");
     String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
 }

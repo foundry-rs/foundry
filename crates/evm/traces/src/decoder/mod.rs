@@ -2,7 +2,7 @@ use crate::{
     identifier::{
         AddressIdentity, LocalTraceIdentifier, SingleSignaturesIdentifier, TraceIdentifier,
     },
-    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedItem,
+    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
@@ -20,6 +20,7 @@ use foundry_evm_core::{
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
+use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use rustc_hash::FxHashMap;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 
@@ -296,51 +297,34 @@ impl CallTraceDecoder {
     /// [CallTraceDecoder::decode_event] for more details.
     pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
-            let decoded = self.decode_function(&node.trace).await;
-            node.trace.decoded.label = decoded.label;
-            node.trace.decoded.call_data = decoded.call_data;
-            node.trace.decoded.return_data = decoded.return_data;
-
+            node.trace.decoded = self.decode_function(&node.trace).await;
             for log in node.logs.iter_mut() {
-                let decoded = self.decode_event(&log.raw_log).await;
-                log.decoded.name = decoded.event_name;
-                log.decoded.params = decoded.event_data;
+                log.decoded = self.decode_event(&log.raw_log).await;
             }
         }
     }
 
     /// Decodes a call trace.
-    pub async fn decode_function(&self, trace: &CallTrace) -> DecodedItem<'_> {
+    pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
         // Decode precompile
         if let Some((label, call_data)) = precompiles::decode(trace, 1) {
-            return DecodedItem {
+            return DecodedCallTrace {
                 label: Some(label),
-                contract_name: None,
                 call_data: Some(call_data),
                 return_data: None,
-                log_data: None,
-                event_name: None,
-                event_data: None,
             };
         }
 
         // Set label
         let label = self.labels.get(&trace.address).cloned();
 
-        // Set contract name
-        let contract_name = self.contracts.get(&trace.address).cloned();
-
         let cdata = &trace.data;
         if trace.address == DEFAULT_CREATE2_DEPLOYER {
-            return DecodedItem {
+            return DecodedCallTrace {
                 label,
-                contract_name,
                 call_data: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
                 return_data: (!trace.status.is_ok())
                     .then(|| self.revert_decoder.decode(&trace.output, Some(trace.status))),
-                log_data: None,
-                event_name: None,
-                event_data: None,
             };
         }
 
@@ -361,43 +345,27 @@ impl CallTraceDecoder {
                 }
             };
             let [func, ..] = &functions[..] else {
-                return DecodedItem {
-                    label,
-                    contract_name,
-                    call_data: None,
-                    return_data: None,
-                    log_data: None,
-                    event_name: None,
-                    event_data: None,
-                };
+                return DecodedCallTrace { label, call_data: None, return_data: None };
             };
 
-            DecodedItem {
+            DecodedCallTrace {
                 label,
-                contract_name,
                 call_data: Some(self.decode_function_input(trace, func)),
                 return_data: self.decode_function_output(trace, functions),
-                log_data: None,
-                event_name: None,
-                event_data: None,
             }
         } else {
             let has_receive = self.receive_contracts.contains(&trace.address);
             let signature =
                 if cdata.is_empty() && has_receive { "receive()" } else { "fallback()" }.into();
             let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
-            DecodedItem {
+            DecodedCallTrace {
                 label,
-                contract_name,
                 call_data: Some(DecodedCallData { signature, args }),
                 return_data: if !trace.success {
                     Some(self.revert_decoder.decode(&trace.output, Some(trace.status)))
                 } else {
                     None
                 },
-                log_data: None,
-                event_name: None,
-                event_data: None,
             }
         }
     }
@@ -572,18 +540,8 @@ impl CallTraceDecoder {
     }
 
     /// Decodes an event.
-    pub async fn decode_event<'a>(&self, log: &'a LogData) -> DecodedItem<'a> {
-        let &[t0, ..] = log.topics() else {
-            return DecodedItem {
-                label: None,
-                contract_name: None,
-                call_data: None,
-                return_data: None,
-                log_data: Some(log),
-                event_name: None,
-                event_data: None,
-            }
-        };
+    pub async fn decode_event(&self, log: &LogData) -> DecodedCallLog {
+        let &[t0, ..] = log.topics() else { return DecodedCallLog { name: None, params: None } };
 
         let mut events = Vec::new();
         let events = match self.events.get(&(t0, log.topics().len() - 1)) {
@@ -600,14 +558,9 @@ impl CallTraceDecoder {
         for event in events {
             if let Ok(decoded) = event.decode_log(log, false) {
                 let params = reconstruct_params(event, &decoded);
-                return DecodedItem {
-                    label: None,
-                    contract_name: None,
-                    call_data: None,
-                    return_data: None,
-                    log_data: Some(log),
-                    event_name: Some(event.name.clone()),
-                    event_data: Some(
+                return DecodedCallLog {
+                    name: Some(event.name.clone()),
+                    params: Some(
                         params
                             .into_iter()
                             .zip(event.inputs.iter())
@@ -622,15 +575,7 @@ impl CallTraceDecoder {
             }
         }
 
-        DecodedItem {
-            label: None,
-            contract_name: None,
-            call_data: None,
-            return_data: None,
-            log_data: Some(log),
-            event_name: None,
-            event_data: None,
-        }
+        DecodedCallLog { name: None, params: None }
     }
 
     /// Prefetches function and event signatures into the identifier cache
