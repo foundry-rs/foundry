@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Soldeer dependencies config structure
+/// Soldeer dependencies config structure when it's defined as a map
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapDependency {
     /// The version of the dependency
@@ -25,6 +25,10 @@ impl AsRef<Self> for SoldeerConfig {
     }
 }
 
+/// Enum to cover both available formats for defining a dependency
+/// `dep = { version = "1.1", url = "https://my-dependency" }`
+/// or
+/// `dep = "1.1"`
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SoldeerDependencyValue {
