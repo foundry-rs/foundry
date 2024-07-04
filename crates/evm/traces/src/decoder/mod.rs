@@ -306,16 +306,10 @@ impl CallTraceDecoder {
 
     /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
-        // Decode precompile
-        if let Some((label, call_data)) = precompiles::decode(trace, 1) {
-            return DecodedCallTrace {
-                label: Some(label),
-                call_data: Some(call_data),
-                return_data: None,
-            };
+        if let Some(trace) = precompiles::decode(trace, 1) {
+            return trace;
         }
 
-        // Set label
         let label = self.labels.get(&trace.address).cloned();
 
         let cdata = &trace.data;
