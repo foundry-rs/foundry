@@ -17,6 +17,7 @@ use foundry_config::{Config, RpcEndpoint};
 use foundry_evm::{
     decode::decode_console_logs,
     traces::{
+        decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
@@ -932,10 +933,11 @@ impl ChiselDispatcher {
         }
 
         println!("{}", "Traces:".green());
-        for (kind, trace) in &result.traces {
+        for (kind, trace) in &mut result.traces {
             // Display all Setup + Execution traces.
             if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
-                println!("{}", render_trace_arena(trace, decoder).await?);
+                decode_trace_arena(trace, decoder).await?;
+                println!("{}", render_trace_arena(trace));
             }
         }
 

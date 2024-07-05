@@ -638,3 +638,44 @@ fn extract_number_of_runs(stderr: String) -> usize {
     });
     runs.unwrap().parse::<usize>().unwrap()
 }
+
+forgetest_init!(should_replay_failures_only, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "ReplayFailures.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Test} from "forge-std/Test.sol";
+
+contract ReplayFailuresTest is Test {
+    function testA() public pure {
+        require(2 > 1);
+    }
+
+    function testB() public pure {
+        require(1 > 2, "testB failed");
+    }
+
+    function testC() public pure {
+        require(2 > 1);
+    }
+
+    function testD() public pure {
+        require(1 > 2, "testD failed");
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]);
+    cmd.assert_err();
+    // Test failure filter should be persisted.
+    assert!(prj.root().join("cache/test-failures").exists());
+
+    // Perform only the 2 failing tests from last run.
+    cmd.forge_fuse();
+    cmd.args(["test", "--rerun"]).unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/replay_last_run_failures.stdout"),
+    );
+});

@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Soldeer dependencies config structure
+/// Soldeer dependencies config structure when it's defined as a map
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SoldeerDependency {
+pub struct MapDependency {
     /// The version of the dependency
     pub version: String,
 
@@ -17,10 +17,21 @@ pub struct SoldeerDependency {
 
 /// Type for Soldeer configs, under dependencies tag in the foundry.toml
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SoldeerConfig(BTreeMap<String, SoldeerDependency>);
+pub struct SoldeerConfig(BTreeMap<String, SoldeerDependencyValue>);
 
 impl AsRef<Self> for SoldeerConfig {
     fn as_ref(&self) -> &Self {
         self
     }
+}
+
+/// Enum to cover both available formats for defining a dependency
+/// `dep = { version = "1.1", url = "https://my-dependency" }`
+/// or
+/// `dep = "1.1"`
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SoldeerDependencyValue {
+    Map(MapDependency),
+    Str(String),
 }
