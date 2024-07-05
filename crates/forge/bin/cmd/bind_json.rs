@@ -83,7 +83,6 @@ impl BindJsonArgs {
             sources
                 .0
                 .into_par_iter()
-                .filter(|(path, _)| path.extension().map_or(false, |ext| ext == "sol"))
                 .map(|(path, source)| {
                     let mut locs_to_update = Vec::new();
                     let mut content = Arc::unwrap_or_clone(source.content);
