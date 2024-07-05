@@ -77,7 +77,6 @@ pub struct ProviderBuilder {
     url: Result<Url>,
     chain: NamedChain,
     max_retry: u32,
-    timeout_retry: u32,
     initial_backoff: u64,
     timeout: Duration,
     /// available CUPS
@@ -128,7 +127,6 @@ impl ProviderBuilder {
             url,
             chain: NamedChain::Mainnet,
             max_retry: 8,
-            timeout_retry: 8,
             initial_backoff: 800,
             timeout: REQUEST_TIMEOUT,
             // alchemy max cpus <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
@@ -172,12 +170,6 @@ impl ProviderBuilder {
     /// the already-set value.
     pub fn maybe_initial_backoff(mut self, initial_backoff: Option<u64>) -> Self {
         self.initial_backoff = initial_backoff.unwrap_or(self.initial_backoff);
-        self
-    }
-
-    /// How often to retry a failed request due to connection issues
-    pub fn timeout_retry(mut self, timeout_retry: u32) -> Self {
-        self.timeout_retry = timeout_retry;
         self
     }
 
@@ -239,7 +231,6 @@ impl ProviderBuilder {
             url,
             chain: _,
             max_retry,
-            timeout_retry: _,
             initial_backoff,
             timeout,
             compute_units_per_second,
@@ -271,7 +262,6 @@ impl ProviderBuilder {
             url,
             chain: _,
             max_retry,
-            timeout_retry: _,
             initial_backoff,
             timeout,
             compute_units_per_second,
