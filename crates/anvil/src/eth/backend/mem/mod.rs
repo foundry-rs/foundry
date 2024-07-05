@@ -41,10 +41,13 @@ use alloy_rpc_types::{
     serde_helpers::JsonStorageKey,
     state::StateOverride,
     trace::{
-        geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
+        geth::{
+            GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
+            GethDebugTracingOptions, GethTrace, NoopFrame,
+        },
         parity::LocalizedTransactionTrace,
     },
-    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
+    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
     FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
 };
@@ -1223,14 +1226,37 @@ impl Backend {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
-        opts: GethDefaultTracingOptions,
-    ) -> Result<DefaultFrame, BlockchainError> {
-        self.with_database_at(block_request, |state, block| {
-            let mut inspector = Inspector::default().with_steps_tracing();
-            let block_number = block.number;
+        opts: GethDebugTracingCallOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        let GethDebugTracingCallOptions { tracing_options, state_overrides, block_overrides } =
+            opts;
+        // let overrides = EvmOverrides::new(state_overrides, block_overrides.map(Box::new));
+        let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
 
-            let env = self.build_call_env(request, fee_details, block);
-            let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
+        self.with_database_at(block_request, |state, block| {
+            // apply state and block overrides
+            let state_with_maybe_overrides = if let Some(state_overrides) = state_overrides {
+                Box::new(state::apply_state_override(state_overrides, state)?)
+            } else {
+                state
+            };
+
+            let block_with_maybe_overrides = if let Some(block_overrides) = block_overrides {
+                let mut block_with_overrides = block.clone();
+                apply_block_overrides(block_overrides, &mut block_with_overrides);
+                block_with_overrides
+            } else {
+                block
+            };
+
+            // TODO - pass tracer config to inspector - right now it defaults to
+            // TracingInspectorConfig.all()
+            let mut inspector = Inspector::default().with_steps_tracing();
+            let block_number = block_with_maybe_overrides.number;
+
+            let env = self.build_call_env(request, fee_details, block_with_maybe_overrides);
+            let mut evm =
+                self.new_evm_with_inspector_ref(state_with_maybe_overrides, env, &mut inspector);
             let ResultAndState { result, state: _ } = evm.transact()?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -1244,9 +1270,41 @@ impl Backend {
             };
 
             drop(evm);
-            let tracer = inspector.tracer.expect("tracer disappeared");
+            let tracing_inspector: foundry_evm::traces::TracingInspector =
+                inspector.tracer.expect("tracer disappeared");
             let return_value = out.as_ref().map(|o| o.data().clone()).unwrap_or_default();
-            let res = tracer.into_geth_builder().geth_traces(gas_used, return_value, opts);
+
+            // tracer type specified
+            if let Some(tracer) = tracer {
+                match tracer {
+                    GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                        GethDebugBuiltInTracerType::CallTracer => {
+                            return match tracer_config.into_call_config() {
+                                Ok(call_config) => Ok(tracing_inspector
+                                    .into_geth_builder()
+                                    .geth_call_traces(call_config, gas_used)
+                                    .into()),
+                                Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
+                            };
+                        }
+                        GethDebugBuiltInTracerType::FourByteTracer |
+                        GethDebugBuiltInTracerType::PreStateTracer |
+                        GethDebugBuiltInTracerType::NoopTracer |
+                        GethDebugBuiltInTracerType::MuxTracer => {}
+                    },
+                    GethDebugTracerType::JsTracer(_code) => {}
+                }
+
+                return Ok(NoopFrame::default().into());
+            }
+
+            // default tracer (structlog tracer) - no tracer type specified
+            let res = tracing_inspector
+                .into_geth_builder()
+                .geth_traces(gas_used, return_value, config)
+                .into();
+
+            // TODO: refactor so early returns still call this macro
             trace!(target: "backend", ?exit_reason, ?out, %gas_used, %block_number, "trace call");
             Ok(res)
         })
@@ -2538,4 +2596,40 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
     }
 
     proofs
+}
+
+/// Applies the given block overrides to the env
+fn apply_block_overrides(overrides: BlockOverrides, env: &mut BlockEnv) {
+    let BlockOverrides {
+        number,
+        difficulty,
+        time,
+        gas_limit,
+        coinbase,
+        random,
+        base_fee,
+        block_hash: _,
+    } = overrides;
+
+    if let Some(number) = number {
+        env.number = number;
+    }
+    if let Some(difficulty) = difficulty {
+        env.difficulty = difficulty;
+    }
+    if let Some(time) = time {
+        env.timestamp = U256::from(time);
+    }
+    if let Some(gas_limit) = gas_limit {
+        env.gas_limit = U256::from(gas_limit);
+    }
+    if let Some(coinbase) = coinbase {
+        env.coinbase = coinbase;
+    }
+    if let Some(random) = random {
+        env.prevrandao = Some(random);
+    }
+    if let Some(base_fee) = base_fee {
+        env.basefee = base_fee;
+    }
 }
