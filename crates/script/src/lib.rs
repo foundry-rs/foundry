@@ -169,7 +169,7 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub json: bool,
 
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, in wei.
     #[arg(
         long,
         env = "ETH_GAS_PRICE",

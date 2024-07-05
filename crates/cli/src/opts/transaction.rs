@@ -10,7 +10,7 @@ pub struct TransactionOpts {
     #[arg(long, env = "ETH_GAS_LIMIT")]
     pub gas_limit: Option<U256>,
 
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, in wei.
     #[arg(
         long,
         env = "ETH_GAS_PRICE",
