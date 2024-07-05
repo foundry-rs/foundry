@@ -682,13 +682,14 @@ struct BufferAccesses {
 
 /// The memory_access variable stores the index on the stack that indicates the buffer
 /// offset/size accessed by the given opcode:
-///   (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
-///   >= 1: the stack index
-///   0: no memory access
-///   -1: a fixed size of 32 bytes
-///   -2: a fixed size of 1 byte
+///    (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
+///    \>= 1: the stack index
+///    0: no memory access
+///    -1: a fixed size of 32 bytes
+///    -2: a fixed size of 1 byte
+///
 /// The return value is a tuple about accessed buffer region by the given opcode:
-///   (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
+///    (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
 fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
     let buffer_access = match op {
         opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => {
