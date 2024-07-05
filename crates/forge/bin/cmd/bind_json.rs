@@ -39,7 +39,7 @@ impl BindJsonArgs {
     }
 
     /// In cases when user moves/renames/deletes structs, compiler will start failing because
-    /// generated bindings will be referencing non-existing structs or importingg non-existing
+    /// generated bindings will be referencing non-existing structs or importing non-existing
     /// files.
     ///
     /// Because of that, we need a little bit of preprocessing to make sure that bindings will still
