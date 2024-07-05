@@ -76,6 +76,7 @@ use foundry_evm::{
             TxEnv, KECCAK_EMPTY,
         },
     },
+    traces::TracingInspectorConfig,
     utils::new_evm_with_inspector_ref,
     InspectorExt,
 };
@@ -1233,9 +1234,8 @@ impl Backend {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
 
         self.with_database_at(block_request, |state, block| {
-            // TODO - pass tracer config to inspector - right now it defaults to
-            // TracingInspectorConfig.all()
-            let mut inspector = Inspector::default().with_steps_tracing();
+            let mut inspector =
+                Inspector::default().with_config(TracingInspectorConfig::from_geth_config(&config));
             let block_number = block.number;
 
             let env = self.build_call_env(request, fee_details, block);
@@ -1256,6 +1256,8 @@ impl Backend {
             let tracing_inspector: foundry_evm::traces::TracingInspector =
                 inspector.tracer.expect("tracer disappeared");
             let return_value = out.as_ref().map(|o| o.data().clone()).unwrap_or_default();
+
+            trace!(target: "backend", ?exit_reason, ?out, %gas_used, %block_number, "trace call");
 
             // tracer type specified
             if let Some(tracer) = tracer {
@@ -1287,8 +1289,6 @@ impl Backend {
                 .geth_traces(gas_used, return_value, config)
                 .into();
 
-            // TODO: refactor so early returns still call this macro
-            trace!(target: "backend", ?exit_reason, ?out, %gas_used, %block_number, "trace call");
             Ok(res)
         })
         .await?
