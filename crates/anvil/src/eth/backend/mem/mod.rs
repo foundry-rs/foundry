@@ -1283,7 +1283,7 @@ impl Backend {
                 return Ok(NoopFrame::default().into());
             }
 
-            // default tracer (structlog tracer) - no tracer type specified
+            // no tracer type specified, defaults to structlog tracer used
             let res = tracing_inspector
                 .into_geth_builder()
                 .geth_traces(gas_used, return_value, config)
