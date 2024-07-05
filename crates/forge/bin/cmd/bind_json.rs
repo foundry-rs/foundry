@@ -377,7 +377,8 @@ impl StructsState {
             name_to_structs_indexes.entry(&s.name).or_insert_with(Vec::new).push(idx);
         }
 
-        // Keeps `Some` for structs that will be referenced by name other than their definition name.
+        // Keeps `Some` for structs that will be referenced by name other than their definition
+        // name.
         let mut fn_names = vec![None; structs_to_write.len()];
 
         for (name, indexes) in name_to_structs_indexes {
