@@ -409,6 +409,7 @@ impl ResolvedState {
     fn write(self) -> Result<String> {
         let mut result = String::new();
         self.write_imports(&mut result);
+        self.write_vm(&mut result);
         self.write_library(&mut result);
 
         fs::create_dir_all(self.target_path.parent().unwrap())?;
@@ -428,9 +429,7 @@ impl ResolvedState {
                 .insert(item);
         }
 
-        result.push_str("pragma solidity >=0.6.2 <0.9.0;\n");
-        result.push_str("pragma experimental ABIEncoderV2;\n\n");
-        result.push_str("import {Vm} from \"forge-std/Vm.sol\";\n");
+        result.push_str("pragma solidity >=0.6.2 <0.9.0;\npragma experimental ABIEncoderV2;\n\n");
 
         for (path, names) in grouped_imports {
             result.push_str(&format!(
@@ -439,6 +438,19 @@ impl ResolvedState {
                 path.display()
             ));
         }
+    }
+
+    /// Writes minimal VM interface to not depend on forge-std version
+    fn write_vm(&self, result: &mut String) {
+        result.push_str(r#"
+interface Vm {
+    function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
+    function parseJsonType(string calldata json, string calldata typeDescription) external pure returns (bytes memory);
+    function parseJsonType(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
+    function serializeJsonType(string calldata typeDescription, bytes memory value) external pure returns (string memory json);
+    function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value) external returns (string memory json);
+}
+        "#);
     }
 
     fn write_library(&self, result: &mut String) {
