@@ -111,7 +111,7 @@ impl BindJsonArgs {
                                                 locs_to_update.push((
                                                     loc.start(),
                                                     loc.end(),
-                                                    "".to_string(),
+                                                    String::new(),
                                                 ));
                                             }
                                         }
@@ -137,7 +137,7 @@ impl BindJsonArgs {
 
                     locs_to_update.sort_by_key(|(start, _, _)| *start);
 
-                    let mut shift = 0 as i64;
+                    let mut shift = 0_i64;
 
                     for (start, end, new) in locs_to_update {
                         let start = ((start as i64) - shift) as usize;
@@ -239,7 +239,7 @@ impl PreprocessedState {
             .filter_map(|(path, mut sources)| Some((path, sources.swap_remove(0).source_file.ast?)))
             .map(|(path, ast)| {
                 Ok((
-                    path.strip_prefix(&project.root()).unwrap_or(&path).to_path_buf(),
+                    path.strip_prefix(project.root()).unwrap_or(&path).to_path_buf(),
                     serde_json::from_str::<SourceUnit>(&serde_json::to_string(&ast)?)?,
                 ))
             })
@@ -360,7 +360,7 @@ impl StructsState {
                 aliases
                     .entry(name.clone())
                     .or_insert_with(BTreeMap::new)
-                    .insert(path.to_path_buf(), format!("{}_{i}", name));
+                    .insert(path.to_path_buf(), format!("{name}_{i}"));
             }
         }
 
@@ -411,7 +411,7 @@ impl ResolvedState {
         self.write_imports(&mut result);
         self.write_library(&mut result);
 
-        fs::create_dir_all(&self.target_path.parent().unwrap())?;
+        fs::create_dir_all(self.target_path.parent().unwrap())?;
         fs::write(&self.target_path, &result)?;
 
         Ok(result)
