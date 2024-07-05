@@ -286,7 +286,7 @@ async fn test_invariant_shrink() {
 #[cfg_attr(windows, ignore = "for some reason there's different rng")]
 async fn test_invariant_assert_shrink() {
     let mut opts = TEST_DATA_DEFAULT.test_opts.clone();
-    opts.fuzz.seed = Some(U256::from(119u32));
+    opts.fuzz.seed = Some(U256::from(55u32));
 
     // ensure assert and require shrinks to same sequence of 3 or less
     test_shrink(opts.clone(), "InvariantShrinkWithAssert").await;
