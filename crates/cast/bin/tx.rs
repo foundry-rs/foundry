@@ -1,9 +1,9 @@
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
-use alloy_primitives::{hex, Address, TxKind};
+use alloy_primitives::{hex, Address, Bytes, TxKind};
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::Result;
@@ -232,7 +232,11 @@ where
         let from = from.into().resolve(&self.provider).await?;
 
         self.tx.set_kind(self.state.kind);
-        self.tx.set_input(self.state.input);
+
+        // we set both fields to the same value because some nodes only accept the legacy `data` field: <https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249>
+        let input = Bytes::from(self.state.input);
+        self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) };
+
         self.tx.set_from(from);
         self.tx.set_chain_id(self.chain.id());
 
