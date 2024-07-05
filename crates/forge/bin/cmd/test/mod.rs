@@ -7,7 +7,10 @@ use forge::{
     gas_report::GasReport,
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
-    traces::{identifier::SignaturesIdentifier, CallTraceDecoderBuilder, TraceKind},
+    traces::{
+        decode_trace_arena, identifier::SignaturesIdentifier, render_trace_arena,
+        CallTraceDecoderBuilder, TraceKind,
+    },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
 use foundry_cli::{
@@ -49,7 +52,6 @@ mod summary;
 use summary::TestSummaryReporter;
 
 pub use filter::FilterArgs;
-use forge::traces::render_trace_arena;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
@@ -474,7 +476,7 @@ impl TestArgs {
 
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
-                for (kind, arena) in &result.traces {
+                for (kind, arena) in &mut result.traces.clone() {
                     if identify_addresses {
                         decoder.identify(arena, &mut identifier);
                     }
@@ -495,7 +497,8 @@ impl TestArgs {
                     };
 
                     if should_include {
-                        decoded_traces.push(render_trace_arena(arena, &decoder).await?);
+                        decode_trace_arena(arena, &decoder).await?;
+                        decoded_traces.push(render_trace_arena(arena));
                     }
                 }
 

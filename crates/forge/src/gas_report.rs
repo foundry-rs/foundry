@@ -89,21 +89,21 @@ impl GasReport {
             return;
         }
 
-        let decoded = decoder.decode_function(&node.trace).await;
-
-        let Some(name) = &decoded.contract else { return };
+        let Some(name) = decoder.contracts.get(&node.trace.address) else { return };
         let contract_name = name.rsplit(':').next().unwrap_or(name);
 
         if !self.should_report(contract_name) {
             return;
         }
 
+        let decoded = || decoder.decode_function(&node.trace);
+
         let contract_info = self.contracts.entry(name.to_string()).or_default();
         if trace.kind.is_any_create() {
             trace!(contract_name, "adding create gas info");
             contract_info.gas = trace.gas_used;
             contract_info.size = trace.data.len();
-        } else if let Some(DecodedCallData { signature, .. }) = decoded.func {
+        } else if let Some(DecodedCallData { signature, .. }) = decoded().await.call_data {
             let name = signature.split('(').next().unwrap();
             // ignore any test/setup functions
             if !name.test_function_kind().is_known() {
