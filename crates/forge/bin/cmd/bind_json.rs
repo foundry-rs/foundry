@@ -1,3 +1,4 @@
+use super::eip712::Resolver;
 use clap::Parser;
 use eyre::{Ok, Result};
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
@@ -21,11 +22,9 @@ use std::{
     sync::Arc,
 };
 
-use super::eip712::Resolver;
-
 foundry_config::impl_figment_convert!(BindJsonArgs, opts);
 
-/// CLI arguments for `forge eip712`.
+/// CLI arguments for `forge bind-json`.
 #[derive(Clone, Debug, Parser)]
 pub struct BindJsonArgs {
     #[command(flatten)]
