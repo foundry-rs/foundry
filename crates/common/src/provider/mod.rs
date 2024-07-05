@@ -1,8 +1,6 @@
 //! Provider-related instantiation and usage utilities.
 
-pub mod retry;
 pub mod runtime_transport;
-pub mod tower;
 
 use crate::{
     provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
@@ -14,7 +12,7 @@ use alloy_provider::{
 };
 use alloy_rpc_client::ClientBuilder;
 use alloy_transport::{
-    layers::{RetryBackoffLayer as AlloyRetryLayer, RetryBackoffService as AlloyRetryService},
+    layers::{RetryBackoffLayer, RetryBackoffService},
     utils::guess_local_url,
 };
 use eyre::{Result, WrapErr};
@@ -27,11 +25,10 @@ use std::{
     str::FromStr,
     time::Duration,
 };
-use tower::{RetryBackoffLayer, RetryBackoffService};
 use url::ParseError;
 
 /// Helper type alias for a retry provider
-pub type RetryProvider<N = AnyNetwork> = RootProvider<AlloyRetryService<RuntimeTransport>, N>;
+pub type RetryProvider<N = AnyNetwork> = RootProvider<RetryBackoffService<RuntimeTransport>, N>;
 
 /// Helper type alias for a retry provider with a signer
 pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
@@ -242,7 +239,7 @@ impl ProviderBuilder {
             url,
             chain: _,
             max_retry,
-            timeout_retry,
+            timeout_retry: _,
             initial_backoff,
             timeout,
             compute_units_per_second,
@@ -252,23 +249,15 @@ impl ProviderBuilder {
         } = self;
         let url = url?;
 
-        let _retry_layer = RetryBackoffLayer::new(
-            max_retry,
-            timeout_retry,
-            initial_backoff,
-            compute_units_per_second,
-        );
-
-        let alloy_retry_layer =
-            AlloyRetryLayer::new(max_retry, initial_backoff, compute_units_per_second);
+        let retry_layer =
+            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
 
         let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
             .with_jwt(jwt)
             .build();
-        let client =
-            ClientBuilder::default().layer(alloy_retry_layer).transport(transport, is_local);
+        let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
         let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
             .on_provider(RootProvider::new(client));
@@ -282,7 +271,7 @@ impl ProviderBuilder {
             url,
             chain: _,
             max_retry,
-            timeout_retry,
+            timeout_retry: _,
             initial_backoff,
             timeout,
             compute_units_per_second,
@@ -292,15 +281,8 @@ impl ProviderBuilder {
         } = self;
         let url = url?;
 
-        let retry_layer = RetryBackoffLayer::new(
-            max_retry,
-            timeout_retry,
-            initial_backoff,
-            compute_units_per_second,
-        );
-
-        let _alloy_retry_layer =
-            AlloyRetryLayer::new(max_retry, initial_backoff, compute_units_per_second);
+        let retry_layer =
+            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
 
         let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
