@@ -24,6 +24,7 @@ use foundry_evm::{
     decode::decode_console_logs,
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
+        decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
@@ -428,7 +429,9 @@ impl PreSimulationState {
                 } || !result.success;
 
                 if should_include {
-                    shell::println(render_trace_arena(trace, decoder).await?)?;
+                    let mut trace = trace.clone();
+                    decode_trace_arena(&mut trace, decoder).await?;
+                    shell::println(render_trace_arena(&trace))?;
                 }
             }
             shell::println(String::new())?;

@@ -278,7 +278,7 @@ test_repro!(6501, false, None, |res| {
         assert_eq!(trace.depth, 1);
         assert!(trace.success);
         assert_eq!(
-            decoded.func,
+            decoded.call_data,
             Some(DecodedCallData {
                 signature: expected.0.into(),
                 args: expected.1.into_iter().map(ToOwned::to_owned).collect(),

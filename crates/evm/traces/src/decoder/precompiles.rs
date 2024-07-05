@@ -2,6 +2,7 @@ use crate::{CallTrace, DecodedCallData};
 use alloy_primitives::{hex, B256, U256};
 use alloy_sol_types::{abi, sol, SolCall};
 use itertools::Itertools;
+use revm_inspectors::tracing::types::DecodedCallTrace;
 
 sol! {
 /// EVM precompiles interface. For illustration purposes only, as precompiles don't follow the
@@ -42,16 +43,14 @@ macro_rules! tri {
 }
 
 /// Tries to decode a precompile call. Returns `Some` if successful.
-pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<(String, DecodedCallData)> {
-    let [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, x @ 0x01..=0x0a] =
-        trace.address.0 .0
-    else {
-        return None
-    };
+pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTrace> {
+    if !trace.address[..19].iter().all(|&x| x == 0) {
+        return None;
+    }
 
     let data = &trace.data;
 
-    let (signature, args) = match x {
+    let (signature, args) = match trace.address.last().unwrap() {
         0x01 => {
             let (sig, ecrecoverCall { hash, v, r, s }) = tri!(abi_decode_call(data));
             (sig, vec![hash.to_string(), v.to_string(), r.to_string(), s.to_string()])
@@ -71,10 +70,15 @@ pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<(String, Decod
         0x08 => (ecpairingCall::SIGNATURE, tri!(decode_ecpairing(data))),
         0x09 => (blake2fCall::SIGNATURE, tri!(decode_blake2f(data))),
         0x0a => (pointEvaluationCall::SIGNATURE, tri!(decode_kzg(data))),
-        0x00 | 0x0b.. => unreachable!(),
+        0x00 | 0x0b.. => return None,
     };
 
-    Some(("PRECOMPILES".into(), DecodedCallData { signature: signature.to_string(), args }))
+    Some(DecodedCallTrace {
+        label: Some("PRECOMPILES".to_string()),
+        call_data: Some(DecodedCallData { signature: signature.to_string(), args }),
+        // TODO: Decode return data too.
+        return_data: None,
+    })
 }
 
 // Note: we use the ABI decoder, but this is not necessarily ABI-encoded data. It's just a
