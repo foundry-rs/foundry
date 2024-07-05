@@ -77,6 +77,8 @@ impl BindJsonArgs {
             .max_by(|(v1, _), (v2, _)| v1.cmp(v2))
             .unwrap()
             .1;
+
+        // Insert empty bindings file
         sources.insert(target_path.clone(), Source::new("library JsonBindings {}"));
 
         let sources = Sources(
@@ -89,8 +91,9 @@ impl BindJsonArgs {
                     let (parsed, _) = solang_parser::parse(&content, 0)
                         .map_err(|errors| eyre::eyre!("Parser failed: {errors:?}"))?;
 
-                    // collect functions to later erase their bodies
+                    // All function definitions in the file
                     let mut functions = Vec::new();
+
                     for part in &parsed.0 {
                         if let solang_ast::SourceUnitPart::FunctionDefinition(def) = part {
                             functions.push(def);
@@ -101,8 +104,7 @@ impl BindJsonArgs {
                                     solang_ast::ContractPart::FunctionDefinition(def) => {
                                         functions.push(def);
                                     }
-                                    // Remove immutable attributes so Solidity does not complain
-                                    // when we erase constructor assigning them
+                                    // Remove `immutable` attributes
                                     solang_ast::ContractPart::VariableDefinition(def) => {
                                         for attr in &def.attrs {
                                             if let solang_ast::VariableAttribute::Immutable(loc) =
@@ -123,6 +125,7 @@ impl BindJsonArgs {
                     }
 
                     for def in functions {
+                        // If there's no body block, keep the function as is
                         let Some(solang_ast::Statement::Block { loc, .. }) = def.body else {
                             continue;
                         };
@@ -285,12 +288,13 @@ impl CompiledState {
             })
             .collect::<BTreeMap<_, _>>();
 
+        // Resolver for EIP712 schemas
         let resolver = Resolver::new(&asts);
 
         let mut structs_to_write = Vec::new();
 
         for ((path, id), (def, contract_name)) in structs {
-            // For some structs there's no schema (e.g. if they contain a mapping), so we might skip
+            // For some structs there's no schema (e.g. if they contain a mapping), so we just skip
             // those.
             let Some(schema) = resolver.resolve_struct_eip712(id, &mut Default::default(), true)?
             else {
@@ -334,17 +338,10 @@ impl StructsState {
         let mut names_to_paths = BTreeMap::new();
 
         for s in &structs_to_write {
-            if let Some(contract) = &s.contract_name {
-                names_to_paths
-                    .entry(contract)
-                    .or_insert_with(BTreeSet::new)
-                    .insert(s.path.as_path());
-            } else {
-                names_to_paths
-                    .entry(&s.name)
-                    .or_insert_with(BTreeSet::new)
-                    .insert(s.path.as_path());
-            }
+            names_to_paths
+                .entry(s.struct_or_contract_name())
+                .or_insert_with(BTreeSet::new)
+                .insert(s.path.as_path());
         }
 
         // now resolve aliases for names which need them and construct mapping (name, file) -> alias
@@ -358,42 +355,41 @@ impl StructsState {
 
             for (i, path) in paths.into_iter().enumerate() {
                 aliases
-                    .entry(name.clone())
+                    .entry(name.to_string())
                     .or_insert_with(BTreeMap::new)
                     .insert(path.to_path_buf(), format!("{name}_{i}"));
             }
         }
 
         for s in &mut structs_to_write {
-            let top_level_name = s.contract_name.as_ref().unwrap_or(&s.name);
-            if aliases.contains_key(top_level_name) {
-                s.import_alias = Some(aliases[top_level_name][&s.path].clone());
+            let name = s.struct_or_contract_name();
+            if aliases.contains_key(name) {
+                s.import_alias = Some(aliases[name][&s.path].clone());
             }
         }
 
-        // each struct needs a name by which we are referencing it in function names, e.g.
-        // deserializeFoo those might also have conflicts, so we manage a separate namespace
-        // for them
+        // Each struct needs a name by which we are referencing it in function names (e.g.
+        // deserializeFoo) Those might also have conflicts, so we manage a separate
+        // namespace for them
         let mut name_to_structs_indexes = BTreeMap::new();
 
         for (idx, s) in structs_to_write.iter().enumerate() {
             name_to_structs_indexes.entry(&s.name).or_insert_with(Vec::new).push(idx);
         }
 
-        let mut fn_names = BTreeMap::new();
+        // Keeps `Some` for structs that will be referenced by name other than their definition name.
+        let mut fn_names = vec![None; structs_to_write.len()];
 
         for (name, indexes) in name_to_structs_indexes {
             if indexes.len() > 1 {
                 for (i, idx) in indexes.into_iter().enumerate() {
-                    fn_names.insert(idx, format!("{name}_{i}"));
+                    fn_names[idx] = Some(format!("{name}_{i}"));
                 }
-            } else {
-                fn_names.insert(indexes[0], name.clone());
             }
         }
 
-        for (idx, s) in structs_to_write.iter_mut().enumerate() {
-            s.name_in_fns = fn_names.remove(&idx).unwrap();
+        for (s, fn_name) in structs_to_write.iter_mut().zip(fn_names.into_iter()) {
+            s.name_in_fns = fn_name.unwrap_or(s.name.clone());
         }
 
         ResolvedState { structs_to_write, target_path }
