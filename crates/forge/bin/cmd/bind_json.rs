@@ -465,6 +465,10 @@ library JsonBindings {
         return vm.serializeJsonType(schema_{name_in_fns}, abi.encode(value));
     }}
 
+    function serialize({path} memory value, string memory objectKey, string memory valueKey) internal returns (string memory) {{
+        return vm.serializeJsonType(objectKey, valueKey, schema_{name_in_fns}, abi.encode(value));
+    }}
+
     function deserialize{name_in_fns}(string memory json) public pure returns ({path} memory) {{
         return abi.decode(vm.parseJsonType(json, schema_{name_in_fns}), ({path}));
     }}
