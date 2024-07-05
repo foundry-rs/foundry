@@ -13,7 +13,10 @@ use alloy_provider::{
     Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
 };
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport::utils::guess_local_url;
+use alloy_transport::{
+    layers::{RetryBackoffLayer as AlloyRetryLayer, RetryBackoffService as AlloyRetryService},
+    utils::guess_local_url,
+};
 use eyre::{Result, WrapErr};
 use foundry_config::NamedChain;
 use reqwest::Url;
@@ -28,7 +31,7 @@ use tower::{RetryBackoffLayer, RetryBackoffService};
 use url::ParseError;
 
 /// Helper type alias for a retry provider
-pub type RetryProvider<N = AnyNetwork> = RootProvider<RetryBackoffService<RuntimeTransport>, N>;
+pub type RetryProvider<N = AnyNetwork> = RootProvider<AlloyRetryService<RuntimeTransport>, N>;
 
 /// Helper type alias for a retry provider with a signer
 pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
@@ -249,18 +252,23 @@ impl ProviderBuilder {
         } = self;
         let url = url?;
 
-        let retry_layer = RetryBackoffLayer::new(
+        let _retry_layer = RetryBackoffLayer::new(
             max_retry,
             timeout_retry,
             initial_backoff,
             compute_units_per_second,
         );
+
+        let alloy_retry_layer =
+            AlloyRetryLayer::new(max_retry, initial_backoff, compute_units_per_second);
+
         let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
             .with_jwt(jwt)
             .build();
-        let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
+        let client =
+            ClientBuilder::default().layer(alloy_retry_layer).transport(transport, is_local);
 
         let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
             .on_provider(RootProvider::new(client));
@@ -290,6 +298,9 @@ impl ProviderBuilder {
             initial_backoff,
             compute_units_per_second,
         );
+
+        let _alloy_retry_layer =
+            AlloyRetryLayer::new(max_retry, initial_backoff, compute_units_per_second);
 
         let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
