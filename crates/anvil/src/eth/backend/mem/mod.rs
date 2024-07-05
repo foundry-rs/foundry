@@ -47,7 +47,7 @@ use alloy_rpc_types::{
         },
         parity::LocalizedTransactionTrace,
     },
-    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides,
+    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
     FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
 };
@@ -1228,35 +1228,18 @@ impl Backend {
         block_request: Option<BlockRequest>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingCallOptions { tracing_options, state_overrides, block_overrides } =
+        let GethDebugTracingCallOptions { tracing_options, block_overrides: _, state_overrides: _ } =
             opts;
-        // let overrides = EvmOverrides::new(state_overrides, block_overrides.map(Box::new));
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
 
         self.with_database_at(block_request, |state, block| {
-            // apply state and block overrides
-            let state_with_maybe_overrides = if let Some(state_overrides) = state_overrides {
-                Box::new(state::apply_state_override(state_overrides, state)?)
-            } else {
-                state
-            };
-
-            let block_with_maybe_overrides = if let Some(block_overrides) = block_overrides {
-                let mut block_with_overrides = block.clone();
-                apply_block_overrides(block_overrides, &mut block_with_overrides);
-                block_with_overrides
-            } else {
-                block
-            };
-
             // TODO - pass tracer config to inspector - right now it defaults to
             // TracingInspectorConfig.all()
             let mut inspector = Inspector::default().with_steps_tracing();
-            let block_number = block_with_maybe_overrides.number;
+            let block_number = block.number;
 
-            let env = self.build_call_env(request, fee_details, block_with_maybe_overrides);
-            let mut evm =
-                self.new_evm_with_inspector_ref(state_with_maybe_overrides, env, &mut inspector);
+            let env = self.build_call_env(request, fee_details, block);
+            let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
             let ResultAndState { result, state: _ } = evm.transact()?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -2596,40 +2579,4 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
     }
 
     proofs
-}
-
-/// Applies the given block overrides to the env
-fn apply_block_overrides(overrides: BlockOverrides, env: &mut BlockEnv) {
-    let BlockOverrides {
-        number,
-        difficulty,
-        time,
-        gas_limit,
-        coinbase,
-        random,
-        base_fee,
-        block_hash: _,
-    } = overrides;
-
-    if let Some(number) = number {
-        env.number = number;
-    }
-    if let Some(difficulty) = difficulty {
-        env.difficulty = difficulty;
-    }
-    if let Some(time) = time {
-        env.timestamp = U256::from(time);
-    }
-    if let Some(gas_limit) = gas_limit {
-        env.gas_limit = U256::from(gas_limit);
-    }
-    if let Some(coinbase) = coinbase {
-        env.coinbase = coinbase;
-    }
-    if let Some(random) = random {
-        env.prevrandao = Some(random);
-    }
-    if let Some(base_fee) = base_fee {
-        env.basefee = base_fee;
-    }
 }
