@@ -167,8 +167,7 @@ impl Cheatcode for parseJsonKeysCall {
 impl Cheatcode for serializeJsonCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, value } = self;
-        *state.serialized_jsons.entry(objectKey.into()).or_default() =
-            serde_json::from_str(&value)?;
+        *state.serialized_jsons.entry(objectKey.into()).or_default() = serde_json::from_str(value)?;
         Ok(value.abi_encode())
     }
 }
@@ -229,7 +228,7 @@ impl Cheatcode for serializeBool_1Call {
             state,
             objectKey,
             valueKey,
-            DynSolValue::Array(values.into_iter().copied().map(DynSolValue::Bool).collect()),
+            DynSolValue::Array(values.iter().copied().map(DynSolValue::Bool).collect()),
         )
     }
 }
@@ -241,7 +240,7 @@ impl Cheatcode for serializeUint_1Call {
             state,
             objectKey,
             valueKey,
-            DynSolValue::Array(values.into_iter().map(|v| DynSolValue::Uint(*v, 256)).collect()),
+            DynSolValue::Array(values.iter().map(|v| DynSolValue::Uint(*v, 256)).collect()),
         )
     }
 }
@@ -253,7 +252,7 @@ impl Cheatcode for serializeInt_1Call {
             state,
             objectKey,
             valueKey,
-            DynSolValue::Array(values.into_iter().map(|v| DynSolValue::Int(*v, 256)).collect()),
+            DynSolValue::Array(values.iter().map(|v| DynSolValue::Int(*v, 256)).collect()),
         )
     }
 }
@@ -265,7 +264,7 @@ impl Cheatcode for serializeAddress_1Call {
             state,
             objectKey,
             valueKey,
-            DynSolValue::Array(values.into_iter().copied().map(DynSolValue::Address).collect()),
+            DynSolValue::Array(values.iter().copied().map(DynSolValue::Address).collect()),
         )
     }
 }
@@ -277,9 +276,7 @@ impl Cheatcode for serializeBytes32_1Call {
             state,
             objectKey,
             valueKey,
-            DynSolValue::Array(
-                values.into_iter().map(|v| DynSolValue::FixedBytes(*v, 32)).collect(),
-            ),
+            DynSolValue::Array(values.iter().map(|v| DynSolValue::FixedBytes(*v, 32)).collect()),
         )
     }
 }
@@ -291,7 +288,7 @@ impl Cheatcode for serializeString_1Call {
             state,
             objectKey,
             valueKey,
-            DynSolValue::Array(values.into_iter().cloned().map(DynSolValue::String).collect()),
+            DynSolValue::Array(values.iter().cloned().map(DynSolValue::String).collect()),
         )
     }
 }
@@ -304,7 +301,7 @@ impl Cheatcode for serializeBytes_1Call {
             objectKey,
             valueKey,
             DynSolValue::Array(
-                values.into_iter().cloned().map(Into::into).map(DynSolValue::Bytes).collect(),
+                values.iter().cloned().map(Into::into).map(DynSolValue::Bytes).collect(),
             ),
         )
     }
@@ -314,7 +311,7 @@ impl Cheatcode for serializeJsonType_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { typeDescription, value } = self;
         let ty = resolve_type(typeDescription)?;
-        let value = ty.abi_decode(&value)?;
+        let value = ty.abi_decode(value)?;
         let value = serialize_value_as_json(value)?;
         Ok(value.to_string().abi_encode())
     }
@@ -324,7 +321,7 @@ impl Cheatcode for serializeJsonType_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { objectKey, valueKey, typeDescription, value } = self;
         let ty = resolve_type(typeDescription)?;
-        let value = ty.abi_decode(&value)?;
+        let value = ty.abi_decode(value)?;
         serialize_json(state, objectKey, valueKey, value)
     }
 }
@@ -673,8 +670,8 @@ fn resolve_type(type_description: &str) -> Result<DynSolType> {
 }
 
 /// TODO: enable once <https://github.com/alloy-rs/core/pull/683> is merged
-#[cfg(ignore)]
 #[cfg(test)]
+#[cfg(ignore)]
 mod tests {
     use super::*;
     use alloy_primitives::FixedBytes;

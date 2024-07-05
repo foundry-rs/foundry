@@ -7,8 +7,9 @@ use foundry_compilers::{
         output_selection::OutputSelection, ContractDefinitionPart, Source, SourceUnit,
         SourceUnitPart, Sources,
     },
-    multi::MultiCompilerParsedSource,
+    multi::{MultiCompilerLanguage, MultiCompilerParsedSource},
     project::ProjectCompiler,
+    solc::SolcLanguage,
     CompilerSettings, Graph, Project,
 };
 use itertools::Itertools;
@@ -62,7 +63,21 @@ impl BindJsonArgs {
         let sources = project.paths.read_input_files()?;
         let graph = Graph::<MultiCompilerParsedSource>::resolve_sources(&project.paths, sources)?;
 
-        let (mut sources, _) = graph.into_sources();
+        // We only generate bindings for a single Solidity version to avoid conflicts.
+        let mut sources = graph
+            // resolve graph into mapping language -> version -> sources
+            .into_sources_by_version(project.offline, &project.locked_versions, &project.compiler)?
+            .0
+            .into_iter()
+            // we are only interested in Solidity sources
+            .find(|(lang, _)| *lang == MultiCompilerLanguage::Solc(SolcLanguage::Solidity))
+            .ok_or_else(|| eyre::eyre!("no Solidity sources"))?
+            .1
+            .into_iter()
+            // For now, we are always picking the latest version.
+            .max_by(|(v1, _), (v2, _)| v1.cmp(v2))
+            .unwrap()
+            .1;
         sources.insert(target_path.clone(), Source::new("library JsonBindings {}"));
 
         let sources = Sources(
@@ -140,7 +155,7 @@ impl BindJsonArgs {
                 .collect::<Result<BTreeMap<_, _>>>()?,
         );
 
-        Ok(PreprocessedState { sources, target_path, root: config.root.0, project })
+        Ok(PreprocessedState { sources, target_path, project })
     }
 }
 
@@ -155,20 +170,28 @@ struct StructToWrite {
     /// Import alias for the contract or struct, depending on whether the struct is imported
     /// directly, or via a contract.
     import_alias: Option<String>,
+    /// Path to the file containing the struct definition.
     path: PathBuf,
+    /// EIP712 schema for the struct.
     schema: String,
+    /// Name of the struct definition used in function names and schema_* variables.
     name_in_fns: String,
 }
 
 impl StructToWrite {
+    /// Returns the name of the imported item. If struct is definied at the file level, returns the
+    /// struct name, otherwise returns the parent contract name.
     fn struct_or_contract_name(&self) -> &str {
         self.contract_name.as_deref().unwrap_or(&self.name)
     }
 
+    /// Same as [StructToWrite::struct_or_contract_name] but with alias applied.
     fn struct_or_contract_name_with_alias(&self) -> &str {
         self.import_alias.as_deref().unwrap_or(self.struct_or_contract_name())
     }
 
+    /// Path which can be used to reference this struct in input/output parameters. Either
+    /// StructName or ParantName.StructName
     fn full_path(&self) -> String {
         if self.contract_name.is_some() {
             format!("{}.{}", self.struct_or_contract_name_with_alias(), self.name)
@@ -190,13 +213,12 @@ impl StructToWrite {
 struct PreprocessedState {
     sources: Sources,
     target_path: PathBuf,
-    root: PathBuf,
     project: Project,
 }
 
 impl PreprocessedState {
     fn compile(self) -> Result<CompiledState> {
-        let Self { sources, target_path, root, mut project } = self;
+        let Self { sources, target_path, mut project } = self;
 
         project.settings.update_output_selection(|selection| {
             *selection = OutputSelection::ast_output_selection();
@@ -219,13 +241,13 @@ impl PreprocessedState {
             .filter_map(|(path, mut sources)| Some((path, sources.swap_remove(0).source_file.ast?)))
             .map(|(path, ast)| {
                 Ok((
-                    path.strip_prefix(&root).unwrap_or(&path).to_path_buf(),
+                    path.strip_prefix(&project.root()).unwrap_or(&path).to_path_buf(),
                     serde_json::from_str::<SourceUnit>(&serde_json::to_string(&ast)?)?,
                 ))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
 
-        Ok(CompiledState { asts, target_path, root })
+        Ok(CompiledState { asts, target_path })
     }
 }
 
@@ -233,12 +255,11 @@ impl PreprocessedState {
 struct CompiledState {
     asts: BTreeMap<PathBuf, SourceUnit>,
     target_path: PathBuf,
-    root: PathBuf,
 }
 
 impl CompiledState {
     fn find_structs(self) -> Result<StructsState> {
-        let Self { asts, target_path, root: _ } = self;
+        let Self { asts, target_path } = self;
 
         // construct mapping (file, id) -> (struct definition, optional parent contract name)
         let structs = asts
@@ -301,10 +322,16 @@ struct StructsState {
 }
 
 impl StructsState {
+    /// We manage 2 namespsaces for JSON bindings:
+    ///   - Namespace of imported items. This includes imports of contracts containing structs and
+    ///     structs defined at the file level.
+    ///   - Namespace of struct names used in function names and schema_* variables.
+    ///
+    /// Both of those might contain conflicts, so we need to resolve them.
     fn resolve_imports_and_aliases(self) -> ResolvedState {
         let Self { mut structs_to_write, target_path } = self;
 
-        // firstly, we resolve import names conflicts
+        // firstly, we resolve imported names conflicts
         // construct mapping name -> paths from which items with such name are imported
         let mut names_to_paths = BTreeMap::new();
 
@@ -403,8 +430,8 @@ impl ResolvedState {
                 .insert(item);
         }
 
-        result.push_str("pragma solidity >=0.6.2 <0.9.0;");
-        result.push_str("pragma experimental ABIEncoderV2;");
+        result.push_str("pragma solidity >=0.6.2 <0.9.0;\n");
+        result.push_str("pragma experimental ABIEncoderV2;\n\n");
         result.push_str("import {Vm} from \"forge-std/Vm.sol\";\n");
 
         for (path, names) in grouped_imports {

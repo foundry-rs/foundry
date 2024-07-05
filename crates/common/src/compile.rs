@@ -5,18 +5,14 @@ use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, CellAlignment, Color
 use eyre::{Context, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{
-        output_selection::OutputSelection, remappings::Remapping, BytecodeObject,
-        ContractBytecodeSome, Libraries, Source, SourceUnit,
-    },
+    artifacts::{remappings::Remapping, BytecodeObject, ContractBytecodeSome, Libraries, Source},
     compilers::{
         multi::MultiCompilerLanguage,
         solc::{Solc, SolcCompiler},
         Compiler,
     },
     report::{BasicStdoutReporter, NoReporter, Report},
-    Artifact, CompilerSettings, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig,
-    SolcConfig,
+    Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
 use foundry_linking::Linker;
 use num_format::{Locale, ToFormattedString};

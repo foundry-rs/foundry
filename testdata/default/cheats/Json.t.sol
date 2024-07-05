@@ -21,11 +21,19 @@ library JsonStructs {
         return abi.decode(vm.parseJsonType(json, schema_FlatJson), (ParseJsonTest.FlatJson));
     }
 
-    function deserializeFlatJson(string memory json, string memory path) internal pure returns (ParseJsonTest.FlatJson memory) {
+    function deserializeFlatJson(string memory json, string memory path)
+        internal
+        pure
+        returns (ParseJsonTest.FlatJson memory)
+    {
         return abi.decode(vm.parseJsonType(json, path, schema_FlatJson), (ParseJsonTest.FlatJson));
     }
 
-    function deserializeFlatJsonArray(string memory json, string memory path) internal pure returns (ParseJsonTest.FlatJson[] memory) {
+    function deserializeFlatJsonArray(string memory json, string memory path)
+        internal
+        pure
+        returns (ParseJsonTest.FlatJson[] memory)
+    {
         return abi.decode(vm.parseJsonTypeArray(json, path, schema_FlatJson), (ParseJsonTest.FlatJson[]));
     }
 
@@ -33,11 +41,19 @@ library JsonStructs {
         return abi.decode(vm.parseJsonType(json, schema_NestedJson), (ParseJsonTest.NestedJson));
     }
 
-    function deserializeNestedJson(string memory json, string memory path) internal pure returns (ParseJsonTest.NestedJson memory) {
+    function deserializeNestedJson(string memory json, string memory path)
+        internal
+        pure
+        returns (ParseJsonTest.NestedJson memory)
+    {
         return abi.decode(vm.parseJsonType(json, path, schema_NestedJson), (ParseJsonTest.NestedJson));
     }
 
-    function deserializeNestedJsonArray(string memory json, string memory path) internal pure returns (ParseJsonTest.NestedJson[] memory) {
+    function deserializeNestedJsonArray(string memory json, string memory path)
+        internal
+        pure
+        returns (ParseJsonTest.NestedJson[] memory)
+    {
         return abi.decode(vm.parseJsonType(json, path, schema_NestedJson), (ParseJsonTest.NestedJson[]));
     }
 
