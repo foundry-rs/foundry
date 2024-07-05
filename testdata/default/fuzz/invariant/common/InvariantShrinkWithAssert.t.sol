@@ -88,26 +88,6 @@ contract InvariantShrinkWithAssert is DSTest {
     function invariant_with_assert() public {
         assertTrue(counter.number() != 3, "wrong counter");
     }
-}
-
-contract InvariantShrinkWithRequire is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-    Counter public counter;
-    Handler handler;
-
-    function setUp() public {
-        counter = new Counter();
-        handler = new Handler(counter);
-    }
-
-    function targetSelectors() public returns (FuzzSelector[] memory) {
-        FuzzSelector[] memory targets = new FuzzSelector[](1);
-        bytes4[] memory selectors = new bytes4[](2);
-        selectors[0] = handler.increment.selector;
-        selectors[1] = handler.setNumber.selector;
-        targets[0] = FuzzSelector(address(handler), selectors);
-        return targets;
-    }
 
     function invariant_with_require() public {
         require(counter.number() != 3, "wrong counter");
