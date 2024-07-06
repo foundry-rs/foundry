@@ -140,9 +140,9 @@ pub struct CoreBuildArgs {
     /// The file will be saved in the foundry cache directory.
     ///
     /// default value: false
-    #[arg(long, short = 'G', visible_alias = "gs")]
+    #[arg(long, visible_alias = "cls")]
     #[serde(skip)]
-    pub generate_local_signatures: bool,
+    pub cache_local_signatures: bool,
 }
 
 impl CoreBuildArgs {

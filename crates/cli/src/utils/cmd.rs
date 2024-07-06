@@ -20,6 +20,7 @@ use foundry_evm::{
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
+use serde_json;
 use std::{
     fmt::Write,
     path::{Path, PathBuf},
@@ -428,8 +429,22 @@ pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) 
     Ok(())
 }
 
-pub fn generate_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
+/// Traverse the artifacts in the project to generate local signatures and merge them into the cache file.
+pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
     let mut cached_signatures = CachedSignatures::default();
+    let path = cache_path.join("signatures");
+    if !path.is_file() {
+        std::fs::create_dir_all(&cache_path)?;
+    } else {
+        let cache_contents = std::fs::read_to_string(path.clone()).unwrap();
+        match serde_json::from_str::<CachedSignatures>(&cache_contents) {
+            Ok(existed_signatures) => cached_signatures = existed_signatures,
+            Err(e) => {
+                println!("parse cached local signatures file error: {}", e);
+            }
+        }
+        dbg!(&cached_signatures);
+    }
     output.artifacts().for_each(|(_, artifact)| {
         if let Some(abi) = &artifact.abi {
             for func in abi.functions() {
@@ -442,10 +457,7 @@ pub fn generate_local_signatures(output: &ProjectCompileOutput, cache_path: Path
             }
         }
     });
-    let path = cache_path.join("signatures");
-    if !path.is_file() {
-        std::fs::create_dir_all(&cache_path)?;
-    }
+
     fs::write_json_file(&path, &cached_signatures)?;
     Ok(())
 }
