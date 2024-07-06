@@ -106,7 +106,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,
-        remappings: vec![Remapping::from_str("forge-std=lib/forge-std/").unwrap().into()],
+        remappings: vec![Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into()],
         libraries: vec![
             "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string()
         ],
