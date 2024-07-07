@@ -1,7 +1,7 @@
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, Log, U256};
 use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
@@ -90,6 +90,10 @@ impl FuzzedExecutor {
         ];
         // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
+        let show_execution_logs = self.config.show_execution_logs;
+
+        //Stores logs for all fuzz cases
+        let logs: RefCell<Vec<Log>> = RefCell::default();
 
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
@@ -113,6 +117,7 @@ impl FuzzedExecutor {
                         data.traces.push(call_traces);
                         data.breakpoints.replace(case.breakpoints);
                     }
+                    logs.borrow_mut().extend(case.logs);
 
                     // Collect and merge coverage if `forge snapshot` context.
                     match &mut data.coverage {
@@ -132,6 +137,7 @@ impl FuzzedExecutor {
                     // our failure - when a fuzz case fails, proptest will try
                     // to run at least one more case to find a minimal failure
                     // case.
+                    logs.borrow_mut().extend(outcome.1.logs.clone());
                     let reason = rd.maybe_decode(&outcome.1.result, Some(status));
                     execution_data.borrow_mut().counterexample = outcome;
                     // HACK: we have to use an empty string here to denote `None`.
@@ -150,14 +156,17 @@ impl FuzzedExecutor {
             (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
         };
 
+        // decide whether to use trace logs or only error logs
+        let actual_logs = if show_execution_logs { logs.into_inner() } else { call.logs };
+
         let mut result = FuzzTestResult {
             first_case: fuzz_result.first_case.unwrap_or_default(),
             gas_by_case: fuzz_result.gas_by_case,
             success: run_result.is_ok(),
             reason: None,
             counterexample: None,
-            decoded_logs: decode_console_logs(&call.logs),
-            logs: call.logs,
+            decoded_logs: decode_console_logs(&actual_logs),
+            logs: actual_logs,
             labeled_addresses: call.labels,
             traces: last_run_traces,
             breakpoints: last_run_breakpoints,
@@ -229,6 +238,7 @@ impl FuzzedExecutor {
                 traces: call.traces,
                 coverage: call.coverage,
                 breakpoints,
+                logs: call.logs,
             }))
         } else {
             Ok(FuzzOutcome::CounterExample(CounterExampleOutcome {

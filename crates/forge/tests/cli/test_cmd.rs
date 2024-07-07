@@ -728,3 +728,128 @@ contract PrecompileLabelsTest is Test {
     assert!(output.contains("Blake2F: [0x0000000000000000000000000000000000000009]"));
     assert!(output.contains("PointEvaluation: [0x000000000000000000000000000000000000000A]"));
 });
+
+// tests that `forge test` with config `show_execution_logs: true` for fuzz tests will
+// display `console.log` info
+forgetest_init!(should_show_execution_logs_when_fuzz_test, |prj, cmd| {
+    prj.wipe_contracts();
+
+    // run fuzz test 3 times
+    let config = Config {
+        fuzz: { FuzzConfig { runs: 3, show_execution_logs: true, ..Default::default() } },
+        ..Default::default()
+    };
+    prj.write_config(config);
+    let config = cmd.config();
+    assert_eq!(config.fuzz.runs, 3);
+
+    prj.add_test(
+        "ContractFuzz.t.sol",
+        r#"pragma solidity 0.8.24;
+        import {Test, console2} from "forge-std/Test.sol";
+    contract ContractFuzz is Test {
+      function testFuzzConsoleLog(uint256 x) public pure {
+        console2.log("inside fuzz test, x is:", x);
+      }
+    }
+     "#,
+    )
+    .unwrap();
+    cmd.args(["test", "-vv"]);
+    let stdout = cmd.stdout_lossy();
+    assert!(stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+});
+
+// tests that `forge test` with inline config `show_execution_logs = true` for fuzz tests will
+// display `console.log` info
+forgetest_init!(should_show_execution_logs_when_fuzz_test_inline_config, |prj, cmd| {
+    prj.wipe_contracts();
+
+    // run fuzz test 3 times
+    let config =
+        Config { fuzz: { FuzzConfig { runs: 3, ..Default::default() } }, ..Default::default() };
+    prj.write_config(config);
+    let config = cmd.config();
+    assert_eq!(config.fuzz.runs, 3);
+
+    prj.add_test(
+        "ContractFuzz.t.sol",
+        r#"pragma solidity 0.8.24;
+        import {Test, console2} from "forge-std/Test.sol";
+    contract ContractFuzz is Test {
+
+      /// forge-config: default.fuzz.show-execution-logs = true
+      function testFuzzConsoleLog(uint256 x) public pure {
+        console2.log("inside fuzz test, x is:", x);
+      }
+    }
+     "#,
+    )
+    .unwrap();
+    cmd.args(["test", "-vv"]);
+    let stdout = cmd.stdout_lossy();
+    assert!(stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+});
+
+// tests that `forge test` with config `show_execution_logs: false` for fuzz tests will not display
+// `console.log` info
+forgetest_init!(should_not_show_execution_logs_when_fuzz_test, |prj, cmd| {
+    prj.wipe_contracts();
+
+    // run fuzz test 3 times
+    let config = Config {
+        fuzz: { FuzzConfig { runs: 3, show_execution_logs: false, ..Default::default() } },
+        ..Default::default()
+    };
+    prj.write_config(config);
+    let config = cmd.config();
+    assert_eq!(config.fuzz.runs, 3);
+
+    prj.add_test(
+        "ContractFuzz.t.sol",
+        r#"pragma solidity 0.8.24;
+        import {Test, console2} from "forge-std/Test.sol";
+    contract ContractFuzz is Test {
+
+      function testFuzzConsoleLog(uint256 x) public pure {
+        console2.log("inside fuzz test, x is:", x);
+      }
+    }
+     "#,
+    )
+    .unwrap();
+    cmd.args(["test", "-vv"]);
+    let stdout = cmd.stdout_lossy();
+    assert!(!stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+});
+
+// tests that `forge test` with inline config `show_execution_logs = false` for fuzz tests will not
+// display `console.log` info
+forgetest_init!(should_not_show_execution_logs_when_fuzz_test_inline_config, |prj, cmd| {
+    prj.wipe_contracts();
+
+    // run fuzz test 3 times
+    let config =
+        Config { fuzz: { FuzzConfig { runs: 3, ..Default::default() } }, ..Default::default() };
+    prj.write_config(config);
+    let config = cmd.config();
+    assert_eq!(config.fuzz.runs, 3);
+
+    prj.add_test(
+        "ContractFuzz.t.sol",
+        r#"pragma solidity 0.8.24;
+        import {Test, console2} from "forge-std/Test.sol";
+    contract ContractFuzz is Test {
+
+      /// forge-config: default.fuzz.show-execution-logs = false
+      function testFuzzConsoleLog(uint256 x) public pure {
+        console2.log("inside fuzz test, x is:", x);
+      }
+    }
+     "#,
+    )
+    .unwrap();
+    cmd.args(["test", "-vv"]);
+    let stdout = cmd.stdout_lossy();
+    assert!(!stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+});
