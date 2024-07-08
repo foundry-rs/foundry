@@ -1,4 +1,8 @@
-use crate::{fork::fork_config, utils::http_provider_with_signer};
+use crate::{
+    abi::{MulticallContract, SimpleStorage},
+    fork::fork_config,
+    utils::http_provider_with_signer,
+};
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::{
@@ -7,7 +11,10 @@ use alloy_provider::{
 };
 use alloy_rpc_types::{
     trace::{
-        geth::{GethDebugTracingCallOptions, GethTrace},
+        geth::{
+            CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType,
+            GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
+        },
         parity::{Action, LocalizedTransactionTrace},
     },
     BlockNumberOrTag, TransactionRequest,
@@ -131,6 +138,111 @@ async fn test_transfer_debug_trace_call() {
     match traces {
         GethTrace::Default(default_frame) => {
             assert!(!default_frame.failed);
+        }
+        _ => {
+            unreachable!()
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_call_tracer_debug_trace_call() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let multicall_contract = MulticallContract::deploy(&provider).await.unwrap();
+
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+
+    let set_value = simple_storage_contract.setValue("bar".to_string());
+    let set_value_calldata = set_value.calldata();
+
+    let internal_call_tx_builder = multicall_contract.aggregate(vec![MulticallContract::Call {
+        target: *simple_storage_contract.address(),
+        callData: set_value_calldata.to_owned(),
+    }]);
+
+    let internal_call_tx_calldata = internal_call_tx_builder.calldata().to_owned();
+
+    let internal_call_tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to(*multicall_contract.address())
+        .with_input(internal_call_tx_calldata);
+
+    let internal_call_tx_traces = handle
+        .http_provider()
+        .debug_trace_call(
+            internal_call_tx,
+            BlockNumberOrTag::Latest,
+            GethDebugTracingCallOptions::default().with_tracing_options(
+                GethDebugTracingOptions::default()
+                    .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
+                    .with_call_config(CallConfig::default().with_log()),
+            ),
+        )
+        .await
+        .unwrap();
+
+    match internal_call_tx_traces {
+        GethTrace::CallTracer(call_frame) => {
+            assert!(call_frame.calls.len() == 1);
+            assert!(call_frame.calls.last().unwrap().logs.len() == 1);
+        }
+        _ => {
+            unreachable!()
+        }
+    }
+
+    let internal_call_only_tx_traces = handle
+        .http_provider()
+        .debug_trace_call(
+            internal_call_tx,
+            BlockNumberOrTag::Latest,
+            GethDebugTracingCallOptions::default().with_tracing_options(
+                GethDebugTracingOptions::default()
+                    .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
+                    .with_call_config(CallConfig::default().with_log()),
+            ),
+        )
+        .await
+        .unwrap();
+
+    match internal_call_tx_traces {
+        GethTrace::CallTracer(call_frame) => {
+            assert!(call_frame.calls.len() == 1);
+            assert!(call_frame.calls.last().unwrap().logs.len() == 1);
+        }
+        _ => {
+            unreachable!()
+        }
+    }
+
+    let direct_call_tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to(*simple_storage_contract.address())
+        .with_input(set_value_calldata.to_owned());
+
+    let direct_call_tx_traces = handle
+        .http_provider()
+        .debug_trace_call(
+            direct_call_tx,
+            BlockNumberOrTag::Latest,
+            GethDebugTracingCallOptions::default().with_tracing_options(
+                GethDebugTracingOptions::default()
+                    .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
+                    .with_call_config(CallConfig::default().with_log()),
+            ),
+        )
+        .await
+        .unwrap();
+
+    match direct_call_tx_traces {
+        GethTrace::CallTracer(call_frame) => {
+            assert!(call_frame.calls.is_empty());
+            assert!(call_frame.logs.len() == 1);
         }
         _ => {
             unreachable!()
