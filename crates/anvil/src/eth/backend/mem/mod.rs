@@ -43,7 +43,7 @@ use alloy_rpc_types::{
     trace::{
         geth::{
             GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
-            GethDebugTracingOptions, GethTrace,
+            GethDebugTracingOptions, GethTrace, NoopFrame,
         },
         parity::LocalizedTransactionTrace,
     },
@@ -1261,9 +1261,9 @@ impl Backend {
                                 .geth_call_traces(call_config, result.gas_used())
                                 .into())
                         }
+                        GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
                         GethDebugBuiltInTracerType::FourByteTracer |
                         GethDebugBuiltInTracerType::PreStateTracer |
-                        GethDebugBuiltInTracerType::NoopTracer |
                         GethDebugBuiltInTracerType::MuxTracer => {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
                         }

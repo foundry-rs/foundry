@@ -167,8 +167,7 @@ async fn test_call_tracer_debug_trace_call() {
 
     let internal_call_tx_calldata = internal_call_tx_builder.calldata().to_owned();
 
-    // calling SimpleStorage contract through the Multicall contract should result in an internal
-    // call
+    // calling SimpleStorage contract through Multicall should result in an internal call
     let internal_call_tx = TransactionRequest::default()
         .from(wallets[1].address())
         .to(*multicall_contract.address())
@@ -215,7 +214,7 @@ async fn test_call_tracer_debug_trace_call() {
 
     match internal_call_only_top_call_tx_traces {
         GethTrace::CallTracer(call_frame) => {
-            assert!(call_frame.calls.len() == 0);
+            assert!(call_frame.calls.is_empty());
         }
         _ => {
             unreachable!()
