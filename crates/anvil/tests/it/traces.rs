@@ -190,7 +190,10 @@ async fn test_call_tracer_debug_trace_call() {
     match internal_call_tx_traces {
         GethTrace::CallTracer(call_frame) => {
             assert!(call_frame.calls.len() == 1);
-            assert!(call_frame.calls.last().unwrap().logs.len() == 1);
+            assert!(
+                call_frame.calls.first().unwrap().to.unwrap() == *simple_storage_contract.address()
+            );
+            assert!(call_frame.calls.first().unwrap().logs.len() == 1);
         }
         _ => {
             unreachable!()
@@ -244,6 +247,7 @@ async fn test_call_tracer_debug_trace_call() {
     match direct_call_tx_traces {
         GethTrace::CallTracer(call_frame) => {
             assert!(call_frame.calls.is_empty());
+            assert!(call_frame.to.unwrap() == *simple_storage_contract.address());
             assert!(call_frame.logs.len() == 1);
         }
         _ => {
