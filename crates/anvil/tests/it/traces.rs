@@ -167,6 +167,8 @@ async fn test_call_tracer_debug_trace_call() {
 
     let internal_call_tx_calldata = internal_call_tx_builder.calldata().to_owned();
 
+    // calling SimpleStorage contract through the Multicall contract should result in an internal
+    // call
     let internal_call_tx = TransactionRequest::default()
         .from(wallets[1].address())
         .to(*multicall_contract.address())
@@ -196,6 +198,7 @@ async fn test_call_tracer_debug_trace_call() {
         }
     }
 
+    // only_top_call option - should not return any internal calls
     let internal_call_only_top_call_tx_traces = handle
         .http_provider()
         .debug_trace_call(
@@ -219,6 +222,7 @@ async fn test_call_tracer_debug_trace_call() {
         }
     }
 
+    // directly calling the SimpleStorage contract should not result in any internal calls
     let direct_call_tx = TransactionRequest::default()
         .from(wallets[1].address())
         .to(*simple_storage_contract.address())
