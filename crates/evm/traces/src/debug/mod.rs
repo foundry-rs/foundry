@@ -1,5 +1,5 @@
 mod sources;
-use crate::{CallTraceNode, DecodedTraceStep};
+use crate::CallTraceNode;
 use alloy_dyn_abi::{
     parser::{Parameters, Storage},
     DynSolType, DynSolValue, Specifier,
@@ -8,7 +8,7 @@ use alloy_primitives::U256;
 use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement};
 use revm::interpreter::OpCode;
-use revm_inspectors::tracing::types::CallTraceStep;
+use revm_inspectors::tracing::types::{CallTraceStep, DecodedInternalCall, DecodedTraceStep};
 pub use sources::{ArtifactData, ContractSources, SourceData};
 
 #[derive(Clone, Debug)]
@@ -25,12 +25,8 @@ impl DebugTraceIdentifier {
     /// Identifies internal function invocations in a given [CallTraceNode].
     ///
     /// Accepts the node itself and identified name of the contract which node corresponds to.
-    pub fn identify_node_steps(
-        &self,
-        node: &CallTraceNode,
-        contract_name: &str,
-    ) -> Vec<DecodedTraceStep> {
-        DebugStepsWalker::new(node, &self.contracts_sources, contract_name).walk()
+    pub fn identify_node_steps(&self, node: &mut CallTraceNode, contract_name: &str) {
+        DebugStepsWalker::new(node, &self.contracts_sources, contract_name).walk();
     }
 }
 
@@ -61,28 +57,20 @@ impl DebugTraceIdentifier {
 /// When a match is found, all items which were pushed after the matched function are removed. There
 /// is a lot of such items due to source maps getting malformed during optimization.
 struct DebugStepsWalker<'a> {
-    node: &'a CallTraceNode,
+    node: &'a mut CallTraceNode,
     current_step: usize,
     stack: Vec<(String, usize)>,
-    identified: Vec<DecodedTraceStep>,
     sources: &'a ContractSources,
     contract_name: &'a str,
 }
 
 impl<'a> DebugStepsWalker<'a> {
     pub fn new(
-        node: &'a CallTraceNode,
+        node: &'a mut CallTraceNode,
         sources: &'a ContractSources,
         contract_name: &'a str,
     ) -> Self {
-        Self {
-            node,
-            current_step: 0,
-            stack: Vec::new(),
-            identified: Vec::new(),
-            sources,
-            contract_name,
-        }
+        Self { node, current_step: 0, stack: Vec::new(), sources, contract_name }
     }
 
     fn current_step(&self) -> &CallTraceStep {
@@ -150,10 +138,7 @@ impl<'a> DebugStepsWalker<'a> {
         };
         // We've found a match, remove all records between start and end, those
         // are considered invalid.
-        let (function_name, start_idx) = self.stack.split_off(i).swap_remove(0);
-
-        let gas_used = self.node.trace.steps[start_idx].gas_remaining as i64 -
-            self.node.trace.steps[self.current_step].gas_remaining as i64;
+        let (func_name, start_idx) = self.stack.split_off(i).swap_remove(0);
 
         // Try to decode function inputs and outputs from the stack and memory.
         let (inputs, outputs) = self
@@ -173,14 +158,10 @@ impl<'a> DebugStepsWalker<'a> {
             })
             .unwrap_or_default();
 
-        self.identified.push(DecodedTraceStep {
-            start_step_idx: start_idx,
-            end_step_idx: Some(self.current_step),
-            inputs,
-            outputs,
-            function_name,
-            gas_used,
-        });
+        self.node.trace.steps[start_idx].decoded = Some(DecodedTraceStep::InternalCall(
+            DecodedInternalCall { func_name, args: inputs, return_data: outputs },
+            self.current_step,
+        ));
     }
 
     fn process(&mut self) {
@@ -205,14 +186,10 @@ impl<'a> DebugStepsWalker<'a> {
         self.current_step += 1;
     }
 
-    pub fn walk(mut self) -> Vec<DecodedTraceStep> {
+    pub fn walk(mut self) {
         while self.current_step < self.node.trace.steps.len() {
             self.step();
         }
-
-        self.identified.sort_by_key(|i| i.start_step_idx);
-
-        self.identified
     }
 }
 

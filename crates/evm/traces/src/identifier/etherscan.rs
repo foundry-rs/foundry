@@ -1,6 +1,5 @@
-use crate::debug::ContractSources;
-
 use super::{AddressIdentity, TraceIdentifier};
+use crate::debug::ContractSources;
 use alloy_primitives::Address;
 use foundry_block_explorers::{
     contract::{ContractMetadata, Metadata},

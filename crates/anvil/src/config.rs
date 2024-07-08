@@ -33,8 +33,8 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use foundry_evm::{
+    backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     revm::primitives::{BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, SpecId, TxEnv},
     utils::apply_chain_and_block_specific_env_changes,
 };
@@ -155,6 +155,8 @@ pub struct NodeConfig {
     pub ipc_path: Option<Option<String>>,
     /// Enable transaction/call steps tracing for debug calls returning geth-style traces
     pub enable_steps_tracing: bool,
+    /// Enable printing of `console.log` invocations.
+    pub print_logs: bool,
     /// Enable auto impersonation of accounts on startup
     pub enable_auto_impersonate: bool,
     /// Configure the code size limit
@@ -245,6 +247,10 @@ Chain ID:       {}
                 fork.block_hash(),
                 fork.chain_id()
             );
+
+            if let Some(tx_hash) = fork.transaction_hash() {
+                let _ = writeln!(config_string, "Transaction hash: {tx_hash}");
+            }
         } else {
             let _ = write!(
                 config_string,
@@ -400,6 +406,7 @@ impl Default for NodeConfig {
             blob_excess_gas_and_price: None,
             enable_tracing: true,
             enable_steps_tracing: false,
+            print_logs: true,
             enable_auto_impersonate: false,
             no_storage_caching: false,
             server_config: Default::default(),
@@ -785,6 +792,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to print `console.log` invocations to stdout.
+    #[must_use]
+    pub fn with_print_logs(mut self, print_logs: bool) -> Self {
+        self.print_logs = print_logs;
+        self
+    }
+
     /// Sets whether to enable autoImpersonate
     #[must_use]
     pub fn with_auto_impersonate(mut self, enable_auto_impersonate: bool) -> Self {
@@ -945,6 +959,7 @@ impl NodeConfig {
             fees,
             Arc::new(RwLock::new(fork)),
             self.enable_steps_tracing,
+            self.print_logs,
             self.prune_history,
             self.transaction_block_keeper,
             self.block_time,
@@ -1169,6 +1184,7 @@ latest block number: {latest_block}"
             eth_rpc_url,
             block_number: fork_block_number,
             block_hash,
+            transaction_hash: self.fork_choice.and_then(|fc| fc.transaction_hash()),
             provider,
             chain_id,
             override_chain_id,
@@ -1243,6 +1259,24 @@ pub enum ForkChoice {
     Block(BlockNumber),
     /// Transaction hash to fork from
     Transaction(TxHash),
+}
+
+impl ForkChoice {
+    /// Returns the block number to fork from
+    pub fn block_number(&self) -> Option<BlockNumber> {
+        match self {
+            Self::Block(block_number) => Some(*block_number),
+            Self::Transaction(_) => None,
+        }
+    }
+
+    /// Returns the transaction hash to fork from
+    pub fn transaction_hash(&self) -> Option<TxHash> {
+        match self {
+            Self::Block(_) => None,
+            Self::Transaction(transaction_hash) => Some(*transaction_hash),
+        }
+    }
 }
 
 /// Convert a transaction hash into a ForkChoice

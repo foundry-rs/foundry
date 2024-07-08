@@ -6,7 +6,6 @@
       url = "github:oxalica/rust-overlay";
       inputs = {
         nixpkgs.follows = "nixpkgs";
-        flake-utils.follows = "flake-utils";
       };
     };
     solc = {
@@ -21,7 +20,6 @@
   outputs = { self, nixpkgs, rust-overlay, flake-utils, solc }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
           inherit system;
           overlays = [ rust-overlay.overlays.default solc.overlay ];
@@ -35,17 +33,15 @@
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
             pkg-config
-            libusb1
-          ] ++ lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.darwin.apple_sdk.frameworks.AppKit
-          ];
-          buildInputs = [
-            pkgs.rust-analyzer-unwrapped
+            solc_0_8_23
+            (solc.mkDefault pkgs solc_0_8_23)
             toolchain
           ];
+          buildInputs = lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.darwin.apple_sdk.frameworks.AppKit
+          ];
           packages = with pkgs; [
-            solc_0_8_20
-            (solc.mkDefault pkgs solc_0_8_20)
+            rust-analyzer-unwrapped
           ];
 
           # Environment variables

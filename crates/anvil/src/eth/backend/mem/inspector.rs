@@ -1,6 +1,6 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
-use crate::{eth::macros::node_info, revm::Database};
+use crate::revm::Database;
 use alloy_primitives::{Address, Log};
 use foundry_evm::{
     call_inspectors,
@@ -22,7 +22,7 @@ use foundry_evm::{
 pub struct Inspector {
     pub tracer: Option<TracingInspector>,
     /// collects all `console.sol` logs
-    pub log_collector: LogCollector,
+    pub log_collector: Option<LogCollector>,
 }
 
 impl Inspector {
@@ -30,7 +30,9 @@ impl Inspector {
     ///
     /// This will log all `console.sol` logs
     pub fn print_logs(&self) {
-        print_logs(&self.log_collector.logs)
+        if let Some(collector) = &self.log_collector {
+            print_logs(&collector.logs);
+        }
     }
 
     /// Configures the `Tracer` [`revm::Inspector`]
@@ -42,6 +44,12 @@ impl Inspector {
     /// Enables steps recording for `Tracer`.
     pub fn with_steps_tracing(mut self) -> Self {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all()));
+        self
+    }
+
+    /// Configures the `Tracer` [`revm::Inspector`]
+    pub fn with_log_collector(mut self) -> Self {
+        self.log_collector = Some(Default::default());
         self
     }
 }
@@ -66,7 +74,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     }
 
     fn log(&mut self, ecx: &mut EvmContext<DB>, log: &Log) {
-        call_inspectors!([&mut self.tracer, Some(&mut self.log_collector)], |inspector| {
+        call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
             inspector.log(ecx, log);
         });
     }
@@ -74,7 +82,7 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         call_inspectors!(
             #[ret]
-            [&mut self.tracer, Some(&mut self.log_collector)],
+            [&mut self.tracer, &mut self.log_collector],
             |inspector| inspector.call(ecx, inputs).map(Some),
         );
         None
@@ -160,6 +168,6 @@ impl<DB: Database> InspectorExt<DB> for Inspector {}
 /// Prints all the logs
 pub fn print_logs(logs: &[Log]) {
     for log in decode_console_logs(logs) {
-        node_info!("{}", log);
+        tracing::info!(target: crate::logging::EVM_CONSOLE_LOG_TARGET, "{}", log);
     }
 }

@@ -93,6 +93,8 @@ impl BuildArgs {
         let mut files = vec![];
         if let Some(paths) = &self.paths {
             for path in paths {
+                let joined = project.root().join(path);
+                let path = if joined.exists() { &joined } else { path };
                 files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
             }
         }

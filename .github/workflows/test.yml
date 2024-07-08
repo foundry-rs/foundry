@@ -103,3 +103,21 @@ jobs:
         with:
           cache-on-failure: true
       - run: cargo hack check
+
+  ci-success:
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - nextest
+      - docs
+      - doctest
+      - clippy
+      - rustfmt
+      - forge-fmt
+      - crate-checks
+    timeout-minutes: 30
+    steps:
+      - name: Decide whether the needed jobs succeeded or failed
+        uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}

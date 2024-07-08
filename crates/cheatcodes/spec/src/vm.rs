@@ -430,6 +430,11 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlobBaseFee() external view returns (uint256 blobBaseFee);
 
+    /// Set blockhash for the current block.
+    /// It only sets the blockhash for blocks where `block.number - 256 <= number < block.number`.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
+
     // -------- Account State --------
 
     /// Sets an address' balance.
@@ -610,6 +615,12 @@ interface Vm {
     /// Performs an Ethereum JSON-RPC request to the current fork URL.
     #[cheatcode(group = Evm, safety = Safe)]
     function rpc(string calldata method, string calldata params) external returns (bytes memory data);
+
+    /// Performs an Ethereum JSON-RPC request to the given endpoint.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function rpc(string calldata urlOrAlias, string calldata method, string calldata params)
+        external
+        returns (bytes memory data);
 
     /// Gets all the logs according to specified filter.
     #[cheatcode(group = Evm, safety = Safe)]

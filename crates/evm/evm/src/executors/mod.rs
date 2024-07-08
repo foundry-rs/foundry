@@ -14,10 +14,10 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256};
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
-    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult, GLOBAL_FAIL_SLOT},
+    backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
-        DEFAULT_CREATE2_DEPLOYER_CODE,
+        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::RevertDecoder,
     utils::StateChangeset,
@@ -162,16 +162,16 @@ impl Executor {
         let create2_deployer_account = self
             .backend()
             .basic_ref(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or_else(|| DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+            .ok_or_else(|| BackendError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
-        // if the deployer is not currently deployed, deploy the default one
+        // If the deployer is not currently deployed, deploy the default one.
         if create2_deployer_account.code.map_or(true, |code| code.is_empty()) {
-            let creator = "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse().unwrap();
+            let creator = DEFAULT_CREATE2_DEPLOYER_DEPLOYER;
 
             // Probably 0, but just in case.
             let initial_balance = self.get_balance(creator)?;
-
             self.set_balance(creator, U256::MAX)?;
+
             let res =
                 self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
             trace!(create2=?res.address, "deployed local create2 deployer");
@@ -182,7 +182,7 @@ impl Executor {
     }
 
     /// Set the balance of an account.
-    pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<()> {
+    pub fn set_balance(&mut self, address: Address, amount: U256) -> BackendResult<()> {
         trace!(?address, ?amount, "setting account balance");
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.balance = amount;
@@ -191,12 +191,12 @@ impl Executor {
     }
 
     /// Gets the balance of an account
-    pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
+    pub fn get_balance(&self, address: Address) -> BackendResult<U256> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.balance).unwrap_or_default())
     }
 
     /// Set the nonce of an account.
-    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<()> {
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.nonce = nonce;
         self.backend_mut().insert_account_info(address, account);
@@ -204,12 +204,12 @@ impl Executor {
     }
 
     /// Returns the nonce of an account.
-    pub fn get_nonce(&self, address: Address) -> DatabaseResult<u64> {
+    pub fn get_nonce(&self, address: Address) -> BackendResult<u64> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
     }
 
     /// Returns `true` if the account has no code.
-    pub fn is_empty_code(&self, address: Address) -> DatabaseResult<bool> {
+    pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
     }
 

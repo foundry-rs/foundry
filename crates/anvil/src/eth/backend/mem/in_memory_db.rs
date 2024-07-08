@@ -11,8 +11,7 @@ use crate::{
 use alloy_primitives::{Address, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
-    backend::{DatabaseResult, StateSnapshot},
-    fork::BlockchainDb,
+    backend::{BlockchainDb, DatabaseResult, StateSnapshot},
     hashbrown::HashMap,
 };
 

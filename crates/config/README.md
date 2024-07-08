@@ -114,6 +114,11 @@ match_contract = "Foo"
 no_match_contract = "Bar"
 match_path = "*/Foo*"
 no_match_path = "*/Bar*"
+no_match_coverage = "Baz"
+# Number of threads to use. Not set or zero specifies the number of logical cores.
+threads = 0
+# whether to show test execution progress
+show_progress = true
 ffi = false
 always_use_create_2_factory = false
 prompt_timeout = 120

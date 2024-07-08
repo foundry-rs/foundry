@@ -7013,26 +7013,6 @@
     },
     {
       "func": {
-        "id": "rpc",
-        "description": "Performs an Ethereum JSON-RPC request to the current fork URL.",
-        "declaration": "function rpc(string calldata method, string calldata params) external returns (bytes memory data);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "rpc(string,string)",
-        "selector": "0x1206c8a8",
-        "selectorBytes": [
-          18,
-          6,
-          200,
-          168
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "rpcUrl",
         "description": "Returns the RPC url for the given alias.",
         "declaration": "function rpcUrl(string calldata rpcAlias) external view returns (string memory json);",
@@ -7088,6 +7068,46 @@
         ]
       },
       "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rpc_0",
+        "description": "Performs an Ethereum JSON-RPC request to the current fork URL.",
+        "declaration": "function rpc(string calldata method, string calldata params) external returns (bytes memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpc(string,string)",
+        "selector": "0x1206c8a8",
+        "selectorBytes": [
+          18,
+          6,
+          200,
+          168
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rpc_1",
+        "description": "Performs an Ethereum JSON-RPC request to the given endpoint.",
+        "declaration": "function rpc(string calldata urlOrAlias, string calldata method, string calldata params) external returns (bytes memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpc(string,string,string)",
+        "selector": "0x0199a220",
+        "selectorBytes": [
+          1,
+          153,
+          162,
+          32
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
@@ -7430,6 +7450,26 @@
       "group": "json",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "setBlockhash",
+        "description": "Set blockhash for the current block.\nIt only sets the blockhash for blocks where `block.number - 256 <= number < block.number`.",
+        "declaration": "function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setBlockhash(uint256,bytes32)",
+        "selector": "0x5314b54a",
+        "selectorBytes": [
+          83,
+          20,
+          181,
+          74
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {

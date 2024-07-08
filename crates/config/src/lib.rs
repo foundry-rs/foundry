@@ -32,7 +32,7 @@ use foundry_compilers::{
         Compiler,
     },
     error::SolcError,
-    ConfigurableArtifacts, Project, ProjectPathsConfig,
+    ConfigurableArtifacts, Project, ProjectPathsConfig, VyperLanguage,
 };
 use inflector::Inflector;
 use regex::Regex;
@@ -252,6 +252,15 @@ pub struct Config {
     /// Only run tests in source files that do not match the specified glob pattern.
     #[serde(rename = "no_match_path", with = "from_opt_glob")]
     pub path_pattern_inverse: Option<globset::Glob>,
+    /// Only show coverage for files that do not match the specified regex pattern.
+    #[serde(rename = "no_match_coverage")]
+    pub coverage_pattern_inverse: Option<RegexWrapper>,
+    /// Path where last test run failures are recorded.
+    pub test_failures_file: PathBuf,
+    /// Max concurrent threads to use.
+    pub threads: Option<usize>,
+    /// Whether to show test execution progress.
+    pub show_progress: bool,
     /// Configuration for fuzz testing
     pub fuzz: FuzzConfig,
     /// Configuration for invariant testing
@@ -833,6 +842,9 @@ impl Config {
     pub fn cleanup<C: Compiler>(&self, project: &Project<C>) -> Result<(), SolcError> {
         project.cleanup()?;
 
+        // Remove last test run failures file.
+        let _ = fs::remove_file(&self.test_failures_file);
+
         // Remove fuzz and invariant cache directories.
         let remove_test_dir = |test_dir: &Option<PathBuf>| {
             if let Some(test_dir) = test_dir {
@@ -957,6 +969,10 @@ impl Config {
 
     /// Returns configured [Vyper] compiler.
     pub fn vyper_compiler(&self) -> Result<Option<Vyper>, SolcError> {
+        // Only instantiate Vyper if there are any Vyper files in the project.
+        if self.project_paths::<VyperLanguage>().input_files_iter().next().is_none() {
+            return Ok(None)
+        }
         let vyper = if let Some(path) = &self.vyper.path {
             Some(Vyper::new(path)?)
         } else {
@@ -2069,6 +2085,10 @@ impl Default for Config {
             contract_pattern_inverse: None,
             path_pattern: None,
             path_pattern_inverse: None,
+            coverage_pattern_inverse: None,
+            test_failures_file: "cache/test-failures".into(),
+            threads: None,
+            show_progress: false,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
