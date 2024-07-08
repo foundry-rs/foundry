@@ -225,8 +225,12 @@ impl SolangParser {
                 prev_item_end = item.loc().end();
                 continue
             };
-            let Some(id) = c.name.as_ref() else { continue };
+            let Some(id) = c.name.as_ref() else {
+                prev_item_end = item.loc().end();
+                continue
+            };
             if id.name != contract_name {
+                prev_item_end = item.loc().end();
                 continue
             };
 
