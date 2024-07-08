@@ -43,7 +43,7 @@ use alloy_rpc_types::{
     trace::{
         geth::{
             GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
-            GethDebugTracingOptions, GethTrace, NoopFrame,
+            GethDebugTracingOptions, GethTrace,
         },
         parity::LocalizedTransactionTrace,
     },
@@ -1234,9 +1234,50 @@ impl Backend {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
 
         self.with_database_at(block_request, |state, block| {
+            let block_number = block.number;
+
+            if let Some(tracer) = tracer {
+                return match tracer {
+                    GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                        GethDebugBuiltInTracerType::CallTracer => {
+                            let call_config = tracer_config
+                                .into_call_config()
+                                .map_err(|e| (RpcError::invalid_params(e.to_string())))?;
+
+                            let mut inspector = Inspector::default().with_config(
+                                TracingInspectorConfig::from_geth_call_config(&call_config),
+                            );
+
+                            let env = self.build_call_env(request, fee_details, block);
+                            let mut evm =
+                                self.new_evm_with_inspector_ref(state, env, &mut inspector);
+                            let ResultAndState { result, state: _ } = evm.transact()?;
+
+                            drop(evm);
+                            let tracing_inspector = inspector.tracer.expect("tracer disappeared");
+
+                            Ok(tracing_inspector
+                                .into_geth_builder()
+                                .geth_call_traces(call_config, result.gas_used())
+                                .into())
+                        }
+                        GethDebugBuiltInTracerType::FourByteTracer |
+                        GethDebugBuiltInTracerType::PreStateTracer |
+                        GethDebugBuiltInTracerType::NoopTracer |
+                        GethDebugBuiltInTracerType::MuxTracer => {
+                            Err(RpcError::invalid_params("unsupported tracer type").into())
+                        }
+                    },
+
+                    GethDebugTracerType::JsTracer(_code) => {
+                        Err(RpcError::invalid_params("unsupported tracer type").into())
+                    }
+                }
+            }
+
+            // defaults to StructLog tracer used since no tracer is specified
             let mut inspector =
                 Inspector::default().with_config(TracingInspectorConfig::from_geth_config(&config));
-            let block_number = block.number;
 
             let env = self.build_call_env(request, fee_details, block);
             let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
@@ -1253,37 +1294,11 @@ impl Backend {
             };
 
             drop(evm);
-            let tracing_inspector: foundry_evm::traces::TracingInspector =
-                inspector.tracer.expect("tracer disappeared");
+            let tracing_inspector = inspector.tracer.expect("tracer disappeared");
             let return_value = out.as_ref().map(|o| o.data().clone()).unwrap_or_default();
 
             trace!(target: "backend", ?exit_reason, ?out, %gas_used, %block_number, "trace call");
 
-            // tracer type specified
-            if let Some(tracer) = tracer {
-                match tracer {
-                    GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
-                        GethDebugBuiltInTracerType::CallTracer => {
-                            return match tracer_config.into_call_config() {
-                                Ok(call_config) => Ok(tracing_inspector
-                                    .into_geth_builder()
-                                    .geth_call_traces(call_config, gas_used)
-                                    .into()),
-                                Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
-                            };
-                        }
-                        GethDebugBuiltInTracerType::FourByteTracer |
-                        GethDebugBuiltInTracerType::PreStateTracer |
-                        GethDebugBuiltInTracerType::NoopTracer |
-                        GethDebugBuiltInTracerType::MuxTracer => {}
-                    },
-                    GethDebugTracerType::JsTracer(_code) => {}
-                }
-
-                return Ok(NoopFrame::default().into());
-            }
-
-            // no tracer type specified, defaults to structlog tracer used
             let res = tracing_inspector
                 .into_geth_builder()
                 .geth_traces(gas_used, return_value, config)

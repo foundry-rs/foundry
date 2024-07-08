@@ -175,7 +175,7 @@ async fn test_call_tracer_debug_trace_call() {
     let internal_call_tx_traces = handle
         .http_provider()
         .debug_trace_call(
-            internal_call_tx,
+            internal_call_tx.clone(),
             BlockNumberOrTag::Latest,
             GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
@@ -196,24 +196,23 @@ async fn test_call_tracer_debug_trace_call() {
         }
     }
 
-    let internal_call_only_tx_traces = handle
+    let internal_call_only_top_call_tx_traces = handle
         .http_provider()
         .debug_trace_call(
-            internal_call_tx,
+            internal_call_tx.clone(),
             BlockNumberOrTag::Latest,
             GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
                     .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
-                    .with_call_config(CallConfig::default().with_log()),
+                    .with_call_config(CallConfig::default().with_log().only_top_call()),
             ),
         )
         .await
         .unwrap();
 
-    match internal_call_tx_traces {
+    match internal_call_only_top_call_tx_traces {
         GethTrace::CallTracer(call_frame) => {
-            assert!(call_frame.calls.len() == 1);
-            assert!(call_frame.calls.last().unwrap().logs.len() == 1);
+            assert!(call_frame.calls.len() == 0);
         }
         _ => {
             unreachable!()
