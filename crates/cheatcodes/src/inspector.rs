@@ -950,8 +950,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         self.pc = interpreter.program_counter();
 
         // `pauseGasMetering`: reset interpreter gas.
-        if self.gas_metering.is_some() {
-            self.meter_gas(interpreter);
+        if let Some(gas_metering) = self.gas_metering {
+            if gas_metering.is_some() {
+                self.meter_gas(interpreter);
+            }
         }
 
         // `record`: record storage reads and writes.
