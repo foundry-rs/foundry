@@ -67,11 +67,11 @@ impl TestOptions {
 
         // Firstly, apply contract-level configurations
         for natspec in natspecs.iter().filter(|n| n.function.is_none()) {
-            if let Some(fuzz) = base_fuzz.merge(&natspec)? {
+            if let Some(fuzz) = base_fuzz.merge(natspec)? {
                 inline_fuzz.insert_contract(&natspec.contract, fuzz);
             }
 
-            if let Some(invariant) = base_invariant.merge(&natspec)? {
+            if let Some(invariant) = base_invariant.merge(natspec)? {
                 inline_invariant.insert_contract(&natspec.contract, invariant);
             }
         }
@@ -85,11 +85,11 @@ impl TestOptions {
             let base_fuzz = inline_fuzz.get(c, f).unwrap_or(&base_fuzz);
             let base_invariant = inline_invariant.get(c, f).unwrap_or(&base_invariant);
 
-            if let Some(fuzz) = base_fuzz.merge(&natspec)? {
+            if let Some(fuzz) = base_fuzz.merge(natspec)? {
                 inline_fuzz.insert_fn(c, f, fuzz);
             }
 
-            if let Some(invariant) = base_invariant.merge(&natspec)? {
+            if let Some(invariant) = base_invariant.merge(natspec)? {
                 inline_invariant.insert_fn(c, f, invariant);
             }
         }

@@ -37,31 +37,7 @@ where
     /// - `Err(InlineConfigParserError)` in case of wrong configuration.
     fn try_merge(&self, configs: &[String]) -> Result<Option<Self>, InlineConfigParserError>;
 
-    /// Validates all configurations contained in a natspec that apply
-    /// to the current configuration key.
-    ///
-    /// i.e. Given the `invariant` config key and a natspec comment of the form,
-    /// ```solidity
-    /// /// forge-config: default.invariant.runs = 500
-    /// /// forge-config: default.invariant.depth = 500
-    /// /// forge-config: ci.invariant.depth = 500
-    /// /// forge-config: ci.fuzz.runs = 10
-    /// ```
-    /// would validate the whole `invariant` configuration.
-    fn validate_configs(natspec: &NatSpec) -> Result<(), InlineConfigError> {
-        let config_key = Self::config_key();
-
-        let configs =
-            natspec.config_lines().filter(|l| l.contains(&config_key)).collect::<Vec<String>>();
-
-        Self::default().try_merge(&configs).map_err(|e| {
-            let line = natspec.debug_context();
-            InlineConfigError { line, source: e }
-        })?;
-
-        Ok(())
-    }
-
+    /// Validates and merges the natspec configs into the current config.
     fn merge(&self, natspec: &NatSpec) -> Result<Option<Self>, InlineConfigError> {
         let config_key = Self::config_key();
 

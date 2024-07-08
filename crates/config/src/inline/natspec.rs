@@ -12,7 +12,7 @@ use std::{collections::BTreeMap, path::Path};
 pub struct NatSpec {
     /// The parent contract of the natspec
     pub contract: String,
-    /// The function annotated with the natspec. None if the natspec is for the entire contract
+    /// The function annotated with the natspec. None if the natspec is contract-level
     pub function: Option<String>,
     /// The line the natspec appears, in the form
     /// `row:col:length` i.e. `10:21:122`
