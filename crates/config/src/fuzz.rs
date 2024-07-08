@@ -31,7 +31,7 @@ pub struct FuzzConfig {
     /// Name of the file to record fuzz failures, defaults to `failures`.
     pub failure_persist_file: Option<String>,
     /// show `console.log` in fuzz test, defaults to `false`
-    pub show_execution_logs: bool,
+    pub show_fuzz_logs: bool,
 }
 
 impl Default for FuzzConfig {
@@ -44,7 +44,7 @@ impl Default for FuzzConfig {
             gas_report_samples: 256,
             failure_persist_dir: None,
             failure_persist_file: None,
-            show_execution_logs: false,
+            show_fuzz_logs: false,
         }
     }
 }
@@ -60,7 +60,7 @@ impl FuzzConfig {
             gas_report_samples: 256,
             failure_persist_dir: Some(cache_dir),
             failure_persist_file: Some("failures".to_string()),
-            show_execution_logs: false,
+            show_fuzz_logs: false,
         }
     }
 }
@@ -89,9 +89,7 @@ impl InlineConfigParser for FuzzConfig {
                     conf_clone.dictionary.dictionary_weight = parse_config_u32(key, value)?
                 }
                 "failure-persist-file" => conf_clone.failure_persist_file = Some(value),
-                "show-execution-logs" => {
-                    conf_clone.show_execution_logs = parse_config_bool(key, value)?
-                }
+                "show-fuzz-logs" => conf_clone.show_fuzz_logs = parse_config_bool(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }

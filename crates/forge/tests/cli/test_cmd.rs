@@ -729,14 +729,14 @@ contract PrecompileLabelsTest is Test {
     assert!(output.contains("PointEvaluation: [0x000000000000000000000000000000000000000A]"));
 });
 
-// tests that `forge test` with config `show_execution_logs: true` for fuzz tests will
+// tests that `forge test` with config `show_fuzz_logs: true` for fuzz tests will
 // display `console.log` info
-forgetest_init!(should_show_execution_logs_when_fuzz_test, |prj, cmd| {
+forgetest_init!(should_show_fuzz_logs_when_fuzz_test, |prj, cmd| {
     prj.wipe_contracts();
 
     // run fuzz test 3 times
     let config = Config {
-        fuzz: { FuzzConfig { runs: 3, show_execution_logs: true, ..Default::default() } },
+        fuzz: { FuzzConfig { runs: 3, show_fuzz_logs: true, ..Default::default() } },
         ..Default::default()
     };
     prj.write_config(config);
@@ -760,9 +760,9 @@ forgetest_init!(should_show_execution_logs_when_fuzz_test, |prj, cmd| {
     assert!(stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
 });
 
-// tests that `forge test` with inline config `show_execution_logs = true` for fuzz tests will
+// tests that `forge test` with inline config `show_fuzz_logs = true` for fuzz tests will
 // display `console.log` info
-forgetest_init!(should_show_execution_logs_when_fuzz_test_inline_config, |prj, cmd| {
+forgetest_init!(should_show_fuzz_logs_when_fuzz_test_inline_config, |prj, cmd| {
     prj.wipe_contracts();
 
     // run fuzz test 3 times
@@ -778,7 +778,7 @@ forgetest_init!(should_show_execution_logs_when_fuzz_test_inline_config, |prj, c
         import {Test, console2} from "forge-std/Test.sol";
     contract ContractFuzz is Test {
 
-      /// forge-config: default.fuzz.show-execution-logs = true
+      /// forge-config: default.fuzz.show-fuzz-logs = true
       function testFuzzConsoleLog(uint256 x) public pure {
         console2.log("inside fuzz test, x is:", x);
       }
@@ -791,14 +791,14 @@ forgetest_init!(should_show_execution_logs_when_fuzz_test_inline_config, |prj, c
     assert!(stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
 });
 
-// tests that `forge test` with config `show_execution_logs: false` for fuzz tests will not display
+// tests that `forge test` with config `show_fuzz_logs: false` for fuzz tests will not display
 // `console.log` info
-forgetest_init!(should_not_show_execution_logs_when_fuzz_test, |prj, cmd| {
+forgetest_init!(should_not_show_fuzz_logs_when_fuzz_test, |prj, cmd| {
     prj.wipe_contracts();
 
     // run fuzz test 3 times
     let config = Config {
-        fuzz: { FuzzConfig { runs: 3, show_execution_logs: false, ..Default::default() } },
+        fuzz: { FuzzConfig { runs: 3, show_fuzz_logs: false, ..Default::default() } },
         ..Default::default()
     };
     prj.write_config(config);
@@ -823,9 +823,9 @@ forgetest_init!(should_not_show_execution_logs_when_fuzz_test, |prj, cmd| {
     assert!(!stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
 });
 
-// tests that `forge test` with inline config `show_execution_logs = false` for fuzz tests will not
+// tests that `forge test` with inline config `show_fuzz_logs = false` for fuzz tests will not
 // display `console.log` info
-forgetest_init!(should_not_show_execution_logs_when_fuzz_test_inline_config, |prj, cmd| {
+forgetest_init!(should_not_show_fuzz_logs_when_fuzz_test_inline_config, |prj, cmd| {
     prj.wipe_contracts();
 
     // run fuzz test 3 times
@@ -841,7 +841,7 @@ forgetest_init!(should_not_show_execution_logs_when_fuzz_test_inline_config, |pr
         import {Test, console2} from "forge-std/Test.sol";
     contract ContractFuzz is Test {
 
-      /// forge-config: default.fuzz.show-execution-logs = false
+      /// forge-config: default.fuzz.show-fuzz-logs = false
       function testFuzzConsoleLog(uint256 x) public pure {
         console2.log("inside fuzz test, x is:", x);
       }

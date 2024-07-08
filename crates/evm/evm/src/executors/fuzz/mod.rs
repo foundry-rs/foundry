@@ -90,7 +90,7 @@ impl FuzzedExecutor {
         ];
         // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
-        let show_execution_logs = self.config.show_execution_logs;
+        let show_fuzz_logs = self.config.show_fuzz_logs;
 
         //Stores logs for all fuzz cases
         let logs: RefCell<Vec<Log>> = RefCell::default();
@@ -157,7 +157,7 @@ impl FuzzedExecutor {
         };
 
         // decide whether to use trace logs or only error logs
-        let actual_logs = if show_execution_logs { logs.into_inner() } else { call.logs };
+        let actual_logs = if show_fuzz_logs { logs.into_inner() } else { call.logs };
 
         let mut result = FuzzTestResult {
             first_case: fuzz_result.first_case.unwrap_or_default(),
