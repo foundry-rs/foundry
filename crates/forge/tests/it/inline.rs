@@ -9,13 +9,41 @@ use foundry_test_utils::Filter;
 async fn inline_config_run_fuzz() {
     let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
+    println!("{:?}", runner.test_options);
     let result = runner.test_collect(&filter);
-    let suite_result = result.get("default/inline/FuzzInlineConf.t.sol:FuzzInlineConf").unwrap();
-    let test_result = suite_result.test_results.get("testInlineConfFuzz(uint8)").unwrap();
-    match test_result.kind {
-        TestKind::Fuzz { runs, .. } => assert_eq!(runs, 1024),
-        _ => unreachable!(),
-    }
+    let results = result
+        .into_iter()
+        .flat_map(|(path, r)| {
+            r.test_results.into_iter().map(move |(name, t)| {
+                let runs = match t.kind {
+                    TestKind::Fuzz { runs, .. } => runs,
+                    _ => unreachable!(),
+                };
+                (path.clone(), name, runs)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        results,
+        vec![
+            (
+                "default/inline/FuzzInlineConf.t.sol:FuzzInlineConf".to_string(),
+                "testInlineConfFuzz(uint8)".to_string(),
+                1024
+            ),
+            (
+                "default/inline/FuzzInlineConf.t.sol:FuzzInlineConf2".to_string(),
+                "testInlineConfFuzz1(uint8)".to_string(),
+                1
+            ),
+            (
+                "default/inline/FuzzInlineConf.t.sol:FuzzInlineConf2".to_string(),
+                "testInlineConfFuzz2(uint8)".to_string(),
+                500
+            ),
+        ]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

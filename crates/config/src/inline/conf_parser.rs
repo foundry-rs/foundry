@@ -62,6 +62,18 @@ where
         Ok(())
     }
 
+    fn merge(&self, natspec: &NatSpec) -> Result<Option<Self>, InlineConfigError> {
+        let config_key = Self::config_key();
+
+        let configs =
+            natspec.config_lines().filter(|l| l.contains(&config_key)).collect::<Vec<String>>();
+
+        self.try_merge(&configs).map_err(|e| {
+            let line = natspec.debug_context();
+            InlineConfigError { line, source: e }
+        })
+    }
+
     /// Given a list of config lines, returns all available pairs (key, value) matching the current
     /// config key.
     ///
