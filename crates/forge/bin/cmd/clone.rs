@@ -288,7 +288,8 @@ impl CloneArgs {
 /// It will update the following fields:
 /// - `auto_detect_solc` to `false`
 /// - `solc_version` to the value from the metadata
-/// - `evm_version` to the value from the metadata
+/// - `evm_version` to the value from the metadata, if the metadata's evm_version is "Default", then
+///   this is derived from the solc version this contract was compiled with.
 /// - `via_ir` to the value from the metadata
 /// - `libraries` to the value from the metadata
 /// - `metadata` to the value from the metadata
