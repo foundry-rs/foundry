@@ -3,9 +3,9 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::utils::{self, FoundryPathExt};
 use foundry_config::Config;
+use parking_lot::Mutex;
 use std::{
     collections::HashSet,
-    convert::Infallible,
     path::PathBuf,
     sync::{
         atomic::{AtomicU8, Ordering},
@@ -13,6 +13,7 @@ use std::{
     },
     time::Duration,
 };
+use tokio::process::Command as TokioCommand;
 use watchexec::{
     action::ActionHandler,
     command::{Command, Program},
@@ -30,7 +31,7 @@ pub struct WatchArgs {
     /// Watch the given files or directories for changes.
     ///
     /// If no paths are provided, the source and test directories of the project are watched.
-    #[arg(long, short, value_name = "PATH")]
+    #[arg(long, short, num_args(0..), value_name = "PATH")]
     pub watch: Option<Vec<PathBuf>>,
 
     /// Do not restart the command while it's still running.
@@ -69,27 +70,25 @@ impl WatchArgs {
         &self,
         default_paths: impl FnOnce() -> PS,
     ) -> Result<watchexec::Config> {
-        self.watchexec_config__(default_paths, None)
+        self.watchexec_config_generic(default_paths, None)
     }
 
-    /// Creates a new [`watchexec::Config`].
+    /// Creates a new [`watchexec::Config`] with a custom command override.
     ///
     /// If paths were provided as arguments the these will be used as the watcher's pathset,
     /// otherwise the path the closure returns will be used.
     pub fn watchexec_config_with_override<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
         &self,
         default_paths: impl FnOnce() -> PS,
-        override_command: impl Fn(&ActionHandler, &mut Vec<String>) + Send + Sync + 'static,
+        spawn_hook: impl Fn(&[Event], &mut TokioCommand) + Send + Sync + 'static,
     ) -> Result<watchexec::Config> {
-        self.watchexec_config__(default_paths, Some(Arc::new(override_command)))
+        self.watchexec_config_generic(default_paths, Some(Arc::new(spawn_hook)))
     }
 
-    fn watchexec_config__<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
+    fn watchexec_config_generic<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
         &self,
         default_paths: impl FnOnce() -> PS,
-        override_command: Option<
-            Arc<dyn Fn(&ActionHandler, &mut Vec<String>) + Send + Sync + 'static>,
-        >,
+        spawn_hook: Option<Arc<dyn Fn(&[Event], &mut TokioCommand) + Send + Sync + 'static>>,
     ) -> Result<watchexec::Config> {
         let mut paths = self.watch.as_deref().unwrap_or_default();
         let storage: Vec<_>;
@@ -97,15 +96,13 @@ impl WatchArgs {
             storage = default_paths().into_iter().map(Into::into).filter(|p| p.exists()).collect();
             paths = &storage;
         }
-        self.watchexec_config_(paths, override_command)
+        self.watchexec_config_inner(paths, spawn_hook)
     }
 
-    fn watchexec_config_(
+    fn watchexec_config_inner(
         &self,
         paths: &[PathBuf],
-        override_command: Option<
-            Arc<dyn Fn(&ActionHandler, &mut Vec<String>) + Send + Sync + 'static>,
-        >,
+        spawn_hook: Option<Arc<dyn Fn(&[Event], &mut TokioCommand) + Send + Sync + 'static>>,
     ) -> Result<watchexec::Config> {
         let config = watchexec::Config::default();
 
@@ -127,23 +124,19 @@ impl WatchArgs {
         let stop_signal = Signal::Terminate;
         config.on_action(move |mut action| {
             let base_command = base_command.clone();
-            // TODO: This will only work once
-            let job = action.get_or_create_job(id, move || {
-                // if let Some(override_command) = &override_command {
-                //     let mut cmd = base_command.clone();
-                //     let mut args =
-                //     cmd
-                // } else {
-                base_command.clone()
-                // }
-            });
+            let job = action.get_or_create_job(id, move || base_command.clone());
 
             let events = action.events.clone();
+            let spawn_hook = spawn_hook.clone();
             job.set_spawn_hook(move |command, _| {
                 // https://github.com/watchexec/watchexec/blob/72f069a8477c679e45f845219276b0bfe22fed79/crates/cli/src/emits.rs#L9
                 let env = summarise_events_to_env(events.iter());
                 for (k, v) in env {
                     command.command_mut().env(format!("WATCHEXEC_{k}_PATH"), v);
+                }
+
+                if let Some(spawn_hook) = &spawn_hook {
+                    spawn_hook(&events, command.command_mut());
                 }
             });
 
@@ -240,7 +233,7 @@ fn end_of_process(state: &CommandState) {
 /// Runs the given [`watchexec::Config`].
 pub async fn run(config: watchexec::Config) -> Result<()> {
     let wx = Watchexec::with_config(config)?;
-    wx.send_event(Event::default(), Priority::Urgent);
+    wx.send_event(Event::default(), Priority::Urgent).await?;
     wx.main().await??;
     Ok(())
 }
@@ -265,131 +258,64 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     let config: Config = args.build_args().into();
     let filter = args.filter(&config);
     // Marker to check whether to override the command.
-    let no_reconfigure = filter.args().test_pattern.is_some() ||
+    let _no_reconfigure = filter.args().test_pattern.is_some() ||
         filter.args().path_pattern.is_some() ||
         filter.args().contract_pattern.is_some() ||
         args.watch.run_all;
 
-    let watchexec_config = args.watchexec_config()?;
-    let wx = Watchexec::with_config(watchexec_config)?;
+    let last_test_files = Mutex::new(HashSet::<String>::new());
+    let project_root = config.root.0.to_string_lossy().into_owned();
+    let config = args.watch.watchexec_config_with_override(
+        || [&config.test, &config.src],
+        move |events, command| {
+            let mut changed_sol_test_files: HashSet<_> = events
+                .iter()
+                .flat_map(|e| e.paths())
+                .filter(|(path, _)| path.is_sol_test())
+                .filter_map(|(path, _)| path.to_str())
+                .map(str::to_string)
+                .collect();
 
-    let state = WatchTestState {
-        project_root: config.root.0,
-        no_reconfigure,
-        last_test_files: Default::default(),
-    };
-    on_action(args.watch.clone(), runtime, Arc::clone(&wx), cmd, state, on_test);
+            if changed_sol_test_files.len() > 1 {
+                // Run all tests if multiple files were changed at once, for example when running
+                // `forge fmt`.
+                return;
+            }
 
-    // start executing the command immediately
-    wx.send_event(Event::default(), Priority::default()).await?;
-    wx.main().await??;
+            if changed_sol_test_files.is_empty() {
+                // Reuse the old test files if a non-test file was changed.
+                let last = last_test_files.lock();
+                if last.is_empty() {
+                    return;
+                }
+                changed_sol_test_files = last.clone();
+            }
+
+            // append `--match-path` glob
+            let mut file = changed_sol_test_files.iter().next().expect("test file present").clone();
+
+            // remove the project root dir from the detected file
+            if let Some(f) = file.strip_prefix(&project_root) {
+                file = f.trim_start_matches('/').to_string();
+            }
+
+            trace!(?file, "reconfigure test command");
+
+            command.arg("--match-path").arg(&file);
+        },
+    )?;
+    run(config).await?;
 
     Ok(())
 }
 
-#[derive(Clone, Debug)]
-struct WatchTestState {
-    /// the root directory of the project
-    project_root: PathBuf,
-    /// marks whether we can reconfigure the watcher command with the `--match-path` arg
-    no_reconfigure: bool,
-    /// Tracks the last changed test files, if any so that if a non-test file was modified we run
-    /// this file instead *Note:* this is a vec, so we can also watch out for changes
-    /// introduced by `forge fmt`
-    last_test_files: HashSet<String>,
-}
-
-/// The `on_action` hook for `forge test --watch`
-fn on_test(action: OnActionState<'_, WatchTestState>) {
-    let OnActionState { args, runtime, action, wx, cmd, other } = action;
-    let WatchTestState { project_root, no_reconfigure, last_test_files } = other;
-
-    if no_reconfigure {
-        // nothing to reconfigure
-        return
-    }
-
-    let mut cmd = cmd.clone();
-
-    let mut changed_sol_test_files: HashSet<_> = action
-        .events
-        .iter()
-        .flat_map(|e| e.paths())
-        .filter(|(path, _)| path.is_sol_test())
-        .filter_map(|(path, _)| path.to_str())
-        .map(str::to_string)
-        .collect();
-
-    // Replace `--match-path` | `--mp` arguments.
-    while let Some(pos) = cmd.iter().position(|arg| arg == "--match-path" || arg == "--mp") {
-        cmd.drain(pos..=(pos + 1));
-    }
-
-    if changed_sol_test_files.len() > 1 ||
-        (changed_sol_test_files.is_empty() && last_test_files.is_empty())
-    {
-        // this could happen if multiple files were changed at once, for example `forge fmt` was
-        // run, or if no test files were changed and no previous test files were modified in which
-        // case we simply run all
-        let mut config = runtime.clone();
-        config.command(watch_command(cmd.clone()));
-        // re-register the action
-        on_action(
-            args.clone(),
-            config,
-            wx,
-            cmd,
-            WatchTestState {
-                project_root,
-                no_reconfigure,
-                last_test_files: changed_sol_test_files,
-            },
-            on_test,
-        );
-        return
-    }
-
-    if changed_sol_test_files.is_empty() {
-        // reuse the old test files if a non-test file was changed
-        changed_sol_test_files = last_test_files;
-    }
-
-    // append `--match-path` glob
-    let mut file = changed_sol_test_files.clone().into_iter().next().expect("test file present");
-
-    // remove the project root dir from the detected file
-    if let Some(root) = project_root.as_os_str().to_str() {
-        if let Some(f) = file.strip_prefix(root) {
-            file = f.trim_start_matches('/').to_string();
-        }
-    }
-
-    let mut new_cmd = cmd.clone();
-    new_cmd.push("--match-path".to_string());
-    new_cmd.push(file);
-    trace!("reconfigure test command {:?}", new_cmd);
-
-    // reconfigure the executor with a new runtime
-    let mut config = runtime.clone();
-    config.command(watch_command(new_cmd));
-
-    // re-register the action
-    on_action(
-        args.clone(),
-        config,
-        wx,
-        cmd,
-        WatchTestState { project_root, no_reconfigure, last_test_files: changed_sol_test_files },
-        on_test,
-    );
-}
-
-/// Converts a list of arguments to a `watchexec::Command`
+/// Converts a list of arguments to a `watchexec::Command`.
 ///
-/// The first index in `args`, is expected to be the path to the executable, See `cmd_args`
+/// The first index in `args` is the path to the executable.
 ///
 /// # Panics
-/// if `args` is empty
+///
+/// Panics if `args` is empty.
 fn watch_command(mut args: Vec<String>) -> Command {
     debug_assert!(!args.is_empty());
     let prog = args.remove(0);
@@ -433,113 +359,6 @@ fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
     }
 
     cmd_args
-}
-
-/// Contains all necessary context to reconfigure a [`Watchexec`] on the fly
-struct OnActionState<'a, T: Clone> {
-    args: &'a WatchArgs,
-    runtime: &'a RuntimeConfig,
-    action: &'a Action,
-    cmd: &'a Vec<String>,
-    wx: Arc<Watchexec>,
-    // additional context to inject
-    other: T,
-}
-
-/// Registers the `on_action` hook on the `RuntimeConfig` currently in use in the `Watchexec`
-///
-/// **Note** this is a bit weird since we're installing the hook on the config that's already used
-/// in `Watchexec` but necessary if we want to have access to it in order to
-/// [`Watchexec::reconfigure`]
-fn on_action<F, T>(
-    args: WatchArgs,
-    mut config: Watchexec,
-    wx: Arc<Watchexec>,
-    cmd: Vec<String>,
-    other: T,
-    f: F,
-) where
-    F: for<'a> Fn(OnActionState<'a, T>) + Send + 'static,
-    T: Clone + Send + 'static,
-{
-    let on_busy = if args.no_restart { "do-nothing" } else { "restart" };
-    let runtime = config.clone();
-    let w = Arc::clone(&wx);
-    config.on_action(move |action: Action| {
-        let fut = async { Ok::<(), Infallible>(()) };
-        let signals: Vec<MainSignal> = action.events.iter().flat_map(|e| e.signals()).collect();
-        let has_paths = action.events.iter().flat_map(|e| e.paths()).next().is_some();
-
-        if signals.contains(&MainSignal::Terminate) || signals.contains(&MainSignal::Interrupt) {
-            action.outcome(Outcome::both(Outcome::Stop, Outcome::Exit));
-            return fut
-        }
-
-        if !has_paths {
-            if !signals.is_empty() {
-                let mut out = Outcome::DoNothing;
-                for sig in signals {
-                    out = Outcome::both(out, Outcome::Signal(sig));
-                }
-
-                action.outcome(out);
-                return fut
-            }
-
-            let completion = action.events.iter().flat_map(|e| e.completions()).next();
-            if let Some(status) = completion {
-                match status {
-                    Some(ProcessEnd::ExitError(code)) => {
-                        trace!("Command exited with {code}")
-                    }
-                    Some(ProcessEnd::ExitSignal(sig)) => {
-                        trace!("Command killed by {:?}", sig)
-                    }
-                    Some(ProcessEnd::ExitStop(sig)) => {
-                        trace!("Command stopped by {:?}", sig)
-                    }
-                    Some(ProcessEnd::Continued) => trace!("Command continued"),
-                    Some(ProcessEnd::Exception(ex)) => {
-                        trace!("Command ended by exception {:#x}", ex)
-                    }
-                    Some(ProcessEnd::Success) => trace!("Command was successful"),
-                    None => trace!("Command completed"),
-                };
-
-                action.outcome(Outcome::DoNothing);
-                return fut
-            }
-        }
-
-        f(OnActionState {
-            args: &args,
-            runtime: &runtime,
-            action: &action,
-            wx: w.clone(),
-            cmd: &cmd,
-            other: other.clone(),
-        });
-
-        // mattsse: could be made into flag to never clear the shell
-        let clear = false;
-        let when_running = match (clear, on_busy) {
-            (_, "do-nothing") => Outcome::DoNothing,
-            (true, "restart") => {
-                Outcome::both(Outcome::Stop, Outcome::both(Outcome::Clear, Outcome::Start))
-            }
-            (false, "restart") => Outcome::both(Outcome::Stop, Outcome::Start),
-            _ => Outcome::DoNothing,
-        };
-
-        let when_idle =
-            if clear { Outcome::both(Outcome::Clear, Outcome::Start) } else { Outcome::Start };
-
-        action.outcome(Outcome::if_running(when_running, when_idle));
-
-        fut
-    });
-
-    let _ = wx.reconfigure(config);
 }
 
 #[cfg(test)]

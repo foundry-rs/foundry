@@ -19,7 +19,6 @@ use foundry_config::{
 };
 use serde::Serialize;
 use std::path::PathBuf;
-use watchexec::config::{InitConfig, RuntimeConfig};
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 
