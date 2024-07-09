@@ -8,7 +8,7 @@ use crate::{
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::Event;
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{address, b256, Address, U256};
 use forge::{decode::decode_console_logs, result::TestStatus};
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_evm::{
@@ -132,6 +132,9 @@ test_repro!(3347, false, None, |res| {
     assert_eq!(
         decoded,
         DecodedEvent {
+            selector: Some(b256!(
+                "78b9a1f3b55d6797ab2c4537e83ee04ff0c65a1ca1bb39d79a62e0a78d5a8a57"
+            )),
             indexed: vec![],
             body: vec![
                 DynSolValue::Uint(U256::from(1), 256),
