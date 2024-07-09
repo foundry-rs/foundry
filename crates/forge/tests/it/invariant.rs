@@ -2,7 +2,7 @@
 
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
-use forge::{fuzz::CounterExample, TestOptions};
+use forge::fuzz::CounterExample;
 use foundry_test_utils::Filter;
 use std::collections::BTreeMap;
 
@@ -285,20 +285,16 @@ async fn test_invariant_shrink() {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg_attr(windows, ignore = "for some reason there's different rng")]
 async fn test_invariant_assert_shrink() {
-    let mut opts = TEST_DATA_DEFAULT.test_opts.clone();
-    opts.fuzz.seed = Some(U256::from(119u32));
-
     // ensure assert and require shrinks to same sequence of 3 or less
-    test_shrink(opts.clone(), "InvariantShrinkWithAssert").await;
-    test_shrink(opts.clone(), "InvariantShrinkWithRequire").await;
+    test_shrink("invariant_with_assert").await;
+    test_shrink("invariant_with_require").await;
 }
 
-async fn test_shrink(opts: TestOptions, contract_pattern: &str) {
-    let filter = Filter::new(
-        ".*",
-        contract_pattern,
-        ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol",
-    );
+async fn test_shrink(test_pattern: &str) {
+    let mut opts = TEST_DATA_DEFAULT.test_opts.clone();
+    opts.fuzz.seed = Some(U256::from(100u32));
+    let filter =
+        Filter::new(test_pattern, ".*", ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
     runner.test_options = opts;
 

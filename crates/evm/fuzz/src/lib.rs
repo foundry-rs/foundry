@@ -163,9 +163,6 @@ pub struct FuzzTestResult {
     /// be printed to the user.
     pub logs: Vec<Log>,
 
-    /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
-    pub decoded_logs: Vec<String>,
-
     /// Labeled addresses
     pub labeled_addresses: HashMap<Address, String>,
 

@@ -65,12 +65,16 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         path_pattern: None,
         path_pattern_inverse: None,
         coverage_pattern_inverse: None,
+        test_failures_file: "test-cache/test-failures".into(),
+        threads: None,
+        show_progress: false,
         fuzz: FuzzConfig {
             runs: 1000,
             max_test_rejects: 100203,
             seed: Some(U256::from(1000)),
             failure_persist_dir: Some("test-cache/fuzz".into()),
             failure_persist_file: Some("failures".to_string()),
+            show_logs: false,
             ..Default::default()
         },
         invariant: InvariantConfig {
