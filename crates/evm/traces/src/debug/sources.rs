@@ -259,7 +259,7 @@ impl ContractSources {
                     artifact.pc_ic_map_runtime.as_ref()
                 }?;
                 let ic = pc_ic_map.get(pc)?;
-    
+
                 source_map.get(ic)?
             } else {
                 source_map.get(pc)?

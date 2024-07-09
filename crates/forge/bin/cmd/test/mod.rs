@@ -78,8 +78,14 @@ pub struct TestArgs {
     debug: Option<Regex>,
 
     /// Whether to identify internal functions in traces.
-    #[arg(long)]
-    decode_internal: bool,
+    ///
+    /// The argument passed to this flag is the name of the test function you want to run, and it
+    /// works the same as --match-test.
+    ///
+    /// If more than one test matches your specified criteria, you must add additional filters
+    /// until only one test is found (see --match-contract and --match-path).
+    #[arg(long, value_name = "TEST_FUNCTION")]
+    decode_internal: Option<Regex>,
 
     /// Print a gas report.
     #[arg(long, env = "FORGE_GAS_REPORT")]
@@ -307,7 +313,7 @@ impl TestArgs {
         let config = Arc::new(config);
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
-            .set_decode_internal(self.decode_internal)
+            .set_decode_internal(self.decode_internal.is_some())
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
@@ -316,16 +322,23 @@ impl TestArgs {
             .enable_isolation(evm_opts.isolate)
             .build(project_root, &output, env, evm_opts)?;
 
-        if let Some(debug_test_pattern) = &self.debug {
-            let test_pattern = &mut filter.args_mut().test_pattern;
-            if test_pattern.is_some() {
-                eyre::bail!(
-                    "Cannot specify both --debug and --match-test. \
-                     Use --match-contract and --match-path to further limit the search instead."
-                );
+        let mut maybe_override_mt = |flag, maybe_regex: Option<&Regex>| {
+            if let Some(regex) = maybe_regex {
+                let test_pattern = &mut filter.args_mut().test_pattern;
+                if test_pattern.is_some() {
+                    eyre::bail!(
+                        "Cannot specify both --{flag} and --match-test. \
+                        Use --match-contract and --match-path to further limit the search instead."
+                    );
+                }
+                *test_pattern = Some(regex.clone());
             }
-            *test_pattern = Some(debug_test_pattern.clone());
-        }
+
+            Ok(())
+        };
+
+        maybe_override_mt("debug", self.debug.as_ref())?;
+        maybe_override_mt("decode_internal", self.decode_internal.as_ref())?;
 
         let libraries = runner.libraries.clone();
         let outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
@@ -379,7 +392,7 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         let num_filtered = runner.matching_test_functions(filter).count();
-        if self.debug.is_some() && num_filtered != 1 {
+        if (self.debug.is_some() || self.decode_internal.is_some()) && num_filtered != 1 {
             eyre::bail!(
                 "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\
                  Use --match-contract and --match-path to further limit the search.\n\
@@ -428,7 +441,7 @@ impl TestArgs {
             )?);
         }
 
-        if self.decode_internal {
+        if self.decode_internal.is_some() {
             let sources =
                 ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
             builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
