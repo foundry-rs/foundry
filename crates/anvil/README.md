@@ -27,7 +27,7 @@ A local Ethereum node, akin to Ganache, designed for development with [**Forge**
 ### Installing from source
 
 ```sh
-cargo install --git https://github.com/foundry-rs/foundry --locked --force
+cargo install --git https://github.com/foundry-rs/foundry anvil --locked --force
 ```
 
 ## Getting started
