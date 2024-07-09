@@ -1,7 +1,6 @@
 //! Test outcomes.
 
 use crate::{
-    decode::decode_console_logs,
     fuzz::{BaseCounterExample, FuzzedCases},
     gas_report::GasReport,
 };
@@ -356,9 +355,6 @@ pub struct TestResult {
     /// be printed to the user.
     pub logs: Vec<Log>,
 
-    /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
-    pub decoded_logs: Vec<String>,
-
     /// What kind of test this was
     pub kind: TestKind,
 
@@ -438,7 +434,6 @@ impl TestResult {
         Self {
             status: TestStatus::Failure,
             reason: setup.reason,
-            decoded_logs: decode_console_logs(&setup.logs),
             logs: setup.logs,
             traces: setup.traces,
             coverage: setup.coverage,
@@ -450,7 +445,6 @@ impl TestResult {
     /// Returns the skipped result for single test (used in skipped fuzz test too).
     pub fn single_skip(mut self) -> Self {
         self.status = TestStatus::Skipped;
-        self.decoded_logs = decode_console_logs(&self.logs);
         self
     }
 
@@ -483,7 +477,6 @@ impl TestResult {
             false => TestStatus::Failure,
         };
         self.reason = reason;
-        self.decoded_logs = decode_console_logs(&self.logs);
         self.breakpoints = raw_call_result.cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
         self.duration = Duration::default();
         self.gas_report_traces = Vec::new();
@@ -512,7 +505,6 @@ impl TestResult {
         };
         self.reason = result.reason;
         self.counterexample = result.counterexample;
-        self.decoded_logs = decode_console_logs(&self.logs);
         self.duration = Duration::default();
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
         self.breakpoints = result.breakpoints.unwrap_or_default();
@@ -523,7 +515,6 @@ impl TestResult {
     pub fn invariant_skip(mut self) -> Self {
         self.kind = TestKind::Invariant { runs: 1, calls: 1, reverts: 1 };
         self.status = TestStatus::Skipped;
-        self.decoded_logs = decode_console_logs(&self.logs);
         self
     }
 
@@ -542,7 +533,6 @@ impl TestResult {
             Some(format!("{invariant_name} persisted failure revert"))
         };
         self.counterexample = Some(CounterExample::Sequence(call_sequence));
-        self.decoded_logs = decode_console_logs(&self.logs);
         self
     }
 
@@ -551,7 +541,6 @@ impl TestResult {
         self.kind = TestKind::Invariant { runs: 0, calls: 0, reverts: 0 };
         self.status = TestStatus::Failure;
         self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
-        self.decoded_logs = decode_console_logs(&self.logs);
         self
     }
 
@@ -576,7 +565,6 @@ impl TestResult {
         };
         self.reason = reason;
         self.counterexample = counterexample;
-        self.decoded_logs = decode_console_logs(&self.logs);
         self.gas_report_traces = gas_report_traces;
         self
     }
