@@ -238,15 +238,10 @@ impl MultiContractRunner {
             Some(artifact_id.version.clone()),
         );
 
-        let trace_mode = if self.debug {
-            TraceMode::Debug
-        } else if self.decode_internal {
-            TraceMode::Jump
-        } else if self.evm_opts.verbosity >= 3 {
-            TraceMode::Call
-        } else {
-            TraceMode::None
-        };
+        let trace_mode = TraceMode::default()
+            .with_debug(self.debug)
+            .with_decode_internal(self.decode_internal)
+            .with_verbosity(self.evm_opts.verbosity);
 
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {

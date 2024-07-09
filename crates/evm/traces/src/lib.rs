@@ -143,6 +143,30 @@ impl TraceMode {
         matches!(self, Self::Debug)
     }
 
+    pub fn with_debug(self, yes: bool) -> Self {
+        if yes {
+            std::cmp::max(self, Self::Debug)
+        } else {
+            self
+        }
+    }
+
+    pub fn with_decode_internal(self, yes: bool) -> Self {
+        if yes {
+            std::cmp::max(self, Self::Jump)
+        } else {
+            self
+        }
+    }
+
+    pub fn with_verbosity(self, verbosiy: u8) -> Self {
+        if verbosiy >= 3 {
+            std::cmp::max(self, Self::Call)
+        } else {
+            self
+        }
+    }
+
     pub fn into_config(self) -> Option<TracingInspectorConfig> {
         if self.is_none() {
             None
