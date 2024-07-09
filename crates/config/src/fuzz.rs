@@ -1,7 +1,8 @@
 //! Configuration for fuzz testing.
 
 use crate::inline::{
-    parse_config_u32, InlineConfigParser, InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY,
+    parse_config_bool, parse_config_u32, InlineConfigParser, InlineConfigParserError,
+    INLINE_CONFIG_FUZZ_KEY,
 };
 use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
@@ -29,6 +30,8 @@ pub struct FuzzConfig {
     pub failure_persist_dir: Option<PathBuf>,
     /// Name of the file to record fuzz failures, defaults to `failures`.
     pub failure_persist_file: Option<String>,
+    /// show `console.log` in fuzz test, defaults to `false`
+    pub show_logs: bool,
 }
 
 impl Default for FuzzConfig {
@@ -41,6 +44,7 @@ impl Default for FuzzConfig {
             gas_report_samples: 256,
             failure_persist_dir: None,
             failure_persist_file: None,
+            show_logs: false,
         }
     }
 }
@@ -56,6 +60,7 @@ impl FuzzConfig {
             gas_report_samples: 256,
             failure_persist_dir: Some(cache_dir),
             failure_persist_file: Some("failures".to_string()),
+            show_logs: false,
         }
     }
 }
@@ -84,6 +89,7 @@ impl InlineConfigParser for FuzzConfig {
                     conf_clone.dictionary.dictionary_weight = parse_config_u32(key, value)?
                 }
                 "failure-persist-file" => conf_clone.failure_persist_file = Some(value),
+                "show-logs" => conf_clone.show_logs = parse_config_bool(key, value)?,
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
