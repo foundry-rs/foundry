@@ -73,7 +73,7 @@ impl WatchArgs {
         self.watchexec_config_generic(default_paths, None)
     }
 
-    /// Creates a new [`watchexec::Config`] with a custom command override.
+    /// Creates a new [`watchexec::Config`] with a custom command spawn hook.
     ///
     /// If paths were provided as arguments the these will be used as the watcher's pathset,
     /// otherwise the path the closure returns will be used.
