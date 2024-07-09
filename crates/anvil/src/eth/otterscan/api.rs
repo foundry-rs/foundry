@@ -62,6 +62,7 @@ pub fn batch_build_ots_traces(traces: Vec<LocalizedTransactionTrace>) -> Vec<Tra
                     to: call.to,
                     value: call.value,
                     input: call.input.0.into(),
+                    output: Bytes::default(),
                 })
             }
             Action::Create(_) | Action::Selfdestruct(_) | Action::Reward(_) => None,
@@ -314,7 +315,7 @@ impl EthApi {
                                 .unwrap()
                                 .unwrap()
                                 .inner;
-                            return Ok(Some(ContractCreator { tx, creator: from }));
+                            return Ok(Some(ContractCreator { hash: tx.hash, creator: from }));
                         }
                         _ => {}
                     }

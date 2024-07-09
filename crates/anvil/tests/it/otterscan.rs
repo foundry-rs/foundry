@@ -243,6 +243,7 @@ async fn test_call_ots_trace_transaction() {
             to: contract_address,
             value: U256::from(1337),
             input: Contract::runCall::SELECTOR.into(),
+            output: Bytes::default(),
         },
         TraceEntry {
             r#type: "STATICCALL".to_string(),
@@ -251,6 +252,7 @@ async fn test_call_ots_trace_transaction() {
             to: contract_address,
             value: U256::ZERO,
             input: Contract::do_staticcallCall::SELECTOR.into(),
+            output: Bytes::default(),
         },
         TraceEntry {
             r#type: "CALL".to_string(),
@@ -259,6 +261,7 @@ async fn test_call_ots_trace_transaction() {
             to: contract_address,
             value: U256::ZERO,
             input: Contract::do_callCall::SELECTOR.into(),
+            output: Bytes::default(),
         },
         TraceEntry {
             r#type: "CALL".to_string(),
@@ -267,6 +270,7 @@ async fn test_call_ots_trace_transaction() {
             to: sender,
             value: U256::from(1337),
             input: Bytes::new(),
+            output: Bytes::default(),
         },
         TraceEntry {
             r#type: "DELEGATECALL".to_string(),
@@ -275,6 +279,7 @@ async fn test_call_ots_trace_transaction() {
             to: contract_address,
             value: U256::ZERO,
             input: Contract::do_delegatecallCall::SELECTOR.into(),
+            output: Bytes::default(),
         },
     ];
     assert_eq!(res, expected);
@@ -516,5 +521,5 @@ async fn ots_get_contract_creator() {
     let creator = api.ots_get_contract_creator(contract_address).await.unwrap().unwrap();
 
     assert_eq!(creator.creator, sender);
-    assert_eq!(creator.tx.hash, receipt.transaction_hash);
+    assert_eq!(creator.hash, receipt.transaction_hash);
 }
