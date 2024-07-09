@@ -37,6 +37,8 @@ pub struct FuzzTestData {
     pub breakpoints: Option<Breakpoints>,
     // Stores coverage information for all fuzz cases.
     pub coverage: Option<HitMaps>,
+    // Stores logs for all fuzz cases
+    pub logs: Vec<Log>,
 }
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
@@ -92,9 +94,6 @@ impl FuzzedExecutor {
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
         let show_fuzz_logs = self.config.show_fuzz_logs;
 
-        //Stores logs for all fuzz cases
-        let logs: RefCell<Vec<Log>> = RefCell::default();
-
         let run_result = self.runner.clone().run(&strat, |calldata| {
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
 
@@ -117,7 +116,7 @@ impl FuzzedExecutor {
                         data.traces.push(call_traces);
                         data.breakpoints.replace(case.breakpoints);
                     }
-                    logs.borrow_mut().extend(case.logs);
+                    data.logs.extend(case.logs);
 
                     // Collect and merge coverage if `forge snapshot` context.
                     match &mut data.coverage {
@@ -137,8 +136,9 @@ impl FuzzedExecutor {
                     // our failure - when a fuzz case fails, proptest will try
                     // to run at least one more case to find a minimal failure
                     // case.
-                    logs.borrow_mut().extend(outcome.1.logs.clone());
                     let reason = rd.maybe_decode(&outcome.1.result, Some(status));
+                    let cloned_logs = outcome.1.logs.clone();
+                    execution_data.borrow_mut().logs.extend(cloned_logs);
                     execution_data.borrow_mut().counterexample = outcome;
                     // HACK: we have to use an empty string here to denote `None`.
                     Err(TestCaseError::fail(reason.unwrap_or_default()))
@@ -157,7 +157,7 @@ impl FuzzedExecutor {
         };
 
         // decide whether to use trace logs or only error logs
-        let actual_logs = if show_fuzz_logs { logs.into_inner() } else { call.logs };
+        let actual_logs = if show_fuzz_logs { fuzz_result.logs } else { call.logs };
 
         let mut result = FuzzTestResult {
             first_case: fuzz_result.first_case.unwrap_or_default(),
