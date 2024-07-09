@@ -5,10 +5,7 @@ use alloy_primitives::{Address, Bytes, Log, U256};
 use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
-use foundry_evm_core::{
-    constants::MAGIC_ASSUME,
-    decode::RevertDecoder,
-};
+use foundry_evm_core::{constants::MAGIC_ASSUME, decode::RevertDecoder};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     strategies::{fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState},
