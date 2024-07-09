@@ -26,7 +26,7 @@ pub struct SourceData {
     pub path: PathBuf,
     /// Maps contract name to (start, end) of the contract definition in the source code.
     /// This is useful for determining which contract contains given function definition.
-    pub contract_definitions: HashMap<String, (usize, usize)>,
+    contract_definitions: HashMap<String, (usize, usize)>,
 }
 
 impl SourceData {
@@ -250,16 +250,16 @@ impl ContractSources {
                 artifact.source_map_runtime.as_ref()
             }?;
 
-            let pc_ic_map = if init_code {
-                artifact.pc_ic_map.as_ref()
-            } else {
-                artifact.pc_ic_map_runtime.as_ref()
-            }?;
-            let ic = pc_ic_map.get(pc)?;
-
             // Solc indexes source maps by instruction counter, but Vyper indexes by program
             // counter.
             let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
+                let pc_ic_map = if init_code {
+                    artifact.pc_ic_map.as_ref()
+                } else {
+                    artifact.pc_ic_map_runtime.as_ref()
+                }?;
+                let ic = pc_ic_map.get(pc)?;
+    
                 source_map.get(ic)?
             } else {
                 source_map.get(pc)?
