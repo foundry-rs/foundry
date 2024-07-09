@@ -9,7 +9,6 @@ use foundry_test_utils::Filter;
 async fn inline_config_run_fuzz() {
     let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
-    println!("{:?}", runner.test_options);
     let result = runner.test_collect(&filter);
     let results = result
         .into_iter()
@@ -40,7 +39,7 @@ async fn inline_config_run_fuzz() {
             (
                 "default/inline/FuzzInlineConf.t.sol:FuzzInlineConf2".to_string(),
                 "testInlineConfFuzz2(uint8)".to_string(),
-                500
+                10
             ),
         ]
     );

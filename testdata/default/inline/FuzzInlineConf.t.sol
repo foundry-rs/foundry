@@ -13,7 +13,7 @@ contract FuzzInlineConf is DSTest {
     }
 }
 
-/// forge-config: default.fuzz.runs = 500
+/// forge-config: default.fuzz.runs = 10
 contract FuzzInlineConf2 is DSTest {
     /// forge-config: default.fuzz.runs = 1
     function testInlineConfFuzz1(uint8 x) public {
