@@ -12,3 +12,15 @@ contract FuzzInlineConf is DSTest {
         require(true, "this is not going to revert");
     }
 }
+
+/// forge-config: default.fuzz.runs = 10
+contract FuzzInlineConf2 is DSTest {
+    /// forge-config: default.fuzz.runs = 1
+    function testInlineConfFuzz1(uint8 x) public {
+        require(true, "this is not going to revert");
+    }
+
+    function testInlineConfFuzz2(uint8 x) public {
+        require(true, "this is not going to revert");
+    }
+}
