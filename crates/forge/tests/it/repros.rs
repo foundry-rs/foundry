@@ -9,7 +9,7 @@ use crate::{
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::Event;
 use alloy_primitives::{address, Address, U256};
-use forge::result::TestStatus;
+use forge::{decode::decode_console_logs, result::TestStatus};
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_evm::{
     constants::HARDHAT_CONSOLE_ADDRESS,
@@ -252,7 +252,10 @@ test_repro!(6501, false, None, |res| {
     let mut res = res.remove("default/repros/Issue6501.t.sol:Issue6501Test").unwrap();
     let test = res.test_results.remove("test_hhLogs()").unwrap();
     assert_eq!(test.status, TestStatus::Success);
-    assert_eq!(test.decoded_logs, ["a".to_string(), "1".to_string(), "b 2".to_string()]);
+    assert_eq!(
+        decode_console_logs(&test.logs),
+        ["a".to_string(), "1".to_string(), "b 2".to_string()]
+    );
 
     let (kind, traces) = test.traces.last().unwrap().clone();
     let nodes = traces.into_nodes();
