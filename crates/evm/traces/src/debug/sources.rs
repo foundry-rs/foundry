@@ -26,18 +26,18 @@ pub struct SourceData {
     pub path: PathBuf,
     /// Maps contract name to (start, end) of the contract definition in the source code.
     /// This is useful for determining which contract contains given function definition.
-    contract_definitions: HashMap<String, (usize, usize)>,
+    contract_definitions: Vec<(String, usize, usize)>,
 }
 
 impl SourceData {
     pub fn new(source: Arc<String>, language: MultiCompilerLanguage, path: PathBuf) -> Self {
-        let mut contract_definitions = HashMap::new();
+        let mut contract_definitions = Vec::new();
 
         match language {
             MultiCompilerLanguage::Vyper(_) => {
                 // Vyper contracts have the same name as the file name.
                 if let Some(name) = path.file_name().map(|s| s.to_string_lossy().to_string()) {
-                    contract_definitions.insert(name, (0, source.len()));
+                    contract_definitions.push((name, 0, source.len()));
                 }
             }
             MultiCompilerLanguage::Solc(_) => {
@@ -49,8 +49,11 @@ impl SourceData {
                         let Some(name) = contract.name else {
                             continue;
                         };
-                        contract_definitions
-                            .insert(name.name, (name.loc.start(), contract.loc.end()));
+                        contract_definitions.push((
+                            name.name,
+                            name.loc.start(),
+                            contract.loc.end(),
+                        ));
                     }
                 }
             }
@@ -63,8 +66,8 @@ impl SourceData {
     pub fn find_contract_name(&self, start: usize, end: usize) -> Option<&str> {
         self.contract_definitions
             .iter()
-            .find(|(_, (s, e))| start >= *s && end <= *e)
-            .map(|(name, _)| name.as_str())
+            .find(|(_, s, e)| start >= *s && end <= *e)
+            .map(|(name, _, _)| name.as_str())
     }
 }
 
