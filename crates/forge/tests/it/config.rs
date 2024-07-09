@@ -125,7 +125,7 @@ pub fn assert_multiple(
             "We did not run as many test functions as we expected for {contract_name}"
         );
         for (test_name, should_pass, reason, expected_logs, expected_warning_count) in tests {
-            let logs = &actuals[*contract_name].test_results[*test_name].decoded_logs;
+            let logs = &decode_console_logs(&actuals[*contract_name].test_results[*test_name].logs);
 
             let warnings_count = &actuals[*contract_name].warnings.len();
 
