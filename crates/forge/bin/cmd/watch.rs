@@ -25,6 +25,8 @@ use watchexec_events::{Event, Priority, ProcessEnd};
 use watchexec_signals::Signal;
 use yansi::{Color, Paint};
 
+type SpawnHook = Arc<dyn Fn(&[Event], &mut TokioCommand) + Send + Sync + 'static>;
+
 #[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Watch options")]
 pub struct WatchArgs {
@@ -88,7 +90,7 @@ impl WatchArgs {
     fn watchexec_config_generic<PS: IntoIterator<Item = P>, P: Into<PathBuf>>(
         &self,
         default_paths: impl FnOnce() -> PS,
-        spawn_hook: Option<Arc<dyn Fn(&[Event], &mut TokioCommand) + Send + Sync + 'static>>,
+        spawn_hook: Option<SpawnHook>,
     ) -> Result<watchexec::Config> {
         let mut paths = self.watch.as_deref().unwrap_or_default();
         let storage: Vec<_>;
@@ -102,7 +104,7 @@ impl WatchArgs {
     fn watchexec_config_inner(
         &self,
         paths: &[PathBuf],
-        spawn_hook: Option<Arc<dyn Fn(&[Event], &mut TokioCommand) + Send + Sync + 'static>>,
+        spawn_hook: Option<SpawnHook>,
     ) -> Result<watchexec::Config> {
         let config = watchexec::Config::default();
 
