@@ -4,6 +4,11 @@
 [advisories]
 version = 2
 yanked = "warn"
+ignore = [
+    # https://github.com/watchexec/watchexec/issues/852
+    "RUSTSEC-2024-0350",
+    "RUSTSEC-2024-0351",
+]
 
 # This section is considered when running `cargo deny check bans`.
 # More documentation about the 'bans' section can be found here:
