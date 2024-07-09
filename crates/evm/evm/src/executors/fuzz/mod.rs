@@ -7,7 +7,7 @@ use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
     constants::MAGIC_ASSUME,
-    decode::{decode_console_logs, RevertDecoder},
+    decode::RevertDecoder,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
@@ -116,8 +116,9 @@ impl FuzzedExecutor {
                         data.traces.push(call_traces);
                         data.breakpoints.replace(case.breakpoints);
                     }
-                    data.logs.extend(case.logs);
-
+                    if show_logs {
+                        data.logs.extend(case.logs);
+                    }
                     // Collect and merge coverage if `forge snapshot` context.
                     match &mut data.coverage {
                         Some(prev) => prev.merge(case.coverage.unwrap()),
@@ -137,8 +138,7 @@ impl FuzzedExecutor {
                     // to run at least one more case to find a minimal failure
                     // case.
                     let reason = rd.maybe_decode(&outcome.1.result, Some(status));
-                    let cloned_logs = outcome.1.logs.clone();
-                    execution_data.borrow_mut().logs.extend(cloned_logs);
+                    execution_data.borrow_mut().logs.extend(outcome.1.logs.clone());
                     execution_data.borrow_mut().counterexample = outcome;
                     // HACK: we have to use an empty string here to denote `None`.
                     Err(TestCaseError::fail(reason.unwrap_or_default()))
@@ -156,17 +156,13 @@ impl FuzzedExecutor {
             (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
         };
 
-        // decide whether to use trace logs or only error logs
-        let actual_logs = if show_logs { fuzz_result.logs } else { call.logs };
-
         let mut result = FuzzTestResult {
             first_case: fuzz_result.first_case.unwrap_or_default(),
             gas_by_case: fuzz_result.gas_by_case,
             success: run_result.is_ok(),
             reason: None,
             counterexample: None,
-            decoded_logs: decode_console_logs(&actual_logs),
-            logs: actual_logs,
+            logs: fuzz_result.logs,
             labeled_addresses: call.labels,
             traces: last_run_traces,
             breakpoints: last_run_breakpoints,
