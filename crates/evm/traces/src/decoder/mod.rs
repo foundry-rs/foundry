@@ -17,6 +17,10 @@ use foundry_evm_core::{
         TEST_CONTRACT_ADDRESS,
     },
     decode::RevertDecoder,
+    precompiles::{
+        BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
+        RIPEMD_160, SHA_256,
+    },
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -160,6 +164,16 @@ impl CallTraceDecoder {
                 (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
                 (CALLER, "DefaultSender".to_string()),
                 (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
+                (EC_RECOVER, "ECRecover".to_string()),
+                (SHA_256, "SHA-256".to_string()),
+                (RIPEMD_160, "RIPEMD-160".to_string()),
+                (IDENTITY, "Identity".to_string()),
+                (MOD_EXP, "ModExp".to_string()),
+                (EC_ADD, "ECAdd".to_string()),
+                (EC_MUL, "ECMul".to_string()),
+                (EC_PAIRING, "ECPairing".to_string()),
+                (BLAKE_2F, "Blake2F".to_string()),
+                (POINT_EVALUATION, "PointEvaluation".to_string()),
             ]
             .into(),
             receive_contracts: Default::default(),
