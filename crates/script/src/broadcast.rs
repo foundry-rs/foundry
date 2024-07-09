@@ -116,7 +116,7 @@ pub enum SendTransactionKind<'a> {
 pub enum SendTransactionsKind {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(HashSet<Address>),
-    /// Send a signed transaction via `eth_broadcastRawTransaction`
+    /// Send a signed transaction via `eth_sendRawTransaction`
     Raw(HashMap<Address, EthereumWallet>),
 }
 

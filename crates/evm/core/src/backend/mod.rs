@@ -1277,7 +1277,9 @@ impl DatabaseExt for Backend {
         let res = {
             let db = self.clone();
             let env = self.env_with_handler_cfg(env);
-            new_evm_with_inspector(db, env, inspector).transact()?
+            let mut evm = new_evm_with_inspector(db, env, inspector);
+            evm.context.evm.journaled_state.depth = journaled_state.depth + 1;
+            evm.transact()?
         };
 
         self.commit(res.state);
