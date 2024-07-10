@@ -439,7 +439,9 @@ impl ResolvedState {
         self.write_vm(&mut result);
         self.write_library(&mut result)?;
 
-        fs::create_dir_all(self.target_path.parent().unwrap())?;
+        if let Some(parent) = self.target_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
         fs::write(&self.target_path, &result)?;
 
         println!("Bindings written to {}", self.target_path.display());
