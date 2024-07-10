@@ -16,6 +16,7 @@ use figment::{
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
+use filter::GlobMatcher;
 use foundry_compilers::{
     artifacts::{
         output_selection::{ContractOutputSelection, OutputSelection},
@@ -181,8 +182,7 @@ pub struct Config {
     /// additional solc include paths for `--include-path`
     pub include_paths: Vec<PathBuf>,
     /// glob patterns to skip
-    #[serde(with = "from_vec_glob")]
-    pub skip: Vec<globset::Glob>,
+    pub skip: Vec<GlobMatcher>,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -1954,30 +1954,6 @@ pub(crate) mod from_opt_glob {
             return Ok(Some(globset::Glob::new(&s).map_err(serde::de::Error::custom)?))
         }
         Ok(None)
-    }
-}
-
-/// Ser/de `globset::Glob` explicitly to handle `Option<Glob>` properly
-pub(crate) mod from_vec_glob {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(value: &[globset::Glob], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let value = value.iter().map(|g| g.glob()).collect::<Vec<_>>();
-        value.serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<globset::Glob>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: Vec<String> = Vec::deserialize(deserializer)?;
-        s.into_iter()
-            .map(|s| globset::Glob::new(&s))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(serde::de::Error::custom)
     }
 }
 

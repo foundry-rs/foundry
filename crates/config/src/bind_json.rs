@@ -1,4 +1,4 @@
-use crate::from_vec_glob;
+use crate::filter::GlobMatcher;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -11,11 +11,9 @@ pub struct BindJsonConfig {
     ///
     /// If provided, only the files matching the globs will be included. Otherwise, defaults to
     /// including all project files.
-    #[serde(with = "from_vec_glob")]
-    pub include: Vec<globset::Glob>,
+    pub include: Vec<GlobMatcher>,
     /// Globs to ignore
-    #[serde(with = "from_vec_glob")]
-    pub exclude: Vec<globset::Glob>,
+    pub exclude: Vec<GlobMatcher>,
 }
 
 impl Default for BindJsonConfig {
