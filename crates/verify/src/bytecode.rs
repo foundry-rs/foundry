@@ -491,7 +491,7 @@ impl VerifyBytecodeArgs {
             let json_res = JsonResult {
                 bytecode_type,
                 matched: false,
-                verification_type: self.verification_type,
+                verification_type: res.1.unwrap(),
                 message: Some(format!(
                     "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
                 )),
@@ -573,7 +573,7 @@ fn try_match(
         Ok((true, Some(VerificationType::Full)))
     } else {
         try_partial_match(local_bytecode, bytecode, constructor_args, is_runtime, has_metadata)
-            .map(|matched| (matched, matched.then_some(VerificationType::Partial)))
+            .map(|matched| (matched, Some(VerificationType::Partial)))
     }
 }
 
