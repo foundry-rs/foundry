@@ -129,6 +129,8 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 alloy-signer-local.workspace = true
 
+snapbox = { workspace = true, features = ["json"] }
+
 [features]
 default = ["rustls", "jemalloc"]
 rustls = [

@@ -12,6 +12,7 @@ use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use regex::Regex;
+use snapbox::cmd::OutputAssert;
 use std::{
     env,
     ffi::OsStr,
@@ -921,8 +922,8 @@ impl TestCommand {
 
     /// Runs the command and asserts that it resulted in success
     #[track_caller]
-    pub fn assert_success(&mut self) {
-        self.output();
+    pub fn assert_success(&mut self) -> OutputAssert {
+        self.assert().success()
     }
 
     /// Executes command, applies stdin function and returns output
@@ -1054,6 +1055,10 @@ stderr:
             lossy_string(&out.stdout),
             lossy_string(&out.stderr),
         )
+    }
+
+    pub fn assert(&mut self) -> OutputAssert {
+        OutputAssert::new(self.execute())
     }
 }
 

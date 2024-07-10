@@ -3362,6 +3362,7 @@ dependencies = [
  "serde_json",
  "similar",
  "similar-asserts",
+ "snapbox",
  "solang-parser",
  "soldeer",
  "strum",
@@ -4056,6 +4057,7 @@ dependencies = [
  "regex",
  "serde_json",
  "similar-asserts",
+ "snapbox",
  "tracing",
  "tracing-subscriber",
  "walkdir",
@@ -5688,6 +5690,12 @@ dependencies = [
  "memchr",
  "minimal-lexical",
 ]
+
+[[package]]
+name = "normalize-line-endings"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61807f77802ff30975e01f4f071c8ba10c022052f98b3294119f3e615d13e5be"
 
 [[package]]
 name = "normalize-path"
@@ -7964,6 +7972,30 @@ name = "smallvec"
 version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
+
+[[package]]
+name = "snapbox"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "699c824ef8c2061c39efb3af4f334310b3acbfb2a50c6d1f867e4d95dcff94be"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "normalize-line-endings",
+ "serde",
+ "serde_json",
+ "similar",
+ "snapbox-macros",
+]
+
+[[package]]
+name = "snapbox-macros"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f4c14672714436c09254801c934b203196a51182a5107fb76591c7cc56424d"
+dependencies = [
+ "anstream",
+]
 
 [[package]]
 name = "socket2"

@@ -261,3 +261,5 @@ tower = "0.4"
 tower-http = "0.5"
 # soldeer
 soldeer = "0.2.17"
+
+snapbox = "0.6.9"
