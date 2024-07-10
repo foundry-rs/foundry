@@ -712,7 +712,8 @@ mod tests {
     fn guessable_types() -> impl proptest::strategy::Strategy<Value = DynSolValue> {
         proptest::arbitrary::any::<DynSolValue>()
             .prop_map(fixup_guessable)
-            .prop_filter_map("tuples are not supported", |v| (!contains_tuple(&v)).then_some(v))
+            .prop_filter("tuples are not supported", |v| !contains_tuple(&v))
+            .prop_filter("filter out values without type", |v| v.as_type().is_some())
     }
 
     // Tests to ensure that conversion [DynSolValue] -> [serde_json::Value] -> [DynSolValue]
@@ -728,10 +729,10 @@ mod tests {
         }
 
         #[test]
-        fn test_json_roundtrip(v in proptest::arbitrary::any::<DynSolValue>()) {
-            let json = serialize_value_as_json(v.clone()).unwrap();
+        fn test_json_roundtrip(v in proptest::arbitrary::any::<DynSolValue>().prop_filter("filter out values without type", |v| v.as_type().is_some())) {
+                let json = serialize_value_as_json(v.clone()).unwrap();
             let value = parse_json_as(&json, &v.as_type().unwrap()).unwrap();
-            assert_eq!(value, v);
+                assert_eq!(value, v);
         }
     }
 }
