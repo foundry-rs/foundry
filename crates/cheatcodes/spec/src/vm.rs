@@ -1493,7 +1493,7 @@ interface Vm {
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     ///
-    /// Additionaly accepts abi-encoded constructor arguments.
+    /// Additionally accepts abi-encoded constructor arguments.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);
 

@@ -2387,7 +2387,7 @@ impl EthApi {
                     // current midpoint, as spending any less gas would make no
                     // sense (as the TX would still revert due to lack of gas).
                     //
-                    // We don't care about the reason here, as we known that trasaction is correct
+                    // We don't care about the reason here, as we known that transaction is correct
                     // as it succeeded earlier
                     lowest_gas_limit = mid_gas_limit;
                 }

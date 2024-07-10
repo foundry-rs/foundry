@@ -123,7 +123,7 @@ fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInpu
 /// Used for routing certain CREATE2 invocations through [DEFAULT_CREATE2_DEPLOYER].
 ///
 /// Overrides create hook with CALL frame if [InspectorExt::should_use_create2_factory] returns
-/// true. Keeps track of overriden frames and handles outcome in the overriden insert_call_outcome
+/// true. Keeps track of overridden frames and handles outcome in the overridden insert_call_outcome
 /// hook by inserting decoded address directly into interpreter.
 ///
 /// Should be installed after [revm::inspector_handle_register] and before any other registers.
