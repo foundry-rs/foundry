@@ -173,7 +173,7 @@ casttest!(wallet_private_key_from_mnemonic_arg, |_prj, cmd| {
         "1",
     ])
     .assert_success()
-    .stdout_eq("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+    .stdout_eq("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d\n");
 });
 
 // tests that `cast wallet private-key` with options outputs the private key
