@@ -110,6 +110,9 @@ use soldeer::SoldeerConfig;
 mod vyper;
 use vyper::VyperConfig;
 
+mod bind_json;
+use bind_json::BindJsonConfig;
+
 /// Foundry configuration
 ///
 /// # Defaults
@@ -389,6 +392,8 @@ pub struct Config {
     pub fmt: FormatterConfig,
     /// Configuration for `forge doc`
     pub doc: DocConfig,
+    /// Configuration for `forge bind-json`
+    pub bind_json: BindJsonConfig,
     /// Configures the permissions of cheat codes that touch the file system.
     ///
     /// This includes what operations can be executed (read, write)
@@ -484,6 +489,7 @@ impl Config {
         "labels",
         "dependencies",
         "vyper",
+        "bind_json",
     ];
 
     /// File name of config toml file
@@ -2142,6 +2148,7 @@ impl Default for Config {
             build_info_path: None,
             fmt: Default::default(),
             doc: Default::default(),
+            bind_json: Default::default(),
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,

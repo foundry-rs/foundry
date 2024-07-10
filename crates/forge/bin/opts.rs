@@ -168,6 +168,7 @@ pub enum ForgeSubcommand {
     /// Generate EIP-712 struct encodings for structs from a given file.
     Eip712(eip712::Eip712Args),
 
+    /// Generate bindings for serialization/deserialization of project structs via JSON cheatcodes.
     BindJson(bind_json::BindJsonArgs),
 }
 
