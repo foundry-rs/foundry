@@ -21,6 +21,25 @@ pub struct CachedSignatures {
     pub functions: BTreeMap<String, String>,
 }
 
+impl CachedSignatures {
+    #[instrument(target = "evm::traces")]
+    pub fn load(
+        cache_path: PathBuf
+    ) -> CachedSignatures {
+        let path = cache_path.join("signatures");
+        let cached = if path.is_file() {
+            fs::read_json_file(&cache_path)
+                .map_err(|err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"))
+                .unwrap_or_default()
+        } else {
+            if let Err(err) = std::fs::create_dir_all(cache_path) {
+                warn!(target: "evm::traces", "could not create signatures cache dir: {:?}", err);
+            }
+            CachedSignatures::default()
+        };
+        cached
+    }
+}
 /// An identifier that tries to identify functions and events using signatures found at
 /// `https://openchain.xyz` or a local cache.
 #[derive(Debug)]
@@ -46,17 +65,10 @@ impl SignaturesIdentifier {
         let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");
             trace!(target: "evm::traces", ?path, "reading signature cache");
-            let cached = if path.is_file() {
-                fs::read_json_file(&path)
-                    .map_err(|err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"))
-                    .unwrap_or_default()
-            } else {
-                if let Err(err) = std::fs::create_dir_all(cache_path) {
-                    warn!(target: "evm::traces", "could not create signatures cache dir: {:?}", err);
-                }
-                CachedSignatures::default()
-            };
-            Self { cached, cached_path: Some(path), unavailable: HashSet::new(), client }
+            let cached = CachedSignatures::load(cache_path.clone());
+            Self {
+                cached, cached_path: Some(path), unavailable: HashSet::new(), client
+            }
         } else {
             Self {
                 cached: Default::default(),

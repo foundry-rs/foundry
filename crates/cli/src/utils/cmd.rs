@@ -20,7 +20,6 @@ use foundry_evm::{
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
-use serde_json;
 use std::{
     fmt::Write,
     path::{Path, PathBuf},
@@ -162,16 +161,16 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return matches!(
+        return matches! (
             chain,
-            NamedChain::Arbitrum
-                | NamedChain::ArbitrumTestnet
-                | NamedChain::ArbitrumGoerli
-                | NamedChain::ArbitrumSepolia
-                | NamedChain::Moonbeam
-                | NamedChain::Moonriver
-                | NamedChain::Moonbase
-                | NamedChain::MoonbeamDev
+            NamedChain::Arbitrum |
+                NamedChain::ArbitrumTestnet |
+                NamedChain::ArbitrumGoerli |
+                NamedChain::ArbitrumSepolia |
+                NamedChain::Moonbeam |
+                NamedChain::Moonriver |
+                NamedChain::Moonbase |
+                NamedChain::MoonbeamDev
         );
     }
     false
@@ -182,10 +181,10 @@ pub fn has_batch_support(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return !matches!(
             chain,
-            NamedChain::Arbitrum
-                | NamedChain::ArbitrumTestnet
-                | NamedChain::ArbitrumGoerli
-                | NamedChain::ArbitrumSepolia
+            NamedChain::Arbitrum |
+                NamedChain::ArbitrumTestnet |
+                NamedChain::ArbitrumGoerli |
+                NamedChain::ArbitrumSepolia
         );
     }
     true
@@ -429,22 +428,11 @@ pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) 
     Ok(())
 }
 
-/// Traverse the artifacts in the project to generate local signatures and merge them into the cache file.
+/// Traverse the artifacts in the project to generate local signatures and merge them into the cache
+/// file.
 pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
-    let mut cached_signatures = CachedSignatures::default();
     let path = cache_path.join("signatures");
-    if !path.is_file() {
-        std::fs::create_dir_all(&cache_path)?;
-    } else {
-        let cache_contents = std::fs::read_to_string(path.clone()).unwrap();
-        match serde_json::from_str::<CachedSignatures>(&cache_contents) {
-            Ok(existed_signatures) => cached_signatures = existed_signatures,
-            Err(e) => {
-                println!("parse cached local signatures file error: {}", e);
-            }
-        }
-        dbg!(&cached_signatures);
-    }
+    let mut cached_signatures = CachedSignatures::load(cache_path.clone());
     output.artifacts().for_each(|(_, artifact)| {
         if let Some(abi) = &artifact.abi {
             for func in abi.functions() {

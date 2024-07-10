@@ -3618,7 +3618,6 @@ dependencies = [
  "once_cell",
  "regex",
  "serde",
- "serde_json",
  "strsim",
  "strum",
  "tempfile",
