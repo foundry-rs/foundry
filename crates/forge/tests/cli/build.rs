@@ -72,7 +72,7 @@ contract ValidContract {}
     .unwrap();
 
     let config =
-        Config { skip: vec![Glob::new("src/InvalidContract.sol").unwrap()], ..Default::default() };
+        Config { skip: vec![Glob::new("src/InvalidContract.sol").unwrap().into()], ..Default::default() };
     prj.write_config(config);
 
     cmd.args(["build"]).assert_success();

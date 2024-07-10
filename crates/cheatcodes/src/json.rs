@@ -712,7 +712,7 @@ mod tests {
     fn guessable_types() -> impl proptest::strategy::Strategy<Value = DynSolValue> {
         proptest::arbitrary::any::<DynSolValue>()
             .prop_map(fixup_guessable)
-            .prop_filter("tuples are not supported", |v| !contains_tuple(&v))
+            .prop_filter("tuples are not supported", |v| !contains_tuple(v))
             .prop_filter("filter out values without type", |v| v.as_type().is_some())
     }
 
