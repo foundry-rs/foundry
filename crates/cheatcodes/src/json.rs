@@ -669,9 +669,7 @@ fn resolve_type(type_description: &str) -> Result<DynSolType> {
     bail!("type description should be a valid Solidity type or a EIP712 `encodeType` string")
 }
 
-/// TODO: enable once <https://github.com/alloy-rs/core/pull/683> is merged
 #[cfg(test)]
-#[cfg(ignore)]
 mod tests {
     use super::*;
     use alloy_primitives::FixedBytes;
