@@ -1,5 +1,5 @@
 use super::eip712::Resolver;
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use eyre::{Ok, Result};
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{compile::with_compilation_reporter, fs};
@@ -28,6 +28,10 @@ foundry_config::impl_figment_convert!(BindJsonArgs, opts);
 /// CLI arguments for `forge bind-json`.
 #[derive(Clone, Debug, Parser)]
 pub struct BindJsonArgs {
+    /// The path to write bindings to.
+    #[arg(value_hint = ValueHint::FilePath, value_name = "PATH")]
+    pub out: Option<PathBuf>,
+
     #[command(flatten)]
     opts: CoreBuildArgs,
 }
@@ -58,7 +62,7 @@ impl BindJsonArgs {
         let config = self.try_load_config_emit_warnings()?;
         let project = config.create_project(false, true)?;
 
-        let target_path = config.root.0.join(&config.bind_json.out);
+        let target_path = config.root.0.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
 
         let sources = project.paths.read_input_files()?;
         let graph = Graph::<MultiCompilerParsedSource>::resolve_sources(&project.paths, sources)?;
