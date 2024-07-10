@@ -195,13 +195,13 @@ alloy-transport-http = { version = "0.1.2", default-features = false }
 alloy-transport-ipc = { version = "0.1.2", default-features = false }
 alloy-transport-ws = { version = "0.1.2", default-features = false }
 
-alloy-dyn-abi = "0.7.3"
-alloy-json-abi = "0.7.3"
-alloy-primitives = { version = "0.7.3", features = ["getrandom", "rand"] }
-alloy-sol-macro-expander = "0.7.3"
-alloy-sol-macro-input = "0.7.3"
-alloy-sol-types = "0.7.3"
-syn-solidity = "0.7.3"
+alloy-dyn-abi = "0.7.7"
+alloy-json-abi = "0.7.7"
+alloy-primitives = { version = "0.7.7", features = ["getrandom", "rand"] }
+alloy-sol-macro-expander = "0.7.7"
+alloy-sol-macro-input = "0.7.7"
+alloy-sol-types = "0.7.7"
+syn-solidity = "0.7.7"
 
 alloy-chains = "0.1"
 alloy-rlp = "0.3.3"
