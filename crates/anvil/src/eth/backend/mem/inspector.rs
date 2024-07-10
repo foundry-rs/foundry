@@ -41,6 +41,11 @@ impl Inspector {
         self
     }
 
+    pub fn with_config(mut self, config: TracingInspectorConfig) -> Self {
+        self.tracer = Some(TracingInspector::new(config));
+        self
+    }
+
     /// Enables steps recording for `Tracer`.
     pub fn with_steps_tracing(mut self) -> Self {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all()));

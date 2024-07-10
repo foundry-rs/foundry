@@ -5,7 +5,7 @@ use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
     state::StateOverride,
-    trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions},
+    trace::geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
     BlockId, BlockNumberOrTag as BlockNumber, Filter, Index,
 };
 use alloy_serde::WithOtherFields;
@@ -297,7 +297,7 @@ pub enum EthRequest {
     DebugTraceCall(
         WithOtherFields<TransactionRequest>,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
-        #[cfg_attr(feature = "serde", serde(default))] GethDefaultTracingOptions,
+        #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingCallOptions,
     ),
 
     /// Trace transaction endpoint for parity's `trace_transaction`
