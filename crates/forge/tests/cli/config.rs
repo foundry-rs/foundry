@@ -134,6 +134,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         build_info_path: None,
         fmt: Default::default(),
         doc: Default::default(),
+        bind_json: Default::default(),
         fs_permissions: Default::default(),
         labels: Default::default(),
         prague: true,

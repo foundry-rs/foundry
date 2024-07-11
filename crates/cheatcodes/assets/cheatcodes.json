@@ -5793,6 +5793,66 @@
     },
     {
       "func": {
+        "id": "parseJsonTypeArray",
+        "description": "Parses a string of JSON data at `key` and coerces it to type array corresponding to `typeDescription`.",
+        "declaration": "function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonTypeArray(string,string,string)",
+        "selector": "0x0175d535",
+        "selectorBytes": [
+          1,
+          117,
+          213,
+          53
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonType_0",
+        "description": "Parses a string of JSON data and coerces it to type corresponding to `typeDescription`.",
+        "declaration": "function parseJsonType(string calldata json, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonType(string,string)",
+        "selector": "0xa9da313b",
+        "selectorBytes": [
+          169,
+          218,
+          49,
+          59
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonType_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to type corresponding to `typeDescription`.",
+        "declaration": "function parseJsonType(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonType(string,string,string)",
+        "selector": "0xe3f5ae33",
+        "selectorBytes": [
+          227,
+          245,
+          174,
+          51
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "parseJsonUint",
         "description": "Parses a string of JSON data at `key` and coerces it to `uint256`.",
         "declaration": "function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);",
@@ -7345,6 +7405,46 @@
           51,
           88,
           176
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "serializeJsonType_0",
+        "description": "See `serializeJson`.",
+        "declaration": "function serializeJsonType(string calldata typeDescription, bytes memory value) external pure returns (string memory json);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "serializeJsonType(string,bytes)",
+        "selector": "0x6d4f96a6",
+        "selectorBytes": [
+          109,
+          79,
+          150,
+          166
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "serializeJsonType_1",
+        "description": "See `serializeJson`.",
+        "declaration": "function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value) external returns (string memory json);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "serializeJsonType(string,string,string,bytes)",
+        "selector": "0x6f93bccb",
+        "selectorBytes": [
+          111,
+          147,
+          188,
+          203
         ]
       },
       "group": "json",

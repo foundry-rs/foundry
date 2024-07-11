@@ -3569,6 +3569,7 @@ dependencies = [
  "k256",
  "p256",
  "parking_lot",
+ "proptest",
  "rand",
  "revm",
  "rustc-hash 2.0.0",
