@@ -78,8 +78,12 @@ pub struct TestArgs {
 
     /// Whether to identify internal functions in traces.
     ///
-    /// The argument passed to this flag is the name of the test function you want to run, and it
-    /// works the same as --match-test.
+    /// If no argument is passed to this flag, it will trace internal functions scope and decode
+    /// stack parameters, but parameters stored in memory (such as bytes or arrays) will not be
+    /// decoded.
+    ///
+    /// To decode memory parameters, you should pass an argument with a test function name,
+    /// similarly to --debug and --match-test.
     ///
     /// If more than one test matches your specified criteria, you must add additional filters
     /// until only one test is found (see --match-contract and --match-path).

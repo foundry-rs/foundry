@@ -956,7 +956,8 @@ contract SimpleContractTest is Test {
      "#,
     )
     .unwrap();
-    cmd.args(["test", "-vvvv", "--decode-internal", "test"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-vvvv", "--decode-internal", "test"]).assert_success().stdout_eq(str![[
+        r#"
 ...
 Traces:
   [421960] SimpleContractTest::test()
@@ -968,5 +969,6 @@ Traces:
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 ...
-"#]]);
+"#
+    ]]);
 });
