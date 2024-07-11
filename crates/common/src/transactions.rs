@@ -147,19 +147,6 @@ mod tests {
     }
 }
 
-/// TODO: Remove when <https://github.com/alloy-rs/alloy/pull/1006> is included
-macro_rules! delegate_to_tx {
-    ($envelope:ident, $method:ident) => {
-        match $envelope {
-            TxEnvelope::Legacy(tx) => tx.tx().$method(),
-            TxEnvelope::Eip2930(tx) => tx.tx().$method(),
-            TxEnvelope::Eip1559(tx) => tx.tx().$method(),
-            TxEnvelope::Eip4844(tx) => tx.tx().$method(),
-            _ => unreachable!(),
-        }
-    };
-}
-
 /// Used for broadcasting transactions
 /// A transaction can either be a TransactionRequest waiting to be signed
 /// or a TxEnvelope, already signed
@@ -204,28 +191,28 @@ impl TransactionMaybeSigned {
 
     pub fn input(&self) -> Option<&[u8]> {
         match self {
-            Self::Signed { tx, .. } => Some(delegate_to_tx!(tx, input)),
+            Self::Signed { tx, .. } => Some(tx.input()),
             Self::Unsigned(tx) => tx.input.input().map(|i| i.as_ref()),
         }
     }
 
     pub fn to(&self) -> Option<TxKind> {
         match self {
-            Self::Signed { tx, .. } => Some(delegate_to_tx!(tx, to)),
+            Self::Signed { tx, .. } => Some(tx.to()),
             Self::Unsigned(tx) => tx.to,
         }
     }
 
     pub fn value(&self) -> Option<U256> {
         match self {
-            Self::Signed { tx, .. } => Some(delegate_to_tx!(tx, value)),
+            Self::Signed { tx, .. } => Some(tx.value()),
             Self::Unsigned(tx) => tx.value,
         }
     }
 
     pub fn gas(&self) -> Option<u128> {
         match self {
-            Self::Signed { tx, .. } => Some(delegate_to_tx!(tx, gas_limit)),
+            Self::Signed { tx, .. } => Some(tx.gas_limit()),
             Self::Unsigned(tx) => tx.gas,
         }
     }

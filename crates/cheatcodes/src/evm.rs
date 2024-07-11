@@ -607,6 +607,7 @@ impl Cheatcode for setBlockhashCall {
             blockNumber <= ccx.ecx.env.block.number,
             "block number must be less than or equal to the current block number"
         );
+
         ccx.ecx.db.set_blockhash(blockNumber, blockHash);
 
         Ok(Default::default())
