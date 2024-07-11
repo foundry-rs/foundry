@@ -1,7 +1,6 @@
 use foundry_config::Config;
-use foundry_test_utils::forgetest;
+use foundry_test_utils::{file, forgetest, str};
 use globset::Glob;
-use snapbox::file;
 
 // tests that json is printed when --json is passed
 forgetest!(compile_json, |prj, cmd| {
@@ -26,7 +25,7 @@ contract Dummy {
 
 // tests build output is as expected
 forgetest_init!(exact_build_output, |prj, cmd| {
-    cmd.args(["build", "--force"]).assert_success().stdout_eq("Compiling[..]\n...");
+    cmd.args(["build", "--force"]).assert_success().stdout_eq(str!["Compiling[..]\n..."]);
 });
 
 // tests build output is as expected

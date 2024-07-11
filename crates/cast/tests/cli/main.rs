@@ -4,6 +4,7 @@ use alloy_primitives::{address, b256, Address, B256};
 use foundry_test_utils::{
     casttest,
     rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint},
+    str,
     util::OutputExt,
 };
 use std::{fs, io::Write, path::Path, str::FromStr};
@@ -103,7 +104,10 @@ casttest!(wallet_sign_message_hex_data, |_prj, cmd| {
         "--private-key",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "0x0000000000000000000000000000000000000000000000000000000000000000",
-    ]).assert_success().stdout_eq("0x23a42ca5616ee730ff3735890c32fc7b9491a9f633faca9434797f2c845f5abf4d9ba23bd7edb8577acebaa3644dc5a4995296db420522bb40060f1693c33c9b1c\n");
+    ]).assert_success().stdout_eq(str![[r#"
+0x23a42ca5616ee730ff3735890c32fc7b9491a9f633faca9434797f2c845f5abf4d9ba23bd7edb8577acebaa3644dc5a4995296db420522bb40060f1693c33c9b1c
+
+"#]]);
 });
 
 // tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON string
@@ -115,7 +119,10 @@ casttest!(wallet_sign_typed_data_string, |_prj, cmd| {
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "--data",
         "{\"types\": {\"EIP712Domain\": [{\"name\": \"name\",\"type\": \"string\"},{\"name\": \"version\",\"type\": \"string\"},{\"name\": \"chainId\",\"type\": \"uint256\"},{\"name\": \"verifyingContract\",\"type\": \"address\"}],\"Message\": [{\"name\": \"data\",\"type\": \"string\"}]},\"primaryType\": \"Message\",\"domain\": {\"name\": \"example.metamask.io\",\"version\": \"1\",\"chainId\": \"1\",\"verifyingContract\": \"0x0000000000000000000000000000000000000000\"},\"message\": {\"data\": \"Hello!\"}}",
-    ]).assert_success().stdout_eq("0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b\n");
+    ]).assert_success().stdout_eq(str![[r#"
+0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b
+
+"#]]);
 });
 
 // tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON file
@@ -133,7 +140,10 @@ casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
             .into_string()
             .unwrap()
             .as_str(),
-    ]).assert_success().stdout_eq("0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b\n");
+    ]).assert_success().stdout_eq(str![[r#"
+0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b
+
+"#]]);
 });
 
 // tests that `cast wallet list` outputs the local accounts
@@ -173,7 +183,10 @@ casttest!(wallet_private_key_from_mnemonic_arg, |_prj, cmd| {
         "1",
     ])
     .assert_success()
-    .stdout_eq("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d\n");
+    .stdout_eq(str![[r#"
+0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+
+"#]]);
 });
 
 // tests that `cast wallet private-key` with options outputs the private key
