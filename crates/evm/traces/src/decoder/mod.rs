@@ -1,4 +1,5 @@
 use crate::{
+    debug::DebugTraceIdentifier,
     identifier::{
         AddressIdentity, LocalTraceIdentifier, SingleSignaturesIdentifier, TraceIdentifier,
     },
@@ -8,7 +9,7 @@ use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{Address, LogData, Selector, B256};
 use foundry_common::{
-    abi::get_indexed_event, fmt::format_token, ContractsByArtifact, SELECTOR_LEN,
+    abi::get_indexed_event, fmt::format_token, get_contract_name, ContractsByArtifact, SELECTOR_LEN,
 };
 use foundry_evm_core::{
     abi::{Console, HardhatConsole, Vm, HARDHAT_CONSOLE_SELECTOR_PATCHES},
@@ -88,6 +89,13 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Sets the debug identifier for the decoder.
+    #[inline]
+    pub fn with_debug_identifier(mut self, identifier: DebugTraceIdentifier) -> Self {
+        self.decoder.debug_identifier = Some(identifier);
+        self
+    }
+
     /// Build the decoder.
     #[inline]
     pub fn build(self) -> CallTraceDecoder {
@@ -124,6 +132,9 @@ pub struct CallTraceDecoder {
     pub signature_identifier: Option<SingleSignaturesIdentifier>,
     /// Verbosity level
     pub verbosity: u8,
+
+    /// Optional identifier of individual trace steps.
+    pub debug_identifier: Option<DebugTraceIdentifier>,
 }
 
 impl CallTraceDecoder {
@@ -196,6 +207,8 @@ impl CallTraceDecoder {
 
             signature_identifier: None,
             verbosity: 0,
+
+            debug_identifier: None,
         }
     }
 
@@ -314,6 +327,12 @@ impl CallTraceDecoder {
             node.trace.decoded = self.decode_function(&node.trace).await;
             for log in node.logs.iter_mut() {
                 log.decoded = self.decode_event(&log.raw_log).await;
+            }
+
+            if let Some(debug) = self.debug_identifier.as_ref() {
+                if let Some(identified) = self.contracts.get(&node.trace.address) {
+                    debug.identify_node_steps(node, get_contract_name(identified))
+                }
             }
         }
     }

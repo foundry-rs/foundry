@@ -17,6 +17,7 @@ workspace = true
 foundry-block-explorers.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
+foundry-linking.workspace = true
 foundry-config.workspace = true
 foundry-evm-core.workspace = true
 
@@ -40,6 +41,9 @@ tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
 rustc-hash.workspace = true
 tempfile.workspace = true
+rayon.workspace = true
+solang-parser.workspace = true
+revm.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

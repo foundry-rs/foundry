@@ -88,9 +88,6 @@ pub struct ContractsByArtifact(Arc<BTreeMap<ArtifactId, ContractData>>);
 
 impl ContractsByArtifact {
     /// Creates a new instance by collecting all artifacts with present bytecode from an iterator.
-    ///
-    /// It is recommended to use this method with an output of
-    /// [foundry_linking::Linker::get_linked_artifacts].
     pub fn new(artifacts: impl IntoIterator<Item = (ArtifactId, CompactContractBytecode)>) -> Self {
         let map = artifacts
             .into_iter()

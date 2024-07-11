@@ -252,7 +252,8 @@ impl CoverageArgs {
         let known_contracts = runner.known_contracts.clone();
 
         let filter = self.test.filter(&config);
-        let outcome = self.test.run_tests(runner, config.clone(), verbosity, &filter).await?;
+        let outcome =
+            self.test.run_tests(runner, config.clone(), verbosity, &filter, output).await?;
 
         outcome.ensure_ok()?;
 
