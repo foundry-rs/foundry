@@ -314,7 +314,7 @@ impl ScriptSequence {
                     Ok(_) => {
                         num_of_successful_verifications += 1;
                     }
-                    Err(err) => println!("Error during verification: {err:#}"),
+                    Err(err) => eprintln!("Error during verification: {err:#}"),
                 }
             }
 
