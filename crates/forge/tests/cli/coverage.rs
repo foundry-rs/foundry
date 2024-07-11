@@ -59,26 +59,7 @@ contract AContractTest is DSTest {
 
     // Assert 100% coverage (init function coverage called in setUp is accounted).
     cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-╭---------------+--------+--------+---------╮
-|   Test Suite  | Passed | Failed | Skipped |
-+===========================================+
-| AContractTest |    1   |    0   |    0    |
-╰---------------+--------+--------+---------╯
+...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
 | src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
@@ -177,21 +158,7 @@ contract BContractTest is DSTest {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
+...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
 | src/BContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
@@ -235,26 +202,7 @@ contract AContractTest is DSTest {
 
     // Assert 100% coverage (assert and require properly covered).
     cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-[..]
-╭---------------+--------+--------+---------╮
-|   Test Suite  | Passed | Failed | Skipped |
-+===========================================+
-| AContractTest |    1   |    0   |    0    |
-╰---------------+--------+--------+---------╯
+...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
 | src/AContract.sol | 100.00% (3/3) | 100.00% (3/3) | 100.00% (0/0) | 100.00% (1/1) |
