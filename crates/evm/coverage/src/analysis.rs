@@ -294,7 +294,10 @@ impl<'a> ContractVisitor<'a> {
         //  tupleexpression
         //  yulfunctioncall
         match node.node_type {
-            NodeType::Assignment | NodeType::UnaryOperation => {
+            NodeType::Assignment |
+            NodeType::UnaryOperation |
+            NodeType::FunctionCall |
+            NodeType::Conditional => {
                 self.push_item(CoverageItem {
                     kind: CoverageItemKind::Statement,
                     loc: self.source_location_for(&node.src),
@@ -320,33 +323,6 @@ impl<'a> ContractVisitor<'a> {
                     self.visit_expression(&expr)?;
                 }
 
-                Ok(())
-            }
-            NodeType::FunctionCall => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
-
-                let expr: Option<Node> = node.attribute("expression");
-                if let Some(NodeType::Identifier) = expr.as_ref().map(|expr| &expr.node_type) {
-                    // Might be a require/assert call
-                    let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
-                    if let Some("assert" | "require") = name.as_deref() {
-                        self.push_branches(&node.src, self.branch_id);
-                        self.branch_id += 1;
-                    }
-                }
-
-                Ok(())
-            }
-            NodeType::Conditional => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
                 Ok(())
             }
             // Does not count towards coverage

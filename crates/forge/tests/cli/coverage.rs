@@ -1,4 +1,4 @@
-use regex::Regex;
+use foundry_test_utils::str;
 
 forgetest!(basic_coverage, |_prj, cmd| {
     cmd.args(["coverage"]);
@@ -57,24 +57,15 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    let lcov_info = prj.root().join("lcov.info");
-    cmd.arg("coverage").args([
-        "--report".to_string(),
-        "lcov".to_string(),
-        "--report-file".to_string(),
-        lcov_info.to_str().unwrap().to_string(),
-    ]);
-    cmd.assert_success();
-    assert!(lcov_info.exists());
+    // Assert 100% coverage (init function coverage called in setUp is accounted).
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
 
-    let lcov_data = std::fs::read_to_string(lcov_info).unwrap();
-    // AContract.init must be hit at least once
-    let re = Regex::new(r"FNDA:(\d+),AContract\.init").unwrap();
-    let valid_line = |line| {
-        re.captures(line)
-            .map_or(false, |caps| caps.get(1).unwrap().as_str().parse::<i32>().unwrap() > 0)
-    };
-    assert!(lcov_data.lines().any(valid_line), "{lcov_data}");
+"#]]);
 });
 
 forgetest!(test_no_match_coverage, |prj, cmd| {
@@ -159,32 +150,63 @@ contract BContractTest is DSTest {
     )
     .unwrap();
 
-    let lcov_info = prj.root().join("lcov.info");
-    cmd.arg("coverage").args([
-        "--no-match-coverage".to_string(),
-        "AContract".to_string(), // Filter out `AContract`
-        "--report".to_string(),
-        "lcov".to_string(),
-        "--report-file".to_string(),
-        lcov_info.to_str().unwrap().to_string(),
-    ]);
-    cmd.assert_success();
-    assert!(lcov_info.exists());
+    // Assert AContract is not included in report.
+    cmd.arg("coverage")
+        .args([
+            "--no-match-coverage".to_string(),
+            "AContract".to_string(), // Filter out `AContract`
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/BContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
 
-    let lcov_data = std::fs::read_to_string(lcov_info).unwrap();
-    // BContract.init must be hit at least once
-    let re = Regex::new(r"FNDA:(\d+),BContract\.init").unwrap();
-    let valid_line = |line| {
-        re.captures(line)
-            .map_or(false, |caps| caps.get(1).unwrap().as_str().parse::<i32>().unwrap() > 0)
-    };
-    assert!(lcov_data.lines().any(valid_line), "{lcov_data}");
+"#]]);
+});
 
-    // AContract.init must not be hit
-    let re = Regex::new(r"FNDA:(\d+),AContract\.init").unwrap();
-    let valid_line = |line| {
-        re.captures(line)
-            .map_or(false, |caps| caps.get(1).unwrap().as_str().parse::<i32>().unwrap() > 0)
-    };
-    assert!(!lcov_data.lines().any(valid_line), "{lcov_data}");
+forgetest!(test_assert_require_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function checkA() external pure returns (bool) {
+        assert(10 > 2);
+        require(10 > 2, "true");
+        return true;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function testA() external {
+        AContract a = new AContract();
+        bool result = a.checkA();
+        assertTrue(result);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert 100% coverage (assert and require properly covered).
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (3/3) | 100.00% (3/3) | 100.00% (0/0) | 100.00% (1/1) |
+| Total             | 100.00% (3/3) | 100.00% (3/3) | 100.00% (0/0) | 100.00% (1/1) |
+
+"#]]);
 });
