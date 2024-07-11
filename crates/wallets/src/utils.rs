@@ -147,3 +147,17 @@ pub fn create_keystore_signer(
         Ok((None, Some(PendingSigner::Keystore(path.clone()))))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_private_key_signer() {
+        let pk = B256::random();
+        let pk_str = pk.to_string();
+        assert!(create_private_key_signer(&pk_str).is_ok());
+        // skip 0x
+        assert!(create_private_key_signer(&pk_str[2..]).is_ok());
+    }
+}

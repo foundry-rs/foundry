@@ -4,8 +4,9 @@
 //! concurrently active pairs at once.
 
 use super::CreateFork;
+use alloy_transport::layers::RetryBackoffService;
 use foundry_common::provider::{
-    runtime_transport::RuntimeTransport, tower::RetryBackoffService, ProviderBuilder, RetryProvider,
+    runtime_transport::RuntimeTransport, ProviderBuilder, RetryProvider,
 };
 use foundry_config::Config;
 use foundry_fork_db::{cache::BlockchainDbMeta, BackendHandler, BlockchainDb, SharedBackend};

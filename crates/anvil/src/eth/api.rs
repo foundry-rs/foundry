@@ -43,7 +43,7 @@ use alloy_rpc_types::{
     request::TransactionRequest,
     state::StateOverride,
     trace::{
-        geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
+        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace,
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
@@ -211,6 +211,9 @@ impl EthApi {
                 self.get_proof(addr, keys, block).await.to_rpc_result()
             }
             EthRequest::EthSign(addr, content) => self.sign(addr, content).await.to_rpc_result(),
+            EthRequest::PersonalSign(content, addr) => {
+                self.sign(addr, content).await.to_rpc_result()
+            }
             EthRequest::EthSignTransaction(request) => {
                 self.sign_transaction(*request).await.to_rpc_result()
             }
@@ -1520,8 +1523,8 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
-        opts: GethDefaultTracingOptions,
-    ) -> Result<DefaultFrame> {
+        opts: GethDebugTracingCallOptions,
+    ) -> Result<GethTrace> {
         node_info!("debug_traceCall");
         let block_request = self.block_request(block_number).await?;
         let fees = FeeDetails::new(
@@ -1532,7 +1535,9 @@ impl EthApi {
         )?
         .or_zero_fees();
 
-        self.backend.call_with_tracing(request, fees, Some(block_request), opts).await
+        let result: std::result::Result<GethTrace, BlockchainError> =
+            self.backend.call_with_tracing(request, fees, Some(block_request), opts).await;
+        result
     }
 
     /// Returns traces for the transaction hash via parity's tracing endpoint

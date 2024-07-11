@@ -3,15 +3,13 @@
 use crate::abi::MulticallContract;
 use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions, TransactionRequest};
-use alloy_serde::WithOtherFields;
-use alloy_sol_types::{sol, SolCall, SolError};
-use anvil::{
-    eth::otterscan::types::{
-        OtsInternalOperation, OtsInternalOperationType, OtsTrace, OtsTraceType,
-    },
-    spawn, Hardfork, NodeConfig,
+use alloy_rpc_types::{
+    trace::otterscan::{InternalOperation, OperationType, TraceEntry},
+    BlockNumberOrTag, BlockTransactions, TransactionRequest,
 };
+use alloy_serde::WithOtherFields;
+use alloy_sol_types::{sol, SolCall, SolError, SolValue};
+use anvil::{spawn, Hardfork, NodeConfig};
 use std::collections::VecDeque;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -50,8 +48,8 @@ async fn ots_get_internal_operations_contract_deploy() {
     let res = api.ots_get_internal_operations(contract_receipt.transaction_hash).await.unwrap();
     assert_eq!(
         res,
-        [OtsInternalOperation {
-            r#type: OtsInternalOperationType::Create,
+        [InternalOperation {
+            r#type: OperationType::OpCreate,
             from: sender,
             to: contract_receipt.contract_address.unwrap(),
             value: U256::from(0)
@@ -78,12 +76,7 @@ async fn ots_get_internal_operations_contract_transfer() {
     let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
     assert_eq!(
         res,
-        [OtsInternalOperation {
-            r#type: OtsInternalOperationType::Transfer,
-            from,
-            to,
-            value: amount
-        }],
+        [InternalOperation { r#type: OperationType::OpTransfer, from, to, value: amount }],
     );
 }
 
@@ -114,8 +107,8 @@ async fn ots_get_internal_operations_contract_create2() {
     let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
     assert_eq!(
         res,
-        [OtsInternalOperation {
-            r#type: OtsInternalOperationType::Create2,
+        [InternalOperation {
+            r#type: OperationType::OpCreate2,
             from: address!("4e59b44847b379578588920cA78FbF26c0B4956C"),
             to: address!("347bcdad821abc09b8c275881b368de36476b62c"),
             value: U256::from(0),
@@ -166,8 +159,8 @@ async fn ots_get_internal_operations_contract_selfdestruct(hardfork: Hardfork) {
     let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
     assert_eq!(
         res,
-        [OtsInternalOperation {
-            r#type: OtsInternalOperationType::SelfDestruct,
+        [InternalOperation {
+            r#type: OperationType::OpSelfDestruct,
             from: contract_address,
             to: expected_to,
             value: expected_value,
@@ -243,50 +236,50 @@ async fn test_call_ots_trace_transaction() {
 
     let res = api.ots_trace_transaction(receipt.transaction_hash).await.unwrap();
     let expected = vec![
-        OtsTrace {
-            r#type: OtsTraceType::Call,
+        TraceEntry {
+            r#type: "CALL".to_string(),
             depth: 0,
             from: sender,
             to: contract_address,
             value: U256::from(1337),
             input: Contract::runCall::SELECTOR.into(),
-            output: None,
+            output: Bytes::new(),
         },
-        OtsTrace {
-            r#type: OtsTraceType::StaticCall,
+        TraceEntry {
+            r#type: "STATICCALL".to_string(),
             depth: 1,
             from: contract_address,
             to: contract_address,
             value: U256::ZERO,
             input: Contract::do_staticcallCall::SELECTOR.into(),
-            output: None,
+            output: true.abi_encode().into(),
         },
-        OtsTrace {
-            r#type: OtsTraceType::Call,
+        TraceEntry {
+            r#type: "CALL".to_string(),
             depth: 1,
             from: contract_address,
             to: contract_address,
             value: U256::ZERO,
             input: Contract::do_callCall::SELECTOR.into(),
-            output: None,
+            output: Bytes::new(),
         },
-        OtsTrace {
-            r#type: OtsTraceType::Call,
+        TraceEntry {
+            r#type: "CALL".to_string(),
             depth: 2,
             from: contract_address,
             to: sender,
             value: U256::from(1337),
             input: Bytes::new(),
-            output: None,
+            output: Bytes::new(),
         },
-        OtsTrace {
-            r#type: OtsTraceType::DelegateCall,
+        TraceEntry {
+            r#type: "DELEGATECALL".to_string(),
             depth: 2,
             from: contract_address,
             to: contract_address,
             value: U256::ZERO,
             input: Contract::do_delegatecallCall::SELECTOR.into(),
-            output: None,
+            output: Bytes::new(),
         },
     ];
     assert_eq!(res, expected);
@@ -399,7 +392,7 @@ async fn ots_get_block_transactions() {
 
         result.receipts.iter().enumerate().for_each(|(i, receipt)| {
             let expected = hashes.pop_front();
-            assert_eq!(expected, Some(receipt.transaction_hash));
+            assert_eq!(expected, Some(receipt.receipt.transaction_hash));
             assert_eq!(expected, result.fullblock.block.transactions.hashes().nth(i).copied());
         });
     }

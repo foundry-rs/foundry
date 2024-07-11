@@ -342,6 +342,22 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         }
         Ok(())
     }
+
+    /// Set the blockhash for a given block number.
+    ///
+    /// # Arguments
+    ///
+    /// * `number` - The block number to set the blockhash for
+    /// * `hash` - The blockhash to set
+    ///
+    /// # Note
+    ///
+    /// This function mimics the EVM limits of the `blockhash` operation:
+    /// - It sets the blockhash for blocks where `block.number - 256 <= number < block.number`
+    /// - Setting a blockhash for the current block (number == block.number) has no effect
+    /// - Setting a blockhash for future blocks (number > block.number) has no effect
+    /// - Setting a blockhash for blocks older than `block.number - 256` has no effect
+    fn set_blockhash(&mut self, block_number: U256, block_hash: B256);
 }
 
 struct _ObjectSafe(dyn DatabaseExt);
@@ -1436,6 +1452,14 @@ impl DatabaseExt for Backend {
 
     fn has_cheatcode_access(&self, account: &Address) -> bool {
         self.inner.cheatcode_access_accounts.contains(account)
+    }
+
+    fn set_blockhash(&mut self, block_number: U256, block_hash: B256) {
+        if let Some(db) = self.active_fork_db_mut() {
+            db.block_hashes.insert(block_number, block_hash);
+        } else {
+            self.mem_db.block_hashes.insert(block_number, block_hash);
+        }
     }
 }
 

@@ -2,7 +2,7 @@ use crate::{
     identifier::{
         AddressIdentity, LocalTraceIdentifier, SingleSignaturesIdentifier, TraceIdentifier,
     },
-    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedCallLog, DecodedCallTrace,
+    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
@@ -17,9 +17,14 @@ use foundry_evm_core::{
         TEST_CONTRACT_ADDRESS,
     },
     decode::RevertDecoder,
+    precompiles::{
+        BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
+        RIPEMD_160, SHA_256,
+    },
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
+use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use rustc_hash::FxHashMap;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 
@@ -159,6 +164,16 @@ impl CallTraceDecoder {
                 (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
                 (CALLER, "DefaultSender".to_string()),
                 (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
+                (EC_RECOVER, "ECRecover".to_string()),
+                (SHA_256, "SHA-256".to_string()),
+                (RIPEMD_160, "RIPEMD-160".to_string()),
+                (IDENTITY, "Identity".to_string()),
+                (MOD_EXP, "ModExp".to_string()),
+                (EC_ADD, "ECAdd".to_string()),
+                (EC_MUL, "ECMul".to_string()),
+                (EC_PAIRING, "ECPairing".to_string()),
+                (BLAKE_2F, "Blake2F".to_string()),
+                (POINT_EVALUATION, "PointEvaluation".to_string()),
             ]
             .into(),
             receive_contracts: Default::default(),
@@ -291,31 +306,33 @@ impl CallTraceDecoder {
         }
     }
 
+    /// Populates the traces with decoded data by mutating the
+    /// [CallTrace] in place. See [CallTraceDecoder::decode_function] and
+    /// [CallTraceDecoder::decode_event] for more details.
+    pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
+        for node in traces {
+            node.trace.decoded = self.decode_function(&node.trace).await;
+            for log in node.logs.iter_mut() {
+                log.decoded = self.decode_event(&log.raw_log).await;
+            }
+        }
+    }
+
+    /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
-        // Decode precompile
-        if let Some((label, func)) = precompiles::decode(trace, 1) {
-            return DecodedCallTrace {
-                label: Some(label),
-                return_data: None,
-                contract: None,
-                func: Some(func),
-            };
+        if let Some(trace) = precompiles::decode(trace, 1) {
+            return trace;
         }
 
-        // Set label
         let label = self.labels.get(&trace.address).cloned();
-
-        // Set contract name
-        let contract = self.contracts.get(&trace.address).cloned();
 
         let cdata = &trace.data;
         if trace.address == DEFAULT_CREATE2_DEPLOYER {
             return DecodedCallTrace {
                 label,
+                call_data: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
                 return_data: (!trace.status.is_ok())
                     .then(|| self.revert_decoder.decode(&trace.output, Some(trace.status))),
-                contract,
-                func: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
             };
         }
 
@@ -336,14 +353,13 @@ impl CallTraceDecoder {
                 }
             };
             let [func, ..] = &functions[..] else {
-                return DecodedCallTrace { label, return_data: None, contract, func: None };
+                return DecodedCallTrace { label, call_data: None, return_data: None };
             };
 
             DecodedCallTrace {
                 label,
-                func: Some(self.decode_function_input(trace, func)),
+                call_data: Some(self.decode_function_input(trace, func)),
                 return_data: self.decode_function_output(trace, functions),
-                contract,
             }
         } else {
             let has_receive = self.receive_contracts.contains(&trace.address);
@@ -352,13 +368,12 @@ impl CallTraceDecoder {
             let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
             DecodedCallTrace {
                 label,
+                call_data: Some(DecodedCallData { signature, args }),
                 return_data: if !trace.success {
                     Some(self.revert_decoder.decode(&trace.output, Some(trace.status)))
                 } else {
                     None
                 },
-                contract,
-                func: Some(DecodedCallData { signature, args }),
             }
         }
     }
@@ -533,8 +548,8 @@ impl CallTraceDecoder {
     }
 
     /// Decodes an event.
-    pub async fn decode_event<'a>(&self, log: &'a LogData) -> DecodedCallLog<'a> {
-        let &[t0, ..] = log.topics() else { return DecodedCallLog::Raw(log) };
+    pub async fn decode_event(&self, log: &LogData) -> DecodedCallLog {
+        let &[t0, ..] = log.topics() else { return DecodedCallLog { name: None, params: None } };
 
         let mut events = Vec::new();
         let events = match self.events.get(&(t0, log.topics().len() - 1)) {
@@ -551,22 +566,24 @@ impl CallTraceDecoder {
         for event in events {
             if let Ok(decoded) = event.decode_log(log, false) {
                 let params = reconstruct_params(event, &decoded);
-                return DecodedCallLog::Decoded(
-                    event.name.clone(),
-                    params
-                        .into_iter()
-                        .zip(event.inputs.iter())
-                        .map(|(param, input)| {
-                            // undo patched names
-                            let name = input.name.clone();
-                            (name, self.apply_label(&param))
-                        })
-                        .collect(),
-                );
+                return DecodedCallLog {
+                    name: Some(event.name.clone()),
+                    params: Some(
+                        params
+                            .into_iter()
+                            .zip(event.inputs.iter())
+                            .map(|(param, input)| {
+                                // undo patched names
+                                let name = input.name.clone();
+                                (name, self.apply_label(&param))
+                            })
+                            .collect(),
+                    ),
+                };
             }
         }
 
-        DecodedCallLog::Raw(log)
+        DecodedCallLog { name: None, params: None }
     }
 
     /// Prefetches function and event signatures into the identifier cache

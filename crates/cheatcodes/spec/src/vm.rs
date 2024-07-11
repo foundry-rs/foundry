@@ -430,6 +430,11 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlobBaseFee() external view returns (uint256 blobBaseFee);
 
+    /// Set blockhash for the current block.
+    /// It only sets the blockhash for blocks where `block.number - 256 <= number < block.number`.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
+
     // -------- Account State --------
 
     /// Sets an address' balance.
@@ -1877,6 +1882,19 @@ interface Vm {
         pure
         returns (bytes32[] memory);
 
+    /// Parses a string of JSON data and coerces it to type corresponding to `typeDescription`.
+    #[cheatcode(group = Json)]
+    function parseJsonType(string calldata json, string calldata typeDescription) external pure returns (bytes memory);
+    /// Parses a string of JSON data at `key` and coerces it to type corresponding to `typeDescription`.
+    #[cheatcode(group = Json)]
+    function parseJsonType(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
+    /// Parses a string of JSON data at `key` and coerces it to type array corresponding to `typeDescription`.
+    #[cheatcode(group = Json)]
+    function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription)
+        external
+        pure
+        returns (bytes memory);
+
     /// Returns an array of all the keys in a JSON object.
     #[cheatcode(group = Json)]
     function parseJsonKeys(string calldata json, string calldata key) external pure returns (string[] memory keys);
@@ -1965,6 +1983,17 @@ interface Vm {
     /// See `serializeJson`.
     #[cheatcode(group = Json)]
     function serializeBytes(string calldata objectKey, string calldata valueKey, bytes[] calldata values)
+        external
+        returns (string memory json);
+    /// See `serializeJson`.
+    #[cheatcode(group = Json)]
+    function serializeJsonType(string calldata typeDescription, bytes memory value)
+        external
+        pure
+        returns (string memory json);
+    /// See `serializeJson`.
+    #[cheatcode(group = Json)]
+    function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value)
         external
         returns (string memory json);
 

@@ -8,21 +8,21 @@ contract UnixTimeTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     // This is really wide because CI sucks.
-    uint256 constant errMargin = 500;
+    uint256 constant errMargin = 1000;
 
     function testUnixTimeAgainstDate() public {
         string[] memory inputs = new string[](2);
         inputs[0] = "date";
-        // OS X does not support precision more than 1 second
+        // OS X does not support precision more than 1 second.
         inputs[1] = "+%s000";
 
         bytes memory res = vm.ffi(inputs);
         uint256 date = vm.parseUint(string(res));
 
-        // Limit precision to 1000 ms
+        // Limit precision to 1000 ms.
         uint256 time = vm.unixTime() / 1000 * 1000;
 
-        assertEq(date, time, ".unixTime() is inaccurate");
+        vm.assertApproxEqAbs(date, time, errMargin, ".unixTime() is inaccurate vs date");
     }
 
     function testUnixTime() public {

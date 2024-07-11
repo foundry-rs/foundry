@@ -1,8 +1,6 @@
 //! Provider-related instantiation and usage utilities.
 
-pub mod retry;
 pub mod runtime_transport;
-pub mod tower;
 
 use crate::{
     provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
@@ -13,7 +11,10 @@ use alloy_provider::{
     Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
 };
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport::utils::guess_local_url;
+use alloy_transport::{
+    layers::{RetryBackoffLayer, RetryBackoffService},
+    utils::guess_local_url,
+};
 use eyre::{Result, WrapErr};
 use foundry_config::NamedChain;
 use reqwest::Url;
@@ -24,7 +25,6 @@ use std::{
     str::FromStr,
     time::Duration,
 };
-use tower::{RetryBackoffLayer, RetryBackoffService};
 use url::ParseError;
 
 /// Helper type alias for a retry provider
@@ -77,7 +77,6 @@ pub struct ProviderBuilder {
     url: Result<Url>,
     chain: NamedChain,
     max_retry: u32,
-    timeout_retry: u32,
     initial_backoff: u64,
     timeout: Duration,
     /// available CUPS
@@ -128,7 +127,6 @@ impl ProviderBuilder {
             url,
             chain: NamedChain::Mainnet,
             max_retry: 8,
-            timeout_retry: 8,
             initial_backoff: 800,
             timeout: REQUEST_TIMEOUT,
             // alchemy max cpus <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
@@ -172,12 +170,6 @@ impl ProviderBuilder {
     /// the already-set value.
     pub fn maybe_initial_backoff(mut self, initial_backoff: Option<u64>) -> Self {
         self.initial_backoff = initial_backoff.unwrap_or(self.initial_backoff);
-        self
-    }
-
-    /// How often to retry a failed request due to connection issues
-    pub fn timeout_retry(mut self, timeout_retry: u32) -> Self {
-        self.timeout_retry = timeout_retry;
         self
     }
 
@@ -239,7 +231,6 @@ impl ProviderBuilder {
             url,
             chain: _,
             max_retry,
-            timeout_retry,
             initial_backoff,
             timeout,
             compute_units_per_second,
@@ -249,12 +240,9 @@ impl ProviderBuilder {
         } = self;
         let url = url?;
 
-        let retry_layer = RetryBackoffLayer::new(
-            max_retry,
-            timeout_retry,
-            initial_backoff,
-            compute_units_per_second,
-        );
+        let retry_layer =
+            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
+
         let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
             .with_headers(headers)
@@ -274,7 +262,6 @@ impl ProviderBuilder {
             url,
             chain: _,
             max_retry,
-            timeout_retry,
             initial_backoff,
             timeout,
             compute_units_per_second,
@@ -284,12 +271,8 @@ impl ProviderBuilder {
         } = self;
         let url = url?;
 
-        let retry_layer = RetryBackoffLayer::new(
-            max_retry,
-            timeout_retry,
-            initial_backoff,
-            compute_units_per_second,
-        );
+        let retry_layer =
+            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
 
         let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)

@@ -39,7 +39,7 @@ If you're experiencing any issues while installing, check out [Getting Help](#ge
 ### Features
 
 -   **Fast & flexible compilation pipeline**
-    -   Automatic Solidity compiler version detection & installation (under `~/.svm`)
+    -   Automatic Solidity compiler version detection & installation
     -   **Incremental compilation & caching**: Only changed files are re-compiled
     -   Parallel compilation
     -   Non-standard directory structures support (e.g. [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829))

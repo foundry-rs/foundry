@@ -116,7 +116,7 @@ contract ParseTomlTest is DSTest {
     }
 
     function test_coercionRevert() public {
-        vm._expectCheatcodeRevert("values at \".nestedObject\" must not be JSON objects");
+        vm._expectCheatcodeRevert("expected uint256, found JSON object");
         vm.parseTomlUint(toml, ".nestedObject");
     }
 

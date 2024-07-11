@@ -60,28 +60,37 @@ impl TestOptions {
         let mut inline_invariant = InlineConfig::<InvariantConfig>::default();
         let mut inline_fuzz = InlineConfig::<FuzzConfig>::default();
 
-        for natspec in natspecs {
-            // Perform general validation
-            validate_profiles(&natspec, &profiles)?;
-            FuzzConfig::validate_configs(&natspec)?;
-            InvariantConfig::validate_configs(&natspec)?;
+        // Validate all natspecs
+        for natspec in &natspecs {
+            validate_profiles(natspec, &profiles)?;
+        }
 
-            // Apply in-line configurations for the current profile
-            let configs: Vec<String> = natspec.current_profile_configs().collect();
-            let c: &str = &natspec.contract;
-            let f: &str = &natspec.function;
-            let line: String = natspec.debug_context();
-
-            match base_fuzz.try_merge(&configs) {
-                Ok(Some(conf)) => inline_fuzz.insert(c, f, conf),
-                Ok(None) => { /* No inline config found, do nothing */ }
-                Err(e) => Err(InlineConfigError { line: line.clone(), source: e })?,
+        // Firstly, apply contract-level configurations
+        for natspec in natspecs.iter().filter(|n| n.function.is_none()) {
+            if let Some(fuzz) = base_fuzz.merge(natspec)? {
+                inline_fuzz.insert_contract(&natspec.contract, fuzz);
             }
 
-            match base_invariant.try_merge(&configs) {
-                Ok(Some(conf)) => inline_invariant.insert(c, f, conf),
-                Ok(None) => { /* No inline config found, do nothing */ }
-                Err(e) => Err(InlineConfigError { line: line.clone(), source: e })?,
+            if let Some(invariant) = base_invariant.merge(natspec)? {
+                inline_invariant.insert_contract(&natspec.contract, invariant);
+            }
+        }
+
+        for (natspec, f) in natspecs.iter().filter_map(|n| n.function.as_ref().map(|f| (n, f))) {
+            // Apply in-line configurations for the current profile
+            let c = &natspec.contract;
+
+            // We might already have inserted contract-level configs above, so respect data already
+            // present in inline configs.
+            let base_fuzz = inline_fuzz.get(c, f).unwrap_or(&base_fuzz);
+            let base_invariant = inline_invariant.get(c, f).unwrap_or(&base_invariant);
+
+            if let Some(fuzz) = base_fuzz.merge(natspec)? {
+                inline_fuzz.insert_fn(c, f, fuzz);
+            }
+
+            if let Some(invariant) = base_invariant.merge(natspec)? {
+                inline_invariant.insert_fn(c, f, invariant);
             }
         }
 
