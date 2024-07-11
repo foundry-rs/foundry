@@ -188,3 +188,53 @@ contract BContractTest is DSTest {
     };
     assert!(!lcov_data.lines().any(valid_line), "{lcov_data}");
 });
+
+forgetest!(test_assert_require_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function checkA() external pure returns (bool) {
+        assert(10 > 2);
+        require(10 > 2, "true");
+        return true;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function testA() external {
+        AContract a = new AContract();
+        bool result = a.checkA();
+        assertTrue(result);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    let lcov_info = prj.root().join("lcov.info");
+    cmd.arg("coverage").args([
+        "--report".to_string(),
+        "lcov".to_string(),
+        "--report-file".to_string(),
+        lcov_info.to_str().unwrap().to_string(),
+    ]);
+    cmd.assert_success();
+    assert!(lcov_info.exists());
+
+    let lcov_data = std::fs::read_to_string(lcov_info).unwrap();
+    // Should find no branch for assert / require, BRF:0 (BRF: branches found).
+    let re = Regex::new(r"BRF:0").unwrap();
+    let valid_line = |line| re.is_match(line);
+    assert!(lcov_data.lines().any(valid_line), "{lcov_data}");
+});
