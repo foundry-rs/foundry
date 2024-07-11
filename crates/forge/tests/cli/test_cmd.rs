@@ -548,7 +548,7 @@ contract Dummy {
     .unwrap();
 
     cmd.args(["test", "--match-path", "src/dummy.sol"]);
-    cmd.assert_success()
+    cmd.assert_success();
 });
 
 forgetest_init!(should_not_shrink_fuzz_failure, |prj, cmd| {

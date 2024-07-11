@@ -285,6 +285,9 @@ interface Vm {
     function parseJsonKeys(string calldata json, string calldata key) external pure returns (string[] memory keys);
     function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);
     function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);
+    function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
+    function parseJsonType(string calldata json, string calldata typeDescription) external pure returns (bytes memory);
+    function parseJsonType(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
     function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
     function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);
     function parseJson(string calldata json) external pure returns (bytes memory abiEncodedData);
@@ -363,6 +366,8 @@ interface Vm {
     function serializeInt(string calldata objectKey, string calldata valueKey, int256 value) external returns (string memory json);
     function serializeInt(string calldata objectKey, string calldata valueKey, int256[] calldata values) external returns (string memory json);
     function serializeJson(string calldata objectKey, string calldata value) external returns (string memory json);
+    function serializeJsonType(string calldata typeDescription, bytes memory value) external pure returns (string memory json);
+    function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value) external returns (string memory json);
     function serializeString(string calldata objectKey, string calldata valueKey, string calldata value) external returns (string memory json);
     function serializeString(string calldata objectKey, string calldata valueKey, string[] calldata values) external returns (string memory json);
     function serializeUintToHex(string calldata objectKey, string calldata valueKey, uint256 value) external returns (string memory json);

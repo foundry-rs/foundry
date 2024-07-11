@@ -41,7 +41,10 @@ use alloy_rpc_types::{
     serde_helpers::JsonStorageKey,
     state::StateOverride,
     trace::{
-        geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
+        geth::{
+            GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
+            GethDebugTracingOptions, GethTrace, NoopFrame,
+        },
         parity::LocalizedTransactionTrace,
     },
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
@@ -73,6 +76,7 @@ use foundry_evm::{
             TxEnv, KECCAK_EMPTY,
         },
     },
+    traces::TracingInspectorConfig,
     utils::new_evm_with_inspector_ref,
     InspectorExt,
 };
@@ -1223,11 +1227,57 @@ impl Backend {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
-        opts: GethDefaultTracingOptions,
-    ) -> Result<DefaultFrame, BlockchainError> {
+        opts: GethDebugTracingCallOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        let GethDebugTracingCallOptions { tracing_options, block_overrides: _, state_overrides: _ } =
+            opts;
+        let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
+
         self.with_database_at(block_request, |state, block| {
-            let mut inspector = Inspector::default().with_steps_tracing();
             let block_number = block.number;
+
+            if let Some(tracer) = tracer {
+                return match tracer {
+                    GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                        GethDebugBuiltInTracerType::CallTracer => {
+                            let call_config = tracer_config
+                                .into_call_config()
+                                .map_err(|e| (RpcError::invalid_params(e.to_string())))?;
+
+                            let mut inspector = Inspector::default().with_config(
+                                TracingInspectorConfig::from_geth_call_config(&call_config),
+                            );
+
+                            let env = self.build_call_env(request, fee_details, block);
+                            let mut evm =
+                                self.new_evm_with_inspector_ref(state, env, &mut inspector);
+                            let ResultAndState { result, state: _ } = evm.transact()?;
+
+                            drop(evm);
+                            let tracing_inspector = inspector.tracer.expect("tracer disappeared");
+
+                            Ok(tracing_inspector
+                                .into_geth_builder()
+                                .geth_call_traces(call_config, result.gas_used())
+                                .into())
+                        }
+                        GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
+                        GethDebugBuiltInTracerType::FourByteTracer |
+                        GethDebugBuiltInTracerType::PreStateTracer |
+                        GethDebugBuiltInTracerType::MuxTracer => {
+                            Err(RpcError::invalid_params("unsupported tracer type").into())
+                        }
+                    },
+
+                    GethDebugTracerType::JsTracer(_code) => {
+                        Err(RpcError::invalid_params("unsupported tracer type").into())
+                    }
+                }
+            }
+
+            // defaults to StructLog tracer used since no tracer is specified
+            let mut inspector =
+                Inspector::default().with_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
             let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
@@ -1244,10 +1294,16 @@ impl Backend {
             };
 
             drop(evm);
-            let tracer = inspector.tracer.expect("tracer disappeared");
+            let tracing_inspector = inspector.tracer.expect("tracer disappeared");
             let return_value = out.as_ref().map(|o| o.data().clone()).unwrap_or_default();
-            let res = tracer.into_geth_builder().geth_traces(gas_used, return_value, opts);
+
             trace!(target: "backend", ?exit_reason, ?out, %gas_used, %block_number, "trace call");
+
+            let res = tracing_inspector
+                .into_geth_builder()
+                .geth_traces(gas_used, return_value, config)
+                .into();
+
             Ok(res)
         })
         .await?

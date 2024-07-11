@@ -623,8 +623,8 @@ impl ClientForkConfig {
         self.provider = Arc::new(
             ProviderBuilder::new(url.as_str())
                 .timeout(self.timeout)
-                .timeout_retry(self.retries)
-                .max_retry(10)
+                // .timeout_retry(self.retries)
+                .max_retry(self.retries)
                 .initial_backoff(self.backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .build()

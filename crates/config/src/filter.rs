@@ -2,6 +2,7 @@
 
 use core::fmt;
 use foundry_compilers::FileFilter;
+use serde::{Deserialize, Serialize};
 use std::{
     convert::Infallible,
     path::{Path, PathBuf},
@@ -95,6 +96,27 @@ impl From<globset::Glob> for GlobMatcher {
         Self::new(glob)
     }
 }
+
+impl Serialize for GlobMatcher {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.glob().glob().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for GlobMatcher {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl PartialEq for GlobMatcher {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for GlobMatcher {}
 
 /// Bundles multiple `SkipBuildFilter` into a single `FileFilter`
 #[derive(Clone, Debug)]

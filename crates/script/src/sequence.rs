@@ -6,7 +6,7 @@ use crate::{
 use alloy_primitives::{hex, Address, TxHash};
 use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use eyre::{ContextCompat, Result, WrapErr};
+use eyre::{eyre, ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::{now, Git};
 use foundry_common::{fs, shell, SELECTOR_LEN};
@@ -307,9 +307,19 @@ impl ScriptSequence {
             self.check_unverified(unverifiable_contracts, verify);
 
             let num_verifications = future_verifications.len();
-            println!("##\nStart verification for ({num_verifications}) contracts",);
+            let mut num_of_successful_verifications = 0;
+            println!("##\nStart verification for ({num_verifications}) contracts");
             for verification in future_verifications {
-                verification.await?;
+                match verification.await {
+                    Ok(_) => {
+                        num_of_successful_verifications += 1;
+                    }
+                    Err(err) => eprintln!("Error during verification: {err:#}"),
+                }
+            }
+
+            if num_of_successful_verifications < num_verifications {
+                return Err(eyre!("Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"))
             }
 
             println!("All ({num_verifications}) contracts were verified!");
