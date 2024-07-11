@@ -118,7 +118,11 @@ pub enum TraceMode {
     Call,
     /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
     ///
-    /// Used for internal functions identification.
+    /// Used for internal functions identification. Does not track memory snapshots.
+    JumpSimple,
+    /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
+    ///
+    /// Same as `JumpSimple`, but tracks memory snapshots as well.
     Jump,
     /// Call trace with complete steps tracing.
     ///
@@ -133,6 +137,10 @@ impl TraceMode {
 
     pub const fn is_call(self) -> bool {
         matches!(self, Self::Call)
+    }
+
+    pub const fn is_jump_simple(self) -> bool {
+        matches!(self, Self::JumpSimple)
     }
 
     pub const fn is_jump(self) -> bool {
@@ -159,6 +167,14 @@ impl TraceMode {
         }
     }
 
+    pub fn with_decode_internal_simple(self, yes: bool) -> Self {
+        if yes {
+            std::cmp::max(self, Self::JumpSimple)
+        } else {
+            self
+        }
+    }
+
     pub fn with_verbosity(self, verbosiy: u8) -> Self {
         if verbosiy >= 3 {
             std::cmp::max(self, Self::Call)
@@ -172,9 +188,9 @@ impl TraceMode {
             None
         } else {
             TracingInspectorConfig {
-                record_steps: self.is_debug() || self.is_jump(),
-                record_memory_snapshots: self.is_debug() || self.is_jump(),
-                record_stack_snapshots: if self.is_debug() || self.is_jump() {
+                record_steps: self >= Self::JumpSimple,
+                record_memory_snapshots: self >= Self::Jump,
+                record_stack_snapshots: if self >= Self::JumpSimple {
                     StackSnapshotType::Full
                 } else {
                     StackSnapshotType::None
@@ -182,8 +198,7 @@ impl TraceMode {
                 record_logs: true,
                 record_state_diff: false,
                 record_returndata_snapshots: self.is_debug(),
-                record_opcodes_filter: self
-                    .is_jump()
+                record_opcodes_filter: (self.is_jump() || self.is_jump_simple())
                     .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),
                 exclude_precompile_calls: false,
             }

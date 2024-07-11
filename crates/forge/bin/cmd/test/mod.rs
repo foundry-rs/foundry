@@ -84,7 +84,7 @@ pub struct TestArgs {
     /// If more than one test matches your specified criteria, you must add additional filters
     /// until only one test is found (see --match-contract and --match-path).
     #[arg(long, value_name = "TEST_FUNCTION")]
-    decode_internal: Option<Regex>,
+    decode_internal: Option<Option<Regex>>,
 
     /// Print a gas report.
     #[arg(long, env = "FORGE_GAS_REPORT")]
@@ -307,12 +307,20 @@ impl TestArgs {
 
         let env = evm_opts.evm_env().await?;
 
+        // If we are provided with test function regex, we are enabling complete internal fns
+        // tracing.
+        let decode_internal = self.decode_internal.as_ref().map_or(false, |v| v.is_some());
+        // If we are provided with just --decode-internal flag, we enable simple tracing (without
+        // memory decoding).
+        let decode_internal_simple = self.decode_internal.is_some();
+
         // Prepare the test builder.
         let should_debug = self.debug.is_some();
         let config = Arc::new(config);
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
-            .set_decode_internal(self.decode_internal.is_some())
+            .set_decode_internal(decode_internal)
+            .set_decode_internal_simple(decode_internal_simple)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
@@ -337,7 +345,10 @@ impl TestArgs {
         };
 
         maybe_override_mt("debug", self.debug.as_ref())?;
-        maybe_override_mt("decode_internal", self.decode_internal.as_ref())?;
+        maybe_override_mt(
+            "decode-internal",
+            self.decode_internal.as_ref().and_then(|v| v.as_ref()),
+        )?;
 
         let libraries = runner.libraries.clone();
         let outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
@@ -391,7 +402,9 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         let num_filtered = runner.matching_test_functions(filter).count();
-        if (self.debug.is_some() || self.decode_internal.is_some()) && num_filtered != 1 {
+        if (self.debug.is_some() || self.decode_internal.as_ref().map_or(false, |v| v.is_some())) &&
+            num_filtered != 1
+        {
             eyre::bail!(
                 "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\
                  Use --match-contract and --match-path to further limit the search.\n\

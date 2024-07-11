@@ -62,6 +62,8 @@ pub struct MultiContractRunner {
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
     pub decode_internal: bool,
+    /// Whether to enable simple steps tracing (without memory recording).
+    pub decode_internal_simple: bool,
     /// Settings related to fuzz and/or invariant tests
     pub test_options: TestOptions,
     /// Whether to enable call isolation
@@ -240,6 +242,7 @@ impl MultiContractRunner {
 
         let trace_mode = TraceMode::default()
             .with_debug(self.debug)
+            .with_decode_internal_simple(self.decode_internal_simple)
             .with_decode_internal(self.decode_internal)
             .with_verbosity(self.evm_opts.verbosity);
 
@@ -307,6 +310,8 @@ pub struct MultiContractRunnerBuilder {
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
     pub decode_internal: bool,
+    /// Whether to enable simple steps tracing (without memory recording).
+    pub decode_internal_simple: bool,
     /// Whether to enable call isolation
     pub isolation: bool,
     /// Settings related to fuzz and/or invariant tests
@@ -326,6 +331,7 @@ impl MultiContractRunnerBuilder {
             isolation: Default::default(),
             test_options: Default::default(),
             decode_internal: Default::default(),
+            decode_internal_simple: Default::default(),
         }
     }
 
@@ -366,6 +372,11 @@ impl MultiContractRunnerBuilder {
 
     pub fn set_decode_internal(mut self, enable: bool) -> Self {
         self.decode_internal = enable;
+        self
+    }
+
+    pub fn set_decode_internal_simple(mut self, enable: bool) -> Self {
+        self.decode_internal_simple = enable;
         self
     }
 
@@ -440,6 +451,7 @@ impl MultiContractRunnerBuilder {
             coverage: self.coverage,
             debug: self.debug,
             decode_internal: self.decode_internal,
+            decode_internal_simple: self.decode_internal_simple,
             test_options: self.test_options.unwrap_or_default(),
             isolation: self.isolation,
             known_contracts,
