@@ -1,3 +1,4 @@
+use foundry_test_utils::str;
 use regex::Regex;
 
 forgetest!(basic_coverage, |_prj, cmd| {
@@ -222,19 +223,32 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    let lcov_info = prj.root().join("lcov.info");
-    cmd.arg("coverage").args([
-        "--report".to_string(),
-        "lcov".to_string(),
-        "--report-file".to_string(),
-        lcov_info.to_str().unwrap().to_string(),
-    ]);
-    cmd.assert_success();
-    assert!(lcov_info.exists());
+    // Assert 100% coverage.
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+[..]
+[..]
+[..]
+[..]
+[..]
+[..]
+[..]
+[..]
+[..]
+[..]
+[..]
+[..]
+[..]
+[..]
+[..]
+╭---------------+--------+--------+---------╮
+|   Test Suite  | Passed | Failed | Skipped |
++===========================================+
+| AContractTest |    1   |    0   |    0    |
+╰---------------+--------+--------+---------╯
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (3/3) | 100.00% (3/3) | 100.00% (0/0) | 100.00% (1/1) |
+| Total             | 100.00% (3/3) | 100.00% (3/3) | 100.00% (0/0) | 100.00% (1/1) |
 
-    let lcov_data = std::fs::read_to_string(lcov_info).unwrap();
-    // Should find no branch for assert / require, BRF:0 (BRF: branches found).
-    let re = Regex::new(r"BRF:0").unwrap();
-    let valid_line = |line| re.is_match(line);
-    assert!(lcov_data.lines().any(valid_line), "{lcov_data}");
+"#]]);
 });
