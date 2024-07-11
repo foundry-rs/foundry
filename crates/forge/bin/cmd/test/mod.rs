@@ -8,8 +8,10 @@ use forge::{
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
-        decode_trace_arena, identifier::SignaturesIdentifier, render_trace_arena,
-        CallTraceDecoderBuilder, TraceKind,
+        debug::{ContractSources, DebugTraceIdentifier},
+        decode_trace_arena,
+        identifier::SignaturesIdentifier,
+        render_trace_arena, CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
@@ -17,15 +19,12 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{
-    compile::{ContractSources, ProjectCompiler},
-    evm::EvmArgs,
-    fs, shell,
-};
+use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
     utils::source_files_iter,
+    ProjectCompileOutput,
 };
 use foundry_config::{
     figment,
@@ -76,6 +75,20 @@ pub struct TestArgs {
     /// For more fine-grained control of which fuzz case is run, see forge run.
     #[arg(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
+
+    /// Whether to identify internal functions in traces.
+    ///
+    /// If no argument is passed to this flag, it will trace internal functions scope and decode
+    /// stack parameters, but parameters stored in memory (such as bytes or arrays) will not be
+    /// decoded.
+    ///
+    /// To decode memory parameters, you should pass an argument with a test function name,
+    /// similarly to --debug and --match-test.
+    ///
+    /// If more than one test matches your specified criteria, you must add additional filters
+    /// until only one test is found (see --match-contract and --match-path).
+    #[arg(long, value_name = "TEST_FUNCTION")]
+    decode_internal: Option<Option<Regex>>,
 
     /// Print a gas report.
     #[arg(long, env = "FORGE_GAS_REPORT")]
@@ -298,11 +311,25 @@ impl TestArgs {
 
         let env = evm_opts.evm_env().await?;
 
+        // Choose the internal function tracing mode, if --decode-internal is provided.
+        let decode_internal = if let Some(maybe_fn) = self.decode_internal.as_ref() {
+            if maybe_fn.is_some() {
+                // If function filter is provided, we enable full tracing.
+                InternalTraceMode::Full
+            } else {
+                // If no function filter is provided, we enable simple tracing.
+                InternalTraceMode::Simple
+            }
+        } else {
+            InternalTraceMode::None
+        };
+
         // Prepare the test builder.
         let should_debug = self.debug.is_some();
         let config = Arc::new(config);
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
+            .set_decode_internal(decode_internal)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)
@@ -311,19 +338,29 @@ impl TestArgs {
             .enable_isolation(evm_opts.isolate)
             .build(project_root, &output, env, evm_opts)?;
 
-        if let Some(debug_test_pattern) = &self.debug {
-            let test_pattern = &mut filter.args_mut().test_pattern;
-            if test_pattern.is_some() {
-                eyre::bail!(
-                    "Cannot specify both --debug and --match-test. \
-                     Use --match-contract and --match-path to further limit the search instead."
-                );
+        let mut maybe_override_mt = |flag, maybe_regex: Option<&Regex>| {
+            if let Some(regex) = maybe_regex {
+                let test_pattern = &mut filter.args_mut().test_pattern;
+                if test_pattern.is_some() {
+                    eyre::bail!(
+                        "Cannot specify both --{flag} and --match-test. \
+                        Use --match-contract and --match-path to further limit the search instead."
+                    );
+                }
+                *test_pattern = Some(regex.clone());
             }
-            *test_pattern = Some(debug_test_pattern.clone());
-        }
+
+            Ok(())
+        };
+
+        maybe_override_mt("debug", self.debug.as_ref())?;
+        maybe_override_mt(
+            "decode-internal",
+            self.decode_internal.as_ref().and_then(|v| v.as_ref()),
+        )?;
 
         let libraries = runner.libraries.clone();
-        let outcome = self.run_tests(runner, config, verbosity, &filter).await?;
+        let outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
 
         if should_debug {
             // Get first non-empty suite result. We will have only one such entry.
@@ -346,9 +383,11 @@ impl TestArgs {
                 )
                 .sources(sources)
                 .breakpoints(test_result.breakpoints.clone());
+
             if let Some(decoder) = &outcome.last_run_decoder {
                 builder = builder.decoder(decoder);
             }
+
             let mut debugger = builder.build();
             debugger.try_run()?;
         }
@@ -363,6 +402,7 @@ impl TestArgs {
         config: Arc<Config>,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
+        output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         if self.list {
             return list(runner, filter, self.json);
@@ -371,7 +411,9 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         let num_filtered = runner.matching_test_functions(filter).count();
-        if self.debug.is_some() && num_filtered != 1 {
+        if (self.debug.is_some() || self.decode_internal.as_ref().map_or(false, |v| v.is_some())) &&
+            num_filtered != 1
+        {
             eyre::bail!(
                 "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\
                  Use --match-contract and --match-path to further limit the search.\n\
@@ -387,6 +429,8 @@ impl TestArgs {
 
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
         let known_contracts = runner.known_contracts.clone();
+
+        let libraries = runner.libraries.clone();
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -416,6 +460,12 @@ impl TestArgs {
                 Config::foundry_cache_dir(),
                 config.offline,
             )?);
+        }
+
+        if self.decode_internal.is_some() {
+            let sources =
+                ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
+            builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
         }
         let mut decoder = builder.build();
 
