@@ -350,8 +350,7 @@ impl CallTraceDecoder {
             return DecodedCallTrace {
                 label,
                 call_data: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
-                return_data: (!trace.status.is_ok())
-                    .then(|| self.revert_decoder.decode(&trace.output, Some(trace.status))),
+                return_data: self.default_return_data(trace),
             };
         }
 
@@ -372,7 +371,11 @@ impl CallTraceDecoder {
                 }
             };
             let [func, ..] = &functions[..] else {
-                return DecodedCallTrace { label, call_data: None, return_data: None };
+                return DecodedCallTrace {
+                    label,
+                    call_data: None,
+                    return_data: self.default_return_data(trace),
+                };
             };
 
             DecodedCallTrace {
@@ -388,11 +391,7 @@ impl CallTraceDecoder {
             DecodedCallTrace {
                 label,
                 call_data: Some(DecodedCallData { signature, args }),
-                return_data: if !trace.success {
-                    Some(self.revert_decoder.decode(&trace.output, Some(trace.status)))
-                } else {
-                    None
-                },
+                return_data: self.default_return_data(trace),
             }
         }
     }
@@ -410,7 +409,7 @@ impl CallTraceDecoder {
 
             if args.is_none() {
                 if let Ok(v) = func.abi_decode_input(&trace.data[SELECTOR_LEN..], false) {
-                    args = Some(v.iter().map(|value| self.apply_label(value)).collect());
+                    args = Some(v.iter().map(|value| self.format_value(value)).collect());
                 }
             }
         }
@@ -523,34 +522,32 @@ impl CallTraceDecoder {
 
     /// Decodes a function's output into the given trace.
     fn decode_function_output(&self, trace: &CallTrace, funcs: &[Function]) -> Option<String> {
-        let data = &trace.output;
-        if trace.success {
-            if trace.address == CHEATCODE_ADDRESS {
-                if let Some(decoded) =
-                    funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func))
-                {
-                    return Some(decoded);
-                }
-            }
-
-            if let Some(values) =
-                funcs.iter().find_map(|func| func.abi_decode_output(data, false).ok())
-            {
-                // Functions coming from an external database do not have any outputs specified,
-                // and will lead to returning an empty list of values.
-                if values.is_empty() {
-                    return None;
-                }
-
-                return Some(
-                    values.iter().map(|value| self.apply_label(value)).format(", ").to_string(),
-                );
-            }
-
-            None
-        } else {
-            Some(self.revert_decoder.decode(data, Some(trace.status)))
+        if !trace.success {
+            return self.default_return_data(trace);
         }
+
+        if trace.address == CHEATCODE_ADDRESS {
+            if let Some(decoded) = funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func))
+            {
+                return Some(decoded);
+            }
+        }
+
+        if let Some(values) =
+            funcs.iter().find_map(|func| func.abi_decode_output(&trace.output, false).ok())
+        {
+            // Functions coming from an external database do not have any outputs specified,
+            // and will lead to returning an empty list of values.
+            if values.is_empty() {
+                return None;
+            }
+
+            return Some(
+                values.iter().map(|value| self.format_value(value)).format(", ").to_string(),
+            );
+        }
+
+        None
     }
 
     /// Custom decoding for cheatcode outputs.
@@ -564,6 +561,11 @@ impl CallTraceDecoder {
             _ => None,
         }
         .map(Into::into)
+    }
+
+    /// The default decoded return data for a trace.
+    fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
+        (!trace.success).then(|| self.revert_decoder.decode(&trace.output, Some(trace.status)))
     }
 
     /// Decodes an event.
@@ -594,7 +596,7 @@ impl CallTraceDecoder {
                             .map(|(param, input)| {
                                 // undo patched names
                                 let name = input.name.clone();
-                                (name, self.apply_label(&param))
+                                (name, self.format_value(&param))
                             })
                             .collect(),
                     ),
@@ -628,7 +630,8 @@ impl CallTraceDecoder {
         identifier.write().await.identify_functions(funcs_it).await;
     }
 
-    fn apply_label(&self, value: &DynSolValue) -> String {
+    /// Pretty-prints a value.
+    fn format_value(&self, value: &DynSolValue) -> String {
         if let DynSolValue::Address(addr) = value {
             if let Some(label) = self.labels.get(addr) {
                 return format!("{label}: [{addr}]");
