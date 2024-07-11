@@ -286,6 +286,7 @@ macro_rules! impl_from {
 
 impl_from!(
     alloy_sol_types::Error,
+    alloy_dyn_abi::Error,
     alloy_primitives::SignatureError,
     FsPathError,
     hex::FromHexError,

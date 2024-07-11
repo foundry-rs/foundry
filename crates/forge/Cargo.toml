@@ -40,7 +40,7 @@ revm-inspectors.workspace = true
 
 comfy-table = "7"
 eyre.workspace = true
-proptest = "1"
+proptest.workspace = true
 rayon.workspace = true
 serde.workspace = true
 tracing.workspace = true
