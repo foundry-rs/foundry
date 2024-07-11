@@ -108,6 +108,27 @@ pub fn load_contracts<'a>(
     contracts
 }
 
+/// Different kinds of internal functions tracing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum InternalTraceMode {
+    #[default]
+    None,
+    /// Traces internal functions without decoding inputs/outputs from memory.
+    Simple,
+    /// Same as `Simple`, but also tracks memory snapshots.
+    Full,
+}
+
+impl From<InternalTraceMode> for TraceMode {
+    fn from(mode: InternalTraceMode) -> Self {
+        match mode {
+            InternalTraceMode::None => Self::None,
+            InternalTraceMode::Simple => Self::JumpSimple,
+            InternalTraceMode::Full => Self::Jump,
+        }
+    }
+}
+
 // Different kinds of traces used by different foundry components.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum TraceMode {
@@ -159,20 +180,8 @@ impl TraceMode {
         }
     }
 
-    pub fn with_decode_internal(self, yes: bool) -> Self {
-        if yes {
-            std::cmp::max(self, Self::Jump)
-        } else {
-            self
-        }
-    }
-
-    pub fn with_decode_internal_simple(self, yes: bool) -> Self {
-        if yes {
-            std::cmp::max(self, Self::JumpSimple)
-        } else {
-            self
-        }
+    pub fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
+        std::cmp::max(self, mode.into())
     }
 
     pub fn with_verbosity(self, verbosiy: u8) -> Self {

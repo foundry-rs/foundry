@@ -11,7 +11,7 @@ use forge::{
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena,
         identifier::SignaturesIdentifier,
-        render_trace_arena, CallTraceDecoderBuilder, TraceKind,
+        render_trace_arena, CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions, TestOptionsBuilder,
 };
@@ -311,12 +311,18 @@ impl TestArgs {
 
         let env = evm_opts.evm_env().await?;
 
-        // If we are provided with test function regex, we are enabling complete internal fns
-        // tracing.
-        let decode_internal = self.decode_internal.as_ref().map_or(false, |v| v.is_some());
-        // If we are provided with just --decode-internal flag, we enable simple tracing (without
-        // memory decoding).
-        let decode_internal_simple = self.decode_internal.is_some();
+        // Choose the internal function tracing mode, if --decode-internal is provided.
+        let decode_internal = if let Some(maybe_fn) = self.decode_internal.as_ref() {
+            if maybe_fn.is_some() {
+                // If function filter is provided, we enable full tracing.
+                InternalTraceMode::Full
+            } else {
+                // If no function filter is provided, we enable simple tracing.
+                InternalTraceMode::Simple
+            }
+        } else {
+            InternalTraceMode::None
+        };
 
         // Prepare the test builder.
         let should_debug = self.debug.is_some();
@@ -324,7 +330,6 @@ impl TestArgs {
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
-            .set_decode_internal_simple(decode_internal_simple)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(config.evm_spec_id())
             .sender(evm_opts.sender)

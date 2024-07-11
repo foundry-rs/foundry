@@ -2,7 +2,7 @@ use crate::executors::{Executor, ExecutorBuilder};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{utils::evm_spec_id, Chain, Config};
 use foundry_evm_core::{backend::Backend, fork::CreateFork, opts::EvmOpts};
-use foundry_evm_traces::TraceMode;
+use foundry_evm_traces::{InternalTraceMode, TraceMode};
 use revm::primitives::{Env, SpecId};
 use std::ops::{Deref, DerefMut};
 
@@ -20,7 +20,12 @@ impl TracingExecutor {
         decode_internal: bool,
     ) -> Self {
         let db = Backend::spawn(fork);
-        let trace_mode = TraceMode::Call.with_debug(debug).with_decode_internal(decode_internal);
+        let trace_mode =
+            TraceMode::Call.with_debug(debug).with_decode_internal(if decode_internal {
+                InternalTraceMode::Full
+            } else {
+                InternalTraceMode::None
+            });
         Self {
             // configures a bare version of the evm executor: no cheatcode inspector is enabled,
             // tracing will be enabled only for the targeted transaction
