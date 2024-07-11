@@ -42,8 +42,6 @@ use std::{
 
 const DEFAULT_HISTORY_LIMIT: usize = 500;
 const MIN_HISTORY_LIMIT: usize = 10;
-// 1hr of up-time at lowest 1s interval
-const MAX_ON_DISK_HISTORY_LIMIT: usize = 3_600;
 
 /// Represents the complete state of single block
 pub struct InMemoryBlockStates {
@@ -75,7 +73,7 @@ impl InMemoryBlockStates {
             on_disk_states: Default::default(),
             in_memory_limit: limit,
             min_in_memory_limit: limit.min(MIN_HISTORY_LIMIT),
-            max_on_disk_limit: MAX_ON_DISK_HISTORY_LIMIT,
+            max_on_disk_limit: limit,
             oldest_on_disk: Default::default(),
             present: Default::default(),
             disk_cache: Default::default(),
