@@ -721,7 +721,8 @@ impl Backend {
         let at = self.env.read().block.clone();
         let best_number = self.blockchain.storage.read().best_number;
         let blocks = self.blockchain.storage.read().serialized_blocks();
-        let state = self.db.read().await.dump_state(at, best_number, blocks)?;
+        let transactions = self.blockchain.storage.read().serialized_transactions();
+        let state = self.db.read().await.dump_state(at, best_number, blocks, transactions)?;
         state.ok_or_else(|| {
             RpcError::invalid_params("Dumping state not supported with the current configuration")
                 .into()
@@ -758,6 +759,7 @@ impl Backend {
         }
 
         self.blockchain.storage.write().load_blocks(state.blocks.clone());
+        self.blockchain.storage.write().load_transactions(state.transactions.clone());
 
         Ok(true)
     }
