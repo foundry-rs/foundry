@@ -1280,3 +1280,23 @@ async fn test_immutable_fork_transaction_hash() {
         assert_eq!(tx.inner.hash.to_string(), expected.0.to_string());
     }
 }
+
+// <https://github.com/foundry-rs/foundry/issues/4700>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_query_at_fork_block() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+    let info = api.anvil_node_info().await.unwrap();
+    let number = info.fork_config.fork_block_number.unwrap();
+    assert_eq!(number, BLOCK_NUMBER);
+
+    let address = Address::random();
+
+    let balance = provider.get_balance(address).await.unwrap();
+    api.evm_mine(None).await.unwrap();
+    api.anvil_set_balance(address, balance + U256::from(1)).await.unwrap();
+
+    let balance_before = provider.get_balance(address).block_id(BlockId::number(number)).await.unwrap();
+
+    assert_eq!(balance_before, balance);
+}
