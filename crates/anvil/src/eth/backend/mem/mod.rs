@@ -1788,43 +1788,23 @@ impl Backend {
         let block_number: U256 = U256::from(self.convert_block_number(block_number));
 
         if block_number < self.env.read().block.number {
+            if let Some((block_hash, block)) = self
+                .block_by_number(BlockNumber::Number(block_number.to::<u64>()))
+                .await?
+                .and_then(|block| Some((block.header.hash?, block)))
             {
-                let mut states = self.states.write();
-
-                if let Some((state, block)) = self
-                    .get_block(block_number.to::<u64>())
-                    .and_then(|block| Some((states.get(&block.header.hash_slow())?, block)))
-                {
+                if let Some(state) = self.states.write().get(&block_hash) {
                     let block = BlockEnv {
-                        number: U256::from(block.header.number),
-                        coinbase: block.header.beneficiary,
+                        number: block_number,
+                        coinbase: block.header.miner,
                         timestamp: U256::from(block.header.timestamp),
                         difficulty: block.header.difficulty,
-                        prevrandao: Some(block.header.mix_hash),
+                        prevrandao: block.header.mix_hash,
                         basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
                         gas_limit: U256::from(block.header.gas_limit),
                         ..Default::default()
                     };
                     return Ok(f(Box::new(state), block));
-                }
-            }
-
-            // there's an edge case in forking mode if the requested `block_number` is __exactly__
-            // the forked block, which should be fetched from remote but since we allow genesis
-            // accounts this may not be accurate data because an account could be provided via
-            // genesis
-            // So this provides calls the given provided function `f` with a genesis aware database
-            if let Some(fork) = self.get_fork() {
-                if block_number == U256::from(fork.block_number()) {
-                    let mut block = self.env.read().block.clone();
-                    let db = self.db.read().await;
-                    let gen_db = self.genesis.state_db_at_genesis(Box::new(&*db));
-
-                    block.number = block_number;
-                    block.timestamp = U256::from(fork.timestamp());
-                    block.basefee = U256::from(fork.base_fee().unwrap_or_default());
-
-                    return Ok(f(Box::new(&gen_db), block));
                 }
             }
 
