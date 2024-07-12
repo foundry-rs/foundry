@@ -1,4 +1,4 @@
-use foundry_test_utils::str;
+use foundry_test_utils::{assert_data_eq, str};
 
 forgetest!(basic_coverage, |_prj, cmd| {
     cmd.args(["coverage"]);
@@ -209,4 +209,65 @@ contract AContractTest is DSTest {
 | Total             | 100.00% (3/3) | 100.00% (3/3) | 100.00% (0/0) | 100.00% (1/1) |
 
 "#]]);
+});
+
+forgetest!(test_line_hit_not_doubled, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    int public i;
+
+    function foo() public {
+        i = 1;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function testFoo() public {
+        AContract a = new AContract();
+        a.foo();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    let lcov_info = prj.root().join("lcov.info");
+    cmd.arg("coverage").args([
+        "--report".to_string(),
+        "lcov".to_string(),
+        "--report-file".to_string(),
+        lcov_info.to_str().unwrap().to_string(),
+    ]);
+    cmd.assert_success();
+    assert!(lcov_info.exists());
+
+    // We want to make sure DA:8,1 is added only once so line hit is not doubled.
+    assert_data_eq!(
+        std::fs::read_to_string(lcov_info).unwrap(),
+        str![[r#"TN:
+SF:src/AContract.sol
+FN:7,AContract.foo
+FNDA:1,AContract.foo
+DA:8,1
+FNF:1
+FNH:1
+LF:1
+LH:1
+BRF:0
+BRH:0
+end[..]
+"#]]
+    );
 });
