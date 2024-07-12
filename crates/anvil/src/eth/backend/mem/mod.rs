@@ -54,7 +54,7 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::eth::{
-    block::{Block, BlockInfo},
+    block::{self, Block, BlockInfo},
     transaction::{
         DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
         TransactionInfo, TypedReceipt, TypedTransaction,
@@ -1791,7 +1791,25 @@ impl Backend {
             {
                 // 1. See if state is available, if it is, use the read lock
                 // 2. If not, we need to retrieve the state via a snapshot
-                let mut states = self.states.write();
+                let states = self.states.read();
+
+                if let Some(block) = self.get_block(block_number.to::<u64>()) {
+                    if let Some(state) = states.get(&block.header.hash_slow()) {
+                        let block = BlockEnv {
+                            number: U256::from(block.header.number),
+                            coinbase: block.header.beneficiary,
+                            timestamp: U256::from(block.header.timestamp),
+                            difficulty: block.header.difficulty,
+                            prevrandao: Some(block.header.mix_hash),
+                            basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
+                            gas_limit: U256::from(block.header.gas_limit),
+                            ..Default::default()
+                        };
+                        return Ok(f(Box::new(state), block));
+                    } else {
+                        let states = self.states.write();
+                    }
+                }
 
                 if let Some((state, block)) = self
                     .get_block(block_number.to::<u64>())
