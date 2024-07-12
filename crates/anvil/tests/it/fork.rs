@@ -4,7 +4,7 @@ use crate::{
     abi::{Greeter, ERC721},
     utils::{http_provider, http_provider_with_signer},
 };
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{address, bytes, Address, Bytes, TxHash, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -1300,4 +1300,46 @@ async fn test_fork_query_at_fork_block() {
         provider.get_balance(address).block_id(BlockId::number(number)).await.unwrap();
 
     assert_eq!(balance_before, balance);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/4173>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reset_dev_account_nonce() {
+    let config: NodeConfig = fork_config();
+    let address = config.genesis_accounts[0].address();
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let info = api.anvil_node_info().await.unwrap();
+    let number = info.fork_config.fork_block_number.unwrap();
+    assert_eq!(number, BLOCK_NUMBER);
+
+    let nonce_before = provider.get_transaction_count(address).await.unwrap();
+
+    // Reset to older block with other nonce
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: None,
+        block_number: Some(BLOCK_NUMBER - 1_000_000),
+    }))
+    .await
+    .unwrap();
+
+    let nonce_after = provider.get_transaction_count(address).await.unwrap();
+
+    assert!(nonce_before > nonce_after);
+
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(address)
+                .to(address)
+                .nonce(nonce_after)
+                .gas_limit(21000u128),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    assert!(receipt.status());
 }
