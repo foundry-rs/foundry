@@ -586,7 +586,7 @@ mod tests {
         for idx in 0..num_states {
             let hash = B256::from(U256::from(idx));
             let addr = Address::from_word(hash);
-            let loaded = storage.get(&hash).unwrap();
+            let loaded = storage.get_and_initialize_from_hash(&hash).unwrap();
             let acc = loaded.basic_ref(addr).unwrap().unwrap();
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, U256::from(balance));

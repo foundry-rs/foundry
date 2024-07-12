@@ -1794,7 +1794,6 @@ impl Backend {
                 // and loading the state with a write lock
                 let states = self.states.read();
 
-                // try the read lock
                 if let Some(block) = self.get_block(block_number.to::<u64>()) {
                     if let Some(state) = states.get(&block.header.hash_slow()) {
                         let block = BlockEnv {
@@ -1808,7 +1807,6 @@ impl Backend {
                             ..Default::default()
                         };
                         return Ok(f(Box::new(state), block));
-                    // get via write lock
                     } else {
                         let mut states = self.states.write();
                         if let Some(state) =
