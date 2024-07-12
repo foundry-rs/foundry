@@ -205,9 +205,9 @@ impl ChiselSession {
     ///
     /// Optionally, an owned instance of the loaded chisel session.
     pub fn load(id: &str) -> Result<Self> {
-        let cache_dir = ChiselSession::cache_dir()?;
+        let cache_dir = Self::cache_dir()?;
         let contents = std::fs::read_to_string(Path::new(&format!("{cache_dir}chisel-{id}.json")))?;
-        let chisel_env: ChiselSession = serde_json::from_str(&contents)?;
+        let chisel_env: Self = serde_json::from_str(&contents)?;
         Ok(chisel_env)
     }
 
@@ -241,13 +241,13 @@ impl ChiselSession {
     pub fn latest() -> Result<Self> {
         let last_session = Self::latest_cached_session()?;
         let last_session_contents = std::fs::read_to_string(Path::new(&last_session))?;
-        let chisel_env: ChiselSession = serde_json::from_str(&last_session_contents)?;
+        let chisel_env: Self = serde_json::from_str(&last_session_contents)?;
         Ok(chisel_env)
     }
 }
 
 /// Generic helper function that attempts to convert a type that has
-/// an [Into<OffsetDateTime>] implementation into a formatted date string.
+/// an [`Into<OffsetDateTime>`] implementation into a formatted date string.
 fn systemtime_strftime<T>(dt: T, format: &str) -> Result<String>
 where
     T: Into<OffsetDateTime>,

@@ -1,17 +1,15 @@
 use alloy_primitives::U256;
-use alloy_providers::tmp::TempProvider;
+use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
-use cast::revm::primitives::EnvWithHandlerCfg;
+use cast::{revm::primitives::EnvWithHandlerCfg, traces::TraceKind};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    init_progress,
     opts::RpcOpts,
-    update_progress,
-    utils::{handle_traces, TraceResult},
+    utils::{handle_traces, init_progress, TraceResult},
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
-use foundry_compilers::EvmVersion;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
     executors::{EvmError, TracingExecutor},
@@ -28,6 +26,10 @@ pub struct RunArgs {
     /// Opens the transaction in the debugger.
     #[arg(long, short)]
     debug: bool,
+
+    /// Whether to identify internal functions in traces.
+    #[arg(long)]
+    decode_internal: bool,
 
     /// Print out opcode traces.
     #[arg(long, short)]
@@ -90,7 +92,7 @@ impl RunArgs {
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
 
-        let provider = foundry_common::provider::alloy::ProviderBuilder::new(
+        let provider = foundry_common::provider::ProviderBuilder::new(
             &config.get_rpc_url_or_localhost_http()?,
         )
         .compute_units_per_second_opt(compute_units_per_second)
@@ -100,42 +102,52 @@ impl RunArgs {
         let tx = provider
             .get_transaction_by_hash(tx_hash)
             .await
-            .wrap_err_with(|| format!("tx not found: {:?}", tx_hash))?;
+            .wrap_err_with(|| format!("tx not found: {tx_hash:?}"))?
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if is_known_system_sender(tx.from) ||
-            tx.transaction_type.map(|ty| ty.to::<u64>()) == Some(SYSTEM_TRANSACTION_TYPE)
-        {
+        if is_known_system_sender(tx.from) || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE) {
             return Err(eyre::eyre!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
                 tx.hash
             ));
         }
 
-        let tx_block_number = tx
-            .block_number
-            .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?
-            .to::<u64>();
+        let tx_block_number =
+            tx.block_number.ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
+
+        // fetch the block the transaction was mined in
+        let block = provider.get_block(tx_block_number.into(), true.into()).await?;
 
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
 
         let (mut env, fork, chain) = TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
-        let mut executor = TracingExecutor::new(env.clone(), fork, self.evm_version, self.debug);
+        let mut evm_version = self.evm_version;
 
         env.block.number = U256::from(tx_block_number);
 
-        let block = provider.get_block(tx_block_number.into(), true).await?;
-        if let Some(ref block) = block {
-            env.block.timestamp = block.header.timestamp;
+        if let Some(block) = &block {
+            env.block.timestamp = U256::from(block.header.timestamp);
             env.block.coinbase = block.header.miner;
             env.block.difficulty = block.header.difficulty;
             env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-            env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
-            env.block.gas_limit = block.header.gas_limit;
+            env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
+            env.block.gas_limit = U256::from(block.header.gas_limit);
+
+            // TODO: we need a smarter way to map the block to the corresponding evm_version for
+            // commonly used chains
+            if evm_version.is_none() {
+                // if the block has the excess_blob_gas field, we assume it's a Cancun block
+                if block.header.excess_blob_gas.is_some() {
+                    evm_version = Some(EvmVersion::Cancun);
+                }
+            }
         }
 
+        let mut executor =
+            TracingExecutor::new(env.clone(), fork, evm_version, self.debug, self.decode_internal);
         let mut env =
             EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 
@@ -144,7 +156,7 @@ impl RunArgs {
             println!("Executing previous transactions from the block.");
 
             if let Some(block) = block {
-                let pb = init_progress!(block.transactions, "tx");
+                let pb = init_progress(block.transactions.len() as u64, "tx");
                 pb.set_position(0);
 
                 let BlockTransactions::Full(txs) = block.transactions else {
@@ -156,10 +168,9 @@ impl RunArgs {
                     // we skip them otherwise this would cause
                     // reverts
                     if is_known_system_sender(tx.from) ||
-                        tx.transaction_type.map(|ty| ty.to::<u64>()) ==
-                            Some(SYSTEM_TRANSACTION_TYPE)
+                        tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                     {
-                        update_progress!(pb, index);
+                        pb.set_position((index + 1) as u64);
                         continue;
                     }
                     if tx.hash == tx_hash {
@@ -170,7 +181,7 @@ impl RunArgs {
 
                     if let Some(to) = tx.to {
                         trace!(tx=?tx.hash,?to, "executing previous call transaction");
-                        executor.commit_tx_with_env(env.clone()).wrap_err_with(|| {
+                        executor.transact_with_env(env.clone()).wrap_err_with(|| {
                             format!(
                                 "Failed to execute transaction: {:?} in block {}",
                                 tx.hash, env.block.number
@@ -194,7 +205,7 @@ impl RunArgs {
                         }
                     }
 
-                    update_progress!(pb, index);
+                    pb.set_position((index + 1) as u64);
                 }
             }
         }
@@ -207,17 +218,14 @@ impl RunArgs {
 
             if let Some(to) = tx.to {
                 trace!(tx=?tx.hash, to=?to, "executing call transaction");
-                TraceResult::from(executor.commit_tx_with_env(env)?)
+                TraceResult::from_raw(executor.transact_with_env(env)?, TraceKind::Execution)
             } else {
                 trace!(tx=?tx.hash, "executing create transaction");
-                match executor.deploy_with_env(env, None) {
-                    Ok(res) => TraceResult::from(res),
-                    Err(err) => TraceResult::try_from(err)?,
-                }
+                TraceResult::try_from(executor.deploy_with_env(env, None))?
             }
         };
 
-        handle_traces(result, &config, chain, self.label, self.debug).await?;
+        handle_traces(result, &config, chain, self.label, self.debug, self.decode_internal).await?;
 
         Ok(())
     }

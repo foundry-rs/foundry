@@ -1,6 +1,6 @@
 //! Forge tests for core functionality.
 
-use crate::config::*;
+use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use forge::result::SuiteResult;
 use foundry_evm::traces::TraceKind;
 use foundry_test_utils::Filter;
@@ -9,14 +9,14 @@ use std::{collections::BTreeMap, env};
 #[tokio::test(flavor = "multi_thread")]
 async fn test_core() {
     let filter = Filter::new(".*", ".*", ".*core");
-    let mut runner = runner();
+    let mut runner = TEST_DATA_DEFAULT.runner();
     let results = runner.test_collect(&filter);
 
     assert_multiple(
         &results,
         BTreeMap::from([
             (
-                "core/FailingSetup.t.sol:FailingSetupTest",
+                "default/core/FailingSetup.t.sol:FailingSetupTest",
                 vec![(
                     "setUp()",
                     false,
@@ -26,7 +26,7 @@ async fn test_core() {
                 )],
             ),
             (
-                "core/MultipleSetup.t.sol:MultipleSetup",
+                "default/core/MultipleSetup.t.sol:MultipleSetup",
                 vec![(
                     "setUp()",
                     false,
@@ -36,34 +36,37 @@ async fn test_core() {
                 )],
             ),
             (
-                "core/Reverting.t.sol:RevertingTest",
+                "default/core/Reverting.t.sol:RevertingTest",
                 vec![("testFailRevert()", true, None, None, None)],
             ),
             (
-                "core/SetupConsistency.t.sol:SetupConsistencyCheck",
+                "default/core/SetupConsistency.t.sol:SetupConsistencyCheck",
                 vec![
                     ("testAdd()", true, None, None, None),
                     ("testMultiply()", true, None, None, None),
                 ],
             ),
             (
-                "core/DSStyle.t.sol:DSStyleTest",
+                "default/core/DSStyle.t.sol:DSStyleTest",
                 vec![("testFailingAssertions()", true, None, None, None)],
             ),
             (
-                "core/ContractEnvironment.t.sol:ContractEnvironmentTest",
+                "default/core/ContractEnvironment.t.sol:ContractEnvironmentTest",
                 vec![
                     ("testAddresses()", true, None, None, None),
                     ("testEnvironment()", true, None, None, None),
                 ],
             ),
             (
-                "core/PaymentFailure.t.sol:PaymentFailureTest",
+                "default/core/PaymentFailure.t.sol:PaymentFailureTest",
                 vec![("testCantPay()", false, Some("EvmError: Revert".to_string()), None, None)],
             ),
-            ("core/Abstract.t.sol:AbstractTest", vec![("testSomething()", true, None, None, None)]),
             (
-                "core/FailingTestAfterFailedSetup.t.sol:FailingTestAfterFailedSetupTest",
+                "default/core/Abstract.t.sol:AbstractTest",
+                vec![("testSomething()", true, None, None, None)],
+            ),
+            (
+                "default/core/FailingTestAfterFailedSetup.t.sol:FailingTestAfterFailedSetupTest",
                 vec![(
                     "setUp()",
                     false,
@@ -72,6 +75,37 @@ async fn test_core() {
                     None,
                 )],
             ),
+            (
+                "default/core/MultipleAfterInvariant.t.sol:MultipleAfterInvariant",
+                vec![(
+                    "afterInvariant()",
+                    false,
+                    Some("multiple afterInvariant functions".to_string()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/core/BadSigAfterInvariant.t.sol:BadSigAfterInvariant",
+                vec![("testShouldPassWithWarning()", true, None, None, None)],
+            ),
+            (
+                "default/core/LegacyAssertions.t.sol:NoAssertionsRevertTest",
+                vec![(
+                    "testMultipleAssertFailures()",
+                    false,
+                    Some("assertion failed: 1 != 2".to_string()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                "default/core/LegacyAssertions.t.sol:LegacyAssertionsTest",
+                vec![
+                    ("testFlagNotSetSuccess()", true, None, None, None),
+                    ("testFlagSetFailure()", true, None, None, None),
+                ],
+            ),
         ]),
     );
 }
@@ -79,25 +113,25 @@ async fn test_core() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_linking() {
     let filter = Filter::new(".*", ".*", ".*linking");
-    let mut runner = runner();
+    let mut runner = TEST_DATA_DEFAULT.runner();
     let results = runner.test_collect(&filter);
 
     assert_multiple(
         &results,
         BTreeMap::from([
             (
-                "linking/simple/Simple.t.sol:SimpleLibraryLinkingTest",
+                "default/linking/simple/Simple.t.sol:SimpleLibraryLinkingTest",
                 vec![("testCall()", true, None, None, None)],
             ),
             (
-                "linking/nested/Nested.t.sol:NestedLibraryLinkingTest",
+                "default/linking/nested/Nested.t.sol:NestedLibraryLinkingTest",
                 vec![
                     ("testDirect()", true, None, None, None),
                     ("testNested()", true, None, None, None),
                 ],
             ),
             (
-                "linking/duplicate/Duplicate.t.sol:DuplicateLibraryLinkingTest",
+                "default/linking/duplicate/Duplicate.t.sol:DuplicateLibraryLinkingTest",
                 vec![
                     ("testA()", true, None, None, None),
                     ("testB()", true, None, None, None),
@@ -113,14 +147,14 @@ async fn test_linking() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_logs() {
     let filter = Filter::new(".*", ".*", ".*logs");
-    let mut runner = runner();
+    let mut runner = TEST_DATA_DEFAULT.runner();
     let results = runner.test_collect(&filter);
 
     assert_multiple(
         &results,
         BTreeMap::from([
             (
-                "logs/DebugLogs.t.sol:DebugLogsTest",
+                "default/logs/DebugLogs.t.sol:DebugLogsTest",
                 vec![
                     (
                         "test1()",
@@ -289,7 +323,7 @@ async fn test_logs() {
                 ],
             ),
             (
-                "logs/HardhatLogs.t.sol:HardhatLogsTest",
+                "default/logs/HardhatLogs.t.sol:HardhatLogsTest",
                 vec![
                     (
                         "testInts()",
@@ -678,7 +712,7 @@ async fn test_env_vars() {
     env::remove_var(env_var_key);
 
     let filter = Filter::new("testSetEnv", ".*", ".*");
-    let mut runner = runner();
+    let mut runner = TEST_DATA_DEFAULT.runner();
     let _ = runner.test_collect(&filter);
 
     assert_eq!(env::var(env_var_key).unwrap(), env_var_val);
@@ -687,16 +721,16 @@ async fn test_env_vars() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_doesnt_run_abstract_contract() {
     let filter = Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str());
-    let mut runner = runner();
+    let mut runner = TEST_DATA_DEFAULT.runner();
     let results = runner.test_collect(&filter);
-    assert!(!results.contains_key("core/Abstract.t.sol:AbstractTestBase"));
-    assert!(results.contains_key("core/Abstract.t.sol:AbstractTest"));
+    assert!(!results.contains_key("default/core/Abstract.t.sol:AbstractTestBase"));
+    assert!(results.contains_key("default/core/Abstract.t.sol:AbstractTest"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace() {
     let filter = Filter::new(".*", ".*", ".*trace");
-    let mut runner = tracing_runner();
+    let mut runner = TEST_DATA_DEFAULT.tracing_runner();
     let suite_result = runner.test_collect(&filter);
 
     // TODO: This trace test is very basic - it is probably a good candidate for snapshot
@@ -707,12 +741,12 @@ async fn test_trace() {
                 result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Deployment);
             let setup_traces = result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Setup);
             let execution_traces =
-                result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Deployment);
+                result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Execution);
 
             assert_eq!(
                 deployment_traces.count(),
-                1,
-                "Test {test_name} did not have exactly 1 deployment trace."
+                12,
+                "Test {test_name} did not have exactly 12 deployment trace."
             );
             assert!(setup_traces.count() <= 1, "Test {test_name} had more than 1 setup trace.");
             assert_eq!(
@@ -722,4 +756,50 @@ async fn test_trace() {
             );
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_assertions_revert_false() {
+    let filter = Filter::new(".*", ".*NoAssertionsRevertTest", ".*");
+    let mut config = TEST_DATA_DEFAULT.config.clone();
+    config.assertions_revert = false;
+    let mut runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let results = runner.test_collect(&filter);
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/core/LegacyAssertions.t.sol:NoAssertionsRevertTest",
+            vec![(
+                "testMultipleAssertFailures()",
+                false,
+                None,
+                Some(vec![
+                    "assertion failed: 1 != 2".to_string(),
+                    "assertion failed: 5 >= 4".to_string(),
+                ]),
+                None,
+            )],
+        )]),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_legacy_assertions() {
+    let filter = Filter::new(".*", ".*LegacyAssertions", ".*");
+    let mut config = TEST_DATA_DEFAULT.config.clone();
+    config.legacy_assertions = true;
+    let mut runner = TEST_DATA_DEFAULT.runner_with_config(config);
+    let results = runner.test_collect(&filter);
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "default/core/LegacyAssertions.t.sol:LegacyAssertionsTest",
+            vec![
+                ("testFlagNotSetSuccess()", true, None, None, None),
+                ("testFlagSetFailure()", false, None, None, None),
+            ],
+        )]),
+    );
 }

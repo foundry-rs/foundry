@@ -1,9 +1,8 @@
 use crate::{raw_wallet::RawWalletOpts, utils, wallet_signer::WalletSigner};
 use alloy_primitives::Address;
+use alloy_signer::Signer;
 use clap::Parser;
-use ethers_signers::Signer;
 use eyre::Result;
-use foundry_common::types::ToAlloy;
 use serde::Serialize;
 
 /// The wallet options can either be:
@@ -12,6 +11,7 @@ use serde::Serialize;
 /// 3. Trezor
 /// 4. Keystore (via file path)
 /// 5. AWS KMS
+/// 6. Google Cloud KMS
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct WalletOpts {
@@ -79,8 +79,12 @@ pub struct WalletOpts {
     pub trezor: bool,
 
     /// Use AWS Key Management Service.
-    #[arg(long, help_heading = "Wallet options - AWS KMS")]
+    #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "aws-kms"))]
     pub aws: bool,
+
+    /// Use Google Cloud Key Management Service.
+    #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "gcp-kms"))]
+    pub gcp: bool,
 }
 
 impl WalletOpts {
@@ -95,7 +99,14 @@ impl WalletOpts {
                 .await?
         } else if self.aws {
             let key_id = std::env::var("AWS_KMS_KEY_ID")?;
-            WalletSigner::from_aws(&key_id).await?
+            WalletSigner::from_aws(key_id).await?
+        } else if self.gcp {
+            let project_id = std::env::var("GCP_PROJECT_ID")?;
+            let location = std::env::var("GCP_LOCATION")?;
+            let keyring = std::env::var("GCP_KEYRING")?;
+            let key_name = std::env::var("GCP_KEY_NAME")?;
+            let key_version = std::env::var("GCP_KEY_VERSION")?.parse()?;
+            WalletSigner::from_gcp(project_id, location, keyring, key_name, key_version).await?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
         } else if let Some(path) = utils::maybe_get_keystore_path(
@@ -120,7 +131,7 @@ impl WalletOpts {
 Error accessing local wallet. Did you set a private key, mnemonic or keystore?
 Run `cast send --help` or `forge create --help` and use the corresponding CLI
 flag to set your key via:
---private-key, --mnemonic-path, --aws, --interactive, --trezor or --ledger.
+--private-key, --mnemonic-path, --aws, --gcp, --interactive, --trezor or --ledger.
 Alternatively, if you're using a local node with unlocked accounts,
 use the --unlocked flag and either set the `ETH_FROM` environment variable to the address
 of the unlocked account you want to use, or provide the --from flag with the address directly."
@@ -139,7 +150,7 @@ of the unlocked account you want to use, or provide the --from flag with the add
         if let Some(from) = self.from {
             from
         } else if let Ok(signer) = self.signer().await {
-            signer.address().to_alloy()
+            signer.address()
         } else {
             Address::ZERO
         }
@@ -176,7 +187,7 @@ mod tests {
         ]);
         let signer = wallet.signer().await.unwrap();
         assert_eq!(
-            signer.address().to_alloy(),
+            signer.address(),
             Address::from_str("ec554aeafe75601aaab43bd4621a22284db566c2").unwrap()
         );
     }
@@ -200,6 +211,7 @@ mod tests {
             ledger: false,
             trezor: false,
             aws: false,
+            gcp: false,
         };
         match wallet.signer().await {
             Ok(_) => {
@@ -207,7 +219,7 @@ mod tests {
             }
             Err(x) => {
                 assert!(
-                    x.to_string().contains("Failed to create wallet"),
+                    x.to_string().contains("Failed to decode private key"),
                     "Error message is not user-friendly"
                 );
             }

@@ -1,5 +1,4 @@
 use super::{
-    artifacts::ArtifactInfo,
     multi_sequence::MultiChainSequence,
     providers::ProvidersManager,
     runner::ScriptRunner,
@@ -13,26 +12,25 @@ use crate::{
     sequence::get_commit_hash,
     ScriptArgs, ScriptConfig, ScriptResult,
 };
-use alloy_primitives::{utils::format_units, Address, U256};
+use alloy_network::TransactionBuilder;
+use alloy_primitives::{utils::format_units, Address, TxKind, U256};
 use eyre::{Context, Result};
 use foundry_cheatcodes::{BroadcastableTransactions, ScriptWallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{
-    get_contract_name, provider::ethers::RpcUrl, shell, types::ToAlloy, ContractsByArtifact,
-};
-use foundry_evm::traces::render_trace_arena;
-use futures::future::join_all;
+use foundry_common::{get_contract_name, shell, ContractData};
+use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
+use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     sync::Arc,
 };
 
-/// Same as [ExecutedState], but also contains [ExecutionArtifacts] which are obtained from
-/// [ScriptResult].
+/// Same as [ExecutedState](crate::execute::ExecutedState), but also contains [ExecutionArtifacts]
+/// which are obtained from [ScriptResult].
 ///
-/// Can be either converted directly to [BundledState] via [PreSimulationState::resume] or driven to
-/// it through [FilledTransactionsState].
+/// Can be either converted directly to [BundledState] or driven to it through
+/// [FilledTransactionsState].
 pub struct PreSimulationState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
@@ -66,7 +64,6 @@ impl PreSimulationState {
             script_config: self.script_config,
             script_wallets: self.script_wallets,
             build_data: self.build_data,
-            execution_data: self.execution_data,
             execution_artifacts: self.execution_artifacts,
             transactions,
         })
@@ -90,9 +87,7 @@ impl PreSimulationState {
                 .collect::<HashMap<_, _>>(),
         );
 
-        let contracts = self.build_data.get_flattened_contracts(false);
-        let address_to_abi: BTreeMap<Address, ArtifactInfo> =
-            self.build_address_to_abi_map(&contracts);
+        let address_to_abi = self.build_address_to_abi_map();
 
         let mut final_txs = VecDeque::new();
 
@@ -104,11 +99,12 @@ impl PreSimulationState {
                 let mut runner = runners.get(&rpc).expect("invalid rpc url").write();
 
                 let mut tx = transaction.transaction;
+                let to = if let Some(TxKind::Call(to)) = tx.to { Some(to) } else { None };
                 let result = runner
                     .simulate(
                         tx.from
                             .expect("transaction doesn't have a `from` address at execution time"),
-                        tx.to,
+                        to,
                         tx.input.clone().into_input(),
                         tx.value,
                     )
@@ -122,7 +118,7 @@ impl PreSimulationState {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    runner.executor.env.block.number += U256::from(1);
+                    runner.executor.env_mut().block.number += U256::from(1);
                 }
 
                 let is_fixed_gas_limit = tx.gas.is_some();
@@ -133,9 +129,8 @@ impl PreSimulationState {
                     }
                     // We inflate the gas used by the user specified percentage
                     None => {
-                        let gas =
-                            U256::from(result.gas_used * self.args.gas_estimate_multiplier / 100);
-                        tx.gas = Some(gas);
+                        let gas = result.gas_used * self.args.gas_estimate_multiplier / 100;
+                        tx.gas = Some(gas as u128);
                     }
                 }
                 let tx = TransactionWithMetadata::new(
@@ -159,15 +154,13 @@ impl PreSimulationState {
 
         let mut abort = false;
         for res in join_all(futs).await {
-            let (tx, traces) = res?;
+            let (tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
             if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
-                for (_, trace) in &traces {
-                    println!(
-                        "{}",
-                        render_trace_arena(trace, &self.execution_artifacts.decoder).await?
-                    );
+                for (_, trace) in &mut traces {
+                    decode_trace_arena(trace, &self.execution_artifacts.decoder).await?;
+                    println!("{}", render_trace_arena(trace));
                 }
             }
 
@@ -186,26 +179,17 @@ impl PreSimulationState {
     }
 
     /// Build mapping from contract address to its ABI, code and contract name.
-    fn build_address_to_abi_map<'a>(
-        &self,
-        contracts: &'a ContractsByArtifact,
-    ) -> BTreeMap<Address, ArtifactInfo<'a>> {
+    fn build_address_to_abi_map(&self) -> BTreeMap<Address, &ContractData> {
         self.execution_artifacts
             .decoder
             .contracts
             .iter()
             .filter_map(move |(addr, contract_id)| {
                 let contract_name = get_contract_name(contract_id);
-                if let Ok(Some((_, (abi, code)))) =
-                    contracts.find_by_name_or_identifier(contract_name)
+                if let Ok(Some((_, data))) =
+                    self.build_data.known_contracts.find_by_name_or_identifier(contract_name)
                 {
-                    let info = ArtifactInfo {
-                        contract_name: contract_name.to_string(),
-                        contract_id: contract_id.to_string(),
-                        abi,
-                        code,
-                    };
-                    return Some((*addr, info));
+                    return Some((*addr, data));
                 }
                 None
             })
@@ -213,7 +197,7 @@ impl PreSimulationState {
     }
 
     /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
-    async fn build_runners(&self) -> Result<HashMap<RpcUrl, ScriptRunner>> {
+    async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner)>> {
         let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
         if !shell::verbosity().is_silent() {
             let n = rpcs.len();
@@ -221,17 +205,13 @@ impl PreSimulationState {
             println!("\n## Setting up {n} EVM{s}.");
         }
 
-        let futs = rpcs
-            .into_iter()
-            .map(|rpc| async move {
-                let mut script_config = self.script_config.clone();
-                script_config.evm_opts.fork_url = Some(rpc.clone());
-                let runner = script_config.get_runner().await?;
-                Ok((rpc.clone(), runner))
-            })
-            .collect::<Vec<_>>();
-
-        join_all(futs).await.into_iter().collect()
+        let futs = rpcs.into_iter().map(|rpc| async move {
+            let mut script_config = self.script_config.clone();
+            script_config.evm_opts.fork_url = Some(rpc.clone());
+            let runner = script_config.get_runner().await?;
+            Ok((rpc.clone(), runner))
+        });
+        try_join_all(futs).await
     }
 
     /// If simulation is disabled, converts transactions into [TransactionWithMetadata] type
@@ -259,7 +239,6 @@ pub struct FilledTransactionsState {
     pub script_config: ScriptConfig,
     pub script_wallets: ScriptWallets,
     pub build_data: LinkedBuildData,
-    pub execution_data: ExecutionData,
     pub execution_artifacts: ExecutionArtifacts,
     pub transactions: VecDeque<TransactionWithMetadata>,
 }
@@ -277,7 +256,7 @@ impl FilledTransactionsState {
             eyre::bail!("Multi-chain deployment is not supported with libraries.");
         }
 
-        let mut total_gas_per_rpc: HashMap<RpcUrl, U256> = HashMap::new();
+        let mut total_gas_per_rpc: HashMap<String, u128> = HashMap::new();
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();
@@ -293,15 +272,14 @@ impl FilledTransactionsState {
             let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy).await?;
 
             // Handles chain specific requirements.
-            tx.change_type(provider_info.is_legacy);
             tx.transaction.set_chain_id(provider_info.chain);
 
             if !self.args.skip_simulation {
-                let typed_tx = tx.typed_tx_mut();
+                let tx = tx.tx_mut();
 
                 if has_different_gas_calc(provider_info.chain) {
                     trace!("estimating with different gas calculation");
-                    let gas = *typed_tx.gas().expect("gas is set by simulation.");
+                    let gas = tx.gas.expect("gas is set by simulation.");
 
                     // We are trying to show the user an estimation of the total gas usage.
                     //
@@ -314,22 +292,19 @@ impl FilledTransactionsState {
                     // for chains where `has_different_gas_calc` returns true,
                     // we await each transaction before broadcasting the next
                     // one.
-                    if let Err(err) = estimate_gas(
-                        typed_tx,
-                        &provider_info.provider,
-                        self.args.gas_estimate_multiplier,
-                    )
-                    .await
+                    if let Err(err) =
+                        estimate_gas(tx, &provider_info.provider, self.args.gas_estimate_multiplier)
+                            .await
                     {
                         trace!("gas estimation failed: {err}");
 
                         // Restore gas value, since `estimate_gas` will remove it.
-                        typed_tx.set_gas(gas);
+                        tx.set_gas_limit(gas);
                     }
                 }
 
-                let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(U256::ZERO);
-                *total_gas += (*typed_tx.gas().expect("gas is set")).to_alloy();
+                let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(0);
+                *total_gas += tx.gas.expect("gas is set");
             }
 
             new_sequence.push_back(tx);
@@ -357,7 +332,7 @@ impl FilledTransactionsState {
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
                 let per_gas = if let Some(gas_price) = self.args.with_gas_price {
-                    gas_price
+                    gas_price.to()
                 } else {
                     provider_info.gas_price()?
                 };
@@ -425,7 +400,7 @@ impl FilledTransactionsState {
             )?)
         };
 
-        let commit = get_commit_hash(&self.script_config.config.__root.0);
+        let commit = get_commit_hash(&self.script_config.config.root.0);
 
         let libraries = self
             .build_data

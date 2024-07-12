@@ -1,13 +1,9 @@
 //! The module for generating Solidity documentation.
 //!
-//! See [DocBuilder]
+//! See [`DocBuilder`].
 
-#![warn(missing_debug_implementations, missing_docs, unreachable_pub, unused_crate_dependencies)]
-#![deny(unused_must_use, rust_2018_idioms)]
-#![doc(test(
-    no_crate_inject,
-    attr(deny(warnings, rust_2018_idioms), allow(dead_code, unused_variables))
-))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate tracing;

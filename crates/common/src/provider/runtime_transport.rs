@@ -1,17 +1,18 @@
 //! Runtime transport that connects on first request, which can take either of an HTTP,
 //! WebSocket, or IPC transport and supports retries based on CUPS logic.
+
 use crate::REQUEST_TIMEOUT;
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
+use alloy_rpc_types::engine::{Claims, JwtSecret};
 use alloy_transport::{
     Authorization, BoxTransport, TransportError, TransportErrorKind, TransportFut,
 };
 use alloy_transport_http::Http;
 use alloy_transport_ipc::IpcConnect;
 use alloy_transport_ws::WsConnect;
-use ethers_providers::{JwtAuth, JwtKey};
 use reqwest::header::{HeaderName, HeaderValue};
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{fmt, path::PathBuf, str::FromStr, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tower::Service;
@@ -33,8 +34,8 @@ pub enum InnerTransport {
 #[derive(Error, Debug)]
 pub enum RuntimeTransportError {
     /// Internal transport error
-    #[error(transparent)]
-    TransportError(TransportError),
+    #[error("Internal transport error: {0} with {1}")]
+    TransportError(TransportError, String),
 
     /// Failed to lock the transport
     #[error("Failed to lock the transport")]
@@ -125,8 +126,8 @@ impl RuntimeTransportBuilder {
     }
 }
 
-impl ::core::fmt::Display for RuntimeTransport {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+impl fmt::Display for RuntimeTransport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "RuntimeTransport {}", self.url)
     }
 }
@@ -144,7 +145,9 @@ impl RuntimeTransport {
 
     /// Connects to an HTTP [alloy_transport_http::Http] transport.
     async fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
-        let mut client_builder = reqwest::Client::builder().timeout(self.timeout);
+        let mut client_builder = reqwest::Client::builder()
+            .timeout(self.timeout)
+            .tls_built_in_root_certs(self.url.scheme() == "https");
         let mut headers = reqwest::header::HeaderMap::new();
 
         // If there's a JWT, add it to the headers if we can decode it.
@@ -185,7 +188,7 @@ impl RuntimeTransport {
         let ws = WsConnect { url: self.url.to_string(), auth }
             .into_service()
             .await
-            .map_err(RuntimeTransportError::TransportError)?;
+            .map_err(|e| RuntimeTransportError::TransportError(e, self.url.to_string()))?;
         Ok(InnerTransport::Ws(ws))
     }
 
@@ -193,9 +196,10 @@ impl RuntimeTransport {
     async fn connect_ipc(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let path = url_to_file_path(&self.url)
             .map_err(|_| RuntimeTransportError::BadPath(self.url.to_string()))?;
-        let ipc_connector: IpcConnect<PathBuf> = path.into();
-        let ipc =
-            ipc_connector.into_service().await.map_err(RuntimeTransportError::TransportError)?;
+        let ipc_connector = IpcConnect::new(path.clone());
+        let ipc = ipc_connector.into_service().await.map_err(|e| {
+            RuntimeTransportError::TransportError(e, path.clone().display().to_string())
+        })?;
         Ok(InnerTransport::Ipc(ipc))
     }
 
@@ -290,10 +294,9 @@ impl tower::Service<RequestPacket> for &RuntimeTransport {
 
 fn build_auth(jwt: String) -> eyre::Result<Authorization> {
     // Decode jwt from hex, then generate claims (iat with current timestamp)
-    let jwt = hex::decode(jwt)?;
-    let secret = JwtKey::from_slice(&jwt).map_err(|err| eyre::eyre!("Invalid JWT: {}", err))?;
-    let auth = JwtAuth::new(secret, None, None);
-    let token = auth.generate_token()?;
+    let secret = JwtSecret::from_hex(jwt)?;
+    let claims = Claims::default();
+    let token = secret.encode(&claims)?;
 
     let auth = Authorization::Bearer(token);
 

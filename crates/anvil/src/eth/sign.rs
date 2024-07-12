@@ -1,8 +1,10 @@
 use crate::eth::error::BlockchainError;
+use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
-use alloy_network::{Signed, Transaction};
-use alloy_primitives::{Address, Signature, B256, U256};
-use alloy_signer::{LocalWallet, Signer as AlloySigner, SignerSync as AlloySignerSync};
+use alloy_network::TxSignerSync;
+use alloy_primitives::{Address, Signature, B256};
+use alloy_signer::Signer as AlloySigner;
+use alloy_signer_local::PrivateKeySigner;
 use anvil_core::eth::transaction::{
     optimism::{DepositTransaction, DepositTransactionRequest},
     TypedTransaction, TypedTransactionRequest,
@@ -45,11 +47,11 @@ pub trait Signer: Send + Sync {
 /// Maintains developer keys
 pub struct DevSigner {
     addresses: Vec<Address>,
-    accounts: HashMap<Address, LocalWallet>,
+    accounts: HashMap<Address, PrivateKeySigner>,
 }
 
 impl DevSigner {
-    pub fn new(accounts: Vec<LocalWallet>) -> Self {
+    pub fn new(accounts: Vec<PrivateKeySigner>) -> Self {
         let addresses = accounts.iter().map(|wallet| wallet.address()).collect::<Vec<_>>();
         let accounts = addresses.iter().cloned().zip(accounts).collect();
         Self { addresses, accounts }
@@ -84,17 +86,13 @@ impl Signer for DevSigner {
         // typed data.
         signer.set_chain_id(None);
 
-        Ok(signer
-            .sign_hash(
-                payload.eip712_signing_hash().map_err(|_| BlockchainError::NoSignerAvailable)?,
-            )
-            .await?)
+        Ok(signer.sign_dynamic_typed_data(payload).await?)
     }
 
     async fn sign_hash(&self, address: Address, hash: B256) -> Result<Signature, BlockchainError> {
         let signer = self.accounts.get(&address).ok_or(BlockchainError::NoSignerAvailable)?;
 
-        Ok(signer.sign_hash(hash).await?)
+        Ok(signer.sign_hash(&hash).await?)
     }
 
     fn sign_transaction(
@@ -123,21 +121,15 @@ pub fn build_typed_transaction(
     signature: Signature,
 ) -> Result<TypedTransaction, BlockchainError> {
     let tx = match request {
-        TypedTransactionRequest::Legacy(tx) => {
-            let sighash = tx.signature_hash();
-            TypedTransaction::Legacy(Signed::new_unchecked(tx, signature, sighash))
-        }
+        TypedTransactionRequest::Legacy(tx) => TypedTransaction::Legacy(tx.into_signed(signature)),
         TypedTransactionRequest::EIP2930(tx) => {
-            let sighash = tx.signature_hash();
-            TypedTransaction::EIP2930(Signed::new_unchecked(tx, signature, sighash))
+            TypedTransaction::EIP2930(tx.into_signed(signature))
         }
         TypedTransactionRequest::EIP1559(tx) => {
-            let sighash = tx.signature_hash();
-            TypedTransaction::EIP1559(Signed::new_unchecked(tx, signature, sighash))
+            TypedTransaction::EIP1559(tx.into_signed(signature))
         }
         TypedTransactionRequest::EIP4844(tx) => {
-            let sighash = tx.signature_hash();
-            TypedTransaction::EIP4844(Signed::new_unchecked(tx, signature, sighash))
+            TypedTransaction::EIP4844(tx.into_signed(signature))
         }
         TypedTransactionRequest::Deposit(tx) => {
             let DepositTransactionRequest {
@@ -160,7 +152,7 @@ pub fn build_typed_transaction(
                 source_hash,
                 mint,
                 is_system_tx,
-                nonce: U256::ZERO,
+                nonce: 0,
             })
         }
     };

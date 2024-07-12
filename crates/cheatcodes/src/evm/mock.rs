@@ -47,16 +47,15 @@ impl Cheatcode for clearMockedCallsCall {
 }
 
 impl Cheatcode for mockCall_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { callee, data, returnData } = self;
-        // TODO: use ecx.load_account
-        let (acc, _) = ccx.ecx.journaled_state.load_account(*callee, &mut ccx.ecx.db)?;
+        let (acc, _) = ccx.ecx.load_account(*callee)?;
 
         // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
         // check Solidity might perform.
         let empty_bytecode = acc.info.code.as_ref().map_or(true, Bytecode::is_empty);
         if empty_bytecode {
-            let code = Bytecode::new_raw(Bytes::from_static(&[0u8])).to_checked();
+            let code = Bytecode::new_raw(Bytes::from_static(&[0u8]));
             ccx.ecx.journaled_state.set_code(*callee, code);
         }
 
@@ -66,7 +65,7 @@ impl Cheatcode for mockCall_0Call {
 }
 
 impl Cheatcode for mockCall_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         ccx.ecx.load_account(*callee)?;
         mock_call(ccx.state, callee, data, Some(msgValue), returnData, InstructionResult::Return);
@@ -94,9 +93,9 @@ impl Cheatcode for mockCallRevert_1Call {
 fn mock_call(
     state: &mut Cheatcodes,
     callee: &Address,
-    cdata: &Vec<u8>,
+    cdata: &Bytes,
     value: Option<&U256>,
-    rdata: &Vec<u8>,
+    rdata: &Bytes,
     ret_type: InstructionResult,
 ) {
     state.mocked_calls.entry(*callee).or_default().insert(

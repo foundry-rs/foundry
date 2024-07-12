@@ -28,7 +28,7 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
     #[inline]
     fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         // We don't want to override the very first call made to the test contract.
-        if self.call_generator.is_some() && ecx.env.tx.caller != inputs.context.caller {
+        if self.call_generator.is_some() && ecx.env.tx.caller != inputs.caller {
             self.override_call(inputs);
         }
 
@@ -61,11 +61,7 @@ impl<DB: Database> Inspector<DB> for Fuzzer {
 impl Fuzzer {
     /// Collects `stack` and `memory` values into the fuzz dictionary.
     fn collect_data(&mut self, interpreter: &Interpreter) {
-        let mut state = self.fuzz_state.write();
-
-        for slot in interpreter.stack().data() {
-            state.values_mut().insert(slot.to_be_bytes());
-        }
+        self.fuzz_state.collect_values(interpreter.stack().data().iter().copied().map(Into::into));
 
         // TODO: disabled for now since it's flooding the dictionary
         // for index in 0..interpreter.shared_memory.len() / 32 {
@@ -80,22 +76,18 @@ impl Fuzzer {
     fn override_call(&mut self, call: &mut CallInputs) {
         if let Some(ref mut call_generator) = self.call_generator {
             // We only override external calls which are not coming from the test contract.
-            if call.context.caller != call_generator.test_address &&
-                call.context.scheme == CallScheme::Call &&
+            if call.caller != call_generator.test_address &&
+                call.scheme == CallScheme::Call &&
                 !call_generator.used
             {
                 // There's only a 30% chance that an override happens.
-                if let Some((sender, (contract, input))) =
-                    call_generator.next(call.context.caller, call.contract)
-                {
-                    *call.input = input.0;
-                    call.context.caller = sender;
-                    call.contract = contract;
+                if let Some(tx) = call_generator.next(call.caller, call.target_address) {
+                    *call.input = tx.call_details.calldata.0;
+                    call.caller = tx.sender;
+                    call.target_address = tx.call_details.target;
 
                     // TODO: in what scenarios can the following be problematic
-                    call.context.code_address = contract;
-                    call.context.address = contract;
-
+                    call.bytecode_address = tx.call_details.target;
                     call_generator.used = true;
                 }
             }

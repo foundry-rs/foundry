@@ -11,7 +11,7 @@ use svm::Platform;
 /// 3. svm bumped in foundry-compilers
 /// 4. foundry-compilers update with any breaking changes
 /// 5. upgrade the `LATEST_SOLC`
-const LATEST_SOLC: Version = Version::new(0, 8, 24);
+const LATEST_SOLC: Version = Version::new(0, 8, 26);
 
 macro_rules! ensure_svm_releases {
     ($($test:ident => $platform:ident),* $(,)?) => {$(

@@ -1,18 +1,15 @@
 use super::{multi_sequence::MultiChainSequence, NestedValue};
 use crate::{
-    transaction::{wrapper, AdditionalContract, TransactionWithMetadata},
+    transaction::{AdditionalContract, TransactionWithMetadata},
     verify::VerifyBundle,
 };
-use alloy_primitives::{Address, TxHash};
-use ethers_core::types::{transaction::eip2718::TypedTransaction, TransactionReceipt};
-use eyre::{ContextCompat, Result, WrapErr};
+use alloy_primitives::{hex, Address, TxHash};
+use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
+use alloy_serde::WithOtherFields;
+use eyre::{eyre, ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::{now, Git};
-use foundry_common::{
-    fs, shell,
-    types::{ToAlloy, ToEthers},
-    SELECTOR_LEN,
-};
+use foundry_common::{fs, shell, SELECTOR_LEN};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -36,22 +33,22 @@ pub enum ScriptSequenceKind {
 impl ScriptSequenceKind {
     pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         match self {
-            ScriptSequenceKind::Single(sequence) => sequence.save(silent, save_ts),
-            ScriptSequenceKind::Multi(sequence) => sequence.save(silent, save_ts),
+            Self::Single(sequence) => sequence.save(silent, save_ts),
+            Self::Multi(sequence) => sequence.save(silent, save_ts),
         }
     }
 
     pub fn sequences(&self) -> &[ScriptSequence] {
         match self {
-            ScriptSequenceKind::Single(sequence) => std::slice::from_ref(sequence),
-            ScriptSequenceKind::Multi(sequence) => &sequence.deployments,
+            Self::Single(sequence) => std::slice::from_ref(sequence),
+            Self::Multi(sequence) => &sequence.deployments,
         }
     }
 
     pub fn sequences_mut(&mut self) -> &mut [ScriptSequence] {
         match self {
-            ScriptSequenceKind::Single(sequence) => std::slice::from_mut(sequence),
-            ScriptSequenceKind::Multi(sequence) => &mut sequence.deployments,
+            Self::Single(sequence) => std::slice::from_mut(sequence),
+            Self::Multi(sequence) => &mut sequence.deployments,
         }
     }
     /// Updates underlying sequence paths to not be under /dry-run directory.
@@ -62,11 +59,11 @@ impl ScriptSequenceKind {
         target: &ArtifactId,
     ) -> Result<()> {
         match self {
-            ScriptSequenceKind::Single(sequence) => {
+            Self::Single(sequence) => {
                 sequence.paths =
                     Some(ScriptSequence::get_paths(config, sig, target, sequence.chain, false)?);
             }
-            ScriptSequenceKind::Multi(sequence) => {
+            Self::Multi(sequence) => {
                 (sequence.path, sequence.sensitive_path) =
                     MultiChainSequence::get_paths(config, sig, target, false)?;
             }
@@ -91,8 +88,7 @@ pub const DRY_RUN_DIR: &str = "dry-run";
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
-    #[serde(serialize_with = "wrapper::serialize_receipts")]
-    pub receipts: Vec<TransactionReceipt>,
+    pub receipts: Vec<AnyTransactionReceipt>,
     pub libraries: Vec<String>,
     pub pending: Vec<TxHash>,
     #[serde(skip)]
@@ -119,7 +115,7 @@ pub struct SensitiveScriptSequence {
 
 impl From<ScriptSequence> for SensitiveScriptSequence {
     fn from(sequence: ScriptSequence) -> Self {
-        SensitiveScriptSequence {
+        Self {
             transactions: sequence
                 .transactions
                 .iter()
@@ -138,8 +134,7 @@ impl ScriptSequence {
         chain_id: u64,
         dry_run: bool,
     ) -> Result<Self> {
-        let (path, sensitive_path) =
-            ScriptSequence::get_paths(config, sig, target, chain_id, dry_run)?;
+        let (path, sensitive_path) = Self::get_paths(config, sig, target, chain_id, dry_run)?;
 
         let mut script_sequence: Self = foundry_compilers::utils::read_json_file(&path)
             .wrap_err(format!("Deployment not found for chain `{chain_id}`."))?;
@@ -201,13 +196,13 @@ impl ScriptSequence {
         Ok(())
     }
 
-    pub fn add_receipt(&mut self, receipt: TransactionReceipt) {
+    pub fn add_receipt(&mut self, receipt: AnyTransactionReceipt) {
         self.receipts.push(receipt);
     }
 
     /// Sorts all receipts with ascending transaction index
     pub fn sort_receipts(&mut self) {
-        self.receipts.sort_unstable()
+        self.receipts.sort_by_key(|r| (r.block_number, r.transaction_index));
     }
 
     pub fn add_pending(&mut self, index: usize, tx_hash: TxHash) {
@@ -222,8 +217,8 @@ impl ScriptSequence {
     }
 
     /// Gets paths in the formats
-    /// ./broadcast/[contract_filename]/[chain_id]/[sig]-[timestamp].json and
-    /// ./cache/[contract_filename]/[chain_id]/[sig]-[timestamp].json
+    /// `./broadcast/[contract_filename]/[chain_id]/[sig]-[timestamp].json` and
+    /// `./cache/[contract_filename]/[chain_id]/[sig]-[timestamp].json`.
     pub fn get_paths(
         config: &Config,
         sig: &str,
@@ -284,13 +279,13 @@ impl ScriptSequence {
                 let mut offset = 0;
 
                 if tx.is_create2() {
-                    receipt.contract_address = tx.contract_address.map(|a| a.to_ethers());
+                    receipt.contract_address = tx.contract_address;
                     offset = 32;
                 }
 
                 // Verify contract created directly from the transaction
                 if let (Some(address), Some(data)) =
-                    (receipt.contract_address.map(|h| h.to_alloy()), tx.typed_tx().data())
+                    (receipt.contract_address, tx.tx().input.input())
                 {
                     match verify.get_verify_args(address, offset, &data.0, &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
@@ -300,7 +295,7 @@ impl ScriptSequence {
 
                 // Verify potential contracts created during the transaction execution
                 for AdditionalContract { address, init_code, .. } in &tx.additional_contracts {
-                    match verify.get_verify_args(*address, 0, init_code, &self.libraries) {
+                    match verify.get_verify_args(*address, 0, init_code.as_ref(), &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
                         None => unverifiable_contracts.push(*address),
                     };
@@ -312,9 +307,19 @@ impl ScriptSequence {
             self.check_unverified(unverifiable_contracts, verify);
 
             let num_verifications = future_verifications.len();
-            println!("##\nStart verification for ({num_verifications}) contracts",);
+            let mut num_of_successful_verifications = 0;
+            println!("##\nStart verification for ({num_verifications}) contracts");
             for verification in future_verifications {
-                verification.await?;
+                match verification.await {
+                    Ok(_) => {
+                        num_of_successful_verifications += 1;
+                    }
+                    Err(err) => eprintln!("Error during verification: {err:#}"),
+                }
+            }
+
+            if num_of_successful_verifications < num_verifications {
+                return Err(eyre!("Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"))
             }
 
             println!("All ({num_verifications}) contracts were verified!");
@@ -329,11 +334,12 @@ impl ScriptSequence {
         if !unverifiable_contracts.is_empty() {
             println!(
                 "\n{}",
-                Paint::yellow(format!(
+                format!(
                     "We haven't found any matching bytecode for the following contracts: {:?}.\n\n{}",
                     unverifiable_contracts,
                     "This may occur when resuming a verification, but the underlying source code or compiler version has changed."
-                ))
+                )
+                .yellow()
                 .bold(),
             );
 
@@ -357,8 +363,8 @@ impl ScriptSequence {
     }
 
     /// Returns the list of the transactions without the metadata.
-    pub fn typed_transactions(&self) -> impl Iterator<Item = &TypedTransaction> {
-        self.transactions.iter().map(|tx| tx.typed_tx())
+    pub fn transactions(&self) -> impl Iterator<Item = &WithOtherFields<TransactionRequest>> {
+        self.transactions.iter().map(|tx| tx.tx())
     }
 
     pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) {

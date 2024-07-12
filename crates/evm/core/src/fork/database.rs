@@ -1,12 +1,12 @@
 //! A revm database that forks off a remote client
 
 use crate::{
-    backend::{DatabaseError, RevertSnapshotAction, StateSnapshot},
-    fork::{BlockchainDb, SharedBackend},
+    backend::{RevertSnapshotAction, StateSnapshot},
     snapshot::Snapshots,
 };
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
+use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
 use parking_lot::Mutex;
 use revm::{
     db::{CacheDB, DatabaseRef},
@@ -207,8 +207,6 @@ pub struct ForkDbSnapshot {
     pub snapshot: StateSnapshot,
 }
 
-// === impl DbSnapshot ===
-
 impl ForkDbSnapshot {
     fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
         self.local.accounts.get(&address).and_then(|account| account.storage.get(&index)).copied()
@@ -266,15 +264,15 @@ impl DatabaseRef for ForkDbSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fork::BlockchainDbMeta;
-    use foundry_common::provider::alloy::get_http_provider;
+    use crate::backend::BlockchainDbMeta;
+    use foundry_common::provider::get_http_provider;
     use std::collections::BTreeSet;
 
     /// Demonstrates that `Database::basic` for `ForkedDatabase` will always return the
     /// `AccountInfo`
     #[tokio::test(flavor = "multi_thread")]
     async fn fork_db_insert_basic_default() {
-        let rpc = foundry_common::rpc::next_http_rpc_endpoint();
+        let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
         let provider = get_http_provider(rpc.clone());
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),

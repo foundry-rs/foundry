@@ -1,6 +1,6 @@
 //! Genesis settings
 
-use crate::eth::backend::db::{Db, MaybeHashDatabase};
+use crate::eth::backend::db::{Db, MaybeFullDatabase};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, U256};
 use foundry_evm::{
@@ -31,8 +31,6 @@ pub struct GenesisConfig {
     /// The `genesis.json` if provided
     pub genesis_init: Option<Genesis>,
 }
-
-// === impl GenesisConfig ===
 
 impl GenesisConfig {
     /// Returns fresh `AccountInfo`s for the configured `accounts`
@@ -84,7 +82,7 @@ impl GenesisConfig {
     /// [AccountInfo]
     pub(crate) fn state_db_at_genesis<'a>(
         &self,
-        db: Box<dyn MaybeHashDatabase + 'a>,
+        db: Box<dyn MaybeFullDatabase + 'a>,
     ) -> AtGenesisStateDb<'a> {
         AtGenesisStateDb {
             genesis: self.genesis_init.clone(),
@@ -103,7 +101,7 @@ impl GenesisConfig {
 pub(crate) struct AtGenesisStateDb<'a> {
     genesis: Option<Genesis>,
     accounts: HashMap<Address, AccountInfo>,
-    db: Box<dyn MaybeHashDatabase + 'a>,
+    db: Box<dyn MaybeFullDatabase + 'a>,
 }
 
 impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
@@ -138,7 +136,7 @@ impl<'a> DatabaseRef for AtGenesisStateDb<'a> {
     }
 }
 
-impl<'a> MaybeHashDatabase for AtGenesisStateDb<'a> {
+impl<'a> MaybeFullDatabase for AtGenesisStateDb<'a> {
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         self.db.clear_into_snapshot()
     }

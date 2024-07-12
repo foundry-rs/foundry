@@ -1,23 +1,21 @@
-# Temporarily exclude rusoto and ethers-providers from bans since we've yet to transition to the 
-# Rust AWS SDK.
-exclude = ["rusoto_core", "rusoto_kms", "rusoto_credential", "ethers-providers", "tungstenite", "shlex"]
-
 # This section is considered when running `cargo deny check advisories`
 # More documentation for the advisories section can be found here:
 # https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
+version = 2
 yanked = "warn"
-notice = "warn"
-ignore = []
+ignore = [
+    # https://github.com/watchexec/watchexec/issues/852
+    "RUSTSEC-2024-0350",
+    "RUSTSEC-2024-0351",
+]
 
 # This section is considered when running `cargo deny check bans`.
 # More documentation about the 'bans' section can be found here:
 # https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
 [bans]
 # Lint level for when multiple versions of the same crate are detected
-multiple-versions = "warn"
+multiple-versions = "allow"
 # Lint level for when a crate version requirement is `*`
 wildcards = "allow"
 highlight = "all"
@@ -32,7 +30,9 @@ skip = []
 skip-tree = []
 
 [licenses]
-unlicensed = "deny"
+version = 2
+confidence-threshold = 0.8
+
 # List of explicitly allowed licenses
 # See https://spdx.org/licenses/ for list of possible licenses
 # [possible values: any SPDX 3.7 short identifier (+ optional exception)].
@@ -49,6 +49,7 @@ allow = [
     "WTFPL",
     "BSL-1.0",
     "0BSD",
+    "MPL-2.0",
 ]
 
 # Allow 1 or more licenses on a per-crate basis, so that particular licenses
@@ -57,16 +58,14 @@ exceptions = [
     # CC0 is a permissive license but somewhat unclear status for source code
     # so we prefer to not have dependencies using it
     # https://tldrlegal.com/license/creative-commons-cc0-1.0-universal
-    { allow = ["CC0-1.0"], name = "secp256k1" },
-    { allow = ["CC0-1.0"], name = "secp256k1-sys" },
     { allow = ["CC0-1.0"], name = "tiny-keccak" },
-    { allow = ["CC0-1.0"], name = "to_method" },
-    { allow = ["CC0-1.0"], name = "more-asserts" },
     { allow = ["CC0-1.0"], name = "trezor-client" },
     { allow = ["CC0-1.0"], name = "notify" },
-    { allow = ["CC0-1.0"], name = "constant_time_eq" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
+    { allow = ["CC0-1.0"], name = "constant_time_eq" },
+    { allow = ["CC0-1.0"], name = "secp256k1" },
+    { allow = ["CC0-1.0"], name = "secp256k1-sys" },
 ]
 #copyleft = "deny"
 
@@ -76,6 +75,7 @@ name = "unicode-ident"
 version = "*"
 expression = "(MIT OR Apache-2.0) AND Unicode-DFS-2016"
 license-files = [{ path = "LICENSE-UNICODE", hash = 0x3fb01745 }]
+
 [[licenses.clarify]]
 name = "ring"
 version = "*"
@@ -91,4 +91,9 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 unknown-registry = "warn"
 # Lint level for what to happen when a crate from a git repository that is not
 # in the allow list is encountered
-unknown-git = "allow"
+unknown-git = "deny"
+allow-git = [
+    "https://github.com/alloy-rs/alloy",
+    "https://github.com/paradigmxyz/revm-inspectors",
+    "https://github.com/bluealloy/revm",
+]

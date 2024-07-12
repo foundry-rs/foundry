@@ -8,6 +8,9 @@ use tracing_subscriber::{layer::Context, Layer};
 /// The target that identifies the events intended to be logged to stdout
 pub(crate) const NODE_USER_LOG_TARGET: &str = "node::user";
 
+/// The target that identifies the events coming from the `console.log` invocations.
+pub(crate) const EVM_CONSOLE_LOG_TARGET: &str = "node::console";
+
 /// A logger that listens for node related events and displays them.
 ///
 /// This layer is intended to be used as filter for `NODE_USER_LOG_TARGET` events that will
@@ -16,8 +19,6 @@ pub(crate) const NODE_USER_LOG_TARGET: &str = "node::user";
 pub struct NodeLogLayer {
     state: LoggingManager,
 }
-
-// === impl NodeLogLayer ===
 
 impl NodeLogLayer {
     /// Returns a new instance of this layer
@@ -32,15 +33,18 @@ where
     S: tracing::Subscriber,
 {
     fn register_callsite(&self, metadata: &'static Metadata<'static>) -> Interest {
-        if self.state.is_enabled() && metadata.target() == NODE_USER_LOG_TARGET {
-            Interest::always()
+        if metadata.target() == NODE_USER_LOG_TARGET || metadata.target() == EVM_CONSOLE_LOG_TARGET
+        {
+            Interest::sometimes()
         } else {
             Interest::never()
         }
     }
 
     fn enabled(&self, metadata: &Metadata<'_>, _ctx: Context<'_, S>) -> bool {
-        self.state.is_enabled() && metadata.target() == NODE_USER_LOG_TARGET
+        self.state.is_enabled() &&
+            (metadata.target() == NODE_USER_LOG_TARGET ||
+                metadata.target() == EVM_CONSOLE_LOG_TARGET)
     }
 }
 
@@ -50,8 +54,6 @@ pub struct LoggingManager {
     /// Whether the logger is currently enabled
     pub enabled: Arc<RwLock<bool>>,
 }
-
-// === impl LoggingManager ===
 
 impl LoggingManager {
     /// Returns true if logging is currently enabled

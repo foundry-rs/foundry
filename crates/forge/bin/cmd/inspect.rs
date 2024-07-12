@@ -14,6 +14,8 @@ use foundry_compilers::{
     info::ContractInfo,
     utils::canonicalize,
 };
+use once_cell::sync::Lazy;
+use regex::Regex;
 use std::fmt;
 
 /// CLI arguments for `forge inspect`.
@@ -37,7 +39,7 @@ pub struct InspectArgs {
 
 impl InspectArgs {
     pub fn run(self) -> Result<()> {
-        let InspectArgs { mut contract, field, build, pretty } = self;
+        let Self { mut contract, field, build, pretty } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
@@ -48,7 +50,7 @@ impl InspectArgs {
         }
 
         // Run Optimized?
-        let optimized = if let ContractArtifactField::AssemblyOptimized = field {
+        let optimized = if field == ContractArtifactField::AssemblyOptimized {
             true
         } else {
             build.compiler.optimize
@@ -111,10 +113,10 @@ impl InspectArgs {
                 print_json(&artifact.devdoc)?;
             }
             ContractArtifactField::Ir => {
-                print_json_str(&artifact.ir, None)?;
+                print_yul(artifact.ir.as_deref(), self.pretty)?;
             }
             ContractArtifactField::IrOptimized => {
-                print_json_str(&artifact.ir_optimized, None)?;
+                print_yul(artifact.ir_optimized.as_deref(), self.pretty)?;
             }
             ContractArtifactField::Metadata => {
                 print_json(&artifact.metadata)?;
@@ -369,6 +371,28 @@ fn print_json(obj: &impl serde::Serialize) -> Result<()> {
 }
 
 fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> {
+    println!("{}", get_json_str(obj, key)?);
+    Ok(())
+}
+
+fn print_yul(yul: Option<&str>, pretty: bool) -> Result<()> {
+    let Some(yul) = yul else {
+        eyre::bail!("Could not get IR output");
+    };
+
+    static YUL_COMMENTS: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*\*/)").unwrap());
+
+    if pretty {
+        println!("{}", YUL_COMMENTS.replace_all(yul, ""));
+    } else {
+        println!("{yul}");
+    }
+
+    Ok(())
+}
+
+fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String> {
     let value = serde_json::to_value(obj)?;
     let mut value_ref = &value;
     if let Some(key) = key {
@@ -376,11 +400,11 @@ fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> 
             value_ref = value2;
         }
     }
-    match value_ref.as_str() {
-        Some(s) => println!("{s}"),
-        None => println!("{value_ref:#}"),
-    }
-    Ok(())
+    let s = match value_ref.as_str() {
+        Some(s) => s.to_string(),
+        None => format!("{value_ref:#}"),
+    };
+    Ok(s)
 }
 
 #[cfg(test)]

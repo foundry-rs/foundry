@@ -1,20 +1,28 @@
+//! # foundry-verify
+//!
+//! Smart contract verification.
+
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate tracing;
 
 use alloy_primitives::Address;
+use alloy_provider::Provider;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils,
-    utils::LoadConfig,
+    utils::{self, LoadConfig},
 };
-use foundry_compilers::{info::ContractInfo, EvmVersion};
-use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config};
+use foundry_common::{compile::ProjectCompiler, ContractsByArtifact};
+use foundry_compilers::{artifacts::EvmVersion, compilers::solc::Solc, info::ContractInfo};
+use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config, SolcReq};
+use itertools::Itertools;
 use provider::VerificationProviderType;
 use reqwest::Url;
+use revm_primitives::HashSet;
 use std::path::PathBuf;
 
 mod etherscan;
@@ -23,10 +31,13 @@ use etherscan::EtherscanVerificationProvider;
 pub mod provider;
 use provider::VerificationProvider;
 
+pub mod bytecode;
 pub mod retry;
 mod sourcify;
 
 pub use retry::RetryArgs;
+
+use crate::provider::VerificationContext;
 
 /// Verification provider arguments
 #[derive(Clone, Debug, Parser)]
@@ -42,7 +53,7 @@ pub struct VerifierArgs {
 
 impl Default for VerifierArgs {
     fn default() -> Self {
-        VerifierArgs { verifier: VerificationProviderType::Etherscan, verifier_url: None }
+        Self { verifier: VerificationProviderType::Etherscan, verifier_url: None }
     }
 }
 
@@ -53,7 +64,7 @@ pub struct VerifyArgs {
     pub address: Address,
 
     /// The contract identifier in the form `<path>:<contractname>`.
-    pub contract: ContractInfo,
+    pub contract: Option<ContractInfo>,
 
     /// The ABI-encoded constructor arguments.
     #[arg(
@@ -191,19 +202,22 @@ impl VerifyArgs {
             None => config.chain.unwrap_or_default(),
         };
 
+        let context = self.resolve_context().await?;
+
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
         if self.show_standard_json_input {
-            let args =
-                EtherscanVerificationProvider::default().create_verify_request(&self, None).await?;
+            let args = EtherscanVerificationProvider::default()
+                .create_verify_request(&self, &context)
+                .await?;
             println!("{}", args.source);
             return Ok(())
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
         println!("Start verifying contract `{}` deployed on {chain}", self.address);
-        self.verifier.verifier.client(&self.etherscan.key())?.verify(self).await.map_err(|err| {
+        self.verifier.verifier.client(&self.etherscan.key())?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {
                     Ok(url) => {
@@ -228,6 +242,83 @@ impl VerifyArgs {
     /// Returns the configured verification provider
     pub fn verification_provider(&self) -> Result<Box<dyn VerificationProvider>> {
         self.verifier.verifier.client(&self.etherscan.key())
+    }
+
+    /// Resolves [VerificationContext] object either from entered contract name or by trying to
+    /// match bytecode located at given address.
+    pub async fn resolve_context(&self) -> Result<VerificationContext> {
+        let mut config = self.load_config_emit_warnings();
+        config.libraries.extend(self.libraries.clone());
+
+        let project = config.project()?;
+
+        if let Some(ref contract) = self.contract {
+            let contract_path = if let Some(ref path) = contract.path {
+                project.root().join(PathBuf::from(path))
+            } else {
+                project.find_contract_path(&contract.name)?
+            };
+
+            let version = if let Some(ref version) = self.compiler_version {
+                version.trim_start_matches('v').parse()?
+            } else if let Some(ref solc) = config.solc {
+                match solc {
+                    SolcReq::Version(version) => version.to_owned(),
+                    SolcReq::Local(solc) => Solc::new(solc)?.version,
+                }
+            } else if let Some(entry) = project
+                .read_cache_file()
+                .ok()
+                .and_then(|mut cache| cache.files.remove(&contract_path))
+            {
+                let unique_versions = entry
+                    .artifacts
+                    .get(&contract.name)
+                    .map(|artifacts| artifacts.keys().collect::<HashSet<_>>())
+                    .unwrap_or_default();
+
+                if unique_versions.is_empty() {
+                    eyre::bail!("No matching artifact found for {}", contract.name);
+                } else if unique_versions.len() > 1 {
+                    warn!(
+                        "Ambiguous compiler versions found in cache: {}",
+                        unique_versions.iter().join(", ")
+                    );
+                    eyre::bail!("Compiler version has to be set in `foundry.toml`. If the project was not deployed with foundry, specify the version through `--compiler-version` flag.")
+                }
+
+                unique_versions.into_iter().next().unwrap().to_owned()
+            } else {
+                eyre::bail!("If cache is disabled, compiler version must be either provided with `--compiler-version` option or set in foundry.toml")
+            };
+
+            VerificationContext::new(contract_path, contract.name.clone(), version, config)
+        } else {
+            if config.get_rpc_url().is_none() {
+                eyre::bail!("You have to provide a contract name or a valid RPC URL")
+            }
+            let provider = utils::get_provider(&config)?;
+            let code = provider.get_code_at(self.address).await?;
+
+            let output = ProjectCompiler::new().compile(&project)?;
+            let contracts = ContractsByArtifact::new(
+                output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
+            );
+
+            let Some((artifact_id, _)) = contracts.find_by_deployed_code_exact(&code) else {
+                eyre::bail!(format!(
+                    "Bytecode at {} does not match any local contracts",
+                    self.address
+                ))
+            };
+
+            VerificationContext::new(
+                artifact_id.source.clone(),
+                artifact_id.name.split('.').next().unwrap().to_owned(),
+                artifact_id.version.clone(),
+                config,
+            )
+        }
     }
 }
 

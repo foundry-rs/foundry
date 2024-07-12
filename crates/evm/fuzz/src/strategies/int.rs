@@ -1,3 +1,4 @@
+use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Sign, I256, U256};
 use proptest::{
     strategy::{NewTree, Strategy, ValueTree},
@@ -6,7 +7,6 @@ use proptest::{
 use rand::Rng;
 
 /// Value tree for signed ints (up to int256).
-/// This is very similar to [proptest::BinarySearch]
 pub struct IntValueTree {
     /// Lower base (by absolute value)
     lo: I256,
@@ -55,7 +55,7 @@ impl ValueTree for IntValueTree {
     }
 
     fn simplify(&mut self) -> bool {
-        if self.fixed || !IntValueTree::magnitude_greater(self.hi, self.lo) {
+        if self.fixed || !Self::magnitude_greater(self.hi, self.lo) {
             return false
         }
         self.hi = self.curr;
@@ -63,11 +63,15 @@ impl ValueTree for IntValueTree {
     }
 
     fn complicate(&mut self) -> bool {
-        if self.fixed || !IntValueTree::magnitude_greater(self.hi, self.lo) {
+        if self.fixed || !Self::magnitude_greater(self.hi, self.lo) {
             return false
         }
 
-        self.lo = self.curr + if self.hi.is_negative() { I256::MINUS_ONE } else { I256::ONE };
+        self.lo = if self.curr != I256::MIN && self.curr != I256::MAX {
+            self.curr + if self.hi.is_negative() { I256::MINUS_ONE } else { I256::ONE }
+        } else {
+            self.curr
+        };
 
         self.reposition()
     }
@@ -76,15 +80,23 @@ impl ValueTree for IntValueTree {
 /// Value tree for signed ints (up to int256).
 /// The strategy combines 3 different strategies, each assigned a specific weight:
 /// 1. Generate purely random value in a range. This will first choose bit size uniformly (up `bits`
-/// param). Then generate a value for this bit size.
+///    param). Then generate a value for this bit size.
 /// 2. Generate a random value around the edges (+/- 3 around min, 0 and max possible value)
 /// 3. Generate a value from a predefined fixtures set
+///
+/// To define int fixtures:
+/// - return an array of possible values for a parameter named `amount` declare a function `function
+///   fixture_amount() public returns (int32[] memory)`.
+/// - use `amount` named parameter in fuzzed test in order to include fixtures in fuzzed values
+///   `function testFuzz_int32(int32 amount)`.
+///
+/// If fixture is not a valid int type then error is raised and random value generated.
 #[derive(Debug)]
 pub struct IntStrategy {
     /// Bit size of int (e.g. 256)
     bits: usize,
     /// A set of fixtures to be generated
-    fixtures: Vec<I256>,
+    fixtures: Vec<DynSolValue>,
     /// The weight for edge cases (+/- 3 around 0 and max possible value)
     edge_weight: usize,
     /// The weight for fixtures
@@ -98,10 +110,10 @@ impl IntStrategy {
     /// #Arguments
     /// * `bits` - Size of uint in bits
     /// * `fixtures` - A set of fixed values to be generated (according to fixtures weight)
-    pub fn new(bits: usize, fixtures: Vec<I256>) -> Self {
+    pub fn new(bits: usize, fixtures: Option<&[DynSolValue]>) -> Self {
         Self {
             bits,
-            fixtures,
+            fixtures: Vec::from(fixtures.unwrap_or_default()),
             edge_weight: 10usize,
             fixtures_weight: 40usize,
             random_weight: 50usize,
@@ -128,12 +140,22 @@ impl IntStrategy {
     }
 
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
-        // generate edge cases if there's no fixtures
+        // generate random cases if there's no fixtures
         if self.fixtures.is_empty() {
-            return self.generate_edge_tree(runner)
+            return self.generate_random_tree(runner)
         }
-        let idx = runner.rng().gen_range(0..self.fixtures.len());
-        Ok(IntValueTree::new(self.fixtures[idx], false))
+
+        // Generate value tree from fixture.
+        let fixture = &self.fixtures[runner.rng().gen_range(0..self.fixtures.len())];
+        if let Some(int_fixture) = fixture.as_int() {
+            if int_fixture.1 == self.bits {
+                return Ok(IntValueTree::new(int_fixture.0, false));
+            }
+        }
+
+        // If fixture is not a valid type, raise error and generate random value.
+        error!("{:?} is not a valid {} fixture", fixture, DynSolType::Int(self.bits));
+        self.generate_random_tree(runner)
     }
 
     fn generate_random_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
@@ -190,5 +212,27 @@ impl Strategy for IntStrategy {
             x if x < self.edge_weight + self.fixtures_weight => self.generate_fixtures_tree(runner),
             _ => self.generate_random_tree(runner),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::strategies::int::IntValueTree;
+    use alloy_primitives::I256;
+    use proptest::strategy::ValueTree;
+
+    #[test]
+    fn test_int_tree_complicate_should_not_overflow() {
+        let mut int_tree = IntValueTree::new(I256::MAX, false);
+        assert_eq!(int_tree.hi, I256::MAX);
+        assert_eq!(int_tree.curr, I256::MAX);
+        int_tree.complicate();
+        assert_eq!(int_tree.lo, I256::MAX);
+
+        let mut int_tree = IntValueTree::new(I256::MIN, false);
+        assert_eq!(int_tree.hi, I256::MIN);
+        assert_eq!(int_tree.curr, I256::MIN);
+        int_tree.complicate();
+        assert_eq!(int_tree.lo, I256::MIN);
     }
 }

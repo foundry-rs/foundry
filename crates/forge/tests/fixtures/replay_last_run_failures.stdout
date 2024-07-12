@@ -1,0 +1,15 @@
+No files changed, compilation skipped
+
+Ran 2 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
+[FAIL. Reason: revert: testB failed] testB() (gas: 303)
+[FAIL. Reason: revert: testD failed] testD() (gas: 314)
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; finished in 555.95µs (250.31µs CPU time)
+
+Ran 1 test suite in 3.24ms (555.95µs CPU time): 0 tests passed, 2 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
+[FAIL. Reason: revert: testB failed] testB() (gas: 303)
+[FAIL. Reason: revert: testD failed] testD() (gas: 314)
+
+Encountered a total of 2 failing tests, 0 tests succeeded

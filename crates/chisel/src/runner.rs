@@ -7,7 +7,7 @@ use alloy_primitives::{Address, Bytes, Log, U256};
 use eyre::Result;
 use foundry_evm::{
     executors::{DeployResult, Executor, RawCallResult},
-    traces::{CallTraceArena, TraceKind},
+    traces::{TraceKind, Traces},
 };
 use revm::interpreter::{return_ok, InstructionResult};
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ pub struct ChiselResult {
     /// Transaction logs
     pub logs: Vec<Log>,
     /// Call traces
-    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub traces: Traces,
     /// Amount of gas used in the transaction
     pub gas_used: u64,
     /// Map of addresses to their labels
@@ -125,19 +125,20 @@ impl ChiselRunner {
         value: U256,
         commit: bool,
     ) -> eyre::Result<ChiselResult> {
-        let fs_commit_changed = if let Some(cheatcodes) = &mut self.executor.inspector.cheatcodes {
-            let original_fs_commit = cheatcodes.fs_commit;
-            cheatcodes.fs_commit = false;
-            original_fs_commit != cheatcodes.fs_commit
-        } else {
-            false
-        };
+        let fs_commit_changed =
+            if let Some(cheatcodes) = &mut self.executor.inspector_mut().cheatcodes {
+                let original_fs_commit = cheatcodes.fs_commit;
+                cheatcodes.fs_commit = false;
+                original_fs_commit != cheatcodes.fs_commit
+            } else {
+                false
+            };
 
         let mut res = self.executor.call_raw(from, to, calldata.clone(), value)?;
         let mut gas_used = res.gas_used;
         if matches!(res.exit_reason, return_ok!()) {
             // store the current gas limit and reset it later
-            let init_gas_limit = self.executor.env.tx.gas_limit;
+            let init_gas_limit = self.executor.env().tx.gas_limit;
 
             // the executor will return the _exact_ gas value this transaction consumed, setting
             // this value as gas limit will result in `OutOfGas` so to come up with a
@@ -148,7 +149,7 @@ impl ChiselRunner {
             let mut last_highest_gas_limit = highest_gas_limit;
             while (highest_gas_limit - lowest_gas_limit) > 1 {
                 let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
-                self.executor.env.tx.gas_limit = mid_gas_limit;
+                self.executor.env_mut().tx.gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(from, to, calldata.clone(), value)?;
                 match res.exit_reason {
                     InstructionResult::Revert |
@@ -174,13 +175,13 @@ impl ChiselRunner {
                 }
             }
             // reset gas limit in the
-            self.executor.env.tx.gas_limit = init_gas_limit;
+            self.executor.env_mut().tx.gas_limit = init_gas_limit;
         }
 
         // if we changed `fs_commit` during gas limit search, re-execute the call with original
         // value
         if fs_commit_changed {
-            if let Some(cheatcodes) = &mut self.executor.inspector.cheatcodes {
+            if let Some(cheatcodes) = &mut self.executor.inspector_mut().cheatcodes {
                 cheatcodes.fs_commit = !cheatcodes.fs_commit;
             }
 
@@ -189,7 +190,7 @@ impl ChiselRunner {
 
         if commit {
             // if explicitly requested we can now commit the call
-            res = self.executor.call_raw_committing(from, to, calldata, value)?;
+            res = self.executor.transact_raw(from, to, calldata, value)?;
         }
 
         let RawCallResult { result, reverted, logs, traces, labels, chisel_state, .. } = res;

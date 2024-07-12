@@ -1,4 +1,4 @@
-//! Implementations of [`Toml`](crate::Group::Toml) cheatcodes.
+//! Implementations of [`Toml`](spec::Group::Toml) cheatcodes.
 
 use crate::{
     json::{
@@ -45,7 +45,7 @@ impl Cheatcode for parseTomlUintCall {
 impl Cheatcode for parseTomlUintArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_toml_coerce(toml, key, &DynSolType::Uint(256))
+        parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Uint(256))))
     }
 }
 
@@ -59,7 +59,7 @@ impl Cheatcode for parseTomlIntCall {
 impl Cheatcode for parseTomlIntArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_toml_coerce(toml, key, &DynSolType::Int(256))
+        parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Int(256))))
     }
 }
 
@@ -73,7 +73,7 @@ impl Cheatcode for parseTomlBoolCall {
 impl Cheatcode for parseTomlBoolArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_toml_coerce(toml, key, &DynSolType::Bool)
+        parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Bool)))
     }
 }
 
@@ -87,7 +87,7 @@ impl Cheatcode for parseTomlAddressCall {
 impl Cheatcode for parseTomlAddressArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_toml_coerce(toml, key, &DynSolType::Address)
+        parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Address)))
     }
 }
 
@@ -101,7 +101,7 @@ impl Cheatcode for parseTomlStringCall {
 impl Cheatcode for parseTomlStringArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_toml_coerce(toml, key, &DynSolType::String)
+        parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::String)))
     }
 }
 
@@ -115,7 +115,7 @@ impl Cheatcode for parseTomlBytesCall {
 impl Cheatcode for parseTomlBytesArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_toml_coerce(toml, key, &DynSolType::Bytes)
+        parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::Bytes)))
     }
 }
 
@@ -129,7 +129,7 @@ impl Cheatcode for parseTomlBytes32Call {
 impl Cheatcode for parseTomlBytes32ArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
-        parse_toml_coerce(toml, key, &DynSolType::FixedBytes(32))
+        parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
     }
 }
 

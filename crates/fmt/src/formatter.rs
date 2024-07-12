@@ -6,6 +6,7 @@ use crate::{
     comments::{
         CommentPosition, CommentState, CommentStringExt, CommentType, CommentWithMetadata, Comments,
     },
+    format_diagnostics_report,
     helpers::import_path_string,
     macros::*,
     solang_ext::{pt::*, *},
@@ -16,7 +17,8 @@ use crate::{
 use alloy_primitives::Address;
 use foundry_config::fmt::{HexUnderscore, MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
-use std::{fmt::Write, str::FromStr};
+use solang_parser::diagnostics::Diagnostic;
+use std::{fmt::Write, path::PathBuf, str::FromStr};
 use thiserror::Error;
 
 type Result<T, E = FormatterError> = std::result::Result<T, E>;
@@ -28,8 +30,11 @@ pub enum FormatterError {
     #[error(transparent)]
     Fmt(#[from] std::fmt::Error),
     /// Encountered invalid parse tree item.
-    #[error("Encountered invalid parse tree item at {0:?}")]
+    #[error("encountered invalid parse tree item at {0:?}")]
     InvalidParsedItem(Loc),
+    /// Failed to parse the source code
+    #[error("failed to parse file:\n{}", format_diagnostics_report(_0, _1.as_deref(), _2))]
+    Parse(String, Option<PathBuf>, Vec<Diagnostic>),
     /// All other errors
     #[error(transparent)]
     Custom(Box<dyn std::error::Error + Send + Sync>),
@@ -39,6 +44,7 @@ impl FormatterError {
     fn fmt() -> Self {
         Self::Fmt(std::fmt::Error)
     }
+
     fn custom(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::Custom(Box::new(err))
     }
@@ -393,7 +399,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(out)
     }
 
-    /// Transform [Visitable] items to a list of chunks and then sort those chunks by [AttrSortKey]
+    /// Transform [Visitable] items to a list of chunks and then sort those chunks.
     fn items_to_chunks_sorted<'b>(
         &mut self,
         next_byte_offset: Option<usize>,
@@ -585,8 +591,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(false)
     }
 
-    /// Write a raw comment. This is like [`write_comment`] but won't do any formatting or worry
-    /// about whitespace behind the comment
+    /// Write a raw comment. This is like [`write_comment`](Self::write_comment) but won't do any
+    /// formatting or worry about whitespace behind the comment.
     fn write_raw_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
         self.write_raw(&comment.comment)?;
         if comment.is_line() {
@@ -820,7 +826,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(self.transact(fun)?.buffer)
     }
 
-    /// Turn a chunk and its surrounding comments into a a string
+    /// Turn a chunk and its surrounding comments into a string
     fn chunk_to_string(&mut self, chunk: &Chunk) -> Result<String> {
         self.simulate_to_string(|fmt| fmt.write_chunk(chunk))
     }
@@ -895,7 +901,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 write_chunk!(fmt, "{}", stringified.trim_start())
             })?;
             if !last.content.trim_start().is_empty() {
-                self.write_whitespace_separator(true)?;
+                self.indented(1, |fmt| fmt.write_whitespace_separator(true))?;
             }
             let last_chunk =
                 self.chunk_at(last.loc_before(), last.loc_next(), last.spaced, &last.content);
@@ -1255,7 +1261,8 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Visit the yul string with an optional identifier.
     /// If the identifier is present, write the value in the format `<val>:<ident>`.
-    /// Ref: https://docs.soliditylang.org/en/v0.8.15/yul.html#variable-declarations
+    ///
+    /// Ref: <https://docs.soliditylang.org/en/v0.8.15/yul.html#variable-declarations>
     fn visit_yul_string_with_ident(
         &mut self,
         loc: Loc,
