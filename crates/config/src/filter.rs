@@ -56,15 +56,12 @@ impl GlobMatcher {
             return self.matcher.is_match(format!("./{}", path.display()));
         }
 
-        let glob_path = PathBuf::from(self.glob().glob());
-        if path.is_relative() && glob_path.is_absolute() {
-            let canonicalized_path = match dunce::canonicalize(path) {
-                Ok(p) => p,
-                Err(_e) => {
-                    return false;
-                }
-            };
-            return self.matcher.is_match(canonicalized_path);
+        if path.is_relative() && Path::new(self.glob().glob()).is_absolute() {
+            if let Ok(canonicalized_path) = dunce::canonicalize(path) {
+                return self.matcher.is_match(&canonicalized_path);
+            } else {
+                return false;
+            }
         }
 
         false
