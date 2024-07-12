@@ -1296,7 +1296,8 @@ async fn test_fork_query_at_fork_block() {
     api.evm_mine(None).await.unwrap();
     api.anvil_set_balance(address, balance + U256::from(1)).await.unwrap();
 
-    let balance_before = provider.get_balance(address).block_id(BlockId::number(number)).await.unwrap();
+    let balance_before =
+        provider.get_balance(address).block_id(BlockId::number(number)).await.unwrap();
 
     assert_eq!(balance_before, balance);
 }

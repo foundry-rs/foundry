@@ -1789,7 +1789,8 @@ impl Backend {
 
         if block_number < self.env.read().block.number {
             if let Some((block_hash, block)) = self
-                .block_by_number(BlockNumber::Number(block_number.to::<u64>())).await?
+                .block_by_number(BlockNumber::Number(block_number.to::<u64>()))
+                .await?
                 .and_then(|block| Some((block.header.hash?, block)))
             {
                 if let Some(state) = self.states.write().get(&block_hash) {
