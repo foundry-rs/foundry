@@ -1,4 +1,4 @@
-use foundry_test_utils::str;
+use foundry_test_utils::{assert_data_eq, str};
 
 forgetest!(basic_coverage, |_prj, cmd| {
     cmd.args(["coverage"]);
@@ -253,11 +253,10 @@ contract AContractTest is DSTest {
     cmd.assert_success();
     assert!(lcov_info.exists());
 
-    let lcov_report = std::fs::read_to_string(lcov_info).unwrap();
     // We want to make sure DA:8,1 is added only once so line hit is not doubled.
-    assert_eq!(
-        lcov_report,
-        r#"TN:
+    assert_data_eq!(
+        std::fs::read_to_string(lcov_info).unwrap(),
+        str![[r#"TN:
 SF:src/AContract.sol
 FN:7,AContract.foo
 FNDA:1,AContract.foo
@@ -268,7 +267,7 @@ LF:1
 LH:1
 BRF:0
 BRH:0
-end_of_record
-"#
+end[..]
+"#]]
     );
 });
