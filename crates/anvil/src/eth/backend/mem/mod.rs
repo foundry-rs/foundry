@@ -1789,10 +1789,12 @@ impl Backend {
 
         if block_number < self.env.read().block.number {
             {
-                // 1. See if state is available, if it is, use the read lock
-                // 2. If not, we need to retrieve the state via a snapshot
+                // here we first attempt to get historic state via the read lock.
+                // if not found, fallback into fetching the state from the disk
+                // and loading the state with a write lock
                 let states = self.states.read();
 
+                // try the read lock
                 if let Some(block) = self.get_block(block_number.to::<u64>()) {
                     if let Some(state) = states.get(&block.header.hash_slow()) {
                         let block = BlockEnv {
@@ -1806,26 +1808,27 @@ impl Backend {
                             ..Default::default()
                         };
                         return Ok(f(Box::new(state), block));
+                    // get via write lock
                     } else {
-                        let states = self.states.write();
+                        let mut states = self.states.write();
+                        if let Some(state) =
+                            states.get_and_initialize_from_hash(&block.header.hash_slow())
+                        {
+                            let block = BlockEnv {
+                                number: U256::from(block.header.number),
+                                coinbase: block.header.beneficiary,
+                                timestamp: U256::from(block.header.timestamp),
+                                difficulty: block.header.difficulty,
+                                prevrandao: Some(block.header.mix_hash),
+                                basefee: U256::from(
+                                    block.header.base_fee_per_gas.unwrap_or_default(),
+                                ),
+                                gas_limit: U256::from(block.header.gas_limit),
+                                ..Default::default()
+                            };
+                            return Ok(f(Box::new(state), block));
+                        }
                     }
-                }
-
-                if let Some((state, block)) = self
-                    .get_block(block_number.to::<u64>())
-                    .and_then(|block| Some((states.get(&block.header.hash_slow())?, block)))
-                {
-                    let block = BlockEnv {
-                        number: U256::from(block.header.number),
-                        coinbase: block.header.beneficiary,
-                        timestamp: U256::from(block.header.timestamp),
-                        difficulty: block.header.difficulty,
-                        prevrandao: Some(block.header.mix_hash),
-                        basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
-                        gas_limit: U256::from(block.header.gas_limit),
-                        ..Default::default()
-                    };
-                    return Ok(f(Box::new(state), block));
                 }
             }
 

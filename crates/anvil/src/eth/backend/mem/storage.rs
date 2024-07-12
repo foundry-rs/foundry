@@ -162,7 +162,7 @@ impl InMemoryBlockStates {
     }
 
     /// Returns the state for the given `hash` if present
-    pub fn get(&mut self, hash: &B256) -> Option<&StateDb> {
+    pub fn get(&self, hash: &B256) -> Option<&StateDb> {
         self.states.get(hash)
     }
 
