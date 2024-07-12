@@ -1789,6 +1789,8 @@ impl Backend {
 
         if block_number < self.env.read().block.number {
             {
+                // 1. See if state is available, if it is, use the read lock
+                // 2. If not, we need to retrieve the state via a snapshot
                 let mut states = self.states.write();
 
                 if let Some((state, block)) = self
