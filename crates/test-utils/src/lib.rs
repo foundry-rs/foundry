@@ -28,7 +28,7 @@ pub use script::{ScriptOutcome, ScriptTester};
 // re-exports for convenience
 pub use foundry_compilers;
 
-pub use snapbox::{file, str};
+pub use snapbox::{assert_data_eq, file, str};
 
 /// Initializes tracing for tests.
 pub fn init_tracing() {
