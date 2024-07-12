@@ -555,7 +555,7 @@ mod tests {
         assert_eq!(storage.on_disk_states.len(), 1);
         assert!(storage.on_disk_states.contains_key(&one));
 
-        let loaded = storage.get(&one).unwrap();
+        let loaded = storage.get_and_initialize_from_hash(&one).unwrap();
 
         let acc = loaded.basic_ref(addr).unwrap().unwrap();
         assert_eq!(acc.balance, U256::from(1337u64));

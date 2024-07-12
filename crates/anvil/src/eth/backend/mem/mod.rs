@@ -54,7 +54,7 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::eth::{
-    block::{self, Block, BlockInfo},
+    block::{Block, BlockInfo},
     transaction::{
         DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
         TransactionInfo, TypedReceipt, TypedTransaction,
