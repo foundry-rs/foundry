@@ -64,7 +64,7 @@ use anvil_core::eth::{
 use anvil_rpc::error::RpcError;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
-    backend::{BackendError, BackendResult, DatabaseError, DatabaseResult, RevertSnapshotAction},
+    backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
@@ -277,7 +277,7 @@ impl Backend {
     /// Applies the configured genesis settings
     ///
     /// This will fund, create the genesis accounts
-    async fn apply_genesis(&self) -> BackendResult<()> {
+    async fn apply_genesis(&self) -> Result<(), DatabaseError> {
         trace!(target: "backend", "setting genesis balances");
 
         if self.fork.read().is_some() {
@@ -291,7 +291,7 @@ impl Backend {
                 genesis_accounts_futures.push(tokio::task::spawn(async move {
                     let db = db.read().await;
                     let info = db.basic_ref(address)?.unwrap_or_default();
-                    Ok::<_, BackendError>((address, info))
+                    Ok::<_, DatabaseError>((address, info))
                 }));
             }
 
@@ -299,19 +299,10 @@ impl Backend {
 
             let mut db = self.db.write().await;
 
-            // in fork mode we only set the balance, this way the accountinfo is fetched from the
-            // remote client, preserving code and nonce. The reason for that is private keys for dev
-            // accounts are commonly known and are used on testnets
-            let mut fork_genesis_infos = self.genesis.fork_genesis_account_infos.lock();
-            fork_genesis_infos.clear();
-
             for res in genesis_accounts {
-                let (address, mut info) = res.map_err(BackendError::display)??;
+                let (address, mut info) = res.unwrap()?;
                 info.balance = self.genesis.balance;
                 db.insert_account(address, info.clone());
-
-                // store the fetched AccountInfo, so we can cheaply reset in [Self::reset_fork()]
-                fork_genesis_infos.push(info);
             }
         } else {
             let mut db = self.db.write().await;
@@ -459,23 +450,9 @@ impl Backend {
                 fork.total_difficulty(),
             );
             self.states.write().clear();
+            self.db.write().await.clear();
 
-            // insert back all genesis accounts, by reusing cached `AccountInfo`s we don't need to
-            // fetch the data via RPC again
-            let mut db = self.db.write().await;
-
-            // clear database
-            db.clear();
-
-            let fork_genesis_infos = self.genesis.fork_genesis_account_infos.lock();
-            for (address, info) in
-                self.genesis.accounts.iter().copied().zip(fork_genesis_infos.iter().cloned())
-            {
-                db.insert_account(address, info);
-            }
-
-            // reset the genesis.json alloc
-            self.genesis.apply_genesis_json_alloc(db)?;
+            self.apply_genesis().await?;
 
             Ok(())
         } else {
