@@ -167,7 +167,7 @@ contract BContractTest is DSTest {
 "#]]);
 });
 
-forgetest!(test_assert_require_coverage, |prj, cmd| {
+forgetest!(test_assert_coverage, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
@@ -175,7 +175,6 @@ forgetest!(test_assert_require_coverage, |prj, cmd| {
 contract AContract {
     function checkA() external pure returns (bool) {
         assert(10 > 2);
-        require(10 > 2, "true");
         return true;
     }
 }
@@ -200,15 +199,82 @@ contract AContractTest is DSTest {
     )
     .unwrap();
 
-    // Assert 100% coverage (assert and require properly covered).
+    // Assert 100% coverage (assert properly covered).
     cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
-| src/AContract.sol | 100.00% (3/3) | 100.00% (3/3) | 100.00% (0/0) | 100.00% (1/1) |
-| Total             | 100.00% (3/3) | 100.00% (3/3) | 100.00% (0/0) | 100.00% (1/1) |
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (1/1) |
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (1/1) |
 
 "#]]);
+});
+
+forgetest!(test_require_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    function checkRequire(bool doNotRevert) public view {
+        require(doNotRevert, "reverted");
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+interface Vm {
+    function expectRevert(bytes calldata revertData) external;
+}
+
+contract AContractTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+    function testRequireRevert() external {
+        AContract a = new AContract();
+        vm.expectRevert(abi.encodePacked("reverted"));
+        a.checkRequire(false);
+    }
+
+    function testRequireNoRevert() external {
+        AContract a = new AContract();
+        a.checkRequire(true);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert 50% branch coverage if only revert tested.
+    cmd.arg("coverage")
+        .args(["--mt".to_string(), "testRequireRevert".to_string()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches   | % Funcs       |
+|-------------------|---------------|---------------|--------------|---------------|
+| src/AContract.sol | 100.00% (1/1) | 100.00% (1/1) | 50.00% (1/2) | 100.00% (1/1) |
+| Total             | 100.00% (1/1) | 100.00% (1/1) | 50.00% (1/2) | 100.00% (1/1) |
+
+"#]]);
+
+    // Assert 100% branch coverage.
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (1/1) | 100.00% (1/1) | 100.00% (2/2) | 100.00% (1/1) |
+| Total             | 100.00% (1/1) | 100.00% (1/1) | 100.00% (2/2) | 100.00% (1/1) |
+
+"#]],
+    );
 });
 
 forgetest!(test_line_hit_not_doubled, |prj, cmd| {
