@@ -51,6 +51,99 @@ forge-std = "1.8.1"
     assert_eq!(foundry_contents, actual_foundry_contents);
 });
 
+forgesoldeer!(install_dependency_git, |prj, cmd| {
+    let command = "install";
+    let dependency = "forge-std~1.8.1";
+    let git = "git@gitlab.com:mario4582928/Mario.git";
+
+    let foundry_file = prj.root().join("foundry.toml");
+
+    
+    cmd.arg("soldeer").args([command, dependency, git]);
+    cmd.execute();
+
+    // Making sure the path was created to the dependency and that README.md exists
+    // meaning that the dependencies were installed correctly
+    let path_dep_forge =
+        prj.root().join("dependencies").join("forge-std-1.8.1").join("README.md");
+    assert!(path_dep_forge.exists());
+
+    // Making sure the lock contents are the right ones
+    let path_lock_file = prj.root().join("soldeer.lock");
+    let lock_contents = r#"
+[[dependencies]]
+name = "forge-std"
+version = "1.8.1"
+source = "git@gitlab.com:mario4582928/Mario.git"
+checksum = "bedb1775bd60e3e142a6db863982254a4b891b20"
+"#;
+
+    let actual_lock_contents = read_file_to_string(&path_lock_file);
+    assert_eq!(lock_contents, actual_lock_contents);
+
+    // Making sure the foundry contents are the right ones
+    let foundry_contents = r#"[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+[dependencies]
+forge-std = { version = "1.8.1", url = "git@gitlab.com:mario4582928/Mario.git", commit = "bedb1775bd60e3e142a6db863982254a4b891b20" }
+"#;
+
+    let actual_foundry_contents = read_file_to_string(&foundry_file);
+    assert_eq!(foundry_contents, actual_foundry_contents);
+});
+
+forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
+    let command = "install";
+    let dependency = "forge-std~1.8.1";
+    let git = "git@gitlab.com:mario4582928/Mario.git";
+    let commit = "bedb1775bd60e3e142a6db863982254a4b891b20";
+
+    let foundry_file = prj.root().join("foundry.toml");
+
+    cmd.arg("soldeer").args([command, dependency, git, commit]);
+    cmd.execute();
+
+    // Making sure the path was created to the dependency and that README.md exists
+    // meaning that the dependencies were installed correctly
+    let path_dep_forge =
+        prj.root().join("dependencies").join("forge-std-1.8.1").join("README.md");
+    assert!(path_dep_forge.exists());
+
+    // Making sure the lock contents are the right ones
+    let path_lock_file = prj.root().join("soldeer.lock");
+    let lock_contents = r#"
+[[dependencies]]
+name = "forge-std"
+version = "1.8.1"
+source = "git@gitlab.com:mario4582928/Mario.git"
+checksum = "bedb1775bd60e3e142a6db863982254a4b891b20"
+"#;
+
+    let actual_lock_contents = read_file_to_string(&path_lock_file);
+    assert_eq!(lock_contents, actual_lock_contents);
+
+    // Making sure the foundry contents are the right ones
+    let foundry_contents = r#"[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+[dependencies]
+forge-std = { version = "1.8.1", url = "git@gitlab.com:mario4582928/Mario.git", commit = "bedb1775bd60e3e142a6db863982254a4b891b20" }
+"#;
+
+    let actual_foundry_contents = read_file_to_string(&foundry_file);
+    assert_eq!(foundry_contents, actual_foundry_contents);
+});
+
+
 forgesoldeer!(update_dependencies, |prj, cmd| {
     let command = "update";
 
