@@ -402,7 +402,16 @@ impl MultiWalletOpts {
         Ok(None)
     }
 
-    // TODO: Support multiple keys
+    /// Returns a list of GCP signers if the GCP flag is set.
+    ///
+    /// The GCP signers are created from the following environment variables:
+    /// - GCP_PROJECT_ID: The GCP project ID. e.g. `my-project-123456`.
+    /// - GCP_LOCATION: The GCP location. e.g. `us-central1`.
+    /// - GCP_KEY_RING: The GCP key ring name. e.g. `my-key-ring`.
+    /// - GCP_KEY_NAME: The GCP key name. e.g. `my-key`.
+    /// - GCP_KEY_VERSION: The GCP key version. e.g. `1`.
+    ///
+    /// For more information on GCP KMS, see the [official documentation](https://cloud.google.com/kms/docs).
     pub async fn gcp_signers(&self) -> Result<Option<Vec<WalletSigner>>> {
         #[cfg(feature = "gcp-kms")]
         if self.gcp {
