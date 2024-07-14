@@ -516,3 +516,48 @@ contract FooTest is DSTest {
 
 "#]]);
 });
+
+forgetest!(test_expression_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Coverage.sol",
+        r#"
+contract Coverage {
+    function coverMe() public pure returns (uint256 a, bytes32 b, bytes[] memory c) {
+        // Next line should be accounted in coverage.
+        a = 1;
+        // Next lines should not be accounted in coverage.
+        b = b;
+        c = c;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "CoverageTest.sol",
+        r#"
+import "./test.sol";
+import {Coverage} from "./Coverage.sol";
+
+contract CoverageTest is DSTest {
+    function testCoverage() external {
+        Coverage coverage = new Coverage();
+        coverage.coverMe();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert 100% coverage, one line (two no effect expressions are ignored).
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+...
+| File             | % Lines       | % Statements  | % Branches    | % Funcs       |
+|------------------|---------------|---------------|---------------|---------------|
+| src/Coverage.sol | 100.00% (1/1) | 100.00% (1/1) | 100.00% (0/0) | 100.00% (1/1) |
+| Total            | 100.00% (1/1) | 100.00% (1/1) | 100.00% (0/0) | 100.00% (1/1) |
+
+"#]]);
+});

@@ -188,12 +188,33 @@ impl<'a> ContractVisitor<'a> {
                 self.visit_block_or_statement(body)
             }
             // Expression statement
-            NodeType::ExpressionStatement | NodeType::YulExpressionStatement => self
-                .visit_expression(
-                    &node
-                        .attribute("expression")
-                        .ok_or_else(|| eyre::eyre!("expression statement had no expression"))?,
-                ),
+            NodeType::ExpressionStatement | NodeType::YulExpressionStatement => {
+                let expr: Node = node
+                    .attribute("expression")
+                    .ok_or_else(|| eyre::eyre!("expression statement had no expression"))?;
+
+                // Exclude expressions that doesn't have effect (e.g. `b = b`).
+                let should_include = match expr
+                    .attribute::<Node>("rightHandSide")
+                    .and_then(|rhs| rhs.attribute::<String>("name"))
+                {
+                    Some(rhs_name) => {
+                        match expr
+                            .attribute::<Node>("leftHandSide")
+                            .and_then(|lhs| lhs.attribute::<String>("name"))
+                        {
+                            Some(lhs_name) => lhs_name != rhs_name,
+                            _ => true,
+                        }
+                    }
+                    _ => true,
+                };
+
+                if should_include {
+                    self.visit_expression(&expr)?
+                }
+                Ok(())
+            }
             // If statement
             NodeType::IfStatement => {
                 self.visit_expression(
