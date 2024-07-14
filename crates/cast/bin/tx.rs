@@ -94,6 +94,7 @@ where
 
         let chain = utils::get_chain(config.chain, &provider).await?;
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
+        let legacy = tx_opts.legacy || chain.is_legacy();
 
         if let Some(gas_limit) = tx_opts.gas_limit {
             tx.set_gas_limit(gas_limit.to());
@@ -104,14 +105,14 @@ where
         }
 
         if let Some(gas_price) = tx_opts.gas_price {
-            if tx_opts.legacy {
+            if legacy {
                 tx.set_gas_price(gas_price.to());
             } else {
                 tx.set_max_fee_per_gas(gas_price.to());
             }
         }
 
-        if !tx_opts.legacy {
+        if !legacy {
             if let Some(priority_fee) = tx_opts.priority_gas_price {
                 tx.set_max_priority_fee_per_gas(priority_fee.to());
             }
@@ -128,7 +129,7 @@ where
         Ok(Self {
             provider,
             tx,
-            legacy: tx_opts.legacy || chain.is_legacy(),
+            legacy,
             blob: tx_opts.blob,
             chain,
             etherscan_api_key,

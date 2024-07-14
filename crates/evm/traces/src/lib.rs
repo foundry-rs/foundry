@@ -9,6 +9,8 @@
 extern crate tracing;
 
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use revm::interpreter::OpCode;
+use revm_inspectors::tracing::OpcodeFilter;
 use serde::{Deserialize, Serialize};
 
 pub use revm_inspectors::tracing::{
@@ -28,6 +30,9 @@ use identifier::{LocalTraceIdentifier, TraceIdentifier};
 
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
+
+pub mod debug;
+pub use debug::DebugTraceIdentifier;
 
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
@@ -101,4 +106,112 @@ pub fn load_contracts<'a>(
         }
     }
     contracts
+}
+
+/// Different kinds of internal functions tracing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum InternalTraceMode {
+    #[default]
+    None,
+    /// Traces internal functions without decoding inputs/outputs from memory.
+    Simple,
+    /// Same as `Simple`, but also tracks memory snapshots.
+    Full,
+}
+
+impl From<InternalTraceMode> for TraceMode {
+    fn from(mode: InternalTraceMode) -> Self {
+        match mode {
+            InternalTraceMode::None => Self::None,
+            InternalTraceMode::Simple => Self::JumpSimple,
+            InternalTraceMode::Full => Self::Jump,
+        }
+    }
+}
+
+// Different kinds of traces used by different foundry components.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum TraceMode {
+    /// Disabled tracing.
+    #[default]
+    None,
+    /// Simple call trace, no steps tracing required.
+    Call,
+    /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
+    ///
+    /// Used for internal functions identification. Does not track memory snapshots.
+    JumpSimple,
+    /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
+    ///
+    /// Same as `JumpSimple`, but tracks memory snapshots as well.
+    Jump,
+    /// Call trace with complete steps tracing.
+    ///
+    /// Used by debugger.
+    Debug,
+}
+
+impl TraceMode {
+    pub const fn is_none(self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    pub const fn is_call(self) -> bool {
+        matches!(self, Self::Call)
+    }
+
+    pub const fn is_jump_simple(self) -> bool {
+        matches!(self, Self::JumpSimple)
+    }
+
+    pub const fn is_jump(self) -> bool {
+        matches!(self, Self::Jump)
+    }
+
+    pub const fn is_debug(self) -> bool {
+        matches!(self, Self::Debug)
+    }
+
+    pub fn with_debug(self, yes: bool) -> Self {
+        if yes {
+            std::cmp::max(self, Self::Debug)
+        } else {
+            self
+        }
+    }
+
+    pub fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
+        std::cmp::max(self, mode.into())
+    }
+
+    pub fn with_verbosity(self, verbosiy: u8) -> Self {
+        if verbosiy >= 3 {
+            std::cmp::max(self, Self::Call)
+        } else {
+            self
+        }
+    }
+
+    pub fn into_config(self) -> Option<TracingInspectorConfig> {
+        if self.is_none() {
+            None
+        } else {
+            TracingInspectorConfig {
+                record_steps: self >= Self::JumpSimple,
+                record_memory_snapshots: self >= Self::Jump,
+                record_stack_snapshots: if self >= Self::JumpSimple {
+                    StackSnapshotType::Full
+                } else {
+                    StackSnapshotType::None
+                },
+                record_logs: true,
+                record_state_diff: false,
+                record_returndata_snapshots: self.is_debug(),
+                record_opcodes_filter: (self.is_jump() || self.is_jump_simple())
+                    .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),
+                exclude_precompile_calls: false,
+            }
+            .into()
+        }
+    }
 }
