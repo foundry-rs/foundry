@@ -516,3 +516,75 @@ contract FooTest is DSTest {
 
 "#]]);
 });
+
+forgetest!(test_function_call_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    struct Custom {
+        bool a;
+        uint256 b;
+    }
+
+    function coverMe() external returns (bool) {
+        // Next lines should not be counted in coverage.
+        string("");
+        uint256(1);
+        address(this);
+        bool(false);
+        Custom(true, 10);
+        // Next lines should be counted in coverage.
+        uint256 a = uint256(1);
+        Custom memory cust = Custom(false, 100);
+        privateWithNoBody();
+        privateWithBody();
+        publicWithNoBody();
+        publicWithBody();
+        return true;
+    }
+
+    function privateWithNoBody() private {}
+
+    function privateWithBody() private returns (bool) {
+        return true;
+    }
+
+    function publicWithNoBody() private {}
+
+    function publicWithBody() private returns (bool) {
+        return true;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function testTypeConversionCoverage() external {
+        AContract a = new AContract();
+        a.coverMe();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert 100% coverage and only 9 lines reported (comments, type conversions and struct
+    // constructor calls are not included).
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (9/9) | 100.00% (9/9) | 100.00% (0/0) | 100.00% (5/5) |
+| Total             | 100.00% (9/9) | 100.00% (9/9) | 100.00% (0/0) | 100.00% (5/5) |
+
+"#]]);
+});
