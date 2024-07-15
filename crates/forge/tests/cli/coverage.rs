@@ -588,3 +588,116 @@ contract AContractTest is DSTest {
 
 "#]]);
 });
+
+forgetest!(test_try_catch_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Foo.sol",
+        r#"
+contract Foo {
+    address public owner;
+
+    constructor(address _owner) {
+        require(_owner != address(0), "invalid address");
+        assert(_owner != 0x0000000000000000000000000000000000000001);
+        owner = _owner;
+    }
+
+    function myFunc(uint256 x) public pure returns (string memory) {
+        require(x != 0, "require failed");
+        return "my func was called";
+    }
+}
+
+contract Bar {
+    event Log(string message);
+    event LogBytes(bytes data);
+
+    Foo public foo;
+
+    constructor() {
+        foo = new Foo(msg.sender);
+    }
+
+    function tryCatchExternalCall(uint256 _i) public {
+        try foo.myFunc(_i) returns (string memory result) {
+            emit Log(result);
+        } catch {
+            emit Log("external call failed");
+        }
+    }
+
+    function tryCatchNewContract(address _owner) public {
+        try new Foo(_owner) returns (Foo foo_) {
+            emit Log("Foo created");
+        } catch Error(string memory reason) {
+            emit Log(reason);
+        } catch (bytes memory reason) {}
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "FooTest.sol",
+        r#"
+import "./test.sol";
+import {Bar, Foo} from "./Foo.sol";
+
+interface Vm {
+    function expectRevert() external;
+}
+
+contract FooTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function test_happy_foo_coverage() external {
+        vm.expectRevert();
+        Foo foo = new Foo(address(0));
+        vm.expectRevert();
+        foo = new Foo(address(1));
+        foo = new Foo(address(2));
+    }
+
+    function test_happy_path_coverage() external {
+        Bar bar = new Bar();
+        bar.tryCatchNewContract(0x0000000000000000000000000000000000000002);
+        bar.tryCatchExternalCall(1);
+    }
+
+    function test_coverage() external {
+        Bar bar = new Bar();
+        bar.tryCatchNewContract(0x0000000000000000000000000000000000000000);
+        bar.tryCatchNewContract(0x0000000000000000000000000000000000000001);
+        bar.tryCatchExternalCall(0);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert coverage not 100% for happy paths only.
+    cmd.arg("coverage").args(["--mt".to_string(), "happy".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File        | % Lines        | % Statements   | % Branches    | % Funcs       |
+|-------------|----------------|----------------|---------------|---------------|
+| src/Foo.sol | 66.67% (10/15) | 66.67% (14/21) | 100.00% (4/4) | 100.00% (5/5) |
+| Total       | 66.67% (10/15) | 66.67% (14/21) | 100.00% (4/4) | 100.00% (5/5) |
+
+"#]],
+    );
+
+    // Assert 100% branch coverage (including clauses without body).
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File        | % Lines         | % Statements    | % Branches    | % Funcs       |
+|-------------|-----------------|-----------------|---------------|---------------|
+| src/Foo.sol | 100.00% (15/15) | 100.00% (21/21) | 100.00% (4/4) | 100.00% (5/5) |
+| Total       | 100.00% (15/15) | 100.00% (21/21) | 100.00% (4/4) | 100.00% (5/5) |
+
+"#]],
+    );
+});
