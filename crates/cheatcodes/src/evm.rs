@@ -148,7 +148,7 @@ impl Cheatcode for dumpStateCall {
                     },
                 )
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<BTreeMap<_, _>>();
 
         write_json_file(path, &alloc)?;
         Ok(Default::default())
