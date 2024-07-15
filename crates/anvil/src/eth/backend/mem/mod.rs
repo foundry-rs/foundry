@@ -2049,23 +2049,33 @@ impl Backend {
     }
 
     // Returnes the traces matching a given filter
-    pub async fn trace_filter(&self, filter: TraceFilter) {
-        // -> Result<Vec<LocalizedTransactionTrace>, BlockchainError>
+    pub async fn trace_filter(
+        &self,
+        filter: TraceFilter,
+    ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
         let matcher = filter.matcher();
         let start = filter.from_block.unwrap_or(0);
         let end = if let Some(end) = filter.to_block { end } else { self.best_number() };
 
         // TODO: define limits
 
-        let mut filtered_block = vec![];
+        let mut filtered_traces = vec![];
         for num in start..=end {
             if let Some(block) = self.get_block(num) {
                 for tx in block.transactions {
                     // Handle error better here
                     let from = tx.impersonated_sender.unwrap();
+                    let to = tx.to();
+                    if matcher.matches(from, to) {
+                        if let Some(trace) = self.mined_parity_trace_transaction(tx.hash()) {
+                            filtered_traces.push(trace);
+                        }
+                    };
                 }
             }
         }
+
+        Ok(filtered_traces)
     }
 
     /// Returns all receipts of the block
