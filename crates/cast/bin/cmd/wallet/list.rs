@@ -1,5 +1,6 @@
 use clap::Parser;
 use eyre::Result;
+use std::env;
 
 use foundry_common::fs;
 use foundry_config::Config;
@@ -54,7 +55,7 @@ impl ListArgs {
             .mnemonic_indexes(Some(vec![0]))
             .trezor(self.trezor || self.all)
             .aws(self.aws || self.all)
-            .gcp(self.gcp || self.all)
+            .gcp(self.gcp || (self.all && gcp_env_vars_set()))
             .interactives(0)
             .build()
             .expect("build multi wallet");
@@ -113,4 +114,11 @@ impl ListArgs {
 
         Ok(())
     }
+}
+
+fn gcp_env_vars_set() -> bool {
+    let required_vars =
+        ["GCP_PROJECT_ID", "GCP_LOCATION", "GCP_KEY_RING", "GCP_KEY_NAME", "GCP_KEY_VERSION"];
+
+    required_vars.iter().all(|&var| env::var(var).is_ok())
 }
