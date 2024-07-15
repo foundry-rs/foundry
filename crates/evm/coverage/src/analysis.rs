@@ -334,31 +334,37 @@ impl<'a> ContractVisitor<'a> {
                 Ok(())
             }
             NodeType::FunctionCall => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+                // Do not count other kinds of calls towards coverage (like `typeConversion`
+                // and `structConstructorCall`).
+                let kind: Option<String> = node.attribute("kind");
+                if let Some("functionCall") = kind.as_deref() {
+                    self.push_item(CoverageItem {
+                        kind: CoverageItemKind::Statement,
+                        loc: self.source_location_for(&node.src),
+                        hits: 0,
+                    });
 
-                let expr: Option<Node> = node.attribute("expression");
-                if let Some(NodeType::Identifier) = expr.as_ref().map(|expr| &expr.node_type) {
-                    // Might be a require call, add branch coverage.
-                    let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
-                    if let Some("require") = name.as_deref() {
-                        let branch_id = self.branch_id;
-                        self.branch_id += 1;
-                        self.push_item(CoverageItem {
-                            kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
-                            loc: self.source_location_for(&node.src),
-                            hits: 0,
-                        });
-                        self.push_item(CoverageItem {
-                            kind: CoverageItemKind::Branch { branch_id, path_id: 1 },
-                            loc: self.source_location_for(&node.src),
-                            hits: 0,
-                        });
+                    let expr: Option<Node> = node.attribute("expression");
+                    if let Some(NodeType::Identifier) = expr.as_ref().map(|expr| &expr.node_type) {
+                        // Might be a require call, add branch coverage.
+                        let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
+                        if let Some("require") = name.as_deref() {
+                            let branch_id = self.branch_id;
+                            self.branch_id += 1;
+                            self.push_item(CoverageItem {
+                                kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
+                                loc: self.source_location_for(&node.src),
+                                hits: 0,
+                            });
+                            self.push_item(CoverageItem {
+                                kind: CoverageItemKind::Branch { branch_id, path_id: 1 },
+                                loc: self.source_location_for(&node.src),
+                                hits: 0,
+                            });
+                        }
                     }
                 }
+
                 Ok(())
             }
             NodeType::BinaryOperation => {
