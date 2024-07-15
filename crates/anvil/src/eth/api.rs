@@ -1559,6 +1559,9 @@ impl EthApi {
 
     pub async fn trace_filter(&self, filter: TraceFilter) {
         node_info!("trace_filter");
+        // Approach:
+        // 1. Get block traces over that range
+        // 2. Each block, filter the transactions via addresses
     }
 }
 
