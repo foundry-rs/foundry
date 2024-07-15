@@ -1,10 +1,10 @@
 use crate::eth::error::BlockchainError;
-use alloy_consensus::{SignableTransaction, Signed};
+use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, Signature, B256};
 use alloy_signer::Signer as AlloySigner;
-use alloy_signer_wallet::LocalWallet;
+use alloy_signer_local::PrivateKeySigner;
 use anvil_core::eth::transaction::{
     optimism::{DepositTransaction, DepositTransactionRequest},
     TypedTransaction, TypedTransactionRequest,
@@ -47,11 +47,11 @@ pub trait Signer: Send + Sync {
 /// Maintains developer keys
 pub struct DevSigner {
     addresses: Vec<Address>,
-    accounts: HashMap<Address, LocalWallet>,
+    accounts: HashMap<Address, PrivateKeySigner>,
 }
 
 impl DevSigner {
-    pub fn new(accounts: Vec<LocalWallet>) -> Self {
+    pub fn new(accounts: Vec<PrivateKeySigner>) -> Self {
         let addresses = accounts.iter().map(|wallet| wallet.address()).collect::<Vec<_>>();
         let accounts = addresses.iter().cloned().zip(accounts).collect();
         Self { addresses, accounts }
@@ -121,21 +121,15 @@ pub fn build_typed_transaction(
     signature: Signature,
 ) -> Result<TypedTransaction, BlockchainError> {
     let tx = match request {
-        TypedTransactionRequest::Legacy(tx) => {
-            let sighash = tx.signature_hash();
-            TypedTransaction::Legacy(Signed::new_unchecked(tx, signature, sighash))
-        }
+        TypedTransactionRequest::Legacy(tx) => TypedTransaction::Legacy(tx.into_signed(signature)),
         TypedTransactionRequest::EIP2930(tx) => {
-            let sighash = tx.signature_hash();
-            TypedTransaction::EIP2930(Signed::new_unchecked(tx, signature, sighash))
+            TypedTransaction::EIP2930(tx.into_signed(signature))
         }
         TypedTransactionRequest::EIP1559(tx) => {
-            let sighash = tx.signature_hash();
-            TypedTransaction::EIP1559(Signed::new_unchecked(tx, signature, sighash))
+            TypedTransaction::EIP1559(tx.into_signed(signature))
         }
         TypedTransactionRequest::EIP4844(tx) => {
-            let sighash = tx.signature_hash();
-            TypedTransaction::EIP4844(Signed::new_unchecked(tx, signature, sighash))
+            TypedTransaction::EIP4844(tx.into_signed(signature))
         }
         TypedTransactionRequest::Deposit(tx) => {
             let DepositTransactionRequest {

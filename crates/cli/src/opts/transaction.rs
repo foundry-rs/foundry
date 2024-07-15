@@ -45,6 +45,14 @@ pub struct TransactionOpts {
     /// This is automatically enabled for common networks without EIP1559.
     #[arg(long)]
     pub legacy: bool,
+
+    /// Send a EIP-4844 blob transaction.
+    #[arg(long, conflicts_with = "legacy")]
+    pub blob: bool,
+
+    /// Gas price for EIP-4844 blob transaction.
+    #[arg(long, conflicts_with = "legacy", value_parser = parse_ether_value, env = "ETH_BLOB_GAS_PRICE", value_name = "BLOB_PRICE")]
+    pub blob_gas_price: Option<U256>,
 }
 
 #[cfg(test)]

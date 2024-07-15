@@ -52,7 +52,7 @@ impl UpdateArgs {
 /// Returns `(root, paths)` where `root` is the root of the Git repository and `paths` are the
 /// relative paths of the dependencies.
 pub fn dependencies_paths(deps: &[Dependency], config: &Config) -> Result<(PathBuf, Vec<PathBuf>)> {
-    let git_root = Git::root_of(&config.__root.0)?;
+    let git_root = Git::root_of(&config.root.0)?;
     let libs = config.install_lib_dir();
 
     let mut paths = Vec::with_capacity(deps.len());

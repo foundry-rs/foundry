@@ -9,6 +9,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 forge-fmt.workspace = true
 foundry-common.workspace = true
@@ -30,19 +33,19 @@ clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 color-eyre.workspace = true
 dotenvy = "0.15"
 eyre.workspace = true
+futures.workspace = true
 indicatif = "0.17"
-once_cell = "1"
+once_cell.workspace = true
 regex = { version = "1", default-features = false }
 serde.workspace = true
-strsim = "0.10"
+strsim = "0.11"
 strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros"] }
-tracing-error = "0.2"
-tracing-subscriber = { workspace = true, features = ["registry", "env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, features = ["registry", "env-filter"] }
 tracing.workspace = true
 yansi.workspace = true
-hex.workspace = true
-futures = "0.3"
+
+tracing-tracy = { version = "0.11", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -51,3 +54,5 @@ tempfile.workspace = true
 default = ["rustls"]
 rustls = ["foundry-wallets/rustls"]
 openssl = ["foundry-compilers/openssl"]
+
+tracy = ["dep:tracing-tracy"]

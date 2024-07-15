@@ -1,7 +1,7 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
 use foundry_test_utils::{rpc, util::OutputExt, ScriptOutcome, ScriptTester};
 use regex::Regex;
@@ -1354,4 +1354,100 @@ contract SimpleScript is Script {
 
     let output = cmd.stderr_lossy();
     assert!(output.contains("missing CREATE2 deployer"));
+});
+
+forgetest_async!(can_switch_forks_in_setup, |prj, cmd| {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    let url = handle.http_endpoint();
+
+    prj.add_script(
+        "Foo",
+        &r#"
+import "forge-std/Script.sol";
+
+contract SimpleScript is Script {
+    function setUp() external {
+        uint256 initialFork = vm.activeFork();
+        vm.createSelectFork("<url>");
+        vm.selectFork(initialFork);
+    }
+
+    function run() external {
+        assert(vm.getNonce(msg.sender) == 0);
+    }
+}
+   "#
+        .replace("<url>", &url),
+    )
+    .unwrap();
+
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &url,
+        "--sender",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    ]);
+
+    cmd.stdout_lossy();
+});
+
+// Asserts that running the same script twice only deploys library once.
+forgetest_async!(can_deploy_library_create2, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("BroadcastTest", "deploy()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 2), (1, 1)])
+        .await;
+
+    tester.clear();
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("BroadcastTest", "deploy()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 1), (1, 1)])
+        .await;
+});
+
+// Asserts that running the same script twice only deploys library once when using different
+// senders.
+forgetest_async!(can_deploy_library_create2_different_sender, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("BroadcastTest", "deploy()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 2), (1, 1)])
+        .await;
+
+    tester.clear();
+
+    // Run different script from the same contract (which requires the same library).
+    tester
+        .load_private_keys(&[2])
+        .await
+        .add_sig("BroadcastTest", "deployNoArgs()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(2, 2)])
+        .await;
 });

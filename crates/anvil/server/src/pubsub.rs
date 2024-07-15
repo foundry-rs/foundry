@@ -40,8 +40,6 @@ pub struct PubSubContext<Handler: PubSubRpcHandler> {
     subscriptions: Subscriptions<Handler::SubscriptionId, Handler::Subscription>,
 }
 
-// === impl PubSubContext ===
-
 impl<Handler: PubSubRpcHandler> PubSubContext<Handler> {
     /// Adds new active subscription
     ///
@@ -125,8 +123,6 @@ pub struct PubSubConnection<Handler: PubSubRpcHandler, Connection> {
     pending: VecDeque<String>,
 }
 
-// === impl PubSubConnection ===
-
 impl<Handler: PubSubRpcHandler, Connection> PubSubConnection<Handler, Connection> {
     pub fn new(connection: Connection, handler: Handler) -> Self {
         Self {
@@ -171,7 +167,7 @@ where
         let pin = self.get_mut();
         loop {
             // drive the websocket
-            while let Poll::Ready(Ok(())) = pin.connection.poll_ready_unpin(cx) {
+            while matches!(pin.connection.poll_ready_unpin(cx), Poll::Ready(Ok(()))) {
                 // only start sending if socket is ready
                 if let Some(msg) = pin.pending.pop_front() {
                     if let Err(err) = pin.connection.start_send_unpin(msg) {

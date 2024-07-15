@@ -1,14 +1,15 @@
 use crate::{
+    debug::DebugTraceIdentifier,
     identifier::{
         AddressIdentity, LocalTraceIdentifier, SingleSignaturesIdentifier, TraceIdentifier,
     },
-    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedCallLog, DecodedCallTrace,
+    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{Address, LogData, Selector, B256};
 use foundry_common::{
-    abi::get_indexed_event, fmt::format_token, ContractsByArtifact, SELECTOR_LEN,
+    abi::get_indexed_event, fmt::format_token, get_contract_name, ContractsByArtifact, SELECTOR_LEN,
 };
 use foundry_evm_core::{
     abi::{Console, HardhatConsole, Vm, HARDHAT_CONSOLE_SELECTOR_PATCHES},
@@ -17,9 +18,15 @@ use foundry_evm_core::{
         TEST_CONTRACT_ADDRESS,
     },
     decode::RevertDecoder,
+    precompiles::{
+        BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
+        RIPEMD_160, SHA_256,
+    },
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
+use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
+use rustc_hash::FxHashMap;
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 
 mod precompiles;
@@ -82,6 +89,13 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Sets the debug identifier for the decoder.
+    #[inline]
+    pub fn with_debug_identifier(mut self, identifier: DebugTraceIdentifier) -> Self {
+        self.decoder.debug_identifier = Some(identifier);
+        self
+    }
+
     /// Build the decoder.
     #[inline]
     pub fn build(self) -> CallTraceDecoder {
@@ -108,7 +122,7 @@ pub struct CallTraceDecoder {
     pub receive_contracts: Vec<Address>,
 
     /// All known functions.
-    pub functions: HashMap<Selector, Vec<Function>>,
+    pub functions: FxHashMap<Selector, Vec<Function>>,
     /// All known events.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// Revert decoder. Contains all known custom errors.
@@ -118,6 +132,9 @@ pub struct CallTraceDecoder {
     pub signature_identifier: Option<SingleSignaturesIdentifier>,
     /// Verbosity level
     pub verbosity: u8,
+
+    /// Optional identifier of individual trace steps.
+    pub debug_identifier: Option<DebugTraceIdentifier>,
 }
 
 impl CallTraceDecoder {
@@ -158,6 +175,16 @@ impl CallTraceDecoder {
                 (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
                 (CALLER, "DefaultSender".to_string()),
                 (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
+                (EC_RECOVER, "ECRecover".to_string()),
+                (SHA_256, "SHA-256".to_string()),
+                (RIPEMD_160, "RIPEMD-160".to_string()),
+                (IDENTITY, "Identity".to_string()),
+                (MOD_EXP, "ModExp".to_string()),
+                (EC_ADD, "ECAdd".to_string()),
+                (EC_MUL, "ECMul".to_string()),
+                (EC_PAIRING, "ECPairing".to_string()),
+                (BLAKE_2F, "Blake2F".to_string()),
+                (POINT_EVALUATION, "PointEvaluation".to_string()),
             ]
             .into(),
             receive_contracts: Default::default(),
@@ -180,6 +207,8 @@ impl CallTraceDecoder {
 
             signature_identifier: None,
             verbosity: 0,
+
+            debug_identifier: None,
         }
     }
 
@@ -199,7 +228,7 @@ impl CallTraceDecoder {
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
     pub fn identify(&mut self, trace: &CallTraceArena, identifier: &mut impl TraceIdentifier) {
-        self.collect_identities(identifier.identify_addresses(self.addresses(trace)));
+        self.collect_identities(identifier.identify_addresses(self.trace_addresses(trace)));
     }
 
     /// Adds a single event to the decoder.
@@ -229,7 +258,8 @@ impl CallTraceDecoder {
         self.revert_decoder.push_error(error);
     }
 
-    fn addresses<'a>(
+    /// Returns an iterator over the trace addresses.
+    pub fn trace_addresses<'a>(
         &'a self,
         arena: &'a CallTraceArena,
     ) -> impl Iterator<Item = (&'a Address, Option<&'a [u8]>)> + Clone + 'a {
@@ -242,8 +272,8 @@ impl CallTraceDecoder {
                     node.trace.kind.is_any_create().then_some(&node.trace.output[..]),
                 )
             })
-            .filter(|(address, _)| {
-                !self.labels.contains_key(*address) || !self.contracts.contains_key(*address)
+            .filter(|&(address, _)| {
+                !self.labels.contains_key(address) || !self.contracts.contains_key(address)
             })
     }
 
@@ -289,31 +319,38 @@ impl CallTraceDecoder {
         }
     }
 
+    /// Populates the traces with decoded data by mutating the
+    /// [CallTrace] in place. See [CallTraceDecoder::decode_function] and
+    /// [CallTraceDecoder::decode_event] for more details.
+    pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
+        for node in traces {
+            node.trace.decoded = self.decode_function(&node.trace).await;
+            for log in node.logs.iter_mut() {
+                log.decoded = self.decode_event(&log.raw_log).await;
+            }
+
+            if let Some(debug) = self.debug_identifier.as_ref() {
+                if let Some(identified) = self.contracts.get(&node.trace.address) {
+                    debug.identify_node_steps(node, get_contract_name(identified))
+                }
+            }
+        }
+    }
+
+    /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
-        // Decode precompile
-        if let Some((label, func)) = precompiles::decode(trace, 1) {
-            return DecodedCallTrace {
-                label: Some(label),
-                return_data: None,
-                contract: None,
-                func: Some(func),
-            };
+        if let Some(trace) = precompiles::decode(trace, 1) {
+            return trace;
         }
 
-        // Set label
         let label = self.labels.get(&trace.address).cloned();
-
-        // Set contract name
-        let contract = self.contracts.get(&trace.address).cloned();
 
         let cdata = &trace.data;
         if trace.address == DEFAULT_CREATE2_DEPLOYER {
             return DecodedCallTrace {
                 label,
-                return_data: (!trace.status.is_ok())
-                    .then(|| self.revert_decoder.decode(&trace.output, Some(trace.status))),
-                contract,
-                func: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
+                call_data: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
+                return_data: self.default_return_data(trace),
             };
         }
 
@@ -334,14 +371,17 @@ impl CallTraceDecoder {
                 }
             };
             let [func, ..] = &functions[..] else {
-                return DecodedCallTrace { label, return_data: None, contract, func: None };
+                return DecodedCallTrace {
+                    label,
+                    call_data: None,
+                    return_data: self.default_return_data(trace),
+                };
             };
 
             DecodedCallTrace {
                 label,
-                func: Some(self.decode_function_input(trace, func)),
+                call_data: Some(self.decode_function_input(trace, func)),
                 return_data: self.decode_function_output(trace, functions),
-                contract,
             }
         } else {
             let has_receive = self.receive_contracts.contains(&trace.address);
@@ -350,13 +390,8 @@ impl CallTraceDecoder {
             let args = if cdata.is_empty() { Vec::new() } else { vec![cdata.to_string()] };
             DecodedCallTrace {
                 label,
-                return_data: if !trace.success {
-                    Some(self.revert_decoder.decode(&trace.output, Some(trace.status)))
-                } else {
-                    None
-                },
-                contract,
-                func: Some(DecodedCallData { signature, args }),
+                call_data: Some(DecodedCallData { signature, args }),
+                return_data: self.default_return_data(trace),
             }
         }
     }
@@ -374,7 +409,7 @@ impl CallTraceDecoder {
 
             if args.is_none() {
                 if let Ok(v) = func.abi_decode_input(&trace.data[SELECTOR_LEN..], false) {
-                    args = Some(v.iter().map(|value| self.apply_label(value)).collect());
+                    args = Some(v.iter().map(|value| self.format_value(value)).collect());
                 }
             }
         }
@@ -487,34 +522,32 @@ impl CallTraceDecoder {
 
     /// Decodes a function's output into the given trace.
     fn decode_function_output(&self, trace: &CallTrace, funcs: &[Function]) -> Option<String> {
-        let data = &trace.output;
-        if trace.success {
-            if trace.address == CHEATCODE_ADDRESS {
-                if let Some(decoded) =
-                    funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func))
-                {
-                    return Some(decoded);
-                }
-            }
-
-            if let Some(values) =
-                funcs.iter().find_map(|func| func.abi_decode_output(data, false).ok())
-            {
-                // Functions coming from an external database do not have any outputs specified,
-                // and will lead to returning an empty list of values.
-                if values.is_empty() {
-                    return None;
-                }
-
-                return Some(
-                    values.iter().map(|value| self.apply_label(value)).format(", ").to_string(),
-                );
-            }
-
-            None
-        } else {
-            Some(self.revert_decoder.decode(data, Some(trace.status)))
+        if !trace.success {
+            return self.default_return_data(trace);
         }
+
+        if trace.address == CHEATCODE_ADDRESS {
+            if let Some(decoded) = funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func))
+            {
+                return Some(decoded);
+            }
+        }
+
+        if let Some(values) =
+            funcs.iter().find_map(|func| func.abi_decode_output(&trace.output, false).ok())
+        {
+            // Functions coming from an external database do not have any outputs specified,
+            // and will lead to returning an empty list of values.
+            if values.is_empty() {
+                return None;
+            }
+
+            return Some(
+                values.iter().map(|value| self.format_value(value)).format(", ").to_string(),
+            );
+        }
+
+        None
     }
 
     /// Custom decoding for cheatcode outputs.
@@ -522,7 +555,7 @@ impl CallTraceDecoder {
         match func.name.as_str() {
             s if s.starts_with("env") => Some("<env var value>"),
             "createWallet" | "deriveKey" => Some("<pk>"),
-            "promptSecret" => Some("<secret>"),
+            "promptSecret" | "promptSecretUint" => Some("<secret>"),
             "parseJson" if self.verbosity < 5 => Some("<encoded JSON value>"),
             "readFile" if self.verbosity < 5 => Some("<file>"),
             _ => None,
@@ -530,9 +563,14 @@ impl CallTraceDecoder {
         .map(Into::into)
     }
 
+    /// The default decoded return data for a trace.
+    fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
+        (!trace.success).then(|| self.revert_decoder.decode(&trace.output, Some(trace.status)))
+    }
+
     /// Decodes an event.
-    pub async fn decode_event<'a>(&self, log: &'a LogData) -> DecodedCallLog<'a> {
-        let &[t0, ..] = log.topics() else { return DecodedCallLog::Raw(log) };
+    pub async fn decode_event(&self, log: &LogData) -> DecodedCallLog {
+        let &[t0, ..] = log.topics() else { return DecodedCallLog { name: None, params: None } };
 
         let mut events = Vec::new();
         let events = match self.events.get(&(t0, log.topics().len() - 1)) {
@@ -549,22 +587,24 @@ impl CallTraceDecoder {
         for event in events {
             if let Ok(decoded) = event.decode_log(log, false) {
                 let params = reconstruct_params(event, &decoded);
-                return DecodedCallLog::Decoded(
-                    event.name.clone(),
-                    params
-                        .into_iter()
-                        .zip(event.inputs.iter())
-                        .map(|(param, input)| {
-                            // undo patched names
-                            let name = input.name.clone();
-                            (name, self.apply_label(&param))
-                        })
-                        .collect(),
-                );
+                return DecodedCallLog {
+                    name: Some(event.name.clone()),
+                    params: Some(
+                        params
+                            .into_iter()
+                            .zip(event.inputs.iter())
+                            .map(|(param, input)| {
+                                // undo patched names
+                                let name = input.name.clone();
+                                (name, self.format_value(&param))
+                            })
+                            .collect(),
+                    ),
+                };
             }
         }
 
-        DecodedCallLog::Raw(log)
+        DecodedCallLog { name: None, params: None }
     }
 
     /// Prefetches function and event signatures into the identifier cache
@@ -573,7 +613,7 @@ impl CallTraceDecoder {
 
         let events_it = nodes
             .iter()
-            .flat_map(|node| node.logs.iter().filter_map(|log| log.topics().first()))
+            .flat_map(|node| node.logs.iter().filter_map(|log| log.raw_log.topics().first()))
             .unique();
         identifier.write().await.identify_events(events_it).await;
 
@@ -590,7 +630,8 @@ impl CallTraceDecoder {
         identifier.write().await.identify_functions(funcs_it).await;
     }
 
-    fn apply_label(&self, value: &DynSolValue) -> String {
+    /// Pretty-prints a value.
+    fn format_value(&self, value: &DynSolValue) -> String {
         if let DynSolValue::Address(addr) = value {
             if let Some(label) = self.labels.get(addr) {
                 return format!("{label}: [{addr}]");
@@ -697,13 +738,13 @@ mod tests {
         for (function_signature, data, expected) in cheatcode_input_test_cases {
             let function = Function::parse(function_signature).unwrap();
             let result = decoder.decode_cheatcode_inputs(&function, &data);
-            assert_eq!(result, expected, "Input case failed for: {}", function_signature);
+            assert_eq!(result, expected, "Input case failed for: {function_signature}");
         }
 
         for (function_signature, expected) in cheatcode_output_test_cases {
             let function = Function::parse(function_signature).unwrap();
             let result = Some(decoder.decode_cheatcode_outputs(&function).unwrap_or_default());
-            assert_eq!(result, expected, "Output case failed for: {}", function_signature);
+            assert_eq!(result, expected, "Output case failed for: {function_signature}");
         }
     }
 }

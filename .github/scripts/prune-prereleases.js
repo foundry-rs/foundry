@@ -36,7 +36,7 @@ module.exports = async ({ github, context }) => {
 
     // Pruning rules:
     //   1. only keep the earliest (by created_at) release of the month
-    //   2. to keep the newest 3 nightlies
+    //   2. to keep the newest 30 nightlies (to make sure nightlies are kept until the next monthly release)
     // Notes:
     //   - This addresses https://github.com/foundry-rs/foundry/issues/6732
     //   - Name of the release may deviate from created_at due to the usage of different timezones.
@@ -47,7 +47,7 @@ module.exports = async ({ github, context }) => {
     const groups = groupBy(nightlies, i => i.created_at.slice(0, 7));
     const nightliesToPrune = Object.values(groups)
         .reduce((acc, cur) => acc.concat(cur.slice(0, -1)), []) // rule 1
-        .slice(3); // rule 2
+        .slice(30); // rule 2
 
     for (const nightly of nightliesToPrune) {
         console.log(`Deleting nightly: ${nightly.tag_name}`);

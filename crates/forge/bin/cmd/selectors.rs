@@ -1,3 +1,4 @@
+use alloy_primitives::hex;
 use clap::Parser;
 use comfy_table::Table;
 use eyre::Result;
@@ -60,7 +61,7 @@ pub enum SelectorsSubcommands {
 impl SelectorsSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            SelectorsSubcommands::Upload { contract, all, project_paths } => {
+            Self::Upload { contract, all, project_paths } => {
                 let build_args = CoreBuildArgs {
                     project_paths: project_paths.clone(),
                     compiler: CompilerArgs {
@@ -118,7 +119,7 @@ impl SelectorsSubcommands {
                     }
                 }
             }
-            SelectorsSubcommands::Collision { mut first_contract, mut second_contract, build } => {
+            Self::Collision { mut first_contract, mut second_contract, build } => {
                 // Compile the project with the two contracts included
                 let project = build.project()?;
                 let mut compiler = ProjectCompiler::new().quiet(true);
@@ -174,10 +175,10 @@ impl SelectorsSubcommands {
                     println!("{table}");
                 }
             }
-            SelectorsSubcommands::List { contract, project_paths } => {
+            Self::List { contract, project_paths } => {
                 println!("Listing selectors for contracts in the project...");
                 let build_args = CoreBuildArgs {
-                    project_paths: project_paths.clone(),
+                    project_paths,
                     compiler: CompilerArgs {
                         extra_output: vec![ContractOutputSelection::Abi],
                         ..Default::default()
@@ -199,7 +200,7 @@ impl SelectorsSubcommands {
                             let suggestion = if let Some(suggestion) = foundry_cli::utils::did_you_mean(&contract, candidates).pop() {
                                 format!("\nDid you mean `{suggestion}`?")
                             } else {
-                                "".to_string()
+                                String::new()
                             };
                             eyre::eyre!(
                                 "Could not find artifact `{contract}` in the compiled artifacts{suggestion}",

@@ -1,11 +1,12 @@
 //! Tests for OP chain support.
 
 use crate::utils::http_provider_with_signer;
-use alloy_eips::{eip2718::Encodable2718, BlockId};
-use alloy_network::{EthereumSigner, TransactionBuilder};
+use alloy_eips::eip2718::Encodable2718;
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{b256, U128, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{optimism::OptimismTransactionFields, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{optimism::OptimismTransactionFields, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use anvil::{spawn, Hardfork, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -46,14 +47,14 @@ async fn test_send_value_deposit_transaction() {
         spawn(NodeConfig::test().with_optimism(true).with_hardfork(Some(Hardfork::Paris))).await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
-    let signer: EthereumSigner = accounts[0].clone().into();
+    let signer: EthereumWallet = accounts[0].clone().into();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
     let send_value = U256::from(1234);
-    let before_balance_to = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let before_balance_to = provider.get_balance(to).await.unwrap();
 
     let tx = TransactionRequest::default()
         .with_from(from)
@@ -83,7 +84,7 @@ async fn test_send_value_deposit_transaction() {
     assert_eq!(receipt.to, Some(to));
 
     // the recipient should have received the value
-    let after_balance_to = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let after_balance_to = provider.get_balance(to).await.unwrap();
     assert_eq!(after_balance_to, before_balance_to + send_value);
 }
 
@@ -94,14 +95,14 @@ async fn test_send_value_raw_deposit_transaction() {
         spawn(NodeConfig::test().with_optimism(true).with_hardfork(Some(Hardfork::Paris))).await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
-    let signer: EthereumSigner = accounts[0].clone().into();
+    let signer: EthereumWallet = accounts[0].clone().into();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer.clone());
 
     let send_value = U256::from(1234);
-    let before_balance_to = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let before_balance_to = provider.get_balance(to).await.unwrap();
 
     let tx = TransactionRequest::default()
         .with_chain_id(31337)
@@ -140,6 +141,6 @@ async fn test_send_value_raw_deposit_transaction() {
     assert_eq!(receipt.to, Some(to));
 
     // the recipient should have received the value
-    let after_balance_to = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let after_balance_to = provider.get_balance(to).await.unwrap();
     assert_eq!(after_balance_to, before_balance_to + send_value);
 }

@@ -1,9 +1,10 @@
 //! Runtime transport that connects on first request, which can take either of an HTTP,
 //! WebSocket, or IPC transport and supports retries based on CUPS logic.
+
 use crate::REQUEST_TIMEOUT;
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
-use alloy_rpc_types_engine::{Claims, JwtSecret};
+use alloy_rpc_types::engine::{Claims, JwtSecret};
 use alloy_transport::{
     Authorization, BoxTransport, TransportError, TransportErrorKind, TransportFut,
 };
@@ -11,7 +12,7 @@ use alloy_transport_http::Http;
 use alloy_transport_ipc::IpcConnect;
 use alloy_transport_ws::WsConnect;
 use reqwest::header::{HeaderName, HeaderValue};
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{fmt, path::PathBuf, str::FromStr, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tower::Service;
@@ -125,8 +126,8 @@ impl RuntimeTransportBuilder {
     }
 }
 
-impl ::core::fmt::Display for RuntimeTransport {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+impl fmt::Display for RuntimeTransport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "RuntimeTransport {}", self.url)
     }
 }

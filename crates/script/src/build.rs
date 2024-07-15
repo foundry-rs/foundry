@@ -5,77 +5,114 @@ use crate::{
     sequence::{ScriptSequence, ScriptSequenceKind},
     ScriptArgs, ScriptConfig,
 };
-
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Bytes, B256};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_common::{
-    compile::{ContractSources, ProjectCompiler},
-    provider::try_get_http_provider,
-    ContractData, ContractsByArtifact,
+    compile::ProjectCompiler, provider::try_get_http_provider, ContractData, ContractsByArtifact,
 };
 use foundry_compilers::{
     artifacts::{BytecodeObject, Libraries},
+    compilers::{multi::MultiCompilerLanguage, Language},
     info::ContractInfo,
     utils::source_files_iter,
-    ArtifactId, ProjectCompileOutput, SOLC_EXTENSIONS,
+    ArtifactId, ProjectCompileOutput,
 };
-use foundry_linking::{LinkOutput, Linker};
+use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::debug::ContractSources};
+use foundry_linking::Linker;
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 /// Container for the compiled contracts.
+#[derive(Debug)]
 pub struct BuildData {
-    /// Root of the project
+    /// Root of the project.
     pub project_root: PathBuf,
-    /// Linker which can be used to link contracts, owns [ArtifactContracts] map.
+    /// The compiler output.
     pub output: ProjectCompileOutput,
-    /// Id of target contract artifact.
+    /// ID of target contract artifact.
     pub target: ArtifactId,
 }
 
 impl BuildData {
-    pub fn get_linker(&self) -> Linker {
+    pub fn get_linker(&self) -> Linker<'_> {
         Linker::new(self.project_root.clone(), self.output.artifact_ids().collect())
     }
 
-    /// Links the build data with given libraries, using sender and nonce to compute addresses of
-    /// missing libraries.
-    pub fn link(
-        self,
-        known_libraries: Libraries,
-        sender: Address,
-        nonce: u64,
-    ) -> Result<LinkedBuildData> {
-        let link_output = self.get_linker().link_with_nonce_or_address(
-            known_libraries,
-            sender,
-            nonce,
-            &self.target,
-        )?;
+    /// Links contracts. Uses CREATE2 linking when possible, otherwise falls back to
+    /// default linking with sender nonce and address.
+    pub async fn link(self, script_config: &ScriptConfig) -> Result<LinkedBuildData> {
+        let can_use_create2 = if let Some(fork_url) = &script_config.evm_opts.fork_url {
+            let provider = try_get_http_provider(fork_url)?;
+            let deployer_code = provider.get_code_at(DEFAULT_CREATE2_DEPLOYER).await?;
 
-        LinkedBuildData::new(link_output, self)
+            !deployer_code.is_empty()
+        } else {
+            // If --fork-url is not provided, we are just simulating the script.
+            true
+        };
+
+        let known_libraries = script_config.config.libraries_with_remappings()?;
+
+        let maybe_create2_link_output = can_use_create2
+            .then(|| {
+                self.get_linker()
+                    .link_with_create2(
+                        known_libraries.clone(),
+                        DEFAULT_CREATE2_DEPLOYER,
+                        script_config.config.create2_library_salt,
+                        &self.target,
+                    )
+                    .ok()
+            })
+            .flatten();
+
+        let (libraries, predeploy_libs) = if let Some(output) = maybe_create2_link_output {
+            (
+                output.libraries,
+                ScriptPredeployLibraries::Create2(
+                    output.libs_to_deploy,
+                    script_config.config.create2_library_salt,
+                ),
+            )
+        } else {
+            let output = self.get_linker().link_with_nonce_or_address(
+                known_libraries,
+                script_config.evm_opts.sender,
+                script_config.sender_nonce,
+                [&self.target],
+            )?;
+
+            (output.libraries, ScriptPredeployLibraries::Default(output.libs_to_deploy))
+        };
+
+        LinkedBuildData::new(libraries, predeploy_libs, self)
     }
 
     /// Links the build data with the given libraries. Expects supplied libraries set being enough
     /// to fully link target contract.
     pub fn link_with_libraries(self, libraries: Libraries) -> Result<LinkedBuildData> {
-        let link_output = self.get_linker().link_with_nonce_or_address(
-            libraries,
-            Address::ZERO,
-            0,
-            &self.target,
-        )?;
+        LinkedBuildData::new(libraries, ScriptPredeployLibraries::Default(Vec::new()), self)
+    }
+}
 
-        if !link_output.libs_to_deploy.is_empty() {
-            eyre::bail!("incomplete libraries set");
+#[derive(Debug)]
+pub enum ScriptPredeployLibraries {
+    Default(Vec<Bytes>),
+    Create2(Vec<Bytes>, B256),
+}
+
+impl ScriptPredeployLibraries {
+    pub fn libraries_count(&self) -> usize {
+        match self {
+            Self::Default(libs) => libs.len(),
+            Self::Create2(libs, _) => libs.len(),
         }
-
-        LinkedBuildData::new(link_output, self)
     }
 }
 
 /// Container for the linked contracts and their dependencies
+#[derive(Debug)]
 pub struct LinkedBuildData {
     /// Original build data, might be used to relink this object with different libraries.
     pub build_data: BuildData,
@@ -84,37 +121,33 @@ pub struct LinkedBuildData {
     /// Libraries used to link the contracts.
     pub libraries: Libraries,
     /// Libraries that need to be deployed by sender before script execution.
-    pub predeploy_libraries: Vec<Bytes>,
+    pub predeploy_libraries: ScriptPredeployLibraries,
     /// Source files of the contracts. Used by debugger.
     pub sources: ContractSources,
 }
 
 impl LinkedBuildData {
-    pub fn new(link_output: LinkOutput, build_data: BuildData) -> Result<Self> {
+    pub fn new(
+        libraries: Libraries,
+        predeploy_libraries: ScriptPredeployLibraries,
+        build_data: BuildData,
+    ) -> Result<Self> {
         let sources = ContractSources::from_project_output(
             &build_data.output,
             &build_data.project_root,
-            &link_output.libraries,
+            Some(&libraries),
         )?;
 
-        let known_contracts = ContractsByArtifact::new(
-            build_data.get_linker().get_linked_artifacts(&link_output.libraries)?,
-        );
+        let known_contracts =
+            ContractsByArtifact::new(build_data.get_linker().get_linked_artifacts(&libraries)?);
 
-        Ok(Self {
-            build_data,
-            known_contracts,
-            libraries: link_output.libraries,
-            predeploy_libraries: link_output.libs_to_deploy,
-            sources,
-        })
+        Ok(Self { build_data, known_contracts, libraries, predeploy_libraries, sources })
     }
 
     /// Fetches target bytecode from linked contracts.
-    pub fn get_target_contract(&self) -> Result<ContractData> {
+    pub fn get_target_contract(&self) -> Result<&ContractData> {
         self.known_contracts
             .get(&self.build_data.target)
-            .cloned()
             .ok_or_eyre("target not found in linked artifacts")
     }
 }
@@ -150,9 +183,12 @@ impl PreprocessedState {
             }
         };
 
-        let sources_to_compile =
-            source_files_iter(project.paths.sources.as_path(), SOLC_EXTENSIONS)
-                .chain([target_path.to_path_buf()]);
+        #[allow(clippy::redundant_clone)]
+        let sources_to_compile = source_files_iter(
+            project.paths.sources.as_path(),
+            MultiCompilerLanguage::FILE_EXTENSIONS,
+        )
+        .chain([target_path.to_path_buf()]);
 
         let output = ProjectCompiler::new()
             .quiet_if(args.opts.silent)
@@ -212,13 +248,10 @@ pub struct CompiledState {
 
 impl CompiledState {
     /// Uses provided sender address to compute library addresses and link contracts with them.
-    pub fn link(self) -> Result<LinkedState> {
+    pub async fn link(self) -> Result<LinkedState> {
         let Self { args, script_config, script_wallets, build_data } = self;
 
-        let sender = script_config.evm_opts.sender;
-        let nonce = script_config.sender_nonce;
-        let known_libraries = script_config.config.libraries_with_remappings()?;
-        let build_data = build_data.link(known_libraries, sender, nonce)?;
+        let build_data = build_data.link(&script_config).await?;
 
         Ok(LinkedState { args, script_config, script_wallets, build_data })
     }
@@ -269,7 +302,7 @@ impl CompiledState {
             if !froms.all(|from| available_signers.contains(&from)) {
                 // IF we are missing required signers, execute script as we might need to collect
                 // private keys from the execution.
-                let executed = self.link()?.prepare_execution().await?.execute().await?;
+                let executed = self.link().await?.prepare_execution().await?.execute().await?;
                 (
                     executed.args,
                     executed.build_data.build_data,

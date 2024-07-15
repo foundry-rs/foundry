@@ -1,7 +1,8 @@
 use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{Address, Bytes, TxKind, B256};
-use alloy_rpc_types::{request::TransactionRequest, WithOtherFields};
+use alloy_primitives::{hex, Address, Bytes, TxKind, B256};
+use alloy_rpc_types::request::TransactionRequest;
+use alloy_serde::WithOtherFields;
 use eyre::{ContextCompat, Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, ContractData, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
@@ -41,7 +42,7 @@ pub struct TransactionWithMetadata {
 }
 
 fn default_string() -> Option<String> {
-    Some("".to_string())
+    Some(String::new())
 }
 
 fn default_address() -> Option<Address> {
@@ -131,7 +132,7 @@ impl TransactionWithMetadata {
 
         let Some(data) = self.transaction.input.input() else { return Ok(()) };
         let Some(info) = info else { return Ok(()) };
-        let Some(bytecode) = info.bytecode.as_ref() else { return Ok(()) };
+        let Some(bytecode) = info.bytecode() else { return Ok(()) };
 
         // `create2` transactions are prefixed by a 32 byte salt.
         let creation_code = if is_create2 {
@@ -151,7 +152,7 @@ impl TransactionWithMetadata {
         let constructor_args = &creation_code[bytecode.len()..];
 
         let Some(constructor) = info.abi.constructor() else { return Ok(()) };
-        let values = constructor.abi_decode_input(constructor_args, false).map_err(|e| {
+        let values = constructor.abi_decode_input(constructor_args, false).inspect_err(|_| {
             error!(
                 contract=?self.contract_name,
                 signature=%format!("constructor({})", constructor.inputs.iter().map(|p| &p.ty).format(",")),
@@ -160,7 +161,6 @@ impl TransactionWithMetadata {
                 "Failed to decode constructor arguments",
             );
             debug!(full_data=%hex::encode(data), bytecode=%hex::encode(creation_code));
-            e
         })?;
         self.arguments = Some(values.iter().map(format_token_raw).collect());
 
@@ -194,14 +194,13 @@ impl TransactionWithMetadata {
         if let Some(function) = function {
             self.function = Some(function.signature());
 
-            let values = function.abi_decode_input(data, false).map_err(|e| {
+            let values = function.abi_decode_input(data, false).inspect_err(|_| {
                 error!(
                     contract=?self.contract_name,
                     signature=?function,
                     data=hex::encode(data),
                     "Failed to decode function arguments",
                 );
-                e
             })?;
             self.arguments = Some(values.iter().map(format_token_raw).collect());
         }

@@ -1,4 +1,4 @@
-use alloy_network::{Ethereum, EthereumSigner};
+use alloy_network::{Ethereum, EthereumWallet};
 use foundry_common::provider::{
     get_http_provider, ProviderBuilder, RetryProvider, RetryProviderWithSigner,
 };
@@ -9,19 +9,19 @@ pub fn http_provider(http_endpoint: &str) -> RetryProvider {
 
 pub fn http_provider_with_signer(
     http_endpoint: &str,
-    signer: EthereumSigner,
+    signer: EthereumWallet,
 ) -> RetryProviderWithSigner {
     ProviderBuilder::new(http_endpoint)
-        .build_with_signer(signer)
+        .build_with_wallet(signer)
         .expect("failed to build Alloy HTTP provider with signer")
 }
 
 pub fn ws_provider_with_signer(
     ws_endpoint: &str,
-    signer: EthereumSigner,
+    signer: EthereumWallet,
 ) -> RetryProviderWithSigner {
     ProviderBuilder::new(ws_endpoint)
-        .build_with_signer(signer)
+        .build_with_wallet(signer)
         .expect("failed to build Alloy WS provider with signer")
 }
 
@@ -31,33 +31,35 @@ pub async fn connect_pubsub(conn_str: &str) -> RootProvider<BoxTransport> {
 }
 
 use alloy_provider::{
-    fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, SignerFiller},
+    fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller},
     Identity, RootProvider,
 };
 use alloy_transport::BoxTransport;
+
 type PubsubSigner = FillProvider<
     JoinFill<
         JoinFill<JoinFill<JoinFill<Identity, GasFiller>, NonceFiller>, ChainIdFiller>,
-        SignerFiller<EthereumSigner>,
+        WalletFiller<EthereumWallet>,
     >,
     RootProvider<BoxTransport>,
     BoxTransport,
     Ethereum,
 >;
-pub async fn connect_pubsub_with_signer(conn_str: &str, signer: EthereumSigner) -> PubsubSigner {
+
+pub async fn connect_pubsub_with_wallet(conn_str: &str, wallet: EthereumWallet) -> PubsubSigner {
     alloy_provider::ProviderBuilder::new()
         .with_recommended_fillers()
-        .signer(signer)
+        .wallet(wallet)
         .on_builtin(conn_str)
         .await
         .unwrap()
 }
 
-pub async fn ipc_provider_with_signer(
+pub async fn ipc_provider_with_wallet(
     ipc_endpoint: &str,
-    signer: EthereumSigner,
+    wallet: EthereumWallet,
 ) -> RetryProviderWithSigner {
     ProviderBuilder::new(ipc_endpoint)
-        .build_with_signer(signer)
+        .build_with_wallet(wallet)
         .expect("failed to build Alloy IPC provider with signer")
 }

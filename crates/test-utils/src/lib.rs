@@ -1,4 +1,9 @@
-#![warn(unused_crate_dependencies, unreachable_pub)]
+//! # foundry-test-utils
+//!
+//! Internal Foundry testing utilities.
+
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
 extern crate tracing;
@@ -22,6 +27,8 @@ pub use script::{ScriptOutcome, ScriptTester};
 
 // re-exports for convenience
 pub use foundry_compilers;
+
+pub use snapbox::{assert_data_eq, file, str};
 
 /// Initializes tracing for tests.
 pub fn init_tracing() {

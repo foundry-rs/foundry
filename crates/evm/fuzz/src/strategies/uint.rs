@@ -7,7 +7,6 @@ use proptest::{
 use rand::Rng;
 
 /// Value tree for unsigned ints (up to uint256).
-/// This is very similar to [proptest::BinarySearch]
 pub struct UintValueTree {
     /// Lower base
     lo: U256,
@@ -69,15 +68,15 @@ impl ValueTree for UintValueTree {
 /// Value tree for unsigned ints (up to uint256).
 /// The strategy combines 3 different strategies, each assigned a specific weight:
 /// 1. Generate purely random value in a range. This will first choose bit size uniformly (up `bits`
-/// param). Then generate a value for this bit size.
+///    param). Then generate a value for this bit size.
 /// 2. Generate a random value around the edges (+/- 3 around 0 and max possible value)
 /// 3. Generate a value from a predefined fixtures set
 ///
 /// To define uint fixtures:
-/// - return an array of possible values for a parameter named `amount` declare a function
-/// `function fixture_amount() public returns (uint32[] memory)`.
+/// - return an array of possible values for a parameter named `amount` declare a function `function
+///   fixture_amount() public returns (uint32[] memory)`.
 /// - use `amount` named parameter in fuzzed test in order to include fixtures in fuzzed values
-/// `function testFuzz_uint32(uint32 amount)`.
+///   `function testFuzz_uint32(uint32 amount)`.
 ///
 /// If fixture is not a valid uint type then error is raised and random value generated.
 #[derive(Debug)]

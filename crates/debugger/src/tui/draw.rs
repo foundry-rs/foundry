@@ -3,7 +3,8 @@
 use super::context::{BufferKind, DebuggerContext};
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
-use foundry_compilers::sourcemap::SourceElement;
+use foundry_compilers::artifacts::sourcemap::SourceElement;
+use foundry_evm_traces::debug::SourceData;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -191,8 +192,8 @@ impl DebuggerContext<'_> {
     }
 
     fn draw_src(&self, f: &mut Frame<'_>, area: Rect) {
-        let text_output = self.src_text(area);
-        let title = match self.call_kind() {
+        let (text_output, source_name) = self.src_text(area);
+        let call_kind_text = match self.call_kind() {
             CallKind::Create | CallKind::Create2 => "Contract creation",
             CallKind::Call => "Contract call",
             CallKind::StaticCall => "Contract staticcall",
@@ -200,32 +201,38 @@ impl DebuggerContext<'_> {
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
         };
+        let title = format!(
+            "{} {} ",
+            call_kind_text,
+            source_name.map(|s| format!("| {s}")).unwrap_or_default()
+        );
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text_output).block(block).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
     }
 
-    fn src_text(&self, area: Rect) -> Text<'_> {
-        let (source_element, source_code) = match self.src_map() {
+    fn src_text(&self, area: Rect) -> (Text<'_>, Option<&str>) {
+        let (source_element, source) = match self.src_map() {
             Ok(r) => r,
-            Err(e) => return Text::from(e),
+            Err(e) => return (Text::from(e), None),
         };
 
         // We are handed a vector of SourceElements that give us a span of sourcecode that is
         // currently being executed. This includes an offset and length.
         // This vector is in instruction pointer order, meaning the location of the instruction
         // minus `sum(push_bytes[..pc])`.
-        let offset = source_element.offset;
-        let len = source_element.length;
-        let max = source_code.len();
+        let offset = source_element.offset() as usize;
+        let len = source_element.length() as usize;
+        let max = source.source.len();
 
         // Split source into before, relevant, and after chunks, split by line, for formatting.
         let actual_start = offset.min(max);
         let actual_end = (offset + len).min(max);
 
-        let mut before: Vec<_> = source_code[..actual_start].split_inclusive('\n').collect();
-        let actual: Vec<_> = source_code[actual_start..actual_end].split_inclusive('\n').collect();
-        let mut after: VecDeque<_> = source_code[actual_end..].split_inclusive('\n').collect();
+        let mut before: Vec<_> = source.source[..actual_start].split_inclusive('\n').collect();
+        let actual: Vec<_> =
+            source.source[actual_start..actual_end].split_inclusive('\n').collect();
+        let mut after: VecDeque<_> = source.source[actual_end..].split_inclusive('\n').collect();
 
         let num_lines = before.len() + actual.len() + after.len();
         let height = area.height as usize;
@@ -272,7 +279,7 @@ impl DebuggerContext<'_> {
         // Highlighted text: cyan, bold.
         let h_text = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 
-        let mut lines = SourceLines::new(decimal_digits(num_lines));
+        let mut lines = SourceLines::new(start_line, end_line);
 
         // We check if there is other text on the same line before the highlight starts.
         if let Some(last) = before.pop() {
@@ -322,59 +329,32 @@ impl DebuggerContext<'_> {
             lines.push(u_num, line, u_text);
         }
 
-        Text::from(lines.lines)
+        // pad with empty to each line to ensure the previous text is cleared
+        for line in &mut lines.lines {
+            // note that the \n is not included in the line length
+            if area.width as usize > line.width() + 1 {
+                line.push_span(Span::raw(" ".repeat(area.width as usize - line.width() - 1)));
+            }
+        }
+
+        (Text::from(lines.lines), source.path.to_str())
     }
 
-    fn src_map(&self) -> Result<(SourceElement, &str), String> {
+    /// Returns source map, source code and source name of the current line.
+    fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
         let address = self.address();
         let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
         };
 
-        let Some(mut files_source_code) =
-            self.debugger.contracts_sources.get_sources(contract_name)
-        else {
-            return Err(format!("No source map index for contract {contract_name}"));
-        };
-
-        let Some((create_map, rt_map)) = self.debugger.pc_ic_maps.get(contract_name) else {
-            return Err(format!("No PC-IC maps for contract {contract_name}"));
-        };
-
-        let is_create = matches!(self.call_kind(), CallKind::Create | CallKind::Create2);
-        let pc = self.current_step().pc;
-        let Some((source_element, source_code)) =
-            files_source_code.find_map(|(file_id, source_code, contract_source)| {
-                let bytecode = if is_create {
-                    &contract_source.bytecode
-                } else {
-                    contract_source.deployed_bytecode.bytecode.as_ref()?
-                };
-                let mut source_map = bytecode.source_map()?.ok()?;
-
-                let pc_ic_map = if is_create { create_map } else { rt_map };
-                let ic = pc_ic_map.get(pc)?;
-                let source_element = source_map.swap_remove(ic);
-                // if the source element has an index, find the sourcemap for that index
-                source_element
-                    .index
-                    .and_then(|index|
-                    // if index matches current file_id, return current source code
-                    (index == file_id).then(|| (source_element.clone(), source_code)))
-                    .or_else(|| {
-                        // otherwise find the source code for the element's index
-                        self.debugger
-                            .contracts_sources
-                            .sources_by_id
-                            .get(&(source_element.index?))
-                            .map(|source_code| (source_element.clone(), source_code.as_ref()))
-                    })
-            })
-        else {
-            return Err(format!("No source map for contract {contract_name}"));
-        };
-
-        Ok((source_element, source_code))
+        self.debugger
+            .contracts_sources
+            .find_source_mapping(
+                contract_name,
+                self.current_step().pc,
+                self.debug_call().kind.is_any_create(),
+            )
+            .ok_or_else(|| format!("No source map for contract {contract_name}"))
     }
 
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {
@@ -399,7 +379,7 @@ impl DebuggerContext<'_> {
             "Address: {} | PC: {} | Gas used in call: {}",
             self.address(),
             self.current_step().pc,
-            self.current_step().total_gas_used,
+            self.current_step().gas_used,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)
@@ -413,58 +393,67 @@ impl DebuggerContext<'_> {
 
     fn draw_stack(&self, f: &mut Frame<'_>, area: Rect) {
         let step = self.current_step();
-        let stack = &step.stack;
+        let stack = step.stack.as_ref();
+        let stack_len = stack.map_or(0, |s| s.len());
 
-        let min_len = decimal_digits(stack.len()).max(2);
+        let min_len = decimal_digits(stack_len).max(2);
 
-        let params = OpcodeParam::of(step.instruction);
+        let params = OpcodeParam::of(step.op.get());
 
-        let text: Vec<Line> = stack
-            .iter()
-            .rev()
-            .enumerate()
-            .skip(self.draw_memory.current_stack_startline)
-            .map(|(i, stack_item)| {
-                let param = params.iter().find(|param| param.index == i);
+        let text: Vec<Line<'_>> = stack
+            .map(|stack| {
+                stack
+                    .iter()
+                    .rev()
+                    .enumerate()
+                    .skip(self.draw_memory.current_stack_startline)
+                    .map(|(i, stack_item)| {
+                        let param = params.iter().find(|param| param.index == i);
 
-                let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
+                        let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
 
-                // Stack index.
-                spans.push(Span::styled(format!("{i:0min_len$}| "), Style::new().fg(Color::White)));
+                        // Stack index.
+                        spans.push(Span::styled(
+                            format!("{i:0min_len$}| "),
+                            Style::new().fg(Color::White),
+                        ));
 
-                // Item hex bytes.
-                hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| {
-                    if param.is_some() {
-                        Style::new().fg(Color::Cyan)
-                    } else {
-                        Style::new().fg(Color::White)
-                    }
-                });
+                        // Item hex bytes.
+                        hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| {
+                            if param.is_some() {
+                                Style::new().fg(Color::Cyan)
+                            } else {
+                                Style::new().fg(Color::White)
+                            }
+                        });
 
-                if self.stack_labels {
-                    if let Some(param) = param {
-                        spans.push(Span::raw("| "));
-                        spans.push(Span::raw(param.name));
-                    }
-                }
+                        if self.stack_labels {
+                            if let Some(param) = param {
+                                spans.push(Span::raw("| "));
+                                spans.push(Span::raw(param.name));
+                            }
+                        }
 
-                spans.push(Span::raw("\n"));
+                        spans.push(Span::raw("\n"));
 
-                Line::from(spans)
+                        Line::from(spans)
+                    })
+                    .collect()
             })
-            .collect();
+            .unwrap_or_default();
 
-        let title = format!("Stack: {}", stack.len());
+        let title = format!("Stack: {stack_len}");
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
+        let call = self.debug_call();
         let step = self.current_step();
         let buf = match self.active_buffer {
-            BufferKind::Memory => step.memory.as_ref(),
-            BufferKind::Calldata => step.calldata.as_ref(),
+            BufferKind::Memory => step.memory.as_ref().unwrap().as_ref(),
+            BufferKind::Calldata => call.calldata.as_ref(),
             BufferKind::Returndata => step.returndata.as_ref(),
         };
 
@@ -476,18 +465,20 @@ impl DebuggerContext<'_> {
         let mut write_offset = None;
         let mut write_size = None;
         let mut color = None;
-        let stack_len = step.stack.len();
+        let stack_len = step.stack.as_ref().map_or(0, |s| s.len());
         if stack_len > 0 {
-            if let Some(accesses) = get_buffer_accesses(step.instruction, &step.stack) {
-                if let Some(read_access) = accesses.read {
-                    offset = Some(read_access.1.offset);
-                    size = Some(read_access.1.size);
-                    color = Some(Color::Cyan);
-                }
-                if let Some(write_access) = accesses.write {
-                    if self.active_buffer == BufferKind::Memory {
-                        write_offset = Some(write_access.offset);
-                        write_size = Some(write_access.size);
+            if let Some(stack) = step.stack.as_ref() {
+                if let Some(accesses) = get_buffer_accesses(step.op.get(), stack) {
+                    if let Some(read_access) = accesses.read {
+                        offset = Some(read_access.1.offset);
+                        size = Some(read_access.1.size);
+                        color = Some(Color::Cyan);
+                    }
+                    if let Some(write_access) = accesses.write {
+                        if self.active_buffer == BufferKind::Memory {
+                            write_offset = Some(write_access.offset);
+                            write_size = Some(write_access.size);
+                        }
                     }
                 }
             }
@@ -500,13 +491,15 @@ impl DebuggerContext<'_> {
         if self.current_step > 0 {
             let prev_step = self.current_step - 1;
             let prev_step = &self.debug_steps()[prev_step];
-            if let Some(write_access) =
-                get_buffer_accesses(prev_step.instruction, &prev_step.stack).and_then(|a| a.write)
-            {
-                if self.active_buffer == BufferKind::Memory {
-                    offset = Some(write_access.offset);
-                    size = Some(write_access.size);
-                    color = Some(Color::Green);
+            if let Some(stack) = prev_step.stack.as_ref() {
+                if let Some(write_access) =
+                    get_buffer_accesses(prev_step.op.get(), stack).and_then(|a| a.write)
+                {
+                    if self.active_buffer == BufferKind::Memory {
+                        offset = Some(write_access.offset);
+                        size = Some(write_access.size);
+                        color = Some(Color::Green);
+                    }
                 }
             }
         }
@@ -514,7 +507,7 @@ impl DebuggerContext<'_> {
         let height = area.height as usize;
         let end_line = self.draw_memory.current_buf_startline + height;
 
-        let text: Vec<Line> = buf
+        let text: Vec<Line<'_>> = buf
             .chunks(32)
             .enumerate()
             .skip(self.draw_memory.current_buf_startline)
@@ -595,12 +588,13 @@ impl DebuggerContext<'_> {
 /// Wrapper around a list of [`Line`]s that prepends the line number on each new line.
 struct SourceLines<'a> {
     lines: Vec<Line<'a>>,
+    start_line: usize,
     max_line_num: usize,
 }
 
 impl<'a> SourceLines<'a> {
-    fn new(max_line_num: usize) -> Self {
-        Self { lines: Vec::new(), max_line_num }
+    fn new(start_line: usize, end_line: usize) -> Self {
+        Self { lines: Vec::new(), start_line, max_line_num: decimal_digits(end_line) }
     }
 
     fn push(&mut self, line_number_style: Style, line: &'a str, line_style: Style) {
@@ -610,8 +604,11 @@ impl<'a> SourceLines<'a> {
     fn push_raw(&mut self, line_number_style: Style, spans: &[Span<'a>]) {
         let mut line_spans = Vec::with_capacity(4);
 
-        let line_number =
-            format!("{number: >width$} ", number = self.lines.len() + 1, width = self.max_line_num);
+        let line_number = format!(
+            "{number: >width$} ",
+            number = self.start_line + self.lines.len() + 1,
+            width = self.max_line_num
+        );
         line_spans.push(Span::styled(line_number, line_number_style));
 
         // Space between line number and line text.
@@ -639,13 +636,14 @@ struct BufferAccesses {
 
 /// The memory_access variable stores the index on the stack that indicates the buffer
 /// offset/size accessed by the given opcode:
-///   (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
-///   >= 1: the stack index
-///   0: no memory access
-///   -1: a fixed size of 32 bytes
-///   -2: a fixed size of 1 byte
+///    (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
+///    \>= 1: the stack index
+///    0: no memory access
+///    -1: a fixed size of 32 bytes
+///    -2: a fixed size of 1 byte
+///
 /// The return value is a tuple about accessed buffer region by the given opcode:
-///   (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
+///    (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
 fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
     let buffer_access = match op {
         opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => {

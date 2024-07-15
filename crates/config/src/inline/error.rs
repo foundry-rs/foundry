@@ -1,4 +1,4 @@
-/// Errors returned by the [`InlineConfigParser`] trait.
+/// Errors returned by the [`InlineConfigParser`](crate::InlineConfigParser) trait.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum InlineConfigParserError {
     /// An invalid configuration property has been provided.
@@ -16,8 +16,7 @@ pub enum InlineConfigParserError {
     ParseBool(String, String),
 }
 
-/// Wrapper error struct that catches config parsing
-/// errors [`InlineConfigParserError`], enriching them with context information
+/// Wrapper error struct that catches config parsing errors, enriching them with context information
 /// reporting the misconfigured line.
 #[derive(Debug, thiserror::Error)]
 #[error("Inline config error detected at {line}")]

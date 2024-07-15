@@ -1,3 +1,6 @@
+#![doc = include_str!("../README.md")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+
 #[macro_use]
 extern crate tracing;
 
@@ -18,7 +21,7 @@ use crate::{
     tasks::TaskManager,
 };
 use alloy_primitives::{Address, U256};
-use alloy_signer_wallet::LocalWallet;
+use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
@@ -42,7 +45,7 @@ use tokio::{
 mod service;
 
 mod config;
-pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
+pub use config::{AccountGenerator, ForkChoice, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 
 mod hardfork;
 pub use hardfork::Hardfork;
@@ -125,7 +128,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
     let backend = Arc::new(config.setup().await);
 
     if config.enable_auto_impersonate {
-        backend.auto_impersonate_account(true).await;
+        backend.auto_impersonate_account(true);
     }
 
     let fork = backend.get_fork();
@@ -153,7 +156,13 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
         let listener = pool.add_ready_listener();
         MiningMode::instant(max_transactions, listener)
     };
-    let miner = Miner::new(mode);
+
+    let miner = match &fork {
+        Some(fork) => {
+            Miner::new(mode).with_forced_transactions(fork.config.read().force_transactions.clone())
+        }
+        _ => Miner::new(mode),
+    };
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(signer_accounts));
     let mut signers = vec![dev_signer];
@@ -162,26 +171,22 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
             .alloc
             .values()
             .filter_map(|acc| acc.private_key)
-            .flat_map(|k| LocalWallet::from_bytes(&k))
+            .flat_map(|k| PrivateKeySigner::from_bytes(&k))
             .collect::<Vec<_>>();
         if !genesis_signers.is_empty() {
             signers.push(Box::new(DevSigner::new(genesis_signers)));
         }
     }
 
-    let fees = backend.fees().clone();
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
         backend.new_block_notifications(),
         Arc::clone(&fee_history_cache),
-        fees,
         StorageInfo::new(Arc::clone(&backend)),
     );
     // create an entry for the best block
-    if let Some(best_block) =
-        backend.get_block(backend.best_number()).map(|block| block.header.hash_slow())
-    {
-        fee_history_service.insert_cache_entry_for_block(best_block);
+    if let Some(header) = backend.get_block(backend.best_number()).map(|block| block.header) {
+        fee_history_service.insert_cache_entry_for_block(header.hash_slow(), &header);
     }
 
     let filters = Filters::default();
@@ -272,7 +277,7 @@ impl NodeHandle {
         self.config.print(fork);
         if !self.config.silent {
             if let Some(ipc_path) = self.ipc_path() {
-                println!("IPC path: {}", ipc_path);
+                println!("IPC path: {ipc_path}");
             }
             println!(
                 "Listening on {}",
@@ -329,7 +334,7 @@ impl NodeHandle {
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub fn dev_wallets(&self) -> impl Iterator<Item = LocalWallet> + '_ {
+    pub fn dev_wallets(&self) -> impl Iterator<Item = PrivateKeySigner> + '_ {
         self.config.signer_accounts.iter().cloned()
     }
 

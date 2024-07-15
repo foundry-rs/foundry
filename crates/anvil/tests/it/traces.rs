@@ -1,12 +1,25 @@
-use crate::{fork::fork_config, utils::http_provider_with_signer};
-use alloy_network::{EthereumSigner, TransactionBuilder};
-use alloy_primitives::{hex, Address, Bytes, U256};
-use alloy_provider::{ext::DebugApi, Provider};
-use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest, WithOtherFields};
-use alloy_rpc_types_trace::{
-    geth::{GethDebugTracingCallOptions, GethTrace},
-    parity::{Action, LocalizedTransactionTrace},
+use crate::{
+    abi::{MulticallContract, SimpleStorage},
+    fork::fork_config,
+    utils::http_provider_with_signer,
 };
+use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_primitives::{hex, Address, Bytes, U256};
+use alloy_provider::{
+    ext::{DebugApi, TraceApi},
+    Provider,
+};
+use alloy_rpc_types::{
+    trace::{
+        geth::{
+            CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType,
+            GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
+        },
+        parity::{Action, LocalizedTransactionTrace},
+    },
+    BlockNumberOrTag, TransactionRequest,
+};
+use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use anvil::{spawn, Hardfork, NodeConfig};
 
@@ -95,7 +108,7 @@ sol!(
 async fn test_transfer_debug_trace_call() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
-    let deployer: EthereumSigner = wallets[0].clone().into();
+    let deployer: EthereumWallet = wallets[0].clone().into();
     let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
 
     let contract_addr = DebugTraceContract::deploy_builder(provider.clone())
@@ -104,7 +117,7 @@ async fn test_transfer_debug_trace_call() {
         .await
         .unwrap();
 
-    let caller: EthereumSigner = wallets[1].clone().into();
+    let caller: EthereumWallet = wallets[1].clone().into();
     let caller_provider = http_provider_with_signer(&handle.http_endpoint(), caller);
     let contract = DebugTraceContract::new(contract_addr, caller_provider);
 
@@ -125,6 +138,117 @@ async fn test_transfer_debug_trace_call() {
     match traces {
         GethTrace::Default(default_frame) => {
             assert!(!default_frame.failed);
+        }
+        _ => {
+            unreachable!()
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_call_tracer_debug_trace_call() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let multicall_contract = MulticallContract::deploy(&provider).await.unwrap();
+
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+
+    let set_value = simple_storage_contract.setValue("bar".to_string());
+    let set_value_calldata = set_value.calldata();
+
+    let internal_call_tx_builder = multicall_contract.aggregate(vec![MulticallContract::Call {
+        target: *simple_storage_contract.address(),
+        callData: set_value_calldata.to_owned(),
+    }]);
+
+    let internal_call_tx_calldata = internal_call_tx_builder.calldata().to_owned();
+
+    // calling SimpleStorage contract through Multicall should result in an internal call
+    let internal_call_tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to(*multicall_contract.address())
+        .with_input(internal_call_tx_calldata);
+
+    let internal_call_tx_traces = handle
+        .http_provider()
+        .debug_trace_call(
+            internal_call_tx.clone(),
+            BlockNumberOrTag::Latest,
+            GethDebugTracingCallOptions::default().with_tracing_options(
+                GethDebugTracingOptions::default()
+                    .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
+                    .with_call_config(CallConfig::default().with_log()),
+            ),
+        )
+        .await
+        .unwrap();
+
+    match internal_call_tx_traces {
+        GethTrace::CallTracer(call_frame) => {
+            assert!(call_frame.calls.len() == 1);
+            assert!(
+                call_frame.calls.first().unwrap().to.unwrap() == *simple_storage_contract.address()
+            );
+            assert!(call_frame.calls.first().unwrap().logs.len() == 1);
+        }
+        _ => {
+            unreachable!()
+        }
+    }
+
+    // only_top_call option - should not return any internal calls
+    let internal_call_only_top_call_tx_traces = handle
+        .http_provider()
+        .debug_trace_call(
+            internal_call_tx.clone(),
+            BlockNumberOrTag::Latest,
+            GethDebugTracingCallOptions::default().with_tracing_options(
+                GethDebugTracingOptions::default()
+                    .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
+                    .with_call_config(CallConfig::default().with_log().only_top_call()),
+            ),
+        )
+        .await
+        .unwrap();
+
+    match internal_call_only_top_call_tx_traces {
+        GethTrace::CallTracer(call_frame) => {
+            assert!(call_frame.calls.is_empty());
+        }
+        _ => {
+            unreachable!()
+        }
+    }
+
+    // directly calling the SimpleStorage contract should not result in any internal calls
+    let direct_call_tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to(*simple_storage_contract.address())
+        .with_input(set_value_calldata.to_owned());
+
+    let direct_call_tx_traces = handle
+        .http_provider()
+        .debug_trace_call(
+            direct_call_tx,
+            BlockNumberOrTag::Latest,
+            GethDebugTracingCallOptions::default().with_tracing_options(
+                GethDebugTracingOptions::default()
+                    .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
+                    .with_call_config(CallConfig::default().with_log()),
+            ),
+        )
+        .await
+        .unwrap();
+
+    match direct_call_tx_traces {
+        GethTrace::CallTracer(call_frame) => {
+            assert!(call_frame.calls.is_empty());
+            assert!(call_frame.to.unwrap() == *simple_storage_contract.address());
+            assert!(call_frame.logs.len() == 1);
         }
         _ => {
             unreachable!()
@@ -350,7 +474,7 @@ async fn test_trace_address_fork2() {
     api.anvil_impersonate_account(from).await.unwrap();
 
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-    let status = tx.inner.inner.inner.receipt.status;
+    let status = tx.inner.inner.inner.receipt.status.coerce_status();
     assert!(status);
 
     let traces = provider.trace_transaction(tx.transaction_hash).await.unwrap();

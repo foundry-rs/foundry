@@ -30,10 +30,10 @@ pub struct Block {
 }
 
 impl Block {
-    /// Creates a new block
+    /// Creates a new block.
     ///
-    /// Note: if the `impersonate-tx` feature is enabled this  will also accept
-    /// [MaybeImpersonatedTransaction]
+    /// Note: if the `impersonate-tx` feature is enabled this will also accept
+    /// `MaybeImpersonatedTransaction`.
     pub fn new<T>(
         partial_header: PartialHeader,
         transactions: impl IntoIterator<Item = T>,

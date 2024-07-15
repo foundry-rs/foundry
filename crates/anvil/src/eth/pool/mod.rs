@@ -464,8 +464,8 @@ pub enum AddedTransaction {
 impl AddedTransaction {
     pub fn hash(&self) -> &TxHash {
         match self {
-            AddedTransaction::Ready(tx) => &tx.hash,
-            AddedTransaction::Pending { hash } => hash,
+            Self::Ready(tx) => &tx.hash,
+            Self::Pending { hash } => hash,
         }
     }
 }

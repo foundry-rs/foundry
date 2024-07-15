@@ -1,20 +1,28 @@
-use revm::{
-    interpreter::{opcode, opcode::spec_opcode_gas},
-    primitives::SpecId,
-};
+use revm::interpreter::opcode::{PUSH0, PUSH1, PUSH32};
 use rustc_hash::FxHashMap;
 
 /// Maps from program counter to instruction counter.
 ///
 /// Inverse of [`IcPcMap`].
+#[derive(Debug, Clone)]
 pub struct PcIcMap {
     pub inner: FxHashMap<usize, usize>,
 }
 
 impl PcIcMap {
     /// Creates a new `PcIcMap` for the given code.
-    pub fn new(spec: SpecId, code: &[u8]) -> Self {
-        Self { inner: make_map::<true>(spec, code) }
+    pub fn new(code: &[u8]) -> Self {
+        Self { inner: make_map::<true>(code) }
+    }
+
+    /// Returns the length of the map.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns `true` if the map is empty.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 
     /// Returns the instruction counter for the given program counter.
@@ -32,8 +40,18 @@ pub struct IcPcMap {
 
 impl IcPcMap {
     /// Creates a new `IcPcMap` for the given code.
-    pub fn new(spec: SpecId, code: &[u8]) -> Self {
-        Self { inner: make_map::<false>(spec, code) }
+    pub fn new(code: &[u8]) -> Self {
+        Self { inner: make_map::<false>(code) }
+    }
+
+    /// Returns the length of the map.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns `true` if the map is empty.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 
     /// Returns the program counter for the given instruction counter.
@@ -42,8 +60,7 @@ impl IcPcMap {
     }
 }
 
-fn make_map<const PC_FIRST: bool>(spec: SpecId, code: &[u8]) -> FxHashMap<usize, usize> {
-    let opcode_infos = spec_opcode_gas(spec);
+fn make_map<const PC_FIRST: bool>(code: &[u8]) -> FxHashMap<usize, usize> {
     let mut map = FxHashMap::default();
 
     let mut pc = 0;
@@ -56,10 +73,9 @@ fn make_map<const PC_FIRST: bool>(spec: SpecId, code: &[u8]) -> FxHashMap<usize,
             map.insert(ic, pc);
         }
 
-        let op = code[pc];
-        if opcode_infos[op as usize].is_push() {
+        if (PUSH1..=PUSH32).contains(&code[pc]) {
             // Skip the push bytes.
-            let push_size = (op - opcode::PUSH0) as usize;
+            let push_size = (code[pc] - PUSH0) as usize;
             pc += push_size;
             cumulative_push_size += push_size;
         }

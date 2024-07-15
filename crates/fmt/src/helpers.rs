@@ -10,20 +10,31 @@ use std::{fmt::Write, path::Path};
 /// Result of parsing the source code
 #[derive(Debug)]
 pub struct Parsed<'a> {
-    /// The original source code
+    /// The original source code.
     pub src: &'a str,
-    /// The Parse Tree via [`solang`]
+    /// The parse tree.
     pub pt: SourceUnit,
-    /// Parsed comments
+    /// Parsed comments.
     pub comments: Comments,
-    /// Parsed inline config
+    /// Parsed inline config.
     pub inline_config: InlineConfig,
-    /// Invalid inline config items parsed
+    /// Invalid inline config items parsed.
     pub invalid_inline_config_items: Vec<(Loc, InvalidInlineConfigItem)>,
 }
 
-/// Parse source code
-pub fn parse(src: &str) -> Result<Parsed, Vec<Diagnostic>> {
+/// Parse source code.
+pub fn parse(src: &str) -> Result<Parsed<'_>, FormatterError> {
+    parse_raw(src).map_err(|diag| FormatterError::Parse(src.to_string(), None, diag))
+}
+
+/// Parse source code with a path for diagnostics.
+pub fn parse2<'s>(src: &'s str, path: Option<&Path>) -> Result<Parsed<'s>, FormatterError> {
+    parse_raw(src)
+        .map_err(|diag| FormatterError::Parse(src.to_string(), path.map(ToOwned::to_owned), diag))
+}
+
+/// Parse source code, returning a list of diagnostics on failure.
+pub fn parse_raw(src: &str) -> Result<Parsed<'_>, Vec<Diagnostic>> {
     let (pt, comments) = solang_parser::parse(src, 0)?;
     let comments = Comments::new(comments, src);
     let (inline_config_items, invalid_inline_config_items): (Vec<_>, Vec<_>) =
@@ -35,7 +46,7 @@ pub fn parse(src: &str) -> Result<Parsed, Vec<Diagnostic>> {
 /// Format parsed code
 pub fn format_to<W: Write>(
     writer: W,
-    mut parsed: Parsed,
+    mut parsed: Parsed<'_>,
     config: FormatterConfig,
 ) -> Result<(), FormatterError> {
     trace!(?parsed, ?config, "Formatting");
@@ -46,10 +57,7 @@ pub fn format_to<W: Write>(
 
 /// Parse and format a string with default settings
 pub fn format(src: &str) -> Result<String, FormatterError> {
-    let parsed = parse(src).map_err(|err| {
-        debug!(?err, "Parse error");
-        FormatterError::Fmt(std::fmt::Error)
-    })?;
+    let parsed = parse(src)?;
 
     let mut output = String::new();
     format_to(&mut output, parsed, FormatterConfig::default())?;
@@ -75,18 +83,19 @@ pub fn offset_to_line_column(content: &str, start: usize) -> (usize, usize) {
     unreachable!("content.len() > start")
 }
 
-/// Print the report of parser's diagnostics
-pub fn print_diagnostics_report(
+/// Formats parser diagnostics
+pub fn format_diagnostics_report(
     content: &str,
     path: Option<&Path>,
-    diagnostics: Vec<Diagnostic>,
-) -> std::io::Result<()> {
+    diagnostics: &[Diagnostic],
+) -> String {
     if diagnostics.is_empty() {
-        return Ok(());
+        return String::new();
     }
 
     let filename =
         path.map(|p| p.file_name().unwrap().to_string_lossy().to_string()).unwrap_or_default();
+    let mut s = Vec::new();
     for diag in diagnostics {
         let (start, end) = (diag.loc.start(), diag.loc.end());
         let mut report = Report::build(ReportKind::Error, &filename, start)
@@ -94,16 +103,16 @@ pub fn print_diagnostics_report(
             .with_label(
                 Label::new((&filename, start..end))
                     .with_color(Color::Red)
-                    .with_message(format!("{}", diag.message.fg(Color::Red))),
+                    .with_message(format!("{}", diag.message.as_str().fg(Color::Red))),
             );
 
-        for note in diag.notes {
-            report = report.with_note(note.message);
+        for note in &diag.notes {
+            report = report.with_note(&note.message);
         }
 
-        report.finish().print((&filename, Source::from(content)))?;
+        report.finish().write((&filename, Source::from(content)), &mut s).unwrap();
     }
-    Ok(())
+    String::from_utf8(s).unwrap()
 }
 
 pub fn import_path_string(path: &ImportPath) -> String {

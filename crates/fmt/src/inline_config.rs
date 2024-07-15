@@ -23,11 +23,11 @@ impl FromStr for InlineConfigItem {
     type Err = InvalidInlineConfigItem;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
-            "disable-next-item" => InlineConfigItem::DisableNextItem,
-            "disable-line" => InlineConfigItem::DisableLine,
-            "disable-next-line" => InlineConfigItem::DisableNextLine,
-            "disable-start" => InlineConfigItem::DisableStart,
-            "disable-end" => InlineConfigItem::DisableEnd,
+            "disable-next-item" => Self::DisableNextItem,
+            "disable-line" => Self::DisableLine,
+            "disable-next-line" => Self::DisableNextLine,
+            "disable-start" => Self::DisableStart,
+            "disable-end" => Self::DisableEnd,
             s => return Err(InvalidInlineConfigItem(s.into())),
         })
     }
@@ -61,8 +61,10 @@ impl DisabledRange {
 /// An inline config. Keeps track of disabled ranges.
 ///
 /// This is a list of Inline Config items for locations in a source file. This is
-/// usually acquired by parsing the comments for an `forgefmt:` items. See
-/// [`Comments::parse_inline_config_items`] for details.
+/// usually acquired by parsing the comments for an `forgefmt:` items.
+///
+/// See [`Comments::parse_inline_config_items`](crate::Comments::parse_inline_config_items) for
+/// details.
 #[derive(Debug, Default)]
 pub struct InlineConfig {
     disabled_ranges: Vec<DisabledRange>,

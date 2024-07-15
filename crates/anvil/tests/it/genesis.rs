@@ -3,7 +3,6 @@
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockId;
 use anvil::{spawn, NodeConfig};
 use std::str::FromStr;
 
@@ -44,7 +43,7 @@ async fn can_apply_genesis() {
     assert_eq!(provider.get_chain_id().await.unwrap(), 19763u64);
 
     let addr: Address = Address::from_str("71562b71999873db5b286df957af199ec94617f7").unwrap();
-    let balance = provider.get_balance(addr, BlockId::latest()).await.unwrap();
+    let balance = provider.get_balance(addr).await.unwrap();
 
     let expected: U256 = U256::from_str_radix("ffffffffffffffffffffffffff", 16).unwrap();
     assert_eq!(balance, expected);

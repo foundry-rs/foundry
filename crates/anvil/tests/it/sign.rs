@@ -1,9 +1,10 @@
 use crate::utils::http_provider_with_signer;
 use alloy_dyn_abi::TypedData;
-use alloy_network::EthereumSigner;
+use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_rpc_types::TransactionRequest;
+use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use anvil::{spawn, NodeConfig};
 
@@ -303,14 +304,14 @@ async fn can_sign_transaction() {
     // sign it via the eth_signTransaction API
     let signed_tx = api.sign_transaction(tx).await.unwrap();
 
-    assert_eq!(signed_tx, "0x02f868827a690a65648252089470997970c51812dc3a010c7d01b50e0d17dc79c88203e980c082f4f6a0e4de88aefcf87ccb04466e60de66a83192e46aa26177d5ea35efbfd43fd0ecdca00e3148e0e8e0b9a6f9b329efd6e30c4a461920f3a27497be3dbefaba996601da");
+    assert_eq!(signed_tx, "0x02f866827a690a65648252089470997970c51812dc3a010c7d01b50e0d17dc79c88203e980c001a0e4de88aefcf87ccb04466e60de66a83192e46aa26177d5ea35efbfd43fd0ecdca00e3148e0e8e0b9a6f9b329efd6e30c4a461920f3a27497be3dbefaba996601da");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn rejects_different_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap().with_chain_id(Some(1));
-    let provider = http_provider_with_signer(&handle.http_endpoint(), EthereumSigner::from(wallet));
+    let provider = http_provider_with_signer(&handle.http_endpoint(), EthereumWallet::from(wallet));
 
     let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100));
     let tx = WithOtherFields::new(tx);
@@ -324,7 +325,7 @@ async fn rejects_invalid_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
     let wallet = wallet.with_chain_id(Some(99u64));
-    let provider = http_provider_with_signer(&handle.http_endpoint(), EthereumSigner::from(wallet));
+    let provider = http_provider_with_signer(&handle.http_endpoint(), EthereumWallet::from(wallet));
     let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100u64));
     let tx = WithOtherFields::new(tx);
     let res = provider.send_transaction(tx).await;

@@ -17,6 +17,7 @@ use foundry_config::{Config, RpcEndpoint};
 use foundry_evm::{
     decode::decode_console_logs,
     traces::{
+        decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
@@ -86,11 +87,11 @@ impl DispatchResult {
     pub fn is_error(&self) -> bool {
         matches!(
             self,
-            DispatchResult::Failure(_) |
-                DispatchResult::CommandFailed(_) |
-                DispatchResult::UnrecognizedCommand(_) |
-                DispatchResult::SolangParserFailed(_) |
-                DispatchResult::FileIoError(_)
+            Self::Failure(_) |
+                Self::CommandFailed(_) |
+                Self::UnrecognizedCommand(_) |
+                Self::SolangParserFailed(_) |
+                Self::FileIoError(_)
         )
     }
 }
@@ -414,8 +415,7 @@ impl ChiselDispatcher {
                         )))
                     }
                     Err(e) => DispatchResult::CommandFailed(Self::make_error(format!(
-                        "Invalid calldata: {}",
-                        e
+                        "Invalid calldata: {e}"
                     ))),
                 }
             }
@@ -933,17 +933,18 @@ impl ChiselDispatcher {
         }
 
         println!("{}", "Traces:".green());
-        for (kind, trace) in &result.traces {
+        for (kind, trace) in &mut result.traces {
             // Display all Setup + Execution traces.
             if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
-                println!("{}", render_trace_arena(trace, decoder).await?);
+                decode_trace_arena(trace, decoder).await?;
+                println!("{}", render_trace_arena(trace));
             }
         }
 
         Ok(())
     }
 
-    /// Format a type that implements [fmt::Display] as a chisel error string.
+    /// Format a type that implements [std::fmt::Display] as a chisel error string.
     ///
     /// ### Takes
     ///

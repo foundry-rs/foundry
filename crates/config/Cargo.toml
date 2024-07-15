@@ -10,6 +10,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-compilers = { workspace = true, features = ["svm-solc"] }
@@ -21,33 +24,35 @@ revm-primitives.workspace = true
 solang-parser.workspace = true
 
 dirs-next = "2"
-dunce = "1"
+dunce.workspace = true
 eyre.workspace = true
-figment = { version = "0.10", features = ["toml", "env"] }
+figment = { workspace = true, features = ["toml", "env"] }
 globset = "0.4"
+glob = "0.3"
 Inflector = "0.11"
 number_prefix = "0.4"
-once_cell = "1"
+once_cell.workspace = true
 regex = "1"
 reqwest.workspace = true
-semver = { version = "1", features = ["serde"] }
+semver = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
 serde_regex = "1"
 serde.workspace = true
-thiserror = "1"
+thiserror.workspace = true
 toml = { version = "0.8", features = ["preserve_order"] }
 toml_edit = "0.22.4"
 tracing.workspace = true
-walkdir = "2"
+walkdir.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.2.1"
 
 [dev-dependencies]
 similar-asserts.workspace = true
-figment = { version = "0.10", features = ["test"] }
+figment = { workspace = true, features = ["test"] }
 tempfile.workspace = true
 
 [features]
 default = ["rustls"]
 rustls = ["reqwest/rustls-tls-native-roots"]
+isolate-by-default = []

@@ -3,6 +3,7 @@ use alloy_primitives::{keccak256, Address, Bytes, ChainId, Signature, TxKind, B2
 use alloy_rlp::{
     length_of_length, Decodable, Encodable, Error as DecodeError, Header as RlpHeader,
 };
+use serde::{Deserialize, Serialize};
 use std::mem;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,7 +108,6 @@ impl DepositTransactionRequest {
     }
 
     /// Calculates a heuristic for the in-memory size of the [DepositTransaction] transaction.
-    #[inline]
     pub fn size(&self) -> usize {
         mem::size_of::<B256>() + // source_hash
         mem::size_of::<Address>() + // from
@@ -228,7 +228,7 @@ impl Encodable for DepositTransactionRequest {
 
 /// An op-stack deposit transaction.
 /// See <https://github.com/ethereum-optimism/optimism/blob/develop/specs/deposits.md#the-deposited-transaction-type>
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DepositTransaction {
     pub nonce: u64,
     pub source_hash: B256,
@@ -286,7 +286,7 @@ impl DepositTransaction {
         len
     }
 
-    /// Decodes the inner [TxDeposit] fields from RLP bytes.
+    /// Decodes the inner fields from RLP bytes
     ///
     /// NOTE: This assumes a RLP header has already been decoded, and _just_ decodes the following
     /// RLP fields in the following order:

@@ -23,8 +23,6 @@ pub struct BackendSnapshot<T> {
     pub env: Env,
 }
 
-// === impl BackendSnapshot ===
-
 impl<T> BackendSnapshot<T> {
     /// Takes a new snapshot
     pub fn new(db: T, journaled_state: JournaledState, env: Env) -> Self {
@@ -58,6 +56,6 @@ pub enum RevertSnapshotAction {
 impl RevertSnapshotAction {
     /// Returns `true` if the action is to keep the snapshot
     pub fn is_keep(&self) -> bool {
-        matches!(self, RevertSnapshotAction::RevertKeep)
+        matches!(self, Self::RevertKeep)
     }
 }
