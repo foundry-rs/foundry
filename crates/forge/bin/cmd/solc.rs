@@ -30,7 +30,11 @@ impl SolcSubcommands {
         let graph = Graph::resolve(&project.paths)?;
 
         let version_manager = SolcVersionManager::default();
-        let (versions, _) = graph.into_sources_by_version(project.offline, &version_manager)?;
+        let (versions, _) = graph.into_sources_by_version(
+            project.offline,
+            &project.locked_versions,
+            &version_manager,
+        )?;
 
         let sources_by_version = versions.get(&version_manager)?;
 
