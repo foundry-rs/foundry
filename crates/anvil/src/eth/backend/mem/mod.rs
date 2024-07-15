@@ -2059,21 +2059,22 @@ impl Backend {
 
         // TODO: define limits
 
-        let mut filtered_traces = vec![];
+        let mut trace_tasks = vec![];
         for num in start..=end {
-            if let Some(block) = self.get_block(num) {
-                for tx in block.transactions {
-                    // Handle error better here
-                    let from = tx.impersonated_sender.unwrap();
-                    let to = tx.to();
-                    if matcher.matches(from, to) {
-                        if let Some(trace) = self.mined_parity_trace_transaction(tx.hash()) {
-                            filtered_traces.push(trace);
-                        }
-                    };
-                }
-            }
+            trace_tasks.push(self.trace_block(num.into()));
         }
+
+        let traces = futures::future::try_join_all(trace_tasks).await?;
+        let filtered_traces = traces
+            .into_iter()
+            .flatten()
+            .filter(|trace| match trace.trace.action {
+                alloy_rpc_types::trace::parity::Action::Call(_) => todo!(),
+                alloy_rpc_types::trace::parity::Action::Create(_) => todo!(),
+                alloy_rpc_types::trace::parity::Action::Selfdestruct(_) => todo!(),
+                alloy_rpc_types::trace::parity::Action::Reward(_) => todo!(),
+            })
+            .collect();
 
         Ok(filtered_traces)
     }
