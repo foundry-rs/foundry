@@ -155,7 +155,7 @@ forgetest!(can_test_with_match_path, |prj, cmd| {
         r#"
 import "./test.sol";
 contract ATest is DSTest {
-    function testArray(uint64[2] calldata values) external {
+    function testPass() external {
         assertTrue(true);
     }
 }
@@ -176,8 +176,16 @@ contract FailTest is DSTest {
     )
     .unwrap();
 
-    cmd.args(["test", "--match-path", "*src/ATest.t.sol"]);
-    assert!(cmd.stdout_lossy().contains("[PASS]") && !cmd.stdout_lossy().contains("[FAIL]"));
+    cmd.args(["test", "--match-path", "*src/ATest.t.sol"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/ATest.t.sol:ATest
+[PASS] testPass() (gas: 190)
+...
+Ran 1 test suite in [..] 1 tests passed, 0 failed, 0 skipped (1 total tests)
+...
+"#]]);
+
+    // assert!(cmd.stdout_lossy().contains("[PASS]") && !cmd.stdout_lossy().contains("[FAIL]"));
 });
 
 // tests that using the --match-path option works with absolute paths
@@ -189,7 +197,7 @@ forgetest!(can_test_with_match_path_absolute, |prj, cmd| {
         r#"
 import "./test.sol";
 contract ATest is DSTest {
-    function testArray(uint64[2] calldata values) external {
+    function testPass() external {
         assertTrue(true);
     }
 }
@@ -213,8 +221,14 @@ contract FailTest is DSTest {
     let test_path = prj.root().join("src/ATest.t.sol");
     let test_path = test_path.to_string_lossy();
 
-    cmd.args(["test", "--match-path", test_path.as_ref()]);
-    assert!(cmd.stdout_lossy().contains("[PASS]") && !cmd.stdout_lossy().contains("[FAIL]"));
+    cmd.args(["test", "--match-path", test_path.as_ref()]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/ATest.t.sol:ATest
+[PASS] testPass() (gas: 190)
+...
+Ran 1 test suite in [..] 1 tests passed, 0 failed, 0 skipped (1 total tests)
+...
+"#]]);
 });
 
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
