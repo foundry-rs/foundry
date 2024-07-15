@@ -260,6 +260,6 @@ reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
 tower-http = "0.5"
 # soldeer
-soldeer = "0.2.18"
+soldeer = "0.2.19"
 
 proptest = "1"

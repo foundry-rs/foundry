@@ -7,7 +7,8 @@ use soldeer::commands::Subcommands;
 #[derive(Clone, Debug, Parser)]
 #[clap(override_usage = "forge soldeer install [DEPENDENCY]~[VERSION] <REMOTE_URL>
     forge soldeer install [DEPENDENCY]~[VERSION] <GIT_URL>
-    forge soldeer install [DEPENDENCY]~[VERSION] <GIT_URL> <COMMIT>
+    forge soldeer install [DEPENDENCY]~[VERSION] <GIT_URL> --rev <REVISION>
+    forge soldeer install [DEPENDENCY]~[VERSION] <GIT_URL> --rev <TAG>
     forge soldeer push [DEPENDENCY]~[VERSION] <CUSTOM_PATH_OF_FILES>
     forge soldeer login
     forge soldeer update

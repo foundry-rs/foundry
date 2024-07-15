@@ -16,7 +16,7 @@ pub struct MapDependency {
 
     /// The commit in case git is used as dependency retrieval
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commit: Option<String>,
+    pub rev: Option<String>,
 }
 
 /// Type for Soldeer configs, under dependencies tag in the foundry.toml
