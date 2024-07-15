@@ -92,6 +92,7 @@ pub trait CheatcodesExecutor {
             db: &mut ccx.ecx.db as &mut dyn DatabaseExt,
             error,
             l1_block_info,
+            valid_authorizations: std::mem::take(&mut ccx.ecx.valid_authorizations),
         };
 
         let mut evm = new_evm_with_existing_context(inner, &mut inspector as _);
@@ -102,6 +103,7 @@ pub trait CheatcodesExecutor {
         ccx.ecx.env = evm.context.evm.inner.env;
         ccx.ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
         ccx.ecx.error = evm.context.evm.inner.error;
+        ccx.ecx.valid_authorizations = evm.context.evm.inner.valid_authorizations;
 
         Ok(res)
     }

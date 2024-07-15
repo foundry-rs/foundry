@@ -1156,9 +1156,10 @@ impl Backend {
             data: input.into_input().unwrap_or_default(),
             chain_id: None,
             nonce,
-            access_list: access_list.unwrap_or_default().flattened(),
+            access_list: access_list.unwrap_or_default().into(),
             blob_hashes: blob_versioned_hashes.unwrap_or_default(),
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
+            authorization_list: None,
         };
 
         if env.block.basefee.is_zero() {

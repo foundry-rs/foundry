@@ -844,6 +844,7 @@ fn convert_executed_result(
         &env.tx.data,
         env.tx.transact_to.is_create(),
         &env.tx.access_list,
+        0,
     );
 
     let result = match &out {
