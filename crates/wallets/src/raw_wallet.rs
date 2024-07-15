@@ -47,7 +47,7 @@ impl RawWalletOpts {
             return Ok(Some(PendingSigner::Interactive.unlock()?));
         }
         if let Some(private_key) = &self.private_key {
-            return Ok(Some(utils::create_private_key_signer(private_key)?))
+            return Ok(Some(utils::create_private_key_signer(private_key)?));
         }
         if let Some(mnemonic) = &self.mnemonic {
             return Ok(Some(utils::create_mnemonic_signer(
@@ -55,7 +55,7 @@ impl RawWalletOpts {
                 self.mnemonic_passphrase.as_deref(),
                 self.hd_path.as_deref(),
                 self.mnemonic_index,
-            )?))
+            )?));
         }
         Ok(None)
     }

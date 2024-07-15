@@ -10,6 +10,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-common.workspace = true
 foundry-compilers.workspace = true
@@ -20,7 +23,12 @@ foundry-evm-traces.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
-alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-primitives = { workspace = true, features = [
+    "serde",
+    "getrandom",
+    "arbitrary",
+    "rlp",
+] }
 revm = { workspace = true, features = [
     "std",
     "serde",
@@ -31,12 +39,13 @@ revm = { workspace = true, features = [
     "arbitrary",
 ] }
 
-eyre = "0.6"
+eyre .workspace = true
 itertools.workspace = true
-parking_lot = "0.12"
-proptest = "1"
+parking_lot.workspace = true
+proptest.workspace = true
 rand.workspace = true
-serde = "1"
-thiserror = "1"
-tracing = "0.1"
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
 indexmap.workspace = true
+ahash.workspace = true

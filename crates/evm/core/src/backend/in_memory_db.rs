@@ -1,20 +1,22 @@
-//! The in memory DB
-use crate::{backend::error::DatabaseError, snapshot::Snapshots};
+//! In-memory database.
+
+use crate::snapshot::Snapshots;
 use alloy_primitives::{Address, B256, U256};
+use foundry_fork_db::DatabaseError;
 use revm::{
     db::{CacheDB, DatabaseRef, EmptyDB},
     primitives::{Account, AccountInfo, Bytecode, HashMap as Map},
     Database, DatabaseCommit,
 };
 
-/// Type alias for an in memory database
+/// Type alias for an in-memory database.
 ///
-/// See `EmptyDBWrapper`
+/// See [`EmptyDBWrapper`].
 pub type FoundryEvmInMemoryDB = CacheDB<EmptyDBWrapper>;
 
-/// In memory Database for anvil
+/// In-memory [`Database`] for Anvil.
 ///
-/// This acts like a wrapper type for [InMemoryDB] but is capable of applying snapshots
+/// This acts like a wrapper type for [`FoundryEvmInMemoryDB`] but is capable of applying snapshots.
 #[derive(Debug)]
 pub struct MemDb {
     pub inner: FoundryEvmInMemoryDB,
@@ -29,6 +31,7 @@ impl Default for MemDb {
 
 impl DatabaseRef for MemDb {
     type Error = DatabaseError;
+
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic_ref(&self.inner, address)
     }
@@ -80,7 +83,7 @@ impl DatabaseCommit for MemDb {
 ///
 /// This will also _always_ return `Some(AccountInfo)`:
 ///
-/// The [`Database`](revm::Database) implementation for `CacheDB` manages an `AccountState` for the
+/// The [`Database`] implementation for `CacheDB` manages an `AccountState` for the
 /// `DbAccount`, this will be set to `AccountState::NotExisting` if the account does not exist yet.
 /// This is because there's a distinction between "non-existing" and "empty",
 /// see <https://github.com/bluealloy/revm/blob/8f4348dc93022cffb3730d9db5d3ab1aad77676a/crates/revm/src/db/in_memory_db.rs#L81-L83>.

@@ -10,20 +10,30 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
-foundry-macros.workspace = true
+foundry-evm-abi.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
-alloy-json-abi.workspace = true
-alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
 alloy-genesis.workspace = true
+alloy-json-abi.workspace = true
+alloy-primitives = { workspace = true, features = [
+    "serde",
+    "getrandom",
+    "arbitrary",
+    "rlp",
+] }
 alloy-provider.workspace = true
-alloy-transport.workspace = true
 alloy-rpc-types.workspace = true
+alloy-serde.workspace = true
 alloy-sol-types.workspace = true
+alloy-transport.workspace = true
+foundry-fork-db.workspace = true
 
 revm = { workspace = true, features = [
     "std",
@@ -38,22 +48,17 @@ revm = { workspace = true, features = [
 ] }
 revm-inspectors.workspace = true
 
-arrayvec.workspace = true
-auto_impl = "1"
-derive_more.workspace = true
-eyre = "0.6"
-futures = "0.3"
-hex.workspace = true
+auto_impl.workspace = true
+eyre.workspace = true
+futures.workspace = true
 itertools.workspace = true
-once_cell = "1"
-parking_lot = "0.12"
+parking_lot.workspace = true
 rustc-hash.workspace = true
-serde = "1"
-serde_json = "1"
-thiserror = "1"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
-tracing = "0.1"
-url = "2"
+tracing.workspace = true
 
 [dev-dependencies]
 foundry-test-utils.workspace = true

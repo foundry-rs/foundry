@@ -6,6 +6,8 @@ FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
+FOUNDRYUP_JOBS=""
+
 BINS=(forge cast anvil chisel)
 
 export RUSTFLAGS="${RUSTFLAGS:--C target-cpu=native}"
@@ -24,6 +26,7 @@ main() {
       -p|--path)        shift; FOUNDRYUP_LOCAL_REPO=$1;;
       -P|--pr)          shift; FOUNDRYUP_PR=$1;;
       -C|--commit)      shift; FOUNDRYUP_COMMIT=$1;;
+      -j|--jobs)        shift; FOUNDRYUP_JOBS=$1;;
       --arch)           shift; FOUNDRYUP_ARCH=$1;;
       --platform)       shift; FOUNDRYUP_PLATFORM=$1;;
       -h|--help)
@@ -36,6 +39,12 @@ main() {
         exit 1
     esac; shift
   done
+
+  CARGO_BUILD_ARGS=(--release)
+
+  if [ -n "$FOUNDRYUP_JOBS" ]; then
+    CARGO_BUILD_ARGS+=(--jobs "$FOUNDRYUP_JOBS")
+  fi
 
   # Print the banner after successfully parsing args
   banner
@@ -60,7 +69,7 @@ main() {
     # Enter local repo and build
     say "installing from $FOUNDRYUP_LOCAL_REPO"
     cd "$FOUNDRYUP_LOCAL_REPO"
-    ensure cargo build --bins --release # need 4 speed
+    ensure cargo build --bins "${CARGO_BUILD_ARGS[@]}"
 
     for bin in "${BINS[@]}"; do
       # Remove prior installations if they exist
@@ -197,7 +206,7 @@ EOF
     fi
 
     # Build the repo and install the binaries locally to the .foundry bin directory.
-    ensure cargo build --bins --release
+    ensure cargo build --bins "${CARGO_BUILD_ARGS[@]}"
     for bin in "${BINS[@]}"; do
       for try_path in target/release/$bin target/release/$bin.exe; do
         if [ -f "$try_path" ]; then
@@ -224,17 +233,20 @@ The installer for Foundry.
 
 Update or revert to a specific Foundry version with ease.
 
+By default, the latest nightly version is installed from built binaries.
+
 USAGE:
     foundryup <OPTIONS>
 
 OPTIONS:
     -h, --help      Print help information
-    -v, --version   Install a specific version
-    -b, --branch    Install a specific branch
-    -P, --pr        Install a specific Pull Request
-    -C, --commit    Install a specific commit
-    -r, --repo      Install from a remote GitHub repo (uses default branch if no other options are set)
-    -p, --path      Install a local repository
+    -v, --version   Install a specific version from built binaries
+    -b, --branch    Build and install a specific branch
+    -P, --pr        Build and install a specific Pull Request
+    -C, --commit    Build and install a specific commit
+    -r, --repo      Build and install from a remote GitHub repo (uses default branch if no other options are set)
+    -p, --path      Build and install a local repository
+    -j, --jobs      Number of CPUs to use for building Foundry (default: all CPUs)
     --arch          Install a specific architecture (supports amd64 and arm64)
     --platform      Install a specific platform (supports win32, linux, and darwin)
 EOF

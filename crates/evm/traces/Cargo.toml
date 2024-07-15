@@ -10,28 +10,40 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-block-explorers.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
+foundry-linking.workspace = true
 foundry-config.workspace = true
 foundry-evm-core.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
-alloy-primitives = { workspace = true, features = ["serde", "getrandom", "arbitrary", "rlp"] }
+alloy-primitives = { workspace = true, features = [
+    "serde",
+    "getrandom",
+    "arbitrary",
+    "rlp",
+] }
 alloy-sol-types.workspace = true
 revm-inspectors.workspace = true
 
-eyre = "0.6"
-futures = "0.3"
-hex.workspace = true
+eyre.workspace = true
+futures.workspace = true
 itertools.workspace = true
-once_cell = "1"
-serde = "1"
+once_cell.workspace = true
+serde.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
-tracing = "0.1"
-yansi.workspace = true
+tracing.workspace = true
+rustc-hash.workspace = true
+tempfile.workspace = true
+rayon.workspace = true
+solang-parser.workspace = true
+revm.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

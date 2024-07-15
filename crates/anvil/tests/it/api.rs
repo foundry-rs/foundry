@@ -2,15 +2,16 @@
 
 use crate::{
     abi::{MulticallContract, SimpleStorage},
-    utils::{connect_pubsub_with_signer, http_provider_with_signer},
+    utils::{connect_pubsub_with_wallet, http_provider_with_signer},
 };
-use alloy_network::{EthereumSigner, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, ChainId, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::TransactionRequest, state::AccountOverride, BlockId, BlockNumberOrTag,
-    BlockTransactions, WithOtherFields,
+    BlockTransactions,
 };
+use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
 use std::{collections::HashMap, time::Duration};
 
@@ -34,7 +35,7 @@ async fn can_dev_get_balance() {
 
     let genesis_balance = handle.genesis_balance();
     for acc in handle.genesis_accounts() {
-        let balance = provider.get_balance(acc, BlockId::latest()).await.unwrap();
+        let balance = provider.get_balance(acc).await.unwrap();
         assert_eq!(balance, genesis_balance);
     }
 }
@@ -99,7 +100,7 @@ async fn can_get_block_by_number() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
-    let signer: EthereumSigner = accounts[0].clone().into();
+    let signer: EthereumWallet = accounts[0].clone().into();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
@@ -113,11 +114,14 @@ async fn can_get_block_by_number() {
 
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
 
-    let block = provider.get_block(BlockId::number(1), true).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::number(1), true.into()).await.unwrap().unwrap();
     assert_eq!(block.transactions.len(), 1);
 
-    let block =
-        provider.get_block(BlockId::hash(block.header.hash.unwrap()), true).await.unwrap().unwrap();
+    let block = provider
+        .get_block(BlockId::hash(block.header.hash.unwrap()), true.into())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(block.transactions.len(), 1);
 }
 
@@ -126,13 +130,13 @@ async fn can_get_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
-    let signer: EthereumSigner = accounts[0].clone().into();
+    let signer: EthereumWallet = accounts[0].clone().into();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let provider = connect_pubsub_with_signer(&handle.http_endpoint(), signer).await;
+    let provider = connect_pubsub_with_wallet(&handle.http_endpoint(), signer).await;
 
-    let block = provider.get_block(BlockId::pending(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::pending(), false.into()).await.unwrap().unwrap();
     assert_eq!(block.header.number.unwrap(), 1);
 
     let num = provider.get_block_number().await.unwrap();
@@ -147,12 +151,12 @@ async fn can_get_pending_block() {
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, 0);
 
-    let block = provider.get_block(BlockId::pending(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::pending(), false.into()).await.unwrap().unwrap();
     assert_eq!(block.header.number.unwrap(), 1);
     assert_eq!(block.transactions.len(), 1);
     assert_eq!(block.transactions, BlockTransactions::Hashes(vec![*pending.tx_hash()]));
 
-    let block = provider.get_block(BlockId::pending(), true).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::pending(), true.into()).await.unwrap().unwrap();
     assert_eq!(block.header.number.unwrap(), 1);
     assert_eq!(block.transactions.len(), 1);
 }
@@ -162,7 +166,7 @@ async fn can_call_on_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
     let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = wallet.clone().into();
+    let signer: EthereumWallet = wallet.clone().into();
     let sender = wallet.address();
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
@@ -239,7 +243,7 @@ async fn can_call_on_pending_block() {
 async fn can_call_with_state_override() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumSigner = wallet.clone().into();
+    let signer: EthereumWallet = wallet.clone().into();
     let account = wallet.address();
 
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
@@ -268,10 +272,7 @@ async fn can_call_with_state_override() {
         *simple_storage_contract.address(),
         AccountOverride {
             // The `lastSender` is in the first storage slot
-            state_diff: Some(HashMap::from([(
-                B256::ZERO,
-                U256::from_be_slice(B256::from(account.into_word()).as_slice()),
-            )])),
+            state_diff: Some(HashMap::from([(B256::ZERO, account.into_word())])),
             ..Default::default()
         },
     )]);
@@ -295,10 +296,7 @@ async fn can_call_with_state_override() {
         *simple_storage_contract.address(),
         AccountOverride {
             // The `lastSender` is in the first storage slot
-            state: Some(HashMap::from([(
-                B256::ZERO,
-                U256::from_be_slice(B256::from(account.into_word()).as_slice()),
-            )])),
+            state: Some(HashMap::from([(B256::ZERO, account.into_word())])),
             ..Default::default()
         },
     )]);

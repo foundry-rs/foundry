@@ -2,6 +2,7 @@ use crate::eth::{
     backend::{info::StorageInfo, notifications::NewBlockNotifications},
     error::BlockchainError,
 };
+use alloy_consensus::Header;
 use alloy_eips::{
     calc_next_block_base_fee, eip1559::BaseFeeParams, eip4844::MAX_DATA_GAS_PER_BLOCK,
 };
@@ -31,6 +32,9 @@ pub const INITIAL_GAS_PRICE: u128 = 1_875_000_000;
 /// Bounds the amount the base fee can change between blocks.
 pub const BASE_FEE_CHANGE_DENOMINATOR: u128 = 8;
 
+/// Minimum suggested priority fee
+pub const MIN_SUGGESTED_PRIORITY_FEE: u128 = 1e9 as u128;
+
 pub fn default_elasticity() -> f64 {
     1f64 / BaseFeeParams::ethereum().elasticity_multiplier as f64
 }
@@ -54,8 +58,6 @@ pub struct FeeManager {
     gas_price: Arc<RwLock<u128>>,
     elasticity: Arc<RwLock<f64>>,
 }
-
-// === impl FeeManager ===
 
 impl FeeManager {
     pub fn new(
@@ -86,15 +88,6 @@ impl FeeManager {
         (self.spec_id as u8) >= (SpecId::CANCUN as u8)
     }
 
-    /// Calculates the current gas price
-    pub fn gas_price(&self) -> u128 {
-        if self.is_eip1559() {
-            self.base_fee().saturating_add(self.suggested_priority_fee())
-        } else {
-            *self.gas_price.read()
-        }
-    }
-
     /// Calculates the current blob gas price
     pub fn blob_gas_price(&self) -> u128 {
         if self.is_eip4844() {
@@ -104,17 +97,17 @@ impl FeeManager {
         }
     }
 
-    /// Suggested priority fee to add to the base fee
-    pub fn suggested_priority_fee(&self) -> u128 {
-        1e9 as u128
-    }
-
     pub fn base_fee(&self) -> u128 {
         if self.is_eip1559() {
             *self.base_fee.read()
         } else {
             0
         }
+    }
+
+    /// Raw base gas price
+    pub fn raw_gas_price(&self) -> u128 {
+        *self.gas_price.read()
     }
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
@@ -131,13 +124,6 @@ impl FeeManager {
         } else {
             0
         }
-    }
-
-    /// Returns the suggested fee cap
-    ///
-    /// Note: This currently returns a constant value: [Self::suggested_priority_fee]
-    pub fn max_priority_fee_per_gas(&self) -> u128 {
-        self.suggested_priority_fee()
     }
 
     /// Returns the current gas price
@@ -205,28 +191,17 @@ pub struct FeeHistoryService {
     cache: FeeHistoryCache,
     /// number of items to consider
     fee_history_limit: u64,
-    // current fee info
-    fees: FeeManager,
     /// a type that can fetch ethereum-storage data
     storage_info: StorageInfo,
 }
-
-// === impl FeeHistoryService ===
 
 impl FeeHistoryService {
     pub fn new(
         new_blocks: NewBlockNotifications,
         cache: FeeHistoryCache,
-        fees: FeeManager,
         storage_info: StorageInfo,
     ) -> Self {
-        Self {
-            new_blocks,
-            cache,
-            fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
-            fees,
-            storage_info,
-        }
+        Self { new_blocks, cache, fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE, storage_info }
     }
 
     /// Returns the configured history limit
@@ -235,13 +210,17 @@ impl FeeHistoryService {
     }
 
     /// Inserts a new cache entry for the given block
-    pub(crate) fn insert_cache_entry_for_block(&self, hash: B256) {
-        let (result, block_number) = self.create_cache_entry(hash);
+    pub(crate) fn insert_cache_entry_for_block(&self, hash: B256, header: &Header) {
+        let (result, block_number) = self.create_cache_entry(hash, header);
         self.insert_cache_entry(result, block_number);
     }
 
     /// Create a new history entry for the block
-    fn create_cache_entry(&self, hash: B256) -> (FeeHistoryCacheItem, Option<u64>) {
+    fn create_cache_entry(
+        &self,
+        hash: B256,
+        header: &Header,
+    ) -> (FeeHistoryCacheItem, Option<u64>) {
         // percentile list from 0.0 to 100.0 with a 0.5 resolution.
         // this will create 200 percentile points
         let reward_percentiles: Vec<f64> = {
@@ -256,16 +235,18 @@ impl FeeHistoryService {
         };
 
         let mut block_number: Option<u64> = None;
-        let base_fee = self.fees.base_fee();
-        let excess_blob_gas_and_price = self.fees.excess_blob_gas_and_price();
+        let base_fee = header.base_fee_per_gas.unwrap_or_default();
+        let excess_blob_gas = header.excess_blob_gas;
+        let blob_gas_used = header.blob_gas_used;
+        let base_fee_per_blob_gas = header.blob_fee();
         let mut item = FeeHistoryCacheItem {
             base_fee,
             gas_used_ratio: 0f64,
             blob_gas_used_ratio: 0f64,
             rewards: Vec::new(),
-            excess_blob_gas: excess_blob_gas_and_price.as_ref().map(|g| g.excess_blob_gas as u128),
-            base_fee_per_blob_gas: excess_blob_gas_and_price.as_ref().map(|g| g.blob_gasprice),
-            blob_gas_used: excess_blob_gas_and_price.as_ref().map(|_| 0),
+            excess_blob_gas,
+            base_fee_per_blob_gas,
+            blob_gas_used,
         };
 
         let current_block = self.storage_info.block(hash);
@@ -362,10 +343,8 @@ impl Future for FeeHistoryService {
         let pin = self.get_mut();
 
         while let Poll::Ready(Some(notification)) = pin.new_blocks.poll_next_unpin(cx) {
-            let hash = notification.hash;
-
             // add the imported block.
-            pin.insert_cache_entry_for_block(hash);
+            pin.insert_cache_entry_for_block(notification.hash, notification.header.as_ref());
         }
 
         Poll::Pending
@@ -407,12 +386,8 @@ impl FeeDetails {
 
     /// If neither `gas_price` nor `max_fee_per_gas` is `Some`, this will set both to `0`
     pub fn or_zero_fees(self) -> Self {
-        let FeeDetails {
-            gas_price,
-            max_fee_per_gas,
-            max_priority_fee_per_gas,
-            max_fee_per_blob_gas,
-        } = self;
+        let Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas } =
+            self;
 
         let no_fees = gas_price.is_none() && max_fee_per_gas.is_none();
         let gas_price = if no_fees { Some(0) } else { gas_price };
@@ -435,11 +410,11 @@ impl FeeDetails {
         request_max_fee: Option<u128>,
         request_priority: Option<u128>,
         max_fee_per_blob_gas: Option<u128>,
-    ) -> Result<FeeDetails, BlockchainError> {
+    ) -> Result<Self, BlockchainError> {
         match (request_gas_price, request_max_fee, request_priority, max_fee_per_blob_gas) {
             (gas_price, None, None, None) => {
                 // Legacy request, all default to gas price.
-                Ok(FeeDetails {
+                Ok(Self {
                     gas_price,
                     max_fee_per_gas: gas_price,
                     max_priority_fee_per_gas: gas_price,
@@ -455,7 +430,7 @@ impl FeeDetails {
                         return Err(BlockchainError::InvalidFeeInput)
                     }
                 }
-                Ok(FeeDetails {
+                Ok(Self {
                     gas_price: max_fee,
                     max_fee_per_gas: max_fee,
                     max_priority_fee_per_gas: max_priority,
@@ -471,7 +446,7 @@ impl FeeDetails {
                         return Err(BlockchainError::InvalidFeeInput)
                     }
                 }
-                Ok(FeeDetails {
+                Ok(Self {
                     gas_price: max_fee,
                     max_fee_per_gas: max_fee,
                     max_priority_fee_per_gas: max_priority,

@@ -53,16 +53,12 @@ contract AssertionsTest is DSTest {
     }
 
     function _formatWithDecimals(int256 value, uint256 decimals) internal returns (string memory) {
-        string memory intPart = vm.toString(value / int256(10 ** decimals));
-        int256 mod = value % int256(10 ** decimals);
-        string memory decimalPart = vm.toString(mod > 0 ? mod : -mod);
-
-        // Add - if we have something like 0.123
-        if ((value < 0) && keccak256(abi.encode(intPart)) == keccak256(abi.encode("0"))) {
-            intPart = string.concat("-", intPart);
+        string memory formatted = _formatWithDecimals(_abs(value), decimals);
+        if (value < 0) {
+            formatted = string.concat("-", formatted);
         }
 
-        return _prefixDecWithZeroes(intPart, decimalPart, decimals);
+        return formatted;
     }
 
     function testFuzzAssertEqNotEq(uint256 left, uint256 right, uint256 decimals) public {

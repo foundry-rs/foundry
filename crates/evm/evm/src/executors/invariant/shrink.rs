@@ -1,9 +1,14 @@
-use crate::executors::{invariant::error::FailedInvariantCaseData, Executor};
-use alloy_primitives::U256;
-use foundry_evm_core::constants::CALLER;
+use crate::executors::{
+    invariant::{
+        call_after_invariant_function, call_invariant_function, error::FailedInvariantCaseData,
+    },
+    Executor,
+};
+use alloy_primitives::{Address, Bytes, U256};
 use foundry_evm_fuzz::invariant::BasicTxDetails;
+use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
-use std::borrow::Cow;
+use std::cmp::min;
 
 #[derive(Clone, Copy, Debug)]
 struct Shrink {
@@ -83,70 +88,91 @@ pub(crate) fn shrink_sequence(
     failed_case: &FailedInvariantCaseData,
     calls: &[BasicTxDetails],
     executor: &Executor,
+    call_after_invariant: bool,
+    progress: Option<&ProgressBar>,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
 
+    // Reset run count and display shrinking message.
+    if let Some(progress) = progress {
+        progress.set_length(min(calls.len(), failed_case.shrink_run_limit as usize) as u64);
+        progress.reset();
+        progress.set_message(" Shrink");
+    }
+
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
-    let error_call_result =
-        executor.call_raw(CALLER, failed_case.addr, failed_case.func.clone(), U256::ZERO)?;
-    if error_call_result.reverted {
+    let (_, success) =
+        call_invariant_function(executor, failed_case.addr, failed_case.calldata.clone())?;
+    if !success {
         return Ok(vec![]);
     }
 
     let mut shrinker = CallSequenceShrinker::new(calls.len());
     for _ in 0..failed_case.shrink_run_limit {
         // Check candidate sequence result.
-        match check_sequence(failed_case, executor.clone(), calls, shrinker.current().collect()) {
+        match check_sequence(
+            executor.clone(),
+            calls,
+            shrinker.current().collect(),
+            failed_case.addr,
+            failed_case.calldata.clone(),
+            failed_case.fail_on_revert,
+            call_after_invariant,
+        ) {
             // If candidate sequence still fails then shrink more if possible.
-            Ok(false) if !shrinker.simplify() => break,
+            Ok((false, _)) if !shrinker.simplify() => break,
             // If candidate sequence pass then restore last removed call and shrink other
             // calls if possible.
-            Ok(true) if !shrinker.complicate() => break,
+            Ok((true, _)) if !shrinker.complicate() => break,
             _ => {}
+        }
+
+        if let Some(progress) = progress {
+            progress.inc(1);
         }
     }
 
     Ok(shrinker.current().map(|idx| &calls[idx]).cloned().collect())
 }
 
-/// Checks if the shrinked sequence fails test, if it does then we can try simplifying more.
-fn check_sequence(
-    failed_case: &FailedInvariantCaseData,
+/// Checks if the given call sequence breaks the invariant.
+/// Used in shrinking phase for checking candidate sequences and in replay failures phase to test
+/// persisted failures.
+/// Returns the result of invariant check (and afterInvariant call if needed) and if sequence was
+/// entirely applied.
+pub fn check_sequence(
     mut executor: Executor,
     calls: &[BasicTxDetails],
     sequence: Vec<usize>,
-) -> eyre::Result<bool> {
-    let mut sequence_failed = false;
-    // Apply the shrinked candidate sequence.
+    test_address: Address,
+    calldata: Bytes,
+    fail_on_revert: bool,
+    call_after_invariant: bool,
+) -> eyre::Result<(bool, bool)> {
+    // Apply the call sequence.
     for call_index in sequence {
-        let (sender, (addr, bytes)) = &calls[call_index];
-        let call_result =
-            executor.call_raw_committing(*sender, *addr, bytes.clone(), U256::ZERO)?;
-        if call_result.reverted && failed_case.fail_on_revert {
+        let tx = &calls[call_index];
+        let call_result = executor.transact_raw(
+            tx.sender,
+            tx.call_details.target,
+            tx.call_details.calldata.clone(),
+            U256::ZERO,
+        )?;
+        if call_result.reverted && fail_on_revert {
             // Candidate sequence fails test.
             // We don't have to apply remaining calls to check sequence.
-            sequence_failed = true;
-            break;
+            return Ok((false, false));
         }
     }
-    // Return without checking the invariant if we already have failing sequence.
-    if sequence_failed {
-        return Ok(false);
-    };
 
-    // Check the invariant for candidate sequence.
-    // If sequence fails then we can continue with shrinking - the removed call does not affect
-    // failure.
-    //
-    // If sequence doesn't fail then we have to restore last removed call and continue with next
-    // call - removed call is a required step for reproducing the failure.
-    let mut call_result =
-        executor.call_raw(CALLER, failed_case.addr, failed_case.func.clone(), U256::ZERO)?;
-    Ok(executor.is_raw_call_success(
-        failed_case.addr,
-        Cow::Owned(call_result.state_changeset.take().unwrap()),
-        &call_result,
-        false,
-    ))
+    // Check the invariant for call sequence.
+    let (_, mut success) = call_invariant_function(&executor, test_address, calldata)?;
+    // Check after invariant result if invariant is success and `afterInvariant` function is
+    // declared.
+    if success && call_after_invariant {
+        (_, success) = call_after_invariant_function(&executor, test_address)?;
+    }
+
+    Ok((success, true))
 }

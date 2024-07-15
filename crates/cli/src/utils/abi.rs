@@ -1,6 +1,6 @@
 use alloy_chains::Chain;
 use alloy_json_abi::Function;
-use alloy_primitives::Address;
+use alloy_primitives::{hex, Address};
 use alloy_provider::{network::AnyNetwork, Provider};
 use alloy_transport::Transport;
 use eyre::{OptionExt, Result};
@@ -42,8 +42,8 @@ pub async fn parse_function_args<T: Transport + Clone, P: Provider<T, AnyNetwork
 
     let args = resolve_name_args(&args, provider).await;
 
-    if sig.starts_with("0x") {
-        return Ok((hex::decode(sig)?, None));
+    if let Ok(data) = hex::decode(sig) {
+        return Ok((data, None))
     }
 
     let func = if sig.contains('(') {

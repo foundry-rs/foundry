@@ -10,6 +10,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 forge-verify.workspace = true
 foundry-cli.workspace = true
@@ -21,20 +24,19 @@ foundry-cheatcodes.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
 
-hex.workspace = true
 serde.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
-dunce = "1"
+dunce.workspace = true
 foundry-compilers = { workspace = true, features = ["full"] }
 tracing.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-semver = "1"
-futures = "0.3"
+semver.workspace = true
+futures.workspace = true
 async-recursion = "1.0.5"
 
 itertools.workspace = true
-parking_lot = "0.12"
+parking_lot.workspace = true
 yansi.workspace = true
 revm-inspectors.workspace = true
 alloy-rpc-types.workspace = true
@@ -43,6 +45,7 @@ dialoguer = { version = "0.11", default-features = false }
 indicatif = "0.17"
 
 alloy-signer.workspace = true
+alloy-serde.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-chains.workspace = true

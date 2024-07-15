@@ -10,7 +10,14 @@ fn forge_std() {
 
 #[test]
 fn solmate() {
-    ExtTester::new("transmissions11", "solmate", "c892309933b25c03d32b1b0d674df7ae292ba925").run();
+    let mut tester =
+        ExtTester::new("transmissions11", "solmate", "c892309933b25c03d32b1b0d674df7ae292ba925");
+
+    if cfg!(feature = "isolate-by-default") {
+        tester = tester.args(["--nmc", "ReentrancyGuardTest"]);
+    }
+
+    tester.run();
 }
 
 #[test]
@@ -36,15 +43,25 @@ fn prb_proxy() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn sablier_v2() {
-    ExtTester::new("sablier-labs", "v2-core", "84758a40077bf3ccb1c8f7bb8d00278e672fbfef")
-        // Skip fork tests.
-        .args(["--nmc", "Fork"])
-        // Run tests without optimizations.
-        .env("FOUNDRY_PROFILE", "lite")
-        .install_command(&["bun", "install", "--prefer-offline"])
-        // Try npm if bun fails / is not installed.
-        .install_command(&["npm", "install", "--prefer-offline"])
-        .run();
+    let mut tester =
+        ExtTester::new("sablier-labs", "v2-core", "84758a40077bf3ccb1c8f7bb8d00278e672fbfef")
+            // Skip fork tests.
+            .args(["--nmc", "Fork"])
+            // Increase the gas limit: https://github.com/sablier-labs/v2-core/issues/956
+            .args(["--gas-limit", u64::MAX.to_string().as_str()])
+            // Run tests without optimizations.
+            .env("FOUNDRY_PROFILE", "lite")
+            .install_command(&["bun", "install", "--prefer-offline"])
+            // Try npm if bun fails / is not installed.
+            .install_command(&["npm", "install", "--prefer-offline"]);
+
+    // This test reverts due to memory limit without isolation. This revert is not reached with
+    // isolation because memory is divided between separate EVMs created by inner calls.
+    if cfg!(feature = "isolate-by-default") {
+        tester = tester.args(["--nmt", "test_RevertWhen_LoopCalculationOverflowsBlockGasLimit"]);
+    }
+
+    tester.run();
 }
 
 #[test]
@@ -56,6 +73,7 @@ fn solady() {
 #[cfg_attr(windows, ignore = "weird git fail")]
 fn geb() {
     ExtTester::new("reflexer-labs", "geb", "1a59f16a377386c49f520006ed0f7fd9d128cb09")
+        .env("FOUNDRY_LEGACY_ASSERTIONS", "true")
         .args(["--chain-id", "99", "--sender", "0x00a329c0648769A73afAc7F9381E08FB43dBEA72"])
         .run();
 }
@@ -81,7 +99,7 @@ fn lil_web3() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn snekmate() {
-    ExtTester::new("pcaversaccio", "snekmate", "1aa50098720d49e04b257a4aa5138b3d737a0667")
+    ExtTester::new("pcaversaccio", "snekmate", "316088761ca7605216b5bfbbecca8d694c61ed98")
         .install_command(&["pnpm", "install", "--prefer-offline"])
         // Try npm if pnpm fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
@@ -104,6 +122,7 @@ fn mds1_multicall() {
 fn drai() {
     ExtTester::new("mds1", "drai", "f31ce4fb15bbb06c94eefea2a3a43384c75b95cf")
         .args(["--chain-id", "99", "--sender", "0x00a329c0648769A73afAc7F9381E08FB43dBEA72"])
+        .env("FOUNDRY_LEGACY_ASSERTIONS", "true")
         .fork_block(13633752)
         .run();
 }

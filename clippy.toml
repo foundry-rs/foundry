@@ -1,4 +1,4 @@
-msrv = "1.76"
+msrv = "1.79"
 # bytes::Bytes is included by default and alloy_primitives::Bytes is a wrapper around it,
 # so it is safe to ignore it as well
 ignore-interior-mutability = ["bytes::Bytes", "alloy_primitives::Bytes"]

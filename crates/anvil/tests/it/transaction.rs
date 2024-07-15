@@ -2,14 +2,14 @@ use crate::{
     abi::{Greeter, MulticallContract, SimpleStorage},
     utils::{connect_pubsub, http_provider_with_signer},
 };
-use alloy_network::{EthereumSigner, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     state::{AccountOverride, StateOverride},
     AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockTransactions, TransactionRequest,
-    WithOtherFields,
 };
+use alloy_serde::WithOtherFields;
 use anvil::{spawn, Hardfork, NodeConfig};
 use eyre::Ok;
 use futures::{future::join_all, FutureExt, StreamExt};
@@ -25,10 +25,10 @@ async fn can_transfer_eth() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
     assert!(nonce == 0);
 
-    let balance_before = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let balance_before = provider.get_balance(to).await.unwrap();
 
     let amount = handle.genesis_balance().checked_div(U256::from(2u64)).unwrap();
 
@@ -44,11 +44,11 @@ async fn can_transfer_eth() {
     assert_eq!(tx.block_number, Some(1));
     assert_eq!(tx.transaction_index, Some(0));
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
 
     assert_eq!(nonce, 1);
 
-    let to_balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let to_balance = provider.get_balance(to).await.unwrap();
 
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 }
@@ -90,7 +90,7 @@ async fn can_order_transactions() {
     let lower_price = tx_lower.get_receipt().await.unwrap().transaction_hash;
 
     // get the block, await receipts
-    let block = provider.get_block(BlockId::latest(), false).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
 
     assert_eq!(block.transactions, BlockTransactions::Hashes(vec![higher_price, lower_price]))
 }
@@ -104,7 +104,7 @@ async fn can_respect_nonces() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
     let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
     let tx = TransactionRequest::default().to(to).value(amount).from(from).nonce(nonce + 1);
@@ -129,7 +129,7 @@ async fn can_respect_nonces() {
     // this will unblock the currently pending tx
     let higher_tx = higher_pending_tx.get_receipt().await.unwrap(); // Awaits endlessly here due to alloy/#389
 
-    let block = provider.get_block(1.into(), false).await.unwrap().unwrap();
+    let block = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
     assert_eq!(2, block.transactions.len());
     assert_eq!(
         BlockTransactions::Hashes(vec![tx.transaction_hash, higher_tx.transaction_hash]),
@@ -150,7 +150,7 @@ async fn can_replace_transaction() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
     let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
@@ -170,7 +170,7 @@ async fn can_replace_transaction() {
     // mine exactly one block
     api.mine_one().await;
 
-    let block = provider.get_block(1.into(), false).await.unwrap().unwrap();
+    let block = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
 
     assert_eq!(block.transactions.len(), 1);
     assert_eq!(BlockTransactions::Hashes(vec![higher_tx_hash]), block.transactions);
@@ -227,6 +227,28 @@ async fn can_reject_too_high_gas_limits() {
     let _ = pending.unwrap();
 }
 
+// <https://github.com/foundry-rs/foundry/issues/8094>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_mine_large_gas_limit() {
+    let (api, handle) = spawn(NodeConfig::test().disable_block_gas_limit(true)).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let gas_limit = api.gas_limit().to::<u128>();
+    let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
+
+    let tx =
+        TransactionRequest::default().to(to).value(amount).from(from).with_gas_limit(gas_limit * 3);
+
+    // send transaction with higher gas limit
+    let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+
+    let _resp = pending.get_receipt().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reject_underpriced_replacement() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -240,7 +262,7 @@ async fn can_reject_underpriced_replacement() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
     let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
@@ -264,7 +286,7 @@ async fn can_reject_underpriced_replacement() {
     let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap();
 
     // ensure that only the higher priced tx was mined
-    let block = provider.get_block(1.into(), false).await.unwrap().unwrap();
+    let block = provider.get_block(1.into(), false.into()).await.unwrap().unwrap();
     assert_eq!(1, block.transactions.len());
     assert_eq!(
         BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
@@ -277,7 +299,7 @@ async fn can_deploy_greeter_http() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
 
-    let signer: EthereumSigner = wallet.clone().into();
+    let signer: EthereumWallet = wallet.clone().into();
 
     let alloy_provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
@@ -446,7 +468,7 @@ async fn can_deploy_get_code() {
         .await
         .unwrap();
 
-    let code = provider.get_code_at(greeter_addr, BlockId::latest()).await.unwrap();
+    let code = provider.get_code_at(greeter_addr).await.unwrap();
     assert!(!code.as_ref().is_empty());
 }
 
@@ -515,7 +537,7 @@ async fn call_past_state() {
     let value = contract.getValue().call().await.unwrap();
     assert_eq!(value._0, "initial value");
 
-    let gas_price = api.gas_price().unwrap().to::<u128>();
+    let gas_price = api.gas_price();
     let set_tx = contract.setValue("hi".to_string()).gas_price(gas_price + 1);
 
     let _receipt = set_tx.send().await.unwrap().get_receipt().await.unwrap();
@@ -530,7 +552,7 @@ async fn call_past_state() {
     assert_eq!(value._0, "initial value");
 
     let hash = provider
-        .get_block(BlockId::Number(1.into()), false)
+        .get_block(BlockId::Number(1.into()), false.into())
         .await
         .unwrap()
         .unwrap()
@@ -551,7 +573,7 @@ async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
 
     // explicitly set the nonce
     let tx = TransactionRequest::default()
@@ -578,7 +600,7 @@ async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
         join_all(tasks).await.into_iter().filter(|res| res.as_ref().is_ok()).count();
     assert_eq!(successful_tx, 1);
 
-    assert_eq!(provider.get_transaction_count(from, BlockId::latest()).await.unwrap(), 1u64);
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), 1u64);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -588,7 +610,7 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
 
     let wallet = handle.dev_wallets().next().unwrap();
     let from = wallet.address();
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
 
     let mut tasks = Vec::new();
 
@@ -617,7 +639,7 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
     let successful_tx =
         join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
     assert_eq!(successful_tx, 1);
-    assert_eq!(provider.get_transaction_count(from, BlockId::latest()).await.unwrap(), 1u64);
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), 1u64);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -631,7 +653,7 @@ async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let greeter_contract =
         Greeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
 
-    let nonce = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
 
     let mut tasks = Vec::new();
 
@@ -675,7 +697,7 @@ async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     let successful_tx =
         join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
     assert_eq!(successful_tx, 1);
-    assert_eq!(provider.get_transaction_count(from, BlockId::latest()).await.unwrap(), nonce + 1);
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), nonce + 1);
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_pending_transaction() {
@@ -701,7 +723,30 @@ async fn can_get_pending_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_first_noce_is_zero() {
+async fn can_get_raw_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    // first test the pending tx, disable auto mine
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::default().from(from).value(U256::from(1488)).to(Address::random());
+    let tx = WithOtherFields::new(tx);
+    let tx = provider.send_transaction(tx).await.unwrap();
+
+    let res1 = api.raw_transaction(*tx.tx_hash()).await;
+    assert!(res1.is_ok());
+
+    api.mine_one().await;
+    let res2 = api.raw_transaction(*tx.tx_hash()).await;
+
+    assert_eq!(res1.unwrap(), res2.unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_first_nonce_is_zero() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
     api.anvil_set_auto_mine(false).await.unwrap();
@@ -709,7 +754,7 @@ async fn test_first_noce_is_zero() {
     let provider = handle.http_provider();
     let from = handle.dev_wallets().next().unwrap().address();
 
-    let nonce = provider.get_transaction_count(from, BlockId::pending()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
 
     assert_eq!(nonce, 0);
 }
@@ -736,7 +781,7 @@ async fn can_handle_different_sender_nonce_calculation() {
         let tx_from_first = WithOtherFields::new(tx_from_first);
         let _tx = provider.send_transaction(tx_from_first).await.unwrap();
         let nonce_from_first =
-            provider.get_transaction_count(from_first, BlockId::pending()).await.unwrap();
+            provider.get_transaction_count(from_first).block_id(BlockId::pending()).await.unwrap();
         assert_eq!(nonce_from_first, idx);
 
         let tx_from_second = TransactionRequest::default()
@@ -746,7 +791,7 @@ async fn can_handle_different_sender_nonce_calculation() {
         let tx_from_second = WithOtherFields::new(tx_from_second);
         let _tx = provider.send_transaction(tx_from_second).await.unwrap();
         let nonce_from_second =
-            provider.get_transaction_count(from_second, BlockId::pending()).await.unwrap();
+            provider.get_transaction_count(from_second).block_id(BlockId::pending()).await.unwrap();
         assert_eq!(nonce_from_second, idx);
     }
 }
@@ -768,12 +813,13 @@ async fn includes_pending_tx_for_transaction_count() {
             TransactionRequest::default().from(from).value(U256::from(1337)).to(Address::random());
         let tx = WithOtherFields::new(tx);
         let _tx = provider.send_transaction(tx).await.unwrap();
-        let nonce = provider.get_transaction_count(from, BlockId::pending()).await.unwrap();
+        let nonce =
+            provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
         assert_eq!(nonce, idx);
     }
 
     api.mine_one().await;
-    let nonce = provider.get_transaction_count(from, BlockId::pending()).await.unwrap();
+    let nonce = provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
     assert_eq!(nonce, tx_count);
 }
 
@@ -792,19 +838,20 @@ async fn can_get_historic_info() {
     let tx = provider.send_transaction(tx).await.unwrap();
     let _ = tx.get_receipt().await.unwrap();
 
-    let nonce_pre = provider.get_transaction_count(from, BlockId::Number(0.into())).await.unwrap();
+    let nonce_pre =
+        provider.get_transaction_count(from).block_id(BlockId::number(0)).await.unwrap();
 
-    let nonce_post = provider.get_transaction_count(from, BlockId::latest()).await.unwrap();
+    let nonce_post = provider.get_transaction_count(from).await.unwrap();
 
     assert!(nonce_pre < nonce_post);
 
-    let balance_pre = provider.get_balance(from, BlockId::Number(0.into())).await.unwrap();
+    let balance_pre = provider.get_balance(from).block_id(BlockId::number(0)).await.unwrap();
 
-    let balance_post = provider.get_balance(from, BlockId::latest()).await.unwrap();
+    let balance_post = provider.get_balance(from).await.unwrap();
 
     assert!(balance_post < balance_pre);
 
-    let to_balance = provider.get_balance(to, BlockId::latest()).await.unwrap();
+    let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_pre.saturating_add(amount), to_balance);
 }
 
@@ -832,7 +879,7 @@ async fn test_tx_receipt() {
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    // `to` field is none if it's a contract creation transaction: https://eth.wiki/json-rpc/API#eth_getTransactionReceipt
+    // `to` field is none if it's a contract creation transaction: https://ethereum.org/developers/docs/apis/json-rpc/#eth_gettransactionreceipt
     assert!(tx.to.is_none());
     assert!(tx.contract_address.is_some());
 }
@@ -962,7 +1009,7 @@ async fn test_tx_access_list() {
         .to(*simple_storage.address())
         .with_input(set_value_calldata.to_owned());
     let set_value_tx = WithOtherFields::new(set_value_tx);
-    let access_list = provider.create_access_list(&set_value_tx, BlockId::latest()).await.unwrap();
+    let access_list = provider.create_access_list(&set_value_tx).await.unwrap();
     // let set_value_tx = simple_storage.set_value("bar".to_string()).from(sender).tx;
     // let access_list = client.create_access_list(&set_value_tx, None).await.unwrap();
     assert_access_list_eq(
@@ -989,7 +1036,7 @@ async fn test_tx_access_list() {
         .to(*multicall.address())
         .with_input(call_tx_data.to_owned());
     let call_tx = WithOtherFields::new(call_tx);
-    let access_list = provider.create_access_list(&call_tx, BlockId::latest()).await.unwrap();
+    let access_list = provider.create_access_list(&call_tx).await.unwrap();
     assert_access_list_eq(
         access_list.access_list,
         AccessList::from(vec![AccessListItem { address: other_acc, storage_keys: vec![] }]),
@@ -1009,7 +1056,7 @@ async fn test_tx_access_list() {
         .to(*multicall.address())
         .with_input(subcall_tx_calldata.to_owned());
     let subcall_tx = WithOtherFields::new(subcall_tx);
-    let access_list = provider.create_access_list(&subcall_tx, BlockId::latest()).await.unwrap();
+    let access_list = provider.create_access_list(&subcall_tx).await.unwrap();
     assert_access_list_eq(
         access_list.access_list,
         // H256::from_uint(&(1u64.into())),
@@ -1074,8 +1121,7 @@ async fn test_estimate_gas() {
     let error_message = error_result.unwrap_err().to_string();
     assert!(
         error_message.contains("Insufficient funds for gas * price + value"),
-        "Error message did not match expected: {}",
-        error_message
+        "Error message did not match expected: {error_message}"
     );
 
     // Setup state override to simulate sufficient funds for the recipient.
@@ -1134,7 +1180,7 @@ async fn test_reject_eip1559_pre_london() {
     let provider = handle.http_provider();
 
     let gas_limit = api.gas_limit().to::<u128>();
-    let gas_price = api.gas_price().unwrap().to::<u128>();
+    let gas_price = api.gas_price();
 
     let unsupported_call_builder =
         Greeter::deploy_builder(provider.clone(), "Hello World!".to_string());

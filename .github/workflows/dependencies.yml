@@ -1,64 +1,61 @@
-# Automatically run `cargo update` periodically
+# Runs `cargo update` periodically.
 
 name: dependencies
 
 on:
-    schedule:
-        # Run weekly
-        - cron: "0 0 * * SUN"
-    workflow_dispatch:
-        # Needed so we can run it manually
+  schedule:
+    # Run weekly
+    - cron: "0 0 * * SUN"
+  workflow_dispatch:
+    # Needed so we can run it manually
 
 env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    BRANCH: cargo-update
-    TITLE: "chore(deps): weekly `cargo update`"
-    BODY: |
-        Automation to keep dependencies in `Cargo.lock` current.
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  BRANCH: cargo-update
+  TITLE: "chore(deps): weekly `cargo update`"
+  BODY: |
+    Automation to keep dependencies in `Cargo.lock` current.
 
-        <details><summary><strong>cargo update log</strong></summary>
-        <p>
+    <details><summary><strong>cargo update log</strong></summary>
+    <p>
 
-        ```log
-        $cargo_update_log
-        ```
+    ```log
+    $cargo_update_log
+    ```
 
-        </p>
-        </details>
+    </p>
+    </details>
 
 jobs:
-    update:
-        name: Update
-        runs-on: ubuntu-latest
-        timeout-minutes: 30
-        steps:
-            - uses: actions/checkout@v4
-            - uses: dtolnay/rust-toolchain@nightly
+  update:
+    name: Update
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
 
-            - name: cargo update
-              # Remove first line that always just says "Updating crates.io index"
-              run:
-                  cargo update --color never 2>&1 | sed '/crates.io index/d' | tee -a
-                  cargo_update.log
+      - name: cargo update
+        # Remove first line that always just says "Updating crates.io index"
+        run: cargo update --color never 2>&1 | sed '/crates.io index/d' | tee -a cargo_update.log
 
-            - name: craft commit message and PR body
-              id: msg
-              run: |
-                  export cargo_update_log="$(cat cargo_update.log)"
+      - name: craft commit message and PR body
+        id: msg
+        run: |
+          export cargo_update_log="$(cat cargo_update.log)"
 
-                  echo "commit_message<<EOF" >> $GITHUB_OUTPUT
-                  printf "$TITLE\n\n$cargo_update_log\n" >> $GITHUB_OUTPUT
-                  echo "EOF" >> $GITHUB_OUTPUT
+          echo "commit_message<<EOF" >> $GITHUB_OUTPUT
+          printf "$TITLE\n\n$cargo_update_log\n" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-                  echo "body<<EOF" >> $GITHUB_OUTPUT
-                  echo "$BODY" | envsubst >> $GITHUB_OUTPUT
-                  echo "EOF" >> $GITHUB_OUTPUT
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" | envsubst >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-            - name: Create Pull Request
-              uses: peter-evans/create-pull-request@v5
-              with:
-                  add-paths: ./Cargo.lock
-                  commit-message: ${{ steps.msg.outputs.commit_message }}
-                  title: ${{ env.TITLE }}
-                  body: ${{ steps.msg.outputs.body }}
-                  branch: ${{ env.BRANCH }}
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          add-paths: ./Cargo.lock
+          commit-message: ${{ steps.msg.outputs.commit_message }}
+          title: ${{ env.TITLE }}
+          body: ${{ steps.msg.outputs.body }}
+          branch: ${{ env.BRANCH }}

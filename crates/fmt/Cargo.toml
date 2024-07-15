@@ -9,6 +9,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-config.workspace = true
 
@@ -17,7 +20,7 @@ alloy-primitives.workspace = true
 ariadne = "0.4"
 itertools.workspace = true
 solang-parser.workspace = true
-thiserror = "1"
+thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
-#![warn(missing_docs, unreachable_pub, unused_crate_dependencies, rust_2018_idioms)]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt};
@@ -90,10 +91,10 @@ impl Cheatcodes<'static> {
                 Vm::AccountAccessKind::ENUM.clone(),
                 Vm::ForgeContext::ENUM.clone(),
             ]),
-            errors: Vm::VM_ERRORS.iter().map(|&x| x.clone()).collect(),
+            errors: Vm::VM_ERRORS.iter().copied().cloned().collect(),
             events: Cow::Borrowed(&[]),
-            // events: Vm::VM_EVENTS.iter().map(|&x| x.clone()).collect(),
-            cheatcodes: Vm::CHEATCODES.iter().map(|&x| x.clone()).collect(),
+            // events: Vm::VM_EVENTS.iter().copied().cloned().collect(),
+            cheatcodes: Vm::CHEATCODES.iter().copied().cloned().collect(),
         }
     }
 }

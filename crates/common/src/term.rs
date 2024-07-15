@@ -1,6 +1,6 @@
 //! terminal utils
 use foundry_compilers::{
-    remappings::Remapping,
+    artifacts::remappings::Remapping,
     report::{self, BasicStdoutReporter, Reporter},
 };
 use once_cell::sync::Lazy;
@@ -34,8 +34,8 @@ pub struct TermSettings {
 
 impl TermSettings {
     /// Returns a new [`TermSettings`], configured from the current environment.
-    pub fn from_env() -> TermSettings {
-        TermSettings { indicate_progress: std::io::stdout().is_terminal() }
+    pub fn from_env() -> Self {
+        Self { indicate_progress: std::io::stdout().is_terminal() }
     }
 }
 
@@ -55,7 +55,7 @@ impl Spinner {
     }
 
     pub fn with_indicator(indicator: &'static [&'static str], msg: impl Into<String>) -> Self {
-        Spinner {
+        Self {
             indicator,
             no_progress: !TERM_SETTINGS.indicate_progress,
             message: msg.into(),
@@ -125,7 +125,7 @@ impl SpinnerReporter {
             })
             .expect("failed to spawn thread");
 
-        SpinnerReporter { sender }
+        Self { sender }
     }
 
     fn send_msg(&self, msg: impl Into<String>) {
@@ -166,12 +166,10 @@ impl Reporter for SpinnerReporter {
         ));
     }
 
-    /// Invoked before a new [`Solc`] bin is installed
     fn on_solc_installation_start(&self, version: &Version) {
         self.send_msg(format!("Installing Solc version {version}"));
     }
 
-    /// Invoked before a new [`Solc`] bin was successfully installed
     fn on_solc_installation_success(&self, version: &Version) {
         self.send_msg(format!("Successfully installed Solc {version}"));
     }

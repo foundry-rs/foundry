@@ -4,6 +4,7 @@
 
 use crate::abi::abi_decode_calldata;
 use alloy_json_abi::JsonAbi;
+use eyre::Context;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -19,15 +20,15 @@ use std::{
 const SELECTOR_LOOKUP_URL: &str = "https://api.openchain.xyz/signature-database/v1/lookup";
 const SELECTOR_IMPORT_URL: &str = "https://api.openchain.xyz/signature-database/v1/import";
 
-/// The standard request timeout for API requests
+/// The standard request timeout for API requests.
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// How many request can time out before we decide this is a spurious connection
+/// How many request can time out before we decide this is a spurious connection.
 const MAX_TIMEDOUT_REQ: usize = 4usize;
 
-/// A client that can request API data from `https://api.openchain.xyz`
+/// A client that can request API data from OpenChain.
 #[derive(Clone, Debug)]
-pub struct SignEthClient {
+pub struct OpenChainClient {
     inner: reqwest::Client,
     /// Whether the connection is spurious, or API is down
     spurious_connection: Arc<AtomicBool>,
@@ -37,16 +38,17 @@ pub struct SignEthClient {
     max_timedout_requests: usize,
 }
 
-impl SignEthClient {
+impl OpenChainClient {
     /// Creates a new client with default settings
-    pub fn new() -> reqwest::Result<Self> {
+    pub fn new() -> eyre::Result<Self> {
         let inner = reqwest::Client::builder()
             .default_headers(HeaderMap::from_iter([(
                 HeaderName::from_static("user-agent"),
                 HeaderValue::from_static("forge"),
             )]))
             .timeout(REQ_TIMEOUT)
-            .build()?;
+            .build()
+            .wrap_err("failed to build OpenChain client")?;
         Ok(Self {
             inner,
             spurious_connection: Arc::new(Default::default()),
@@ -61,16 +63,10 @@ impl SignEthClient {
             .get(url)
             .send()
             .await
-            .map_err(|err| {
-                self.on_reqwest_err(&err);
-                err
-            })?
+            .inspect_err(|err| self.on_reqwest_err(err))?
             .text()
             .await
-            .map_err(|err| {
-                self.on_reqwest_err(&err);
-                err
-            })
+            .inspect_err(|err| self.on_reqwest_err(err))
     }
 
     /// Sends a new post request
@@ -85,16 +81,10 @@ impl SignEthClient {
             .json(body)
             .send()
             .await
-            .map_err(|err| {
-                self.on_reqwest_err(&err);
-                err
-            })?
+            .inspect_err(|err| self.on_reqwest_err(err))?
             .json()
             .await
-            .map_err(|err| {
-                self.on_reqwest_err(&err);
-                err
-            })
+            .inspect_err(|err| self.on_reqwest_err(err))
     }
 
     fn on_reqwest_err(&self, err: &reqwest::Error) {
@@ -113,7 +103,7 @@ impl SignEthClient {
         }
 
         if is_connectivity_err(err) {
-            warn!("spurious network detected for https://api.openchain.xyz");
+            warn!("spurious network detected for OpenChain");
             let previous = self.timedout_requests.fetch_add(1, Ordering::SeqCst);
             if previous >= self.max_timedout_requests {
                 self.set_spurious();
@@ -138,7 +128,7 @@ impl SignEthClient {
         Ok(())
     }
 
-    /// Decodes the given function or event selector using https://api.openchain.xyz
+    /// Decodes the given function or event selector using OpenChain
     pub async fn decode_selector(
         &self,
         selector: &str,
@@ -151,7 +141,7 @@ impl SignEthClient {
             .ok_or_else(|| eyre::eyre!("No signature found"))
     }
 
-    /// Decodes the given function or event selectors using https://api.openchain.xyz
+    /// Decodes the given function or event selectors using OpenChain
     pub async fn decode_selectors(
         &self,
         selector_type: SelectorType,
@@ -201,8 +191,6 @@ impl SignEthClient {
             result: ApiResult,
         }
 
-        // using openchain.xyz signature database over 4byte
-        // see https://github.com/foundry-rs/foundry/issues/1672
         let url = format!(
             "{SELECTOR_LOOKUP_URL}?{ltype}={selectors_str}",
             ltype = match selector_type {
@@ -238,7 +226,7 @@ impl SignEthClient {
             .collect())
     }
 
-    /// Fetches a function signature given the selector using https://api.openchain.xyz
+    /// Fetches a function signature given the selector using OpenChain
     pub async fn decode_function_selector(&self, selector: &str) -> eyre::Result<Vec<String>> {
         self.decode_selector(selector, SelectorType::Function).await
     }
@@ -263,7 +251,7 @@ impl SignEthClient {
             .collect::<Vec<String>>())
     }
 
-    /// Fetches an event signature given the 32 byte topic using https://api.openchain.xyz
+    /// Fetches an event signature given the 32 byte topic using OpenChain
     pub async fn decode_event_topic(&self, topic: &str) -> eyre::Result<Vec<String>> {
         self.decode_selector(topic, SelectorType::Event).await
     }
@@ -271,10 +259,10 @@ impl SignEthClient {
     /// Pretty print calldata and if available, fetch possible function signatures
     ///
     /// ```no_run
-    /// use foundry_common::selectors::SignEthClient;
+    /// use foundry_common::selectors::OpenChainClient;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let pretty_data = SignEthClient::new()?
+    /// let pretty_data = OpenChainClient::new()?
     ///     .pretty_calldata(
     ///         "0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5"
     ///             .to_string(),
@@ -320,7 +308,7 @@ impl SignEthClient {
         Ok(possible_info)
     }
 
-    /// uploads selectors to https://api.openchain.xyz using the given data
+    /// uploads selectors to OpenChain using the given data
     pub async fn import_selectors(
         &self,
         data: SelectorImportData,
@@ -369,7 +357,7 @@ pub struct PossibleSigs {
 
 impl PossibleSigs {
     fn new() -> Self {
-        PossibleSigs { method: SelectorOrSig::Selector("0x00000000".to_string()), data: vec![] }
+        Self { method: SelectorOrSig::Selector("0x00000000".to_string()), data: vec![] }
     }
 }
 
@@ -397,44 +385,47 @@ impl fmt::Display for PossibleSigs {
     }
 }
 
+/// The type of selector fetched from OpenChain.
 #[derive(Clone, Copy)]
 pub enum SelectorType {
+    /// A function selector.
     Function,
+    /// An event selector.
     Event,
 }
 
-/// Decodes the given function or event selector using https://api.openchain.xyz
+/// Decodes the given function or event selector using OpenChain.
 pub async fn decode_selector(
     selector_type: SelectorType,
     selector: &str,
 ) -> eyre::Result<Vec<String>> {
-    SignEthClient::new()?.decode_selector(selector, selector_type).await
+    OpenChainClient::new()?.decode_selector(selector, selector_type).await
 }
 
-/// Decodes the given function or event selectors using https://api.openchain.xyz
+/// Decodes the given function or event selectors using OpenChain.
 pub async fn decode_selectors(
     selector_type: SelectorType,
     selectors: impl IntoIterator<Item = impl Into<String>>,
 ) -> eyre::Result<Vec<Option<Vec<String>>>> {
-    SignEthClient::new()?.decode_selectors(selector_type, selectors).await
+    OpenChainClient::new()?.decode_selectors(selector_type, selectors).await
 }
 
-/// Fetches a function signature given the selector https://api.openchain.xyz
+/// Fetches a function signature given the selector using OpenChain.
 pub async fn decode_function_selector(selector: &str) -> eyre::Result<Vec<String>> {
-    SignEthClient::new()?.decode_function_selector(selector).await
+    OpenChainClient::new()?.decode_function_selector(selector).await
 }
 
-/// Fetches all possible signatures and attempts to abi decode the calldata
+/// Fetches all possible signatures and attempts to abi decode the calldata using OpenChain.
 pub async fn decode_calldata(calldata: &str) -> eyre::Result<Vec<String>> {
-    SignEthClient::new()?.decode_calldata(calldata).await
+    OpenChainClient::new()?.decode_calldata(calldata).await
 }
 
-/// Fetches an event signature given the 32 byte topic using https://api.openchain.xyz
+/// Fetches an event signature given the 32 byte topic using OpenChain.
 pub async fn decode_event_topic(topic: &str) -> eyre::Result<Vec<String>> {
-    SignEthClient::new()?.decode_event_topic(topic).await
+    OpenChainClient::new()?.decode_event_topic(topic).await
 }
 
-/// Pretty print calldata and if available, fetch possible function signatures
+/// Pretty print calldata and if available, fetch possible function signatures.
 ///
 /// ```no_run
 /// use foundry_common::selectors::pretty_calldata;
@@ -453,7 +444,7 @@ pub async fn pretty_calldata(
     calldata: impl AsRef<str>,
     offline: bool,
 ) -> eyre::Result<PossibleSigs> {
-    SignEthClient::new()?.pretty_calldata(calldata, offline).await
+    OpenChainClient::new()?.pretty_calldata(calldata, offline).await
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Serialize)]
@@ -519,16 +510,16 @@ impl SelectorImportResponse {
             .iter()
             .for_each(|(k, v)| println!("Duplicated: Event {k}: {v}"));
 
-        println!("Selectors successfully uploaded to https://api.openchain.xyz");
+        println!("Selectors successfully uploaded to OpenChain");
     }
 }
 
-/// uploads selectors to https://api.openchain.xyz using the given data
+/// uploads selectors to OpenChain using the given data
 pub async fn import_selectors(data: SelectorImportData) -> eyre::Result<SelectorImportResponse> {
-    SignEthClient::new()?.import_selectors(data).await
+    OpenChainClient::new()?.import_selectors(data).await
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct ParsedSignatures {
     pub signatures: RawSelectorImportData,
     pub abis: Vec<JsonAbi>,
@@ -634,7 +625,7 @@ mod tests {
 
         let abi: JsonAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function", "methodIdentifiers": {"transfer(address,uint256)(uint256)": "0xa9059cbb"}}]"#).unwrap();
         let result = import_selectors(SelectorImportData::Abi(vec![abi])).await;
-        println!("{:?}", result);
+        println!("{result:?}");
         assert_eq!(
             result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
             "0xa9059cbb"

@@ -10,13 +10,20 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "anvil"
 path = "src/anvil.rs"
 required-features = ["cli"]
 
 [build-dependencies]
-vergen = { workspace = true, default-features = false, features = ["build", "git", "gitcl"] }
+vergen = { workspace = true, default-features = false, features = [
+    "build",
+    "git",
+    "gitcl",
+] }
 
 [dependencies]
 # foundry internal
@@ -31,7 +38,12 @@ foundry-evm.workspace = true
 # evm support
 bytes = "1.4.0"
 k256.workspace = true
-revm = { workspace = true, features = ["std", "serde", "memory_limit", "c-kzg"] }
+revm = { workspace = true, features = [
+    "std",
+    "serde",
+    "memory_limit",
+    "c-kzg",
+] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-contract = { workspace = true, features = ["pubsub"] }
@@ -39,12 +51,18 @@ alloy-network.workspace = true
 alloy-eips.workspace = true
 alloy-rlp.workspace = true
 alloy-signer = { workspace = true, features = ["eip712"] }
-alloy-signer-wallet = { workspace = true, features = ["mnemonic"] }
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
-alloy-rpc-types.workspace = true
-alloy-rpc-types-trace.workspace = true
-alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
+alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }
+alloy-serde.workspace = true
+alloy-provider = { workspace = true, features = [
+    "reqwest",
+    "ws",
+    "ipc",
+    "debug-api",
+    "trace-api",
+] }
 alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
@@ -57,20 +75,20 @@ tower.workspace = true
 
 # tracing
 tracing.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 # async
 tokio = { workspace = true, features = ["time"] }
-parking_lot = "0.12"
-futures = "0.3"
-async-trait = "0.1"
+parking_lot.workspace = true
+futures.workspace = true
+async-trait.workspace = true
 
 # misc
 flate2 = "1.0"
 serde_repr = "0.1"
 serde_json.workspace = true
 serde.workspace = true
-thiserror = "1"
+thiserror.workspace = true
 yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true
@@ -78,10 +96,14 @@ rand = "0.8"
 eyre.workspace = true
 
 # cli
-clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }
+clap = { version = "4", features = [
+    "derive",
+    "env",
+    "wrap_help",
+], optional = true }
 clap_complete = { version = "4", optional = true }
 chrono.workspace = true
-auto_impl = "1"
+auto_impl.workspace = true
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
 clap_complete_fig = "4"
@@ -93,6 +115,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 alloy-json-abi.workspace = true
 alloy-rpc-client = { workspace = true, features = ["pubsub"] }
 alloy-transport-ipc = { workspace = true, features = ["mock"] }
+alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-transport-ws.workspace = true
 alloy-json-rpc.workspace = true
 alloy-pubsub.workspace = true
@@ -101,7 +124,7 @@ similar-asserts.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [features]
-default = ["cli"]
+default = ["cli", "jemalloc"]
 cmd = ["clap", "clap_complete", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd", "fdlimit"]
 asm-keccak = ["alloy-primitives/asm-keccak"]

@@ -126,6 +126,13 @@ pub enum CastSubcommand {
         hexdata: Option<String>,
     },
 
+    /// Convert hex data to a utf-8 string.
+    #[command(visible_aliases = &["--to-utf8", "tu8", "2u8"])]
+    ToUtf8 {
+        /// The hex data to convert.
+        hexdata: Option<String>,
+    },
+
     /// Convert a fixed point number into an integer.
     #[command(visible_aliases = &["--from-fix", "ff"])]
     FromFixedPoint {
@@ -323,6 +330,8 @@ pub enum CastSubcommand {
     /// Get the latest block number.
     #[command(visible_alias = "bn")]
     BlockNumber {
+        /// The hash or tag to query. If not specified, the latest number is returned.
+        block: Option<BlockId>,
         #[command(flatten)]
         rpc: RpcOpts,
     },
@@ -519,6 +528,16 @@ pub enum CastSubcommand {
         slot_number: String,
     },
 
+    /// Compute storage slots as specified by `ERC-7201: Namespaced Storage Layout`.
+    #[command(name = "index-erc7201", alias = "index-erc-7201", visible_aliases = &["index7201", "in7201"])]
+    IndexErc7201 {
+        /// The arbitrary identifier.
+        id: Option<String>,
+        /// The formula ID. Currently the only supported formula is `erc7201`.
+        #[arg(long, default_value = "erc7201")]
+        formula_id: String,
+    },
+
     /// Fetch the EIP-1967 implementation account
     #[command(visible_alias = "impl")]
     Implementation {
@@ -707,7 +726,7 @@ pub enum CastSubcommand {
     },
 
     /// Hash arbitrary data using Keccak-256.
-    #[command(visible_alias = "k")]
+    #[command(visible_aliases = &["k", "keccak256"])]
     Keccak {
         /// The data to hash.
         data: Option<String>,
@@ -789,8 +808,12 @@ pub enum CastSubcommand {
         /// The contract's address.
         address: String,
 
-        /// The output directory to expand source tree into.
-        #[arg(short, value_hint = ValueHint::DirPath)]
+        /// Whether to flatten the source code.
+        #[arg(long, short)]
+        flatten: bool,
+
+        /// The output directory/file to expand source tree into.
+        #[arg(short, value_hint = ValueHint::DirPath, alias = "path")]
         directory: Option<PathBuf>,
 
         #[command(flatten)]

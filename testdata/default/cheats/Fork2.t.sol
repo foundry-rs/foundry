@@ -228,6 +228,12 @@ contract ForkTest is DSTest {
         bytes memory result = vm.rpc("eth_getBalance", file);
         assertEq(hex"10b7c11bcb51e6", result);
     }
+
+    function testRpcWithUrl() public {
+        bytes memory result = vm.rpc("rpcAlias", "eth_blockNumber", "[]");
+        uint256 decodedResult = vm.parseUint(vm.toString(result));
+        assertGt(decodedResult, 20_000_000);
+    }
 }
 
 contract DummyContract {

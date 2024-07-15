@@ -65,19 +65,19 @@ impl NumberUnderscore {
     /// Returns true if the option is `Preserve`
     #[inline]
     pub fn is_preserve(self) -> bool {
-        matches!(self, NumberUnderscore::Preserve)
+        matches!(self, Self::Preserve)
     }
 
     /// Returns true if the option is `Remove`
     #[inline]
     pub fn is_remove(self) -> bool {
-        matches!(self, NumberUnderscore::Remove)
+        matches!(self, Self::Remove)
     }
 
     /// Returns true if the option is `Remove`
     #[inline]
     pub fn is_thousands(self) -> bool {
-        matches!(self, NumberUnderscore::Thousands)
+        matches!(self, Self::Thousands)
     }
 }
 
@@ -98,19 +98,19 @@ impl HexUnderscore {
     /// Returns true if the option is `Preserve`
     #[inline]
     pub fn is_preserve(self) -> bool {
-        matches!(self, HexUnderscore::Preserve)
+        matches!(self, Self::Preserve)
     }
 
     /// Returns true if the option is `Remove`
     #[inline]
     pub fn is_remove(self) -> bool {
-        matches!(self, HexUnderscore::Remove)
+        matches!(self, Self::Remove)
     }
 
     /// Returns true if the option is `Remove`
     #[inline]
     pub fn is_bytes(self) -> bool {
-        matches!(self, HexUnderscore::Bytes)
+        matches!(self, Self::Bytes)
     }
 }
 
@@ -130,9 +130,9 @@ impl QuoteStyle {
     /// Get associated quotation mark with option
     pub fn quote(self) -> Option<char> {
         match self {
-            QuoteStyle::Double => Some('"'),
-            QuoteStyle::Single => Some('\''),
-            QuoteStyle::Preserve => None,
+            Self::Double => Some('"'),
+            Self::Single => Some('\''),
+            Self::Preserve => None,
         }
     }
 }
@@ -164,7 +164,7 @@ pub enum MultilineFuncHeaderStyle {
 
 impl Default for FormatterConfig {
     fn default() -> Self {
-        FormatterConfig {
+        Self {
             line_length: 120,
             tab_width: 4,
             bracket_spacing: false,

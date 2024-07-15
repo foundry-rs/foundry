@@ -14,7 +14,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
 /// A regex that matches a basic snapshot entry like
@@ -89,7 +88,7 @@ impl SnapshotArgs {
 
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
-    pub(crate) fn watchexec_config(&self) -> Result<(InitConfig, RuntimeConfig)> {
+    pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         self.test.watchexec_config()
     }
 
@@ -131,7 +130,7 @@ impl FromStr for Format {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "t" | "table" => Ok(Format::Table),
+            "t" | "table" => Ok(Self::Table),
             _ => Err(format!("Unrecognized format `{s}`")),
         }
     }
@@ -211,17 +210,17 @@ impl FromStr for SnapshotEntry {
                 cap.name("file").and_then(|file| {
                     cap.name("sig").and_then(|sig| {
                         if let Some(gas) = cap.name("gas") {
-                            Some(SnapshotEntry {
+                            Some(Self {
                                 contract_name: file.as_str().to_string(),
                                 signature: sig.as_str().to_string(),
-                                gas_used: TestKindReport::Standard {
+                                gas_used: TestKindReport::Unit {
                                     gas: gas.as_str().parse().unwrap(),
                                 },
                             })
                         } else if let Some(runs) = cap.name("runs") {
                             cap.name("avg")
                                 .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
-                                .map(|(runs, avg, med)| SnapshotEntry {
+                                .map(|(runs, avg, med)| Self {
                                     contract_name: file.as_str().to_string(),
                                     signature: sig.as_str().to_string(),
                                     gas_used: TestKindReport::Fuzz {
@@ -237,7 +236,7 @@ impl FromStr for SnapshotEntry {
                                         cap.name("reverts").map(|med| (runs, avg, med))
                                     })
                                 })
-                                .map(|(runs, calls, reverts)| SnapshotEntry {
+                                .map(|(runs, calls, reverts)| Self {
                                     contract_name: file.as_str().to_string(),
                                     signature: sig.as_str().to_string(),
                                     gas_used: TestKindReport::Invariant {
@@ -455,7 +454,7 @@ mod tests {
             SnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindReport::Standard { gas: 7222 }
+                gas_used: TestKindReport::Unit { gas: 7222 }
             }
         );
     }

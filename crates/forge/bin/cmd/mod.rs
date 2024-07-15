@@ -40,6 +40,7 @@
 //! ```
 
 pub mod bind;
+pub mod bind_json;
 pub mod build;
 pub mod cache;
 pub mod clone;
@@ -48,6 +49,7 @@ pub mod coverage;
 pub mod create;
 pub mod debug;
 pub mod doc;
+pub mod eip712;
 pub mod flatten;
 pub mod fmt;
 pub mod geiger;
@@ -59,6 +61,7 @@ pub mod remappings;
 pub mod remove;
 pub mod selectors;
 pub mod snapshot;
+pub mod soldeer;
 pub mod test;
 pub mod tree;
 pub mod update;

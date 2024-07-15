@@ -1,10 +1,11 @@
 use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
-use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
-use alloy_primitives::{Address, Bytes};
+use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
+use alloy_primitives::{hex, Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::{Transport, TransportError};
 use clap::{Parser, ValueHint};
@@ -143,7 +144,7 @@ impl CreateArgs {
             let signer = self.eth.wallet.signer().await?;
             let deployer = signer.address();
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
-                .signer(EthereumSigner::new(signer))
+                .wallet(EthereumWallet::new(signer))
                 .on_provider(provider);
             self.deploy(abi, bin, params, provider, chain_id, deployer).await
         }
@@ -169,7 +170,7 @@ impl CreateArgs {
         // since we don't know the address yet.
         let mut verify = forge_verify::VerifyArgs {
             address: Default::default(),
-            contract: self.contract.clone(),
+            contract: Some(self.contract.clone()),
             compiler_version: None,
             constructor_args,
             constructor_args_path: None,
@@ -199,7 +200,9 @@ impl CreateArgs {
         verify.etherscan.key =
             config.get_etherscan_config_with_chain(Some(chain.into()))?.map(|c| c.key);
 
-        verify.verification_provider()?.preflight_check(verify).await?;
+        let context = verify.resolve_context().await?;
+
+        verify.verification_provider()?.preflight_check(verify, context).await?;
         Ok(())
     }
 
@@ -239,7 +242,7 @@ impl CreateArgs {
         deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
             Ok(nonce.to())
         } else {
-            provider.get_transaction_count(deployer_address, BlockId::latest()).await
+            provider.get_transaction_count(deployer_address).await
         }?);
 
         // set tx value if specified
@@ -250,7 +253,7 @@ impl CreateArgs {
         deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
             Ok(gas_limit.to())
         } else {
-            provider.estimate_gas(&deployer.tx, BlockId::latest()).await
+            provider.estimate_gas(&deployer.tx).await
         }?);
 
         if is_legacy {
@@ -318,7 +321,7 @@ impl CreateArgs {
             if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
         let verify = forge_verify::VerifyArgs {
             address,
-            contract: self.contract,
+            contract: Some(self.contract),
             compiler_version: None,
             constructor_args,
             constructor_args_path: None,
@@ -360,7 +363,7 @@ impl CreateArgs {
             params.push((ty, arg));
         }
         let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
-        parse_tokens(params)
+        parse_tokens(params).map_err(Into::into)
     }
 }
 
@@ -392,7 +395,7 @@ where
     B: Clone,
 {
     fn clone(&self) -> Self {
-        ContractDeploymentTx { deployer: self.deployer.clone(), _contract: self._contract }
+        Self { deployer: self.deployer.clone(), _contract: self._contract }
     }
 }
 
@@ -420,7 +423,7 @@ where
     B: Clone,
 {
     fn clone(&self) -> Self {
-        Deployer {
+        Self {
             tx: self.tx.clone(),
             abi: self.abi.clone(),
             client: self.client.clone(),
@@ -510,7 +513,7 @@ where
     B: Clone,
 {
     fn clone(&self) -> Self {
-        DeploymentTxFactory {
+        Self {
             client: self.client.clone(),
             abi: self.abi.clone(),
             bytecode: self.bytecode.clone(),

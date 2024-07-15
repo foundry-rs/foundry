@@ -1,22 +1,19 @@
-use super::receipts;
 use crate::{
-    build::LinkedBuildData, sequence::ScriptSequenceKind, verify::BroadcastedState, ScriptArgs,
-    ScriptConfig,
+    build::LinkedBuildData, progress::ScriptProgress, sequence::ScriptSequenceKind,
+    verify::BroadcastedState, ScriptArgs, ScriptConfig,
 };
 use alloy_chains::Chain;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
+use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
-use alloy_rpc_types::{BlockId, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::TransactionRequest;
+use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::ScriptWallets;
-use foundry_cli::{
-    init_progress, update_progress,
-    utils::{has_batch_support, has_different_gas_calc},
-};
+use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     provider::{get_http_provider, try_get_http_provider, RetryProvider},
     shell,
@@ -43,10 +40,7 @@ where
     tx.gas = None;
 
     tx.set_gas_limit(
-        provider
-            .estimate_gas(tx, BlockId::latest())
-            .await
-            .wrap_err("Failed to estimate gas for tx")? *
+        provider.estimate_gas(tx).await.wrap_err("Failed to estimate gas for tx")? *
             estimate_multiplier as u128 /
             100,
     );
@@ -56,7 +50,7 @@ where
 pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64> {
     let provider = try_get_http_provider(provider_url)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
-    Ok(provider.get_transaction_count(caller, BlockId::latest()).await?)
+    Ok(provider.get_transaction_count(caller).await?)
 }
 
 pub async fn send_transaction(
@@ -71,7 +65,7 @@ pub async fn send_transaction(
     let from = tx.from.expect("no sender");
 
     if sequential_broadcast {
-        let nonce = provider.get_transaction_count(from, BlockId::latest()).await?;
+        let nonce = provider.get_transaction_count(from).await?;
 
         let tx_nonce = tx.nonce.expect("no nonce");
         if nonce != tx_nonce {
@@ -109,7 +103,7 @@ pub async fn send_transaction(
 #[derive(Clone)]
 pub enum SendTransactionKind<'a> {
     Unlocked(Address),
-    Raw(&'a EthereumSigner),
+    Raw(&'a EthereumWallet),
 }
 
 /// Represents how to send _all_ transactions
@@ -117,7 +111,7 @@ pub enum SendTransactionsKind {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(HashSet<Address>),
     /// Send a signed transaction via `eth_sendRawTransaction`
-    Raw(HashMap<Address, EthereumSigner>),
+    Raw(HashMap<Address, EthereumWallet>),
 }
 
 impl SendTransactionsKind {
@@ -126,13 +120,13 @@ impl SendTransactionsKind {
     /// Returns an error if no matching signer is found or the address is not unlocked
     pub fn for_sender(&self, addr: &Address) -> Result<SendTransactionKind<'_>> {
         match self {
-            SendTransactionsKind::Unlocked(unlocked) => {
+            Self::Unlocked(unlocked) => {
                 if !unlocked.contains(addr) {
                     bail!("Sender address {:?} is not unlocked", addr)
                 }
                 Ok(SendTransactionKind::Unlocked(*addr))
             }
-            SendTransactionsKind::Raw(wallets) => {
+            Self::Raw(wallets) => {
                 if let Some(wallet) = wallets.get(addr) {
                     Ok(SendTransactionKind::Raw(wallet))
                 } else {
@@ -145,14 +139,15 @@ impl SendTransactionsKind {
     /// How many signers are set
     pub fn signers_count(&self) -> usize {
         match self {
-            SendTransactionsKind::Unlocked(addr) => addr.len(),
-            SendTransactionsKind::Raw(signers) => signers.len(),
+            Self::Unlocked(addr) => addr.len(),
+            Self::Raw(signers) => signers.len(),
         }
     }
 }
 
-/// State after we have bundled all [TransactionWithMetadata] objects into a single
-/// [ScriptSequenceKind] object containing one or more script sequences.
+/// State after we have bundled all
+/// [`TransactionWithMetadata`](crate::transaction::TransactionWithMetadata) objects into a single
+/// [`ScriptSequenceKind`] object containing one or more script sequences.
 pub struct BundledState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
@@ -163,14 +158,17 @@ pub struct BundledState {
 
 impl BundledState {
     pub async fn wait_for_pending(mut self) -> Result<Self> {
+        let progress = ScriptProgress::default();
+        let progress_ref = &progress;
         let futs = self
             .sequence
             .sequences_mut()
             .iter_mut()
-            .map(|sequence| async move {
+            .enumerate()
+            .map(|(sequence_idx, sequence)| async move {
                 let rpc_url = sequence.rpc_url();
                 let provider = Arc::new(get_http_provider(rpc_url));
-                receipts::wait_for_pending(provider, sequence).await
+                progress_ref.wait_for_pending(sequence_idx, sequence, &provider).await
             })
             .collect::<Vec<_>>();
 
@@ -226,17 +224,21 @@ impl BundledState {
 
             let signers = signers
                 .into_iter()
-                .map(|(addr, signer)| (addr, EthereumSigner::new(signer)))
+                .map(|(addr, signer)| (addr, EthereumWallet::new(signer)))
                 .collect();
 
             SendTransactionsKind::Raw(signers)
         };
+
+        let progress = ScriptProgress::default();
 
         for i in 0..self.sequence.sequences().len() {
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
             let provider = Arc::new(try_get_http_provider(sequence.rpc_url())?);
             let already_broadcasted = sequence.receipts.len();
+
+            let seq_progress = progress.get_sequence_progress(i, sequence);
 
             if already_broadcasted < sequence.transactions.len() {
                 let is_legacy = Chain::from(sequence.chain).is_legacy() || self.args.legacy;
@@ -316,8 +318,6 @@ impl BundledState {
                     send_kind.signers_count() != 1 ||
                     !has_batch_support(sequence.chain);
 
-                let pb = init_progress!(transactions, "txes");
-
                 // We send transactions and wait for receipts in batches.
                 let batch_size = if sequential_broadcast { 1 } else { self.args.batch_size };
                 let mut index = already_broadcasted;
@@ -325,11 +325,11 @@ impl BundledState {
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                     let mut pending_transactions = vec![];
 
-                    shell::println(format!(
-                        "##\nSending transactions [{} - {}].",
+                    seq_progress.inner.write().set_status(&format!(
+                        "Sending transactions [{} - {}]",
                         batch_number * batch_size,
                         batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
-                    ))?;
+                    ));
                     for (tx, kind, is_fixed_gas_limit) in batch {
                         let fut = send_transaction(
                             provider.clone(),
@@ -354,7 +354,7 @@ impl BundledState {
                             self.sequence.save(true, false)?;
                             sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                            update_progress!(pb, index - already_broadcasted);
+                            seq_progress.inner.write().tx_sent(tx_hash);
                             index += 1;
                         }
 
@@ -362,17 +362,13 @@ impl BundledState {
                         self.sequence.save(true, false)?;
                         sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                        shell::println("##\nWaiting for receipts.")?;
-                        receipts::clear_pendings(provider.clone(), sequence, None).await?;
+                        progress.wait_for_pending(i, sequence, &provider).await?
                     }
                     // Checkpoint save
                     self.sequence.save(true, false)?;
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                 }
             }
-
-            shell::println("\n\n==========================")?;
-            shell::println("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
 
             let (total_gas, total_gas_price, total_paid) =
                 sequence.receipts.iter().fold((0, 0, 0), |acc, receipt| {
@@ -384,13 +380,17 @@ impl BundledState {
             let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u128, 9)
                 .unwrap_or_else(|_| "N/A".to_string());
 
-            shell::println(format!(
-                "Total Paid: {} ETH ({} gas * avg {} gwei)",
+            seq_progress.inner.write().set_status(&format!(
+                "Total Paid: {} ETH ({} gas * avg {} gwei)\n",
                 paid.trim_end_matches('0'),
                 total_gas,
                 avg_gas_price.trim_end_matches('0').trim_end_matches('.')
-            ))?;
+            ));
+            seq_progress.inner.write().finish();
         }
+
+        shell::println("\n\n==========================")?;
+        shell::println("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
 
         Ok(BroadcastedState {
             args: self.args,

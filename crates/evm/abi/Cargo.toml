@@ -1,0 +1,29 @@
+[package]
+name = "foundry-evm-abi"
+description = "Solidity ABI-related utilities and `sol!` definitions"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+foundry-common-fmt.workspace = true
+foundry-macros.workspace = true
+
+alloy-primitives.workspace = true
+alloy-sol-types = { workspace = true, features = ["json"] }
+
+derive_more.workspace = true
+itertools.workspace = true
+once_cell.workspace = true
+rustc-hash.workspace = true
+
+[dev-dependencies]
+foundry-test-utils.workspace = true

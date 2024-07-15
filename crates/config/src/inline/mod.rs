@@ -1,13 +1,15 @@
 use crate::Config;
-pub use conf_parser::{parse_config_bool, parse_config_u32, validate_profiles, InlineConfigParser};
-pub use error::{InlineConfigError, InlineConfigParserError};
-pub use natspec::NatSpec;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
 mod conf_parser;
+pub use conf_parser::*;
+
 mod error;
+pub use error::*;
+
 mod natspec;
+pub use natspec::*;
 
 pub const INLINE_CONFIG_FUZZ_KEY: &str = "fuzz";
 pub const INLINE_CONFIG_INVARIANT_KEY: &str = "invariant";
@@ -23,9 +25,12 @@ static INLINE_CONFIG_PREFIX_SELECTED_PROFILE: Lazy<String> = Lazy::new(|| {
 /// to create configs directly bound to a solidity test.
 #[derive(Clone, Debug, Default)]
 pub struct InlineConfig<T> {
+    /// Contract-level configurations, used for functions that do not have a specific
+    /// configuration.
+    contract_level: HashMap<String, T>,
     /// Maps a (test-contract, test-function) pair
     /// to a specific configuration provided by the user.
-    configs: HashMap<(String, String), T>,
+    fn_level: HashMap<(String, String), T>,
 }
 
 impl<T> InlineConfig<T> {
@@ -33,18 +38,22 @@ impl<T> InlineConfig<T> {
     /// Configuration is identified by the pair "contract", "function".
     pub fn get(&self, contract_id: &str, fn_name: &str) -> Option<&T> {
         let key = (contract_id.to_string(), fn_name.to_string());
-        self.configs.get(&key)
+        self.fn_level.get(&key).or_else(|| self.contract_level.get(contract_id))
+    }
+
+    pub fn insert_contract(&mut self, contract_id: impl Into<String>, config: T) {
+        self.contract_level.insert(contract_id.into(), config);
     }
 
     /// Inserts an inline configuration, for a test function.
     /// Configuration is identified by the pair "contract", "function".
-    pub fn insert<C, F>(&mut self, contract_id: C, fn_name: F, config: T)
+    pub fn insert_fn<C, F>(&mut self, contract_id: C, fn_name: F, config: T)
     where
         C: Into<String>,
         F: Into<String>,
     {
         let key = (contract_id.into(), fn_name.into());
-        self.configs.insert(key, config);
+        self.fn_level.insert(key, config);
     }
 }
 

@@ -10,14 +10,18 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-evm-core.workspace = true
 
 alloy-primitives.workspace = true
-eyre = "0.6"
+eyre.workspace = true
 revm.workspace = true
-semver = "1"
-tracing = "0.1"
+semver.workspace = true
+tracing.workspace = true
 rustc-hash.workspace = true
+rayon.workspace = true

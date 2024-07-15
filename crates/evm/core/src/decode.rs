@@ -3,12 +3,13 @@
 use crate::abi::{Console, Vm};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Error, JsonAbi};
-use alloy_primitives::{Log, Selector};
+use alloy_primitives::{hex, Log, Selector};
 use alloy_sol_types::{SolCall, SolError, SolEventInterface, SolInterface, SolValue};
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
 use revm::interpreter::InstructionResult;
-use std::{collections::HashMap, sync::OnceLock};
+use rustc_hash::FxHashMap;
+use std::sync::OnceLock;
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
@@ -27,7 +28,7 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
 #[derive(Clone, Debug, Default)]
 pub struct RevertDecoder {
     /// The custom errors to use for decoding.
-    pub errors: HashMap<Selector, Vec<Error>>,
+    pub errors: FxHashMap<Selector, Vec<Error>>,
 }
 
 impl Default for &RevertDecoder {
@@ -104,7 +105,7 @@ impl RevertDecoder {
 
     /// Tries to decode an error message from the given revert bytes.
     ///
-    /// See [`decode_revert`] for more information.
+    /// See [`decode`](Self::decode) for more information.
     pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
         if err.len() < SELECTOR_LEN {
             if let Some(status) = status {

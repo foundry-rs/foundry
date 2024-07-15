@@ -55,7 +55,7 @@ pub enum GasPrice {
 }
 
 impl ProviderInfo {
-    pub async fn new(rpc: &str, mut is_legacy: bool) -> Result<ProviderInfo> {
+    pub async fn new(rpc: &str, mut is_legacy: bool) -> Result<Self> {
         let provider = Arc::new(get_http_provider(rpc));
         let chain = provider.get_chain_id().await?;
 
@@ -73,7 +73,7 @@ impl ProviderInfo {
             )
         };
 
-        Ok(ProviderInfo { provider, chain, gas_price })
+        Ok(Self { provider, chain, gas_price })
     }
 
     /// Returns the gas price to use

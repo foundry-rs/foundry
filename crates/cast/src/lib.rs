@@ -1,8 +1,12 @@
+#![doc = include_str!("../README.md")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
-use alloy_json_abi::{ContractObject, Function};
+use alloy_json_abi::Function;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{
+    hex,
     utils::{keccak256, ParseUnits, Unit},
     Address, Keccak256, TxHash, TxKind, B256, I256, U256,
 };
@@ -11,7 +15,8 @@ use alloy_provider::{
     PendingTransactionBuilder, Provider,
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest, WithOtherFields};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
@@ -21,9 +26,11 @@ use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
+    compile::etherscan_project,
     fmt::*,
-    TransactionReceiptWithRevertReason,
+    fs, get_pretty_tx_receipt_attr, TransactionReceiptWithRevertReason,
 };
+use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
@@ -91,7 +98,8 @@ where
     ///
     /// ```
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+    /// use alloy_rpc_types::{TransactionRequest};
+    /// use alloy_serde::WithOtherFields;
     /// use cast::Cast;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::str::FromStr;
@@ -133,8 +141,11 @@ where
                     if res.is_empty() {
                         // check that the recipient is a contract that can be called
                         if let Some(TxKind::Call(addr)) = req.to {
-                            if let Ok(code) =
-                                self.provider.get_code_at(addr, block.unwrap_or_default()).await
+                            if let Ok(code) = self
+                                .provider
+                                .get_code_at(addr)
+                                .block_id(block.unwrap_or_default())
+                                .await
                             {
                                 if code.is_empty() {
                                     eyre::bail!("contract {addr:?} does not have any code")
@@ -169,7 +180,8 @@ where
     /// ```
     /// use cast::{Cast};
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+    /// use alloy_rpc_types::{TransactionRequest};
+    /// use alloy_serde::WithOtherFields;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::str::FromStr;
     /// use alloy_sol_types::{sol, SolCall};
@@ -198,7 +210,7 @@ where
         to_json: bool,
     ) -> Result<String> {
         let access_list =
-            self.provider.create_access_list(req, block.unwrap_or(BlockId::latest())).await?;
+            self.provider.create_access_list(req).block_id(block.unwrap_or_default()).await?;
         let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
@@ -220,7 +232,7 @@ where
     }
 
     pub async fn balance(&self, who: Address, block: Option<BlockId>) -> Result<U256> {
-        Ok(self.provider.get_balance(who, block.unwrap_or(BlockId::latest())).await?)
+        Ok(self.provider.get_balance(who).block_id(block.unwrap_or_default()).await?)
     }
 
     /// Sends a transaction to the specified address
@@ -230,7 +242,8 @@ where
     /// ```
     /// use cast::{Cast};
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+    /// use alloy_serde::WithOtherFields;
+    /// use alloy_rpc_types::{TransactionRequest};
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
     /// use std::str::FromStr;
     /// use alloy_sol_types::{sol, SolCall};
@@ -285,7 +298,7 @@ where
     pub async fn publish(
         &self,
         mut raw_tx: String,
-    ) -> Result<PendingTransactionBuilder<T, AnyNetwork>> {
+    ) -> Result<PendingTransactionBuilder<'_, T, AnyNetwork>> {
         raw_tx = match raw_tx.strip_prefix("0x") {
             Some(s) => s.to_string(),
             None => raw_tx,
@@ -327,7 +340,7 @@ where
 
         let block = self
             .provider
-            .get_block(block, full)
+            .get_block(block, full.into())
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
@@ -345,7 +358,7 @@ where
 
     async fn block_field_as_num<B: Into<BlockId>>(&self, block: B, field: String) -> Result<U256> {
         let block = block.into();
-        let block_field = Cast::block(
+        let block_field = Self::block(
             self,
             block,
             false,
@@ -364,22 +377,22 @@ where
     }
 
     pub async fn base_fee<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
-        Cast::block_field_as_num(self, block, String::from("baseFeePerGas")).await
+        Self::block_field_as_num(self, block, String::from("baseFeePerGas")).await
     }
 
     pub async fn age<B: Into<BlockId>>(&self, block: B) -> Result<String> {
         let timestamp_str =
-            Cast::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
+            Self::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
         let datetime = DateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0).unwrap();
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
     pub async fn timestamp<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
-        Cast::block_field_as_num(self, block, "timestamp".to_string()).await
+        Self::block_field_as_num(self, block, "timestamp".to_string()).await
     }
 
     pub async fn chain(&self) -> Result<&str> {
-        let genesis_hash = Cast::block(
+        let genesis_hash = Self::block(
             self,
             0,
             false,
@@ -391,7 +404,7 @@ where
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Cast::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
+                match &(Self::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
                 {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
@@ -430,7 +443,7 @@ where
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Cast::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
+                match &(Self::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
                     "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
                         "avalanche-fuji"
                     }
@@ -472,7 +485,7 @@ where
     /// # }
     /// ```
     pub async fn nonce(&self, who: Address, block: Option<BlockId>) -> Result<u64> {
-        Ok(self.provider.get_transaction_count(who, block.unwrap_or(BlockId::latest())).await?)
+        Ok(self.provider.get_transaction_count(who).block_id(block.unwrap_or_default()).await?)
     }
 
     /// # Example
@@ -498,7 +511,8 @@ where
             B256::from_str("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc")?;
         let value = self
             .provider
-            .get_storage_at(who, slot.into(), block.unwrap_or(BlockId::latest()))
+            .get_storage_at(who, slot.into())
+            .block_id(block.unwrap_or_default())
             .await?;
         let addr = Address::from_word(value.into());
         Ok(format!("{addr:?}"))
@@ -527,7 +541,8 @@ where
             B256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
         let value = self
             .provider
-            .get_storage_at(who, slot.into(), block.unwrap_or(BlockId::latest()))
+            .get_storage_at(who, slot.into())
+            .block_id(block.unwrap_or_default())
             .await?;
         let addr = Address::from_word(value.into());
         Ok(format!("{addr:?}"))
@@ -581,10 +596,14 @@ where
         disassemble: bool,
     ) -> Result<String> {
         if disassemble {
-            let code = self.provider.get_code_at(who, block.unwrap_or_default()).await?.to_vec();
+            let code =
+                self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?.to_vec();
             Ok(format_operations(disassemble_bytes(code)?)?)
         } else {
-            Ok(format!("{}", self.provider.get_code_at(who, block.unwrap_or_default()).await?))
+            Ok(format!(
+                "{}",
+                self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?
+            ))
         }
     }
 
@@ -607,7 +626,8 @@ where
     /// # }
     /// ```
     pub async fn codesize(&self, who: Address, block: Option<BlockId>) -> Result<String> {
-        let code = self.provider.get_code_at(who, block.unwrap_or_default()).await?.to_vec();
+        let code =
+            self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?.to_vec();
         Ok(format!("{}", code.len()))
     }
 
@@ -773,7 +793,8 @@ where
             "{:?}",
             B256::from(
                 self.provider
-                    .get_storage_at(from, slot.into(), block.unwrap_or(BlockId::latest()))
+                    .get_storage_at(from, slot.into())
+                    .block_id(block.unwrap_or_default())
                     .await?
             )
         ))
@@ -841,7 +862,8 @@ where
             Some(block) => match block {
                 BlockId::Number(block_number) => Ok(Some(block_number)),
                 BlockId::Hash(hash) => {
-                    let block = self.provider.get_block_by_hash(hash.block_hash, false).await?;
+                    let block =
+                        self.provider.get_block_by_hash(hash.block_hash, false.into()).await?;
                     Ok(block.map(|block| block.header.number.unwrap()).map(BlockNumberOrTag::from))
                 }
             },
@@ -920,12 +942,12 @@ where
                         }
                         first = false;
                         let log_str = serde_json::to_string(&log).unwrap();
-                        write!(output, "{}", log_str)?;
+                        write!(output, "{log_str}")?;
                     } else {
                         let log_str = log.pretty()
                             .replacen('\n', "- ", 1)  // Remove empty first line
                             .replace('\n', "\n  ");  // Indent
-                        writeln!(output, "{}", log_str)?;
+                        writeln!(output, "{log_str}")?;
                     }
                 },
                 // Break on cancel signal, to allow for closing JSON bracket
@@ -957,19 +979,6 @@ where
             .await?
             ._0)
     }
-}
-
-pub struct InterfaceSource {
-    pub name: String,
-    pub json_abi: String,
-    pub source: String,
-}
-
-// Local is a path to the directory containing the ABI files
-// In case of etherscan, ABI is fetched from the address on the chain
-pub enum AbiPath {
-    Local { path: String, name: Option<String> },
-    Etherscan { address: Address, chain: Chain, api_key: String },
 }
 
 pub struct SimpleCast;
@@ -1051,6 +1060,24 @@ impl SimpleCast {
     /// ```
     pub fn from_utf8(s: &str) -> String {
         hex::encode_prefixed(s)
+    }
+
+    /// Converts hex input to UTF-8 text
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// assert_eq!(Cast::to_utf8("0x796f")?, "yo");
+    /// assert_eq!(Cast::to_utf8("0x48656c6c6f2c20576f726c6421")?, "Hello, World!");
+    /// assert_eq!(Cast::to_utf8("0x547572626f44617070546f6f6c73")?, "TurboDappTools");
+    /// assert_eq!(Cast::to_utf8("0xe4bda0e5a5bd")?, "你好");
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn to_utf8(s: &str) -> Result<String> {
+        let bytes = hex::decode(s)?;
+        Ok(String::from_utf8_lossy(bytes.as_ref()).to_string())
     }
 
     /// Converts hex data into text data
@@ -1451,7 +1478,7 @@ impl SimpleCast {
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
-    /// use hex;
+    /// use alloy_primitives::hex;
     ///
     ///     // Passing `input = false` will decode the data as the output type.
     ///     // The input data types and the full function sig are ignored, i.e.
@@ -1494,6 +1521,7 @@ impl SimpleCast {
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
+    /// use alloy_primitives::hex;
     ///
     /// // Passing `input = false` will decode the data as the output type.
     /// // The input data types and the full function sig are ignored, i.e.
@@ -1602,62 +1630,6 @@ impl SimpleCast {
         let func = get_func(sig.as_ref())?;
         let calldata = encode_function_args(&func, args)?;
         Ok(hex::encode_prefixed(calldata))
-    }
-
-    /// Generates an interface in solidity from either a local file ABI or a verified contract on
-    /// Etherscan. It returns a vector of [`InterfaceSource`] structs that contain the source of the
-    /// interface and their name.
-    ///
-    /// Note: This removes the constructor from the ABI before generating the interface.
-    ///
-    /// ```no_run
-    /// use cast::{AbiPath, SimpleCast as Cast};
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let path =
-    ///     AbiPath::Local { path: "utils/testdata/interfaceTestABI.json".to_owned(), name: None };
-    /// let interfaces = Cast::generate_interface(path).await?;
-    /// println!("interface {} {{\n {}\n}}", interfaces[0].name, interfaces[0].source);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn generate_interface(address_or_path: AbiPath) -> Result<Vec<InterfaceSource>> {
-        let (mut contract_abis, contract_names) = match address_or_path {
-            AbiPath::Local { path, name } => {
-                let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
-                let obj: ContractObject = serde_json::from_str(&file)?;
-                let abi =
-                    obj.abi.ok_or_else(|| eyre::eyre!("could not find ABI in file {path}"))?;
-                (vec![abi], vec![name.unwrap_or_else(|| "Interface".to_owned())])
-            }
-            AbiPath::Etherscan { address, chain, api_key } => {
-                let client = Client::new(chain, api_key)?;
-                let source = client.contract_source_code(address).await?;
-                let names = source
-                    .items
-                    .iter()
-                    .map(|item| item.contract_name.clone())
-                    .collect::<Vec<String>>();
-
-                let abis = source.abis()?;
-
-                (abis, names)
-            }
-        };
-        contract_abis
-            .iter_mut()
-            .zip(contract_names)
-            .map(|(contract_abi, name)| {
-                // need to filter out the constructor
-                contract_abi.constructor.take();
-
-                let source = foundry_cli::utils::abi_to_solidity(contract_abi, &name)?;
-                Ok(InterfaceSource {
-                    name,
-                    json_abi: serde_json::to_string_pretty(contract_abi)?,
-                    source,
-                })
-            })
-            .collect::<Result<Vec<InterfaceSource>>>()
     }
 
     /// Prints the slot number for the specified mapping type and input data.
@@ -1879,6 +1851,37 @@ impl SimpleCast {
         Ok(())
     }
 
+    /// Fetches the source code of verified contracts from etherscan, flattens it and writes it to
+    /// the given path or stdout.
+    pub async fn etherscan_source_flatten(
+        chain: Chain,
+        contract_address: String,
+        etherscan_api_key: String,
+        output_path: Option<PathBuf>,
+    ) -> Result<()> {
+        let client = Client::new(chain, etherscan_api_key)?;
+        let metadata = client.contract_source_code(contract_address.parse()?).await?;
+        let Some(metadata) = metadata.items.first() else {
+            eyre::bail!("Empty contract source code")
+        };
+
+        let tmp = tempfile::tempdir()?;
+        let project = etherscan_project(metadata, tmp.path())?;
+        let target_path = project.find_contract_path(&metadata.contract_name)?;
+
+        let flattened = Flattener::new(project, &target_path)?.flatten();
+
+        if let Some(path) = output_path {
+            fs::create_dir_all(path.parent().unwrap())?;
+            fs::write(&path, flattened)?;
+            println!("Flattened file written at {}", path.display());
+        } else {
+            println!("{flattened}");
+        }
+
+        Ok(())
+    }
+
     /// Disassembles hex encoded bytecode into individual / human readable opcodes
     ///
     /// # Example
@@ -1930,7 +1933,7 @@ impl SimpleCast {
 
                 let mut nonce = nonce_start;
                 while nonce < u32::MAX && !found.load(Ordering::Relaxed) {
-                    let input = format!("{}{}({}", name, nonce, params);
+                    let input = format!("{name}{nonce}({params}");
                     let hash = keccak256(input.as_bytes());
                     let selector = &hash[..4];
 

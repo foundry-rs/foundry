@@ -1,5 +1,6 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
 use alloy_primitives::{Address, TxHash};
+use alloy_rpc_types::Transaction as RpcTransaction;
 use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use parking_lot::RwLock;
 use std::{
@@ -37,14 +38,12 @@ pub enum TransactionOrder {
     Fees,
 }
 
-// === impl TransactionOrder ===
-
 impl TransactionOrder {
     /// Returns the priority of the transactions
     pub fn priority(&self, tx: &TypedTransaction) -> TransactionPriority {
         match self {
-            TransactionOrder::Fifo => TransactionPriority::default(),
-            TransactionOrder::Fees => TransactionPriority(tx.gas_price()),
+            Self::Fifo => TransactionPriority::default(),
+            Self::Fees => TransactionPriority(tx.gas_price()),
         }
     }
 }
@@ -55,8 +54,8 @@ impl FromStr for TransactionOrder {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.to_lowercase();
         let order = match s.as_str() {
-            "fees" => TransactionOrder::Fees,
-            "fifo" => TransactionOrder::Fifo,
+            "fees" => Self::Fees,
+            "fifo" => Self::Fifo,
             _ => return Err(format!("Unknown TransactionOrder: `{s}`")),
         };
         Ok(order)
@@ -106,6 +105,20 @@ impl fmt::Debug for PoolTransaction {
         write!(fmt, "raw tx: {:?}", &self.pending_transaction)?;
         write!(fmt, "}}")?;
         Ok(())
+    }
+}
+
+impl TryFrom<RpcTransaction> for PoolTransaction {
+    type Error = eyre::Error;
+    fn try_from(transaction: RpcTransaction) -> Result<Self, Self::Error> {
+        let typed_transaction = TypedTransaction::try_from(transaction)?;
+        let pending_transaction = PendingTransaction::new(typed_transaction)?;
+        Ok(Self {
+            pending_transaction,
+            requires: vec![],
+            provides: vec![],
+            priority: TransactionPriority(0),
+        })
     }
 }
 
@@ -411,12 +424,12 @@ impl ReadyTransactions {
         id
     }
 
-    /// Adds a new transactions to the ready queue
+    /// Adds a new transactions to the ready queue.
     ///
     /// # Panics
     ///
-    /// if the pending transaction is not ready: [PendingTransaction::is_ready()]
-    /// or the transaction is already included
+    /// If the pending transaction is not ready ([`PendingPoolTransaction::is_ready`])
+    /// or the transaction is already included.
     pub fn add_transaction(
         &mut self,
         tx: PendingPoolTransaction,
@@ -685,8 +698,6 @@ pub struct ReadyTransaction {
     /// amount of required markers that are inherently provided
     pub requires_offset: usize,
 }
-
-// === impl ReadyTransaction ==
 
 impl ReadyTransaction {
     pub fn provides(&self) -> &[TxMarker] {

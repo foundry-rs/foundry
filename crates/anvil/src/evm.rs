@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use foundry_evm::revm::{precompile::Precompile, ContextPrecompile, ContextPrecompiles};
+use foundry_evm::revm::precompile::Precompile;
 use std::{fmt::Debug, sync::Arc};
 
 /// Object-safe trait that enables injecting extra precompiles when using
@@ -13,26 +13,17 @@ pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
 ///
 /// This will add an additional handler that extends the default precompiles with the given set of
 /// precompiles.
-pub fn inject_precompiles<DB, I>(
+pub fn inject_precompiles<DB: revm::Database, I>(
     evm: &mut revm::Evm<'_, I, DB>,
     precompiles: Vec<(Address, Precompile)>,
-) where
-    DB: revm::Database,
-{
+) {
     evm.handler.append_handler_register_box(Box::new(move |handler| {
         let precompiles = precompiles.clone();
-        let loaded_precompiles = handler.pre_execution().load_precompiles();
+        let prev = handler.pre_execution.load_precompiles.clone();
         handler.pre_execution.load_precompiles = Arc::new(move || {
-            let mut loaded_precompiles = loaded_precompiles.clone();
-            loaded_precompiles.extend(
-                precompiles
-                    .clone()
-                    .into_iter()
-                    .map(|(addr, p)| (addr, ContextPrecompile::Ordinary(p))),
-            );
-            let mut default_precompiles = ContextPrecompiles::default();
-            default_precompiles.extend(loaded_precompiles);
-            default_precompiles
+            let mut cx = prev();
+            cx.extend(precompiles.iter().cloned().map(|(a, b)| (a, b.into())));
+            cx
         });
     }));
 }
@@ -42,12 +33,14 @@ mod tests {
     use crate::{evm::inject_precompiles, PrecompileFactory};
     use alloy_primitives::Address;
     use foundry_evm::revm::primitives::{address, Bytes, Precompile, PrecompileResult, SpecId};
+    use revm::primitives::PrecompileOutput;
 
     #[test]
     fn build_evm_with_extra_precompiles() {
         const PRECOMPILE_ADDR: Address = address!("0000000000000000000000000000000000000071");
+
         fn my_precompile(_bytes: &Bytes, _gas_limit: u64) -> PrecompileResult {
-            Ok((0, Bytes::new()))
+            Ok(PrecompileOutput { bytes: Bytes::new(), gas_used: 0 })
         }
 
         #[derive(Debug)]
