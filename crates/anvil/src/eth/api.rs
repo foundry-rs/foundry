@@ -43,6 +43,7 @@ use alloy_rpc_types::{
     request::TransactionRequest,
     state::StateOverride,
     trace::{
+        filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace,
     },
@@ -1555,6 +1556,8 @@ impl EthApi {
         node_info!("trace_block");
         self.backend.trace_block(block).await
     }
+
+    pub async fn trace_filter(&self, opts: TraceFilter) {}
 }
 
 // == impl EthApi anvil endpoints ==
