@@ -14,7 +14,7 @@ pub enum BackendError {
     #[error("cheatcodes are not enabled for {0}; see `vm.allowCheatcodes(address)`")]
     NoCheats(Address),
     #[error(transparent)]
-    Backend(#[from] DatabaseError),
+    Database(#[from] DatabaseError),
     #[error("failed to fetch account info for {0}")]
     MissingAccount(Address),
     #[error(

@@ -947,7 +947,6 @@ impl NodeConfig {
             timestamp: self.get_genesis_timestamp(),
             balance: self.genesis_balance,
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
-            fork_genesis_account_infos: Arc::new(Default::default()),
             genesis_init: self.genesis.clone(),
         };
 
