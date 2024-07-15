@@ -46,7 +46,10 @@ use alloy_rpc_types::{
             GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
             GethDebugTracingOptions, GethTrace, NoopFrame,
         },
-        parity::LocalizedTransactionTrace,
+        parity::{
+            Action::{Call, Create, Reward, Selfdestruct},
+            LocalizedTransactionTrace,
+        },
     },
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
@@ -2068,11 +2071,13 @@ impl Backend {
         let filtered_traces = traces
             .into_iter()
             .flatten()
-            .filter(|trace| match trace.trace.action {
-                alloy_rpc_types::trace::parity::Action::Call(_) => todo!(),
-                alloy_rpc_types::trace::parity::Action::Create(_) => todo!(),
-                alloy_rpc_types::trace::parity::Action::Selfdestruct(_) => todo!(),
-                alloy_rpc_types::trace::parity::Action::Reward(_) => todo!(),
+            .filter(|trace| match &trace.trace.action {
+                Call(call) => matcher.matches(call.from, Some(call.to)),
+                Create(create) => matcher.matches(create.from, None),
+                Selfdestruct(self_destruct) => {
+                    matcher.matches(self_destruct.address, Some(self_destruct.refund_address))
+                }
+                Reward(_) => true,
             })
             .collect();
 
