@@ -9,10 +9,10 @@ use anvil::{spawn, NodeConfig};
 use foundry_compilers::artifacts::{remappings::Remapping, BytecodeHash};
 use foundry_config::Config;
 use foundry_test_utils::{
-    forgetest, forgetest_async,
-    util::{OutputExt, TestCommand, TestProject},
+    forgetest, forgetest_async, str,
+    util::{TestCommand, TestProject},
 };
-use std::{path::PathBuf, str::FromStr};
+use std::str::FromStr;
 
 /// This will insert _dummy_ contract that uses a library
 ///
@@ -150,15 +150,22 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
         pk.as_str(),
     ]);
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_template_contract.stdout"),
-    );
+    cmd.assert().stdout_eq(str![[r#"
+...
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+Transaction hash: [..]
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_template_contract-2nd.stdout"),
-    );
+"#]]);
+
+    cmd.assert().stdout_eq(str![[r#"
+No files changed, compilation skipped
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+Transaction hash: [..]
+
+"#]]);
 });
 
 // tests that we can deploy the template contract
@@ -183,15 +190,21 @@ forgetest_async!(can_create_using_unlocked, |prj, cmd| {
         "--unlocked",
     ]);
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_using_unlocked.stdout"),
-    );
+    cmd.assert().stdout_eq(str![[r#"
+...
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+Transaction hash: [..]
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_using_unlocked-2nd.stdout"),
-    );
+"#]]);
+    cmd.assert().stdout_eq(str![[r#"
+No files changed, compilation skipped
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+Transaction hash: [..]
+
+"#]]);
 });
 
 // tests that we can deploy with constructor args
@@ -221,21 +234,26 @@ contract ConstructorContract {
     )
     .unwrap();
 
-    cmd.forge_fuse().args([
-        "create",
-        "./src/ConstructorContract.sol:ConstructorContract",
-        "--rpc-url",
-        rpc.as_str(),
-        "--private-key",
-        pk.as_str(),
-        "--constructor-args",
-        "My Constructor",
-    ]);
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "./src/ConstructorContract.sol:ConstructorContract",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--constructor-args",
+            "My Constructor",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+Transaction hash: [..]
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_with_constructor_args.stdout"),
-    );
+"#]]);
 
     prj.add_source(
         "TupleArrayConstructorContract",
@@ -252,21 +270,26 @@ contract TupleArrayConstructorContract {
     )
     .unwrap();
 
-    cmd.forge_fuse().args([
-        "create",
-        "./src/TupleArrayConstructorContract.sol:TupleArrayConstructorContract",
-        "--rpc-url",
-        rpc.as_str(),
-        "--private-key",
-        pk.as_str(),
-        "--constructor-args",
-        "[(1,2), (2,3), (3,4)]",
-    ]);
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "./src/TupleArrayConstructorContract.sol:TupleArrayConstructorContract",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--constructor-args",
+            "[(1,2), (2,3), (3,4)]",
+        ])
+        .assert()
+        .stdout_eq(str![[r#"
+...
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+Transaction hash: [..]
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_with_tuple_constructor_args.stdout"),
-    );
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6332>

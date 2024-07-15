@@ -16,6 +16,7 @@ use figment::{
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
+use filter::GlobMatcher;
 use foundry_compilers::{
     artifacts::{
         output_selection::{ContractOutputSelection, OutputSelection},
@@ -32,7 +33,7 @@ use foundry_compilers::{
         Compiler,
     },
     error::SolcError,
-    ConfigurableArtifacts, Project, ProjectPathsConfig,
+    ConfigurableArtifacts, Project, ProjectPathsConfig, VyperLanguage,
 };
 use inflector::Inflector;
 use regex::Regex;
@@ -110,6 +111,9 @@ use soldeer::SoldeerConfig;
 mod vyper;
 use vyper::VyperConfig;
 
+mod bind_json;
+use bind_json::BindJsonConfig;
+
 /// Foundry configuration
 ///
 /// # Defaults
@@ -178,8 +182,7 @@ pub struct Config {
     /// additional solc include paths for `--include-path`
     pub include_paths: Vec<PathBuf>,
     /// glob patterns to skip
-    #[serde(with = "from_vec_glob")]
-    pub skip: Vec<globset::Glob>,
+    pub skip: Vec<GlobMatcher>,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -252,6 +255,15 @@ pub struct Config {
     /// Only run tests in source files that do not match the specified glob pattern.
     #[serde(rename = "no_match_path", with = "from_opt_glob")]
     pub path_pattern_inverse: Option<globset::Glob>,
+    /// Only show coverage for files that do not match the specified regex pattern.
+    #[serde(rename = "no_match_coverage")]
+    pub coverage_pattern_inverse: Option<RegexWrapper>,
+    /// Path where last test run failures are recorded.
+    pub test_failures_file: PathBuf,
+    /// Max concurrent threads to use.
+    pub threads: Option<usize>,
+    /// Whether to show test execution progress.
+    pub show_progress: bool,
     /// Configuration for fuzz testing
     pub fuzz: FuzzConfig,
     /// Configuration for invariant testing
@@ -380,6 +392,8 @@ pub struct Config {
     pub fmt: FormatterConfig,
     /// Configuration for `forge doc`
     pub doc: DocConfig,
+    /// Configuration for `forge bind-json`
+    pub bind_json: BindJsonConfig,
     /// Configures the permissions of cheat codes that touch the file system.
     ///
     /// This includes what operations can be executed (read, write)
@@ -475,6 +489,7 @@ impl Config {
         "labels",
         "dependencies",
         "vyper",
+        "bind_json",
     ];
 
     /// File name of config toml file
@@ -833,6 +848,9 @@ impl Config {
     pub fn cleanup<C: Compiler>(&self, project: &Project<C>) -> Result<(), SolcError> {
         project.cleanup()?;
 
+        // Remove last test run failures file.
+        let _ = fs::remove_file(&self.test_failures_file);
+
         // Remove fuzz and invariant cache directories.
         let remove_test_dir = |test_dir: &Option<PathBuf>| {
             if let Some(test_dir) = test_dir {
@@ -957,6 +975,10 @@ impl Config {
 
     /// Returns configured [Vyper] compiler.
     pub fn vyper_compiler(&self) -> Result<Option<Vyper>, SolcError> {
+        // Only instantiate Vyper if there are any Vyper files in the project.
+        if self.project_paths::<VyperLanguage>().input_files_iter().next().is_none() {
+            return Ok(None)
+        }
         let vyper = if let Some(path) = &self.vyper.path {
             Some(Vyper::new(path)?)
         } else {
@@ -1313,6 +1335,7 @@ impl Config {
                 "evm.bytecode".to_string(),
                 "evm.deployedBytecode".to_string(),
             ]),
+            search_paths: None,
         })
     }
 
@@ -1934,30 +1957,6 @@ pub(crate) mod from_opt_glob {
     }
 }
 
-/// Ser/de `globset::Glob` explicitly to handle `Option<Glob>` properly
-pub(crate) mod from_vec_glob {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(value: &[globset::Glob], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let value = value.iter().map(|g| g.glob()).collect::<Vec<_>>();
-        value.serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<globset::Glob>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: Vec<String> = Vec::deserialize(deserializer)?;
-        s.into_iter()
-            .map(|s| globset::Glob::new(&s))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(serde::de::Error::custom)
-    }
-}
-
 /// A helper wrapper around the root path used during Config detection
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -2068,6 +2067,10 @@ impl Default for Config {
             contract_pattern_inverse: None,
             path_pattern: None,
             path_pattern_inverse: None,
+            coverage_pattern_inverse: None,
+            test_failures_file: "cache/test-failures".into(),
+            threads: None,
+            show_progress: false,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: InvariantConfig::new("cache/invariant".into()),
             always_use_create_2_factory: false,
@@ -2121,6 +2124,7 @@ impl Default for Config {
             build_info_path: None,
             fmt: Default::default(),
             doc: Default::default(),
+            bind_json: Default::default(),
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,

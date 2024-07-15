@@ -1,9 +1,9 @@
 //! A wrapper around `Backend` that is clone-on-write used for fuzzing.
 
+use super::BackendError;
 use crate::{
     backend::{
-        diagnostic::RevertDiagnostic, error::DatabaseError, Backend, DatabaseExt, LocalForkId,
-        RevertSnapshotAction,
+        diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId, RevertSnapshotAction,
     },
     fork::{CreateFork, ForkId},
     InspectorExt,
@@ -11,6 +11,7 @@ use crate::{
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
 use eyre::WrapErr;
+use foundry_fork_db::DatabaseError;
 use revm::{
     db::DatabaseRef,
     primitives::{
@@ -217,7 +218,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         &mut self,
         allocs: &BTreeMap<Address, GenesisAccount>,
         journaled_state: &mut JournaledState,
-    ) -> Result<(), DatabaseError> {
+    ) -> Result<(), BackendError> {
         self.backend_mut(&Env::default()).load_allocs(allocs, journaled_state)
     }
 
@@ -243,6 +244,10 @@ impl<'a> DatabaseExt for CowBackend<'a> {
 
     fn has_cheatcode_access(&self, account: &Address) -> bool {
         self.backend.has_cheatcode_access(account)
+    }
+
+    fn set_blockhash(&mut self, block_number: U256, block_hash: B256) {
+        self.backend.to_mut().set_blockhash(block_number, block_hash);
     }
 }
 

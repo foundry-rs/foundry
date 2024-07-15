@@ -162,8 +162,13 @@ impl Cheatcode for randomUint_1Call {
         ensure!(min <= max, "min must be less than or equal to max");
         // Generate random between range min..=max
         let mut rng = rand::thread_rng();
-        let range = max - min + U256::from(1);
-        let random_number = rng.gen::<U256>() % range + min;
+        let exclusive_modulo = max - min;
+        let mut random_number = rng.gen::<U256>();
+        if exclusive_modulo != U256::MAX {
+            let inclusive_modulo = exclusive_modulo + U256::from(1);
+            random_number %= inclusive_modulo;
+        }
+        random_number += min;
         Ok(random_number.abi_encode())
     }
 }

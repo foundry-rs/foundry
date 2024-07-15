@@ -232,7 +232,7 @@ impl<'a> Linker<'a> {
             let (file, name) = self.convert_artifact_id_to_lib_path(id);
 
             for (_, bytecode) in &mut needed_libraries {
-                bytecode.to_mut().link(file.to_string_lossy(), name.clone(), address);
+                bytecode.to_mut().link(&file.to_string_lossy(), &name, address);
             }
 
             libraries.libs.entry(file).or_default().insert(name, address.to_checksum(None));
@@ -253,12 +253,12 @@ impl<'a> Linker<'a> {
             for (name, address) in libs {
                 let address = Address::from_str(address).map_err(LinkerError::InvalidAddress)?;
                 if let Some(bytecode) = contract.bytecode.as_mut() {
-                    bytecode.to_mut().link(file.to_string_lossy(), name, address);
+                    bytecode.to_mut().link(&file.to_string_lossy(), name, address);
                 }
                 if let Some(deployed_bytecode) =
                     contract.deployed_bytecode.as_mut().and_then(|b| b.to_mut().bytecode.as_mut())
                 {
-                    deployed_bytecode.link(file.to_string_lossy(), name, address);
+                    deployed_bytecode.link(&file.to_string_lossy(), name, address);
                 }
             }
         }

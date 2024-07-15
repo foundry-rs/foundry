@@ -160,7 +160,7 @@ impl<'a> ContractVisitor<'a> {
                 self.visit_expression(
                     &node
                         .attribute("condition")
-                        .ok_or_else(|| eyre::eyre!("while statement had no condition"))?,
+                        .ok_or_else(|| eyre::eyre!("if statement had no condition"))?,
                 )?;
 
                 let body = node
@@ -211,32 +211,63 @@ impl<'a> ContractVisitor<'a> {
                 let branch_id = self.branch_id;
 
                 // We increase the branch ID here such that nested branches do not use the same
-                // branch ID as we do
+                // branch ID as we do.
                 self.branch_id += 1;
 
-                // The relevant source range for the branch is the `if(...)` statement itself and
-                // the true body of the if statement. The false body of the statement (if any) is
-                // processed as its own thing. If this source range is not processed like this, it
-                // is virtually impossible to correctly map instructions back to branches that
-                // include more complex logic like conditional logic.
-                self.push_branches(
-                    &foundry_compilers::artifacts::ast::LowFidelitySourceLocation {
-                        start: node.src.start,
-                        length: true_body
-                            .src
-                            .length
-                            .map(|length| true_body.src.start - node.src.start + length),
-                        index: node.src.index,
-                    },
-                    branch_id,
-                );
+                // The relevant source range for the true branch is the `if(...)` statement itself
+                // and the true body of the if statement. The false body of the
+                // statement (if any) is processed as its own thing. If this source
+                // range is not processed like this, it is virtually impossible to
+                // correctly map instructions back to branches that include more
+                // complex logic like conditional logic.
+                let true_branch_loc = &ast::LowFidelitySourceLocation {
+                    start: node.src.start,
+                    length: true_body
+                        .src
+                        .length
+                        .map(|length| true_body.src.start - node.src.start + length),
+                    index: node.src.index,
+                };
 
-                // Process the true branch
-                self.visit_block_or_statement(&true_body)?;
+                // Add the coverage item for branch 0 (true body).
+                self.push_item(CoverageItem {
+                    kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
+                    loc: self.source_location_for(true_branch_loc),
+                    hits: 0,
+                });
 
-                // Process the false branch
-                if let Some(false_body) = node.attribute("falseBody") {
-                    self.visit_block_or_statement(&false_body)?;
+                match node.attribute::<Node>("falseBody") {
+                    // Both if/else statements.
+                    Some(false_body) => {
+                        // Add the coverage item for branch 1 (false body).
+                        // The relevant source range for the false branch is the `else` statement
+                        // itself and the false body of the else statement.
+                        self.push_item(CoverageItem {
+                            kind: CoverageItemKind::Branch { branch_id, path_id: 1 },
+                            loc: self.source_location_for(&ast::LowFidelitySourceLocation {
+                                start: node.src.start,
+                                length: false_body.src.length.map(|length| {
+                                    false_body.src.start - true_body.src.start + length
+                                }),
+                                index: node.src.index,
+                            }),
+                            hits: 0,
+                        });
+                        // Process the true body.
+                        self.visit_block_or_statement(&true_body)?;
+                        // Process the false body.
+                        self.visit_block_or_statement(&false_body)?;
+                    }
+                    None => {
+                        // Add the coverage item for branch 1 (same true body).
+                        self.push_item(CoverageItem {
+                            kind: CoverageItemKind::Branch { branch_id, path_id: 1 },
+                            loc: self.source_location_for(true_branch_loc),
+                            hits: 0,
+                        });
+                        // Process the true body.
+                        self.visit_block_or_statement(&true_body)?;
+                    }
                 }
 
                 Ok(())
@@ -294,12 +325,46 @@ impl<'a> ContractVisitor<'a> {
         //  tupleexpression
         //  yulfunctioncall
         match node.node_type {
-            NodeType::Assignment | NodeType::UnaryOperation => {
+            NodeType::Assignment | NodeType::UnaryOperation | NodeType::Conditional => {
                 self.push_item(CoverageItem {
                     kind: CoverageItemKind::Statement,
                     loc: self.source_location_for(&node.src),
                     hits: 0,
                 });
+                Ok(())
+            }
+            NodeType::FunctionCall => {
+                // Do not count other kinds of calls towards coverage (like `typeConversion`
+                // and `structConstructorCall`).
+                let kind: Option<String> = node.attribute("kind");
+                if let Some("functionCall") = kind.as_deref() {
+                    self.push_item(CoverageItem {
+                        kind: CoverageItemKind::Statement,
+                        loc: self.source_location_for(&node.src),
+                        hits: 0,
+                    });
+
+                    let expr: Option<Node> = node.attribute("expression");
+                    if let Some(NodeType::Identifier) = expr.as_ref().map(|expr| &expr.node_type) {
+                        // Might be a require call, add branch coverage.
+                        let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
+                        if let Some("require") = name.as_deref() {
+                            let branch_id = self.branch_id;
+                            self.branch_id += 1;
+                            self.push_item(CoverageItem {
+                                kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
+                                loc: self.source_location_for(&node.src),
+                                hits: 0,
+                            });
+                            self.push_item(CoverageItem {
+                                kind: CoverageItemKind::Branch { branch_id, path_id: 1 },
+                                loc: self.source_location_for(&node.src),
+                                hits: 0,
+                            });
+                        }
+                    }
+                }
+
                 Ok(())
             }
             NodeType::BinaryOperation => {
@@ -320,33 +385,6 @@ impl<'a> ContractVisitor<'a> {
                     self.visit_expression(&expr)?;
                 }
 
-                Ok(())
-            }
-            NodeType::FunctionCall => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
-
-                let expr: Option<Node> = node.attribute("expression");
-                if let Some(NodeType::Identifier) = expr.as_ref().map(|expr| &expr.node_type) {
-                    // Might be a require/assert call
-                    let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
-                    if let Some("assert" | "require") = name.as_deref() {
-                        self.push_branches(&node.src, self.branch_id);
-                        self.branch_id += 1;
-                    }
-                }
-
-                Ok(())
-            }
-            NodeType::Conditional => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
                 Ok(())
             }
             // Does not count towards coverage
@@ -416,19 +454,6 @@ impl<'a> ContractVisitor<'a> {
             length: loc.length.map(|x| x as u32),
             line: self.source[..loc.start].lines().count(),
         }
-    }
-
-    fn push_branches(&mut self, loc: &ast::LowFidelitySourceLocation, branch_id: usize) {
-        self.push_item(CoverageItem {
-            kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
-            loc: self.source_location_for(loc),
-            hits: 0,
-        });
-        self.push_item(CoverageItem {
-            kind: CoverageItemKind::Branch { branch_id, path_id: 1 },
-            loc: self.source_location_for(loc),
-            hits: 0,
-        });
     }
 }
 

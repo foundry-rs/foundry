@@ -57,7 +57,33 @@ all = "warn"
 # NOTE: Debuggers may provide less useful information with this setting.
 # Uncomment this section if you're using a debugger.
 [profile.dev]
-debug = 1
+# https://davidlattimore.github.io/posts/2024/02/04/speeding-up-the-rust-edit-build-run-cycle.html
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+debug = "line-tables-only"
+strip = "symbols"
+panic = "abort"
+codegen-units = 16
+
+# Use the `--profile profiling` flag to show symbols in release mode.
+# e.g. `cargo build --profile profiling`
+[profile.profiling]
+inherits = "release"
+debug = 2
+split-debuginfo = "unpacked"
+strip = false
+
+[profile.bench]
+inherits = "profiling"
+
+[profile.maxperf]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
 
 # Speed up tests and dev build.
 [profile.dev.package]
@@ -95,26 +121,10 @@ axum.opt-level = 3
 # keystores
 scrypt.opt-level = 3
 
-[profile.release]
-opt-level = 3
-lto = "thin"
-debug = "line-tables-only"
-strip = true
-panic = "abort"
-codegen-units = 16
-
-# Use the `--profile profiling` flag to show symbols in release mode.
-# e.g. `cargo build --profile profiling`
-[profile.profiling]
-inherits = "release"
-debug = 1
-strip = false
-
 # Override packages which aren't perf-sensitive for faster compilation speed.
 [profile.release.package]
 mdbook.opt-level = 1
 protobuf.opt-level = 1
-toml_edit.opt-level = 1
 trezor-client.opt-level = 1
 
 [workspace.dependencies]
@@ -147,50 +157,51 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.4.1", default-features = false }
-foundry-compilers = { version = "0.8.0", default-features = false }
+foundry-block-explorers = { version = "0.5.0", default-features = false }
+foundry-compilers = { version = "0.9.0", default-features = false }
+foundry-fork-db = "0.1.1"
 solang-parser = "=0.3.3"
 
 ## revm
 # no default features to avoid c-kzg
 revm = { version = "11.0.0", default-features = false }
 revm-primitives = { version = "5.0.0", default-features = false }
-revm-inspectors = { version = "0.2", features = ["serde"] }
+revm-inspectors = { version = "0.3", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
 
 ## alloy
-alloy-consensus = { version = "0.1.2", default-features = false }
-alloy-contract = { version = "0.1.2", default-features = false }
-alloy-eips = { version = "0.1.2", default-features = false }
-alloy-genesis = { version = "0.1.2", default-features = false }
-alloy-json-rpc = { version = "0.1.2", default-features = false }
-alloy-network = { version = "0.1.2", default-features = false }
-alloy-node-bindings = { version = "0.1.2", default-features = false }
-alloy-provider = { version = "0.1.2", default-features = false }
-alloy-pubsub = { version = "0.1.2", default-features = false }
-alloy-rpc-client = { version = "0.1.2", default-features = false }
-alloy-rpc-types = { version = "0.1.2", default-features = false }
-alloy-serde = { version = "0.1.2", default-features = false }
-alloy-signer = { version = "0.1.2", default-features = false }
-alloy-signer-aws = { version = "0.1.2", default-features = false }
-alloy-signer-gcp = { version = "0.1.2", default-features = false }
-alloy-signer-ledger = { version = "0.1.2", default-features = false }
-alloy-signer-local = { version = "0.1.2", default-features = false }
-alloy-signer-trezor = { version = "0.1.2", default-features = false }
-alloy-transport = { version = "0.1.2", default-features = false }
-alloy-transport-http = { version = "0.1.2", default-features = false }
-alloy-transport-ipc = { version = "0.1.2", default-features = false }
-alloy-transport-ws = { version = "0.1.2", default-features = false }
+alloy-consensus = { version = "0.1.4", default-features = false }
+alloy-contract = { version = "0.1.4", default-features = false }
+alloy-eips = { version = "0.1.4", default-features = false }
+alloy-genesis = { version = "0.1.4", default-features = false }
+alloy-json-rpc = { version = "0.1.4", default-features = false }
+alloy-network = { version = "0.1.4", default-features = false }
+alloy-node-bindings = { version = "0.1.4", default-features = false }
+alloy-provider = { version = "0.1.4", default-features = false }
+alloy-pubsub = { version = "0.1.4", default-features = false }
+alloy-rpc-client = { version = "0.1.4", default-features = false }
+alloy-rpc-types = { version = "0.1.4", default-features = false }
+alloy-serde = { version = "0.1.4", default-features = false }
+alloy-signer = { version = "0.1.4", default-features = false }
+alloy-signer-aws = { version = "0.1.4", default-features = false }
+alloy-signer-gcp = { version = "0.1.4", default-features = false }
+alloy-signer-ledger = { version = "0.1.4", default-features = false }
+alloy-signer-local = { version = "0.1.4", default-features = false }
+alloy-signer-trezor = { version = "0.1.4", default-features = false }
+alloy-transport = { version = "0.1.4", default-features = false }
+alloy-transport-http = { version = "0.1.4", default-features = false }
+alloy-transport-ipc = { version = "0.1.4", default-features = false }
+alloy-transport-ws = { version = "0.1.4", default-features = false }
 
-alloy-dyn-abi = "0.7.3"
-alloy-json-abi = "0.7.3"
-alloy-primitives = { version = "0.7.3", features = ["getrandom", "rand"] }
-alloy-sol-macro-expander = "0.7.3"
-alloy-sol-macro-input = "0.7.3"
-alloy-sol-types = "0.7.3"
-syn-solidity = "0.7.3"
+alloy-dyn-abi = "0.7.7"
+alloy-json-abi = "0.7.7"
+alloy-primitives = { version = "0.7.7", features = ["getrandom", "rand"] }
+alloy-sol-macro-expander = "0.7.7"
+alloy-sol-macro-input = "0.7.7"
+alloy-sol-types = "0.7.7"
+syn-solidity = "0.7.7"
 
 alloy-chains = "0.1"
 alloy-rlp = "0.3.3"
@@ -249,7 +260,9 @@ reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
 tower-http = "0.5"
 # soldeer
-soldeer = "0.2.15"
+soldeer = "0.2.17"
+
+proptest = "1"
 
 [patch.crates-io]
-foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "d9e7306"}
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "b0f6fe6"}

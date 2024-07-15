@@ -14,6 +14,7 @@ use alloy_rpc_types::{
             FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
             GethDebugTracingOptions, GethTrace, NoopFrame,
         },
+        otterscan::{InternalOperation, OperationType},
         parity::LocalizedTransactionTrace,
     },
     BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
@@ -25,7 +26,9 @@ use anvil_core::eth::{
 use anvil_rpc::error::RpcError;
 use foundry_evm::{
     revm::primitives::Env,
-    traces::{FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig},
+    traces::{
+        CallKind, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig,
+    },
 };
 use parking_lot::RwLock;
 use std::{
@@ -164,7 +167,7 @@ impl InMemoryBlockStates {
             if let Some(state) = self.on_disk_states.get_mut(hash) {
                 if let Some(cached) = self.disk_cache.read(*hash) {
                     state.init_from_snapshot(cached);
-                    return Some(state)
+                    return Some(state);
                 }
             }
             None
@@ -426,6 +429,31 @@ impl MinedTransaction {
         })
     }
 
+    pub fn ots_internal_operations(&self) -> Vec<InternalOperation> {
+        self.info
+            .traces
+            .iter()
+            .filter_map(|node| {
+                let r#type = match node.trace.kind {
+                    _ if node.is_selfdestruct() => OperationType::OpSelfDestruct,
+                    CallKind::Call if !node.trace.value.is_zero() => OperationType::OpTransfer,
+                    CallKind::Create => OperationType::OpCreate,
+                    CallKind::Create2 => OperationType::OpCreate2,
+                    _ => return None,
+                };
+                let mut from = node.trace.caller;
+                let mut to = node.trace.address;
+                let mut value = node.trace.value;
+                if node.is_selfdestruct() {
+                    from = node.trace.address;
+                    to = node.trace.selfdestruct_refund_target.unwrap_or_default();
+                    value = node.trace.selfdestruct_transferred_value.unwrap_or_default();
+                }
+                Some(InternalOperation { r#type, from, to, value })
+            })
+            .collect()
+    }
+
     pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> Result<GethTrace, BlockchainError> {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
 
@@ -434,7 +462,7 @@ impl MinedTransaction {
                 GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
                     GethDebugBuiltInTracerType::FourByteTracer => {
                         let inspector = FourByteInspector::default();
-                        return Ok(FourByteFrame::from(inspector).into())
+                        return Ok(FourByteFrame::from(inspector).into());
                     }
                     GethDebugBuiltInTracerType::CallTracer => {
                         return match tracer_config.into_call_config() {

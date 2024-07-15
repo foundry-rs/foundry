@@ -7,8 +7,11 @@ use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
-use foundry_evm_core::constants::{
-    CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
+use foundry_evm_core::{
+    constants::{
+        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
+    },
+    precompiles::PRECOMPILES,
 };
 use foundry_evm_fuzz::{
     invariant::{
@@ -627,6 +630,8 @@ impl<'a> InvariantExecutor<'a> {
             HARDHAT_CONSOLE_ADDRESS,
             DEFAULT_CREATE2_DEPLOYER,
         ]);
+        // Extend with precompiles - https://github.com/foundry-rs/foundry/issues/4287
+        excluded_senders.extend(PRECOMPILES);
         let sender_filters = SenderFilters::new(targeted_senders, excluded_senders);
 
         let selected =

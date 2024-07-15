@@ -1,9 +1,9 @@
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
-use alloy_primitives::{hex, Address, TxKind};
+use alloy_primitives::{hex, Address, Bytes, TxKind};
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::Result;
@@ -94,6 +94,7 @@ where
 
         let chain = utils::get_chain(config.chain, &provider).await?;
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
+        let legacy = tx_opts.legacy || chain.is_legacy();
 
         if let Some(gas_limit) = tx_opts.gas_limit {
             tx.set_gas_limit(gas_limit.to());
@@ -104,14 +105,14 @@ where
         }
 
         if let Some(gas_price) = tx_opts.gas_price {
-            if tx_opts.legacy {
+            if legacy {
                 tx.set_gas_price(gas_price.to());
             } else {
                 tx.set_max_fee_per_gas(gas_price.to());
             }
         }
 
-        if !tx_opts.legacy {
+        if !legacy {
             if let Some(priority_fee) = tx_opts.priority_gas_price {
                 tx.set_max_priority_fee_per_gas(priority_fee.to());
             }
@@ -128,7 +129,7 @@ where
         Ok(Self {
             provider,
             tx,
-            legacy: tx_opts.legacy || chain.is_legacy(),
+            legacy,
             blob: tx_opts.blob,
             chain,
             etherscan_api_key,
@@ -232,7 +233,11 @@ where
         let from = from.into().resolve(&self.provider).await?;
 
         self.tx.set_kind(self.state.kind);
-        self.tx.set_input(self.state.input);
+
+        // we set both fields to the same value because some nodes only accept the legacy `data` field: <https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249>
+        let input = Bytes::from(self.state.input);
+        self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) };
+
         self.tx.set_from(from);
         self.tx.set_chain_id(self.chain.id());
 

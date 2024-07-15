@@ -5,7 +5,7 @@ use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
     state::StateOverride,
-    trace::geth::{GethDebugTracingOptions, GethDefaultTracingOptions},
+    trace::geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
     BlockId, BlockNumberOrTag as BlockNumber, Filter, Index,
 };
 use alloy_serde::WithOtherFields;
@@ -141,8 +141,13 @@ pub enum EthRequest {
     EthGetProof(Address, Vec<B256>, Option<BlockId>),
 
     /// The sign method calculates an Ethereum specific signature with:
-    #[cfg_attr(feature = "serde", serde(rename = "eth_sign", alias = "personal_sign"))]
+    #[cfg_attr(feature = "serde", serde(rename = "eth_sign"))]
     EthSign(Address, Bytes),
+
+    /// The sign method calculates an Ethereum specific signature, equivalent to eth_sign:
+    /// <https://docs.metamask.io/wallet/reference/personal_sign/>
+    #[cfg_attr(feature = "serde", serde(rename = "personal_sign"))]
+    PersonalSign(Bytes, Address),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction", with = "sequence"))]
     EthSignTransaction(Box<WithOtherFields<TransactionRequest>>),
@@ -292,7 +297,7 @@ pub enum EthRequest {
     DebugTraceCall(
         WithOtherFields<TransactionRequest>,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
-        #[cfg_attr(feature = "serde", serde(default))] GethDefaultTracingOptions,
+        #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingCallOptions,
     ),
 
     /// Trace transaction endpoint for parity's `trace_transaction`
@@ -1562,7 +1567,7 @@ true}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
         let s = r#"{"method": "personal_sign", "params":
-["0xd84de507f3fada7df80908082d3239466db55a71", "0x00"]}"#;
+["0x00", "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

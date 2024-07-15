@@ -8,19 +8,18 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{hex, LogData};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::constants::CHEATCODE_ADDRESS;
-use futures::{future::BoxFuture, FutureExt};
-use revm_inspectors::tracing::types::TraceMemberOrder;
+use revm::interpreter::OpCode;
+use revm_inspectors::tracing::OpcodeFilter;
 use serde::{Deserialize, Serialize};
-use std::fmt::Write;
-use yansi::{Color, Paint};
 
 pub use revm_inspectors::tracing::{
-    types::{CallKind, CallTrace, CallTraceNode},
+    types::{
+        CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData, DecodedCallLog,
+        DecodedCallTrace,
+    },
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
-    TracingInspector, TracingInspectorConfig,
+    TraceWriter, TracingInspector, TracingInspectorConfig,
 };
 
 /// Call trace address identifiers.
@@ -32,223 +31,29 @@ use identifier::{LocalTraceIdentifier, TraceIdentifier};
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
+pub mod debug;
+pub use debug::DebugTraceIdentifier;
+
 pub type Traces = Vec<(TraceKind, CallTraceArena)>;
 
-#[derive(Default, Debug, Eq, PartialEq)]
-pub struct DecodedCallData {
-    pub signature: String,
-    pub args: Vec<String>,
-}
-
-#[derive(Default, Debug)]
-pub struct DecodedCallTrace {
-    pub label: Option<String>,
-    pub return_data: Option<String>,
-    pub func: Option<DecodedCallData>,
-    pub contract: Option<String>,
-}
-
-#[derive(Debug)]
-pub enum DecodedCallLog<'a> {
-    /// A raw log.
-    Raw(&'a LogData),
-    /// A decoded log.
-    ///
-    /// The first member of the tuple is the event name, and the second is a vector of decoded
-    /// parameters.
-    Decoded(String, Vec<(String, String)>),
-}
-
-const PIPE: &str = "  │ ";
-const EDGE: &str = "  └─ ";
-const BRANCH: &str = "  ├─ ";
-const CALL: &str = "→ ";
-const RETURN: &str = "← ";
-
-/// Render a collection of call traces.
+/// Decode a collection of call traces.
 ///
 /// The traces will be decoded using the given decoder, if possible.
-pub async fn render_trace_arena(
-    arena: &CallTraceArena,
+pub async fn decode_trace_arena(
+    arena: &mut CallTraceArena,
     decoder: &CallTraceDecoder,
-) -> Result<String, std::fmt::Error> {
+) -> Result<(), std::fmt::Error> {
     decoder.prefetch_signatures(arena.nodes()).await;
+    decoder.populate_traces(arena.nodes_mut()).await;
 
-    fn inner<'a>(
-        arena: &'a [CallTraceNode],
-        decoder: &'a CallTraceDecoder,
-        s: &'a mut String,
-        idx: usize,
-        left: &'a str,
-        child: &'a str,
-    ) -> BoxFuture<'a, Result<(), std::fmt::Error>> {
-        async move {
-            let node = &arena[idx];
-
-            // Display trace header
-            let (trace, return_data) = render_trace(&node.trace, decoder).await?;
-            writeln!(s, "{left}{trace}")?;
-
-            // Display logs and subcalls
-            let left_prefix = format!("{child}{BRANCH}");
-            let right_prefix = format!("{child}{PIPE}");
-            for child in &node.ordering {
-                match child {
-                    TraceMemberOrder::Log(index) => {
-                        let log = render_trace_log(&node.logs[*index].raw_log, decoder).await?;
-
-                        // Prepend our tree structure symbols to each line of the displayed log
-                        log.lines().enumerate().try_for_each(|(i, line)| {
-                            writeln!(
-                                s,
-                                "{}{}",
-                                if i == 0 { &left_prefix } else { &right_prefix },
-                                line
-                            )
-                        })?;
-                    }
-                    TraceMemberOrder::Call(index) => {
-                        inner(
-                            arena,
-                            decoder,
-                            s,
-                            node.children[*index],
-                            &left_prefix,
-                            &right_prefix,
-                        )
-                        .await?;
-                    }
-                    TraceMemberOrder::Step(_) => {}
-                }
-            }
-
-            // Display trace return data
-            let color = trace_color(&node.trace);
-            write!(
-                s,
-                "{child}{EDGE}{}{}",
-                RETURN.fg(color),
-                format!("[{:?}] ", node.trace.status).fg(color)
-            )?;
-            match return_data {
-                Some(val) => write!(s, "{val}"),
-                None if node.trace.kind.is_any_create() => {
-                    write!(s, "{} bytes of code", node.trace.output.len())
-                }
-                None if node.trace.output.is_empty() => Ok(()),
-                None => write!(s, "{}", node.trace.output),
-            }?;
-            writeln!(s)?;
-
-            Ok(())
-        }
-        .boxed()
-    }
-
-    let mut s = String::new();
-    inner(arena.nodes(), decoder, &mut s, 0, "  ", "  ").await?;
-    Ok(s)
+    Ok(())
 }
 
-/// Render a call trace.
-///
-/// The trace will be decoded using the given decoder, if possible.
-pub async fn render_trace(
-    trace: &CallTrace,
-    decoder: &CallTraceDecoder,
-) -> Result<(String, Option<String>), std::fmt::Error> {
-    let mut s = String::new();
-    write!(&mut s, "[{}] ", trace.gas_used)?;
-    let address = trace.address.to_checksum(None);
-
-    let decoded = decoder.decode_function(trace).await;
-    let is_eofcreate = matches!(trace.kind, CallKind::EOFCreate);
-    if trace.kind.is_any_create() || is_eofcreate {
-        write!(
-            &mut s,
-            "{}{} {}@{}",
-            CALL.yellow(),
-            "new".yellow(),
-            decoded.label.as_deref().unwrap_or("<unknown>"),
-            address
-        )?;
-    } else {
-        let (func_name, inputs) = match &decoded.func {
-            Some(DecodedCallData { signature, args }) => {
-                let name = signature.split('(').next().unwrap();
-                (name.to_string(), args.join(", "))
-            }
-            None => {
-                debug!(target: "evm::traces", trace=?trace, "unhandled raw calldata");
-                if trace.data.len() < 4 {
-                    ("fallback".to_string(), hex::encode(&trace.data))
-                } else {
-                    let (selector, data) = trace.data.split_at(4);
-                    (hex::encode(selector), hex::encode(data))
-                }
-            }
-        };
-
-        let action = match trace.kind {
-            CallKind::Call => "",
-            CallKind::StaticCall => " [staticcall]",
-            CallKind::CallCode => " [callcode]",
-            CallKind::DelegateCall => " [delegatecall]",
-            CallKind::Create | CallKind::Create2 | CallKind::EOFCreate => unreachable!(),
-            CallKind::AuthCall => " [authcall]",
-        };
-
-        let color = trace_color(trace);
-        write!(
-            &mut s,
-            "{addr}::{func_name}{opt_value}({inputs}){action}",
-            addr = decoded.label.as_deref().unwrap_or(&address).fg(color),
-            func_name = func_name.fg(color),
-            opt_value = if trace.value.is_zero() {
-                String::new()
-            } else {
-                format!("{{value: {}}}", trace.value)
-            },
-            action = action.yellow(),
-        )?;
-    }
-
-    Ok((s, decoded.return_data))
-}
-
-/// Render a trace log.
-async fn render_trace_log(
-    log: &LogData,
-    decoder: &CallTraceDecoder,
-) -> Result<String, std::fmt::Error> {
-    let mut s = String::new();
-    let decoded = decoder.decode_event(log).await;
-
-    match decoded {
-        DecodedCallLog::Raw(log) => {
-            for (i, topic) in log.topics().iter().enumerate() {
-                writeln!(
-                    s,
-                    "{:>13}: {}",
-                    if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
-                    format!("{topic:?}").cyan()
-                )?;
-            }
-
-            write!(s, "          data: {}", hex::encode_prefixed(&log.data).cyan())?;
-        }
-        DecodedCallLog::Decoded(name, params) => {
-            let params = params
-                .iter()
-                .map(|(name, value)| format!("{name}: {value}"))
-                .collect::<Vec<String>>()
-                .join(", ");
-
-            write!(s, "emit {}({params})", name.cyan())?;
-        }
-    }
-
-    Ok(s)
+/// Render a collection of call traces to a string.
+pub fn render_trace_arena(arena: &CallTraceArena) -> String {
+    let mut w = TraceWriter::new(Vec::<u8>::new());
+    w.write_arena(arena).expect("Failed to write traces");
+    String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
 }
 
 /// Specifies the kind of trace.
@@ -285,17 +90,6 @@ impl TraceKind {
     }
 }
 
-/// Chooses the color of the trace depending on the destination address and status of the call.
-fn trace_color(trace: &CallTrace) -> Color {
-    if trace.address == CHEATCODE_ADDRESS {
-        Color::Blue
-    } else if trace.success {
-        Color::Green
-    } else {
-        Color::Red
-    }
-}
-
 /// Given a list of traces and artifacts, it returns a map connecting address to abi
 pub fn load_contracts<'a>(
     traces: impl IntoIterator<Item = &'a CallTraceArena>,
@@ -312,4 +106,112 @@ pub fn load_contracts<'a>(
         }
     }
     contracts
+}
+
+/// Different kinds of internal functions tracing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum InternalTraceMode {
+    #[default]
+    None,
+    /// Traces internal functions without decoding inputs/outputs from memory.
+    Simple,
+    /// Same as `Simple`, but also tracks memory snapshots.
+    Full,
+}
+
+impl From<InternalTraceMode> for TraceMode {
+    fn from(mode: InternalTraceMode) -> Self {
+        match mode {
+            InternalTraceMode::None => Self::None,
+            InternalTraceMode::Simple => Self::JumpSimple,
+            InternalTraceMode::Full => Self::Jump,
+        }
+    }
+}
+
+// Different kinds of traces used by different foundry components.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum TraceMode {
+    /// Disabled tracing.
+    #[default]
+    None,
+    /// Simple call trace, no steps tracing required.
+    Call,
+    /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
+    ///
+    /// Used for internal functions identification. Does not track memory snapshots.
+    JumpSimple,
+    /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
+    ///
+    /// Same as `JumpSimple`, but tracks memory snapshots as well.
+    Jump,
+    /// Call trace with complete steps tracing.
+    ///
+    /// Used by debugger.
+    Debug,
+}
+
+impl TraceMode {
+    pub const fn is_none(self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    pub const fn is_call(self) -> bool {
+        matches!(self, Self::Call)
+    }
+
+    pub const fn is_jump_simple(self) -> bool {
+        matches!(self, Self::JumpSimple)
+    }
+
+    pub const fn is_jump(self) -> bool {
+        matches!(self, Self::Jump)
+    }
+
+    pub const fn is_debug(self) -> bool {
+        matches!(self, Self::Debug)
+    }
+
+    pub fn with_debug(self, yes: bool) -> Self {
+        if yes {
+            std::cmp::max(self, Self::Debug)
+        } else {
+            self
+        }
+    }
+
+    pub fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
+        std::cmp::max(self, mode.into())
+    }
+
+    pub fn with_verbosity(self, verbosiy: u8) -> Self {
+        if verbosiy >= 3 {
+            std::cmp::max(self, Self::Call)
+        } else {
+            self
+        }
+    }
+
+    pub fn into_config(self) -> Option<TracingInspectorConfig> {
+        if self.is_none() {
+            None
+        } else {
+            TracingInspectorConfig {
+                record_steps: self >= Self::JumpSimple,
+                record_memory_snapshots: self >= Self::Jump,
+                record_stack_snapshots: if self >= Self::JumpSimple {
+                    StackSnapshotType::Full
+                } else {
+                    StackSnapshotType::None
+                },
+                record_logs: true,
+                record_state_diff: false,
+                record_returndata_snapshots: self.is_debug(),
+                record_opcodes_filter: (self.is_jump() || self.is_jump_simple())
+                    .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),
+                exclude_precompile_calls: false,
+            }
+            .into()
+        }
+    }
 }

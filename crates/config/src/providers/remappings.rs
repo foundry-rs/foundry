@@ -164,10 +164,8 @@ impl<'a> RemappingsProvider<'a> {
                 .lib_paths
                 .iter()
                 .map(|lib| self.root.join(lib))
-                .inspect(|lib| {
-                    trace!("find all remappings in lib path: {:?}", lib);
-                })
-                .flat_map(Remapping::find_many)
+                .inspect(|lib| trace!(?lib, "find all remappings"))
+                .flat_map(|lib| Remapping::find_many(&lib))
             {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {

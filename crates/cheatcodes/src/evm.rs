@@ -148,7 +148,7 @@ impl Cheatcode for dumpStateCall {
                     },
                 )
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<BTreeMap<_, _>>();
 
         write_json_file(path, &alloc)?;
         Ok(Default::default())
@@ -564,6 +564,20 @@ impl Cheatcode for stopAndReturnStateDiffCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         get_state_diff(state)
+    }
+}
+
+impl Cheatcode for setBlockhashCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { blockNumber, blockHash } = *self;
+        ensure!(
+            blockNumber <= ccx.ecx.env.block.number,
+            "block number must be less than or equal to the current block number"
+        );
+
+        ccx.ecx.db.set_blockhash(blockNumber, blockHash);
+
+        Ok(Default::default())
     }
 }
 

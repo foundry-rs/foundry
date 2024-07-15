@@ -93,6 +93,7 @@ impl ForgeTestProfile {
                 gas_report_samples: 256,
                 failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
                 failure_persist_file: Some("testfailure".to_string()),
+                show_logs: false,
             })
             .invariant(InvariantConfig {
                 runs: 256,
@@ -175,6 +176,8 @@ impl ForgeTestData {
     ///
     /// Uses [get_compiled] to lazily compile the project.
     pub fn new(profile: ForgeTestProfile) -> Self {
+        init_tracing();
+
         let mut project = profile.project();
         let output = get_compiled(&mut project);
         let test_opts = profile.test_opts(&output);
@@ -220,9 +223,6 @@ impl ForgeTestData {
             opts.isolate = true;
         }
 
-        let env = opts.local_evm_env();
-        let output = self.output.clone();
-
         let sender = config.sender;
 
         let mut builder = self.base_runner();
@@ -231,7 +231,7 @@ impl ForgeTestData {
             .enable_isolation(opts.isolate)
             .sender(sender)
             .with_test_options(self.test_opts.clone())
-            .build(root, output, env, opts)
+            .build(root, &self.output, opts.local_evm_env(), opts)
             .unwrap()
     }
 
@@ -240,7 +240,7 @@ impl ForgeTestData {
         let mut opts = self.evm_opts.clone();
         opts.verbosity = 5;
         self.base_runner()
-            .build(self.project.root(), self.output.clone(), opts.local_evm_env(), opts)
+            .build(self.project.root(), &self.output, opts.local_evm_env(), opts)
             .unwrap()
     }
 
@@ -256,7 +256,7 @@ impl ForgeTestData {
 
         self.base_runner()
             .with_fork(fork)
-            .build(self.project.root(), self.output.clone(), env, opts)
+            .build(self.project.root(), &self.output, env, opts)
             .unwrap()
     }
 }
@@ -273,12 +273,16 @@ pub fn get_vyper() -> Vyper {
         #[cfg(target_family = "unix")]
         use std::{fs::Permissions, os::unix::fs::PermissionsExt};
 
-        let url = match svm::platform() {
-            svm::Platform::MacOsAarch64 => "https://github.com/vyperlang/vyper/releases/download/v0.4.0rc6/vyper.0.4.0rc6+commit.33719560.darwin",
-            svm::Platform::LinuxAmd64 => "https://github.com/vyperlang/vyper/releases/download/v0.4.0rc6/vyper.0.4.0rc6+commit.33719560.linux",
-            svm::Platform::WindowsAmd64 => "https://github.com/vyperlang/vyper/releases/download/v0.4.0rc6/vyper.0.4.0rc6+commit.33719560.windows.exe",
-            _ => panic!("unsupported")
+        let suffix = match svm::platform() {
+            svm::Platform::MacOsAarch64 => "darwin",
+            svm::Platform::LinuxAmd64 => "linux",
+            svm::Platform::WindowsAmd64 => "windows.exe",
+            platform => panic!(
+                "unsupported platform {platform:?} for installing vyper, \
+                 install it manually and add it to $PATH"
+            ),
         };
+        let url = format!("https://github.com/vyperlang/vyper/releases/download/v0.4.0/vyper.0.4.0+commit.e9db8d9f.{suffix}");
 
         let res = reqwest::Client::builder().build().unwrap().get(url).send().await.unwrap();
 

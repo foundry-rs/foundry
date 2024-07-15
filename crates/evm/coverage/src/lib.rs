@@ -9,17 +9,16 @@
 extern crate tracing;
 
 use alloy_primitives::{Bytes, B256};
+use eyre::{Context, Result};
 use foundry_compilers::artifacts::sourcemap::SourceMap;
 use semver::Version;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     ops::{AddAssign, Deref, DerefMut},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
-
-use eyre::{Context, Result};
 
 pub mod analysis;
 pub mod anchors;
@@ -91,8 +90,7 @@ impl CoverageReport {
                 else {
                     continue;
                 };
-                let mut summary = summaries.entry(path).or_default();
-                summary += item;
+                *summaries.entry(path).or_default() += item;
             }
         }
 
@@ -149,6 +147,22 @@ impl CoverageReport {
             }
         }
         Ok(())
+    }
+
+    /// Removes all the coverage items that should be ignored by the filter.
+    ///
+    /// This function should only be called after all the sources were used, otherwise, the output
+    /// will be missing the ones that are dependent on them.
+    pub fn filter_out_ignored_sources(&mut self, filter: impl Fn(&Path) -> bool) {
+        self.items.retain(|version, items| {
+            items.retain(|item| {
+                self.source_paths
+                    .get(&(version.clone(), item.loc.source_id))
+                    .map(|path| filter(path))
+                    .unwrap_or(false)
+            });
+            !items.is_empty()
+        });
     }
 }
 
@@ -380,37 +394,6 @@ impl AddAssign<&Self> for CoverageSummary {
 }
 
 impl AddAssign<&CoverageItem> for CoverageSummary {
-    fn add_assign(&mut self, item: &CoverageItem) {
-        match item.kind {
-            CoverageItemKind::Line => {
-                self.line_count += 1;
-                if item.hits > 0 {
-                    self.line_hits += 1;
-                }
-            }
-            CoverageItemKind::Statement => {
-                self.statement_count += 1;
-                if item.hits > 0 {
-                    self.statement_hits += 1;
-                }
-            }
-            CoverageItemKind::Branch { .. } => {
-                self.branch_count += 1;
-                if item.hits > 0 {
-                    self.branch_hits += 1;
-                }
-            }
-            CoverageItemKind::Function { .. } => {
-                self.function_count += 1;
-                if item.hits > 0 {
-                    self.function_hits += 1;
-                }
-            }
-        }
-    }
-}
-
-impl AddAssign<&CoverageItem> for &mut CoverageSummary {
     fn add_assign(&mut self, item: &CoverageItem) {
         match item.kind {
             CoverageItemKind::Line => {
