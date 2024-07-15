@@ -41,6 +41,7 @@ use alloy_rpc_types::{
     serde_helpers::JsonStorageKey,
     state::StateOverride,
     trace::{
+        filter::TraceFilter,
         geth::{
             GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
             GethDebugTracingOptions, GethTrace, NoopFrame,
@@ -62,6 +63,7 @@ use anvil_core::eth::{
     utils::meets_eip155,
 };
 use anvil_rpc::error::RpcError;
+
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
     backend::{BackendError, BackendResult, DatabaseError, DatabaseResult, RevertSnapshotAction},
@@ -2044,6 +2046,15 @@ impl Backend {
         }
 
         Ok(None)
+    }
+
+    // Returnes the traces matching a given filter
+    pub async fn trace_filter(&self, filter: TraceFilter) {
+        // -> Result<Vec<LocalizedTransactionTrace>, BlockchainError>
+        let start_block = filter.from_block.unwrap_or(0);
+        let to_block =
+            if let Some(to_block) = filter.to_block { to_block } else { self.best_number() };
+            
     }
 
     /// Returns all receipts of the block

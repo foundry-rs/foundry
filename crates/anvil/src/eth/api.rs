@@ -1557,7 +1557,9 @@ impl EthApi {
         self.backend.trace_block(block).await
     }
 
-    pub async fn trace_filter(&self, opts: TraceFilter) {}
+    pub async fn trace_filter(&self, filter: TraceFilter) {
+        node_info!("trace_filter");
+    }
 }
 
 // == impl EthApi anvil endpoints ==
