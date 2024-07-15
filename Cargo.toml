@@ -153,7 +153,7 @@ solang-parser = "=0.3.3"
 
 ## revm
 # no default features to avoid c-kzg
-revm = { version = "10.0.0", default-features = false }
+revm = { version = "11.0.0", default-features = false }
 revm-primitives = { version = "5.0.0", default-features = false }
 revm-inspectors = { version = "0.2", features = ["serde"] }
 
@@ -253,6 +253,3 @@ soldeer = "0.2.15"
 
 [patch.crates-io]
 foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "d9e7306"}
-revm-primitives = { git = "https://github.com/bluealloy/revm.git", rev = "3eb1b1a" }
-revm = { git = "https://github.com/bluealloy/revm.git", rev = "3eb1b1a" }
-revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "076ba29" }

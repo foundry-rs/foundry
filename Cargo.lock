@@ -134,16 +134,19 @@ dependencies = [
 
 [[package]]
 name = "alloy-eips"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32d6d8118b83b0489cfb7e6435106948add2b35217f4a5004ef895f613f60299"
+checksum = "f76ecab54890cdea1e4808fc0891c7e6cfcf71fe1a9fe26810c7280ef768f4ed"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-serde",
+ "arbitrary",
  "c-kzg",
  "derive_more",
  "once_cell",
+ "proptest",
+ "proptest-derive",
  "serde",
  "sha2",
 ]
@@ -428,6 +431,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d94da1c0c4e27cc344b05626fe22a89dc6b8b531b9475f3b7691dbf6913e4109"
 dependencies = [
  "alloy-primitives",
+ "arbitrary",
+ "proptest",
+ "proptest-derive",
  "serde",
  "serde_json",
 ]
@@ -837,7 +843,7 @@ dependencies = [
  "k256",
  "parking_lot",
  "rand",
- "revm",
+ "revm 11.0.0",
  "serde",
  "serde_json",
  "serde_repr",
@@ -869,7 +875,7 @@ dependencies = [
  "foundry-common",
  "foundry-evm",
  "rand",
- "revm",
+ "revm 11.0.0",
  "serde",
  "serde_json",
 ]
@@ -2013,7 +2019,7 @@ dependencies = [
  "once_cell",
  "regex",
  "reqwest 0.12.5",
- "revm",
+ "revm 11.0.0",
  "rustyline",
  "semver 1.0.23",
  "serde",
@@ -3499,7 +3505,7 @@ dependencies = [
  "once_cell",
  "regex",
  "reqwest 0.12.5",
- "revm-primitives",
+ "revm-primitives 5.0.0",
  "semver 1.0.23",
  "serde",
  "serde_json",
@@ -3565,7 +3571,7 @@ dependencies = [
  "p256",
  "parking_lot",
  "rand",
- "revm",
+ "revm 11.0.0",
  "rustc-hash 2.0.0",
  "semver 1.0.23",
  "serde_json",
@@ -3809,7 +3815,7 @@ dependencies = [
  "path-slash",
  "regex",
  "reqwest 0.12.5",
- "revm-primitives",
+ "revm-primitives 5.0.0",
  "semver 1.0.23",
  "serde",
  "serde_json",
@@ -3836,7 +3842,7 @@ dependencies = [
  "foundry-evm-core",
  "foundry-evm-traces",
  "ratatui",
- "revm",
+ "revm 11.0.0",
  "revm-inspectors",
  "serde",
  "tracing",
@@ -3862,7 +3868,7 @@ dependencies = [
  "indicatif",
  "parking_lot",
  "proptest",
- "revm",
+ "revm 11.0.0",
  "revm-inspectors",
  "thiserror",
  "tracing",
@@ -3906,7 +3912,7 @@ dependencies = [
  "futures",
  "itertools 0.13.0",
  "parking_lot",
- "revm",
+ "revm 11.0.0",
  "revm-inspectors",
  "rustc-hash 2.0.0",
  "serde",
@@ -3927,7 +3933,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-evm-core",
  "rayon",
- "revm",
+ "revm 11.0.0",
  "rustc-hash 2.0.0",
  "semver 1.0.23",
  "tracing",
@@ -3953,7 +3959,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rand",
- "revm",
+ "revm 11.0.0",
  "serde",
  "thiserror",
  "tracing",
@@ -6972,13 +6978,29 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "10.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=3eb1b1a#3eb1b1a6fbf7aaad4851ec52683df7f5b0e159d2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "355bde4e21578c241f9379fbb344a73d254969b5007239115e094dda1511cd34"
 dependencies = [
  "auto_impl",
  "cfg-if",
  "dyn-clone",
- "revm-interpreter",
- "revm-precompile",
+ "revm-interpreter 6.0.0",
+ "revm-precompile 8.0.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "revm"
+version = "11.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44102920a77b38b0144f4b84dcaa31fe44746e78f53685c2ca0149af5312e048"
+dependencies = [
+ "auto_impl",
+ "cfg-if",
+ "dyn-clone",
+ "revm-interpreter 7.0.0",
+ "revm-precompile 9.0.0",
  "serde",
  "serde_json",
 ]
@@ -6986,14 +7008,15 @@ dependencies = [
 [[package]]
 name = "revm-inspectors"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/revm-inspectors.git?rev=076ba29#076ba29698b1075d445e60d82ac01b96a3e5d4a7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3e260c899e462b4e189a3bfcf5a947bc3506f8bd89183859604bca009b57530"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
  "alloy-sol-types",
  "anstyle",
  "colorchoice",
- "revm",
+ "revm 10.0.0",
  "serde",
  "serde_json",
  "thiserror",
@@ -7002,23 +7025,53 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "6.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=3eb1b1a#3eb1b1a6fbf7aaad4851ec52683df7f5b0e159d2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23dfd24faa3cbbd96e0976103d1e174d6559b8036730f70415488ee21870d578"
 dependencies = [
- "revm-primitives",
+ "revm-primitives 5.0.0",
+ "serde",
+]
+
+[[package]]
+name = "revm-interpreter"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2b319602039af3d130f792beba76592e7744bb3c4f2db5179758be33985a16b"
+dependencies = [
+ "revm-primitives 6.0.0",
  "serde",
 ]
 
 [[package]]
 name = "revm-precompile"
 version = "8.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=3eb1b1a#3eb1b1a6fbf7aaad4851ec52683df7f5b0e159d2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c669c9b105dbb41133c17bf7f34d29368e358a7fee8fcc289e90dbfb024dfc4"
 dependencies = [
  "aurora-engine-modexp",
  "c-kzg",
  "k256",
  "once_cell",
+ "revm-primitives 5.0.0",
+ "ripemd",
+ "secp256k1",
+ "sha2",
+ "substrate-bn",
+]
+
+[[package]]
+name = "revm-precompile"
+version = "9.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86b441000a0d30e06269f822f42a13fa6bec922e951a84b643818651472c4fe6"
+dependencies = [
+ "aurora-engine-modexp",
+ "c-kzg",
+ "cfg-if",
+ "k256",
+ "once_cell",
  "p256",
- "revm-primitives",
+ "revm-primitives 6.0.0",
  "ripemd",
  "secp256k1",
  "sha2",
@@ -7028,8 +7081,29 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "5.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=3eb1b1a#3eb1b1a6fbf7aaad4851ec52683df7f5b0e159d2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "902184a7a781550858d4b96707098da357429f1e4545806fd5b589f455555cf2"
 dependencies = [
+ "alloy-primitives",
+ "auto_impl",
+ "bitflags 2.5.0",
+ "bitvec",
+ "c-kzg",
+ "cfg-if",
+ "dyn-clone",
+ "enumn",
+ "hashbrown 0.14.5",
+ "hex",
+ "serde",
+]
+
+[[package]]
+name = "revm-primitives"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b518f536bacee396eb28a43f0984b25b2cd80f052ba4f2e794d554d711c13f33"
+dependencies = [
+ "alloy-eips",
  "alloy-primitives",
  "auto_impl",
  "bitflags 2.5.0",
