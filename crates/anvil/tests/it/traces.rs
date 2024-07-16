@@ -721,6 +721,7 @@ async fn test_trace_address_fork2() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_filter() {
     let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
@@ -741,7 +742,6 @@ async fn test_trace_filter() {
     };
 
     for i in 0..=5 {
-        // specify the `from` field so that the client knows which account to use
         let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
         let tx = WithOtherFields::new(tx);
         api.send_transaction(tx).await.unwrap();
@@ -750,14 +750,13 @@ async fn test_trace_filter() {
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 5);
 
-    api.anvil_set_block(U256::from(0)).unwrap();
-
+    let latest = provider.get_block_number().await.unwrap();
     // Test filtering by address
     let tracer = TraceFilter {
-        from_block: Some(0),
-        to_block: Some(5),
-        from_address: vec![from],
-        to_address: vec![to],
+        from_block: Some(latest),
+        to_block: None,
+        from_address: vec![from_two],
+        to_address: vec![to_two],
         mode: TraceFilterMode::Intersection,
         after: None,
         count: None,

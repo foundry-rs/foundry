@@ -2067,10 +2067,7 @@ impl Backend {
             trace_tasks.push(self.trace_block(num.into()));
         }
 
-        println!("Task len: {:#?}", trace_tasks.len());
-
         let traces = futures::future::try_join_all(trace_tasks).await?;
-        println!("Traces {:#?}", traces);
         let filtered_traces = traces
             .into_iter()
             .flatten()
