@@ -5,7 +5,10 @@ use alloy_rpc_types::{
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
     state::StateOverride,
-    trace::geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
+    trace::{
+        filter::TraceFilter,
+        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
+    },
     BlockId, BlockNumberOrTag as BlockNumber, Filter, Index,
 };
 use alloy_serde::WithOtherFields;
@@ -313,6 +316,10 @@ pub enum EthRequest {
         )
     )]
     TraceBlock(BlockNumber),
+
+    // Trace filter: TODO
+    #[cfg_attr(feature = "serde", serde(rename = "trace_filter",))]
+    TraceFilter(TraceFilter),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.

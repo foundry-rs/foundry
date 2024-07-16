@@ -292,6 +292,7 @@ impl EthApi {
             }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
+            EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
             }
