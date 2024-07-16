@@ -4,7 +4,7 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{hex, Address, Bytes, U256};
+use alloy_primitives::{b256, hex, Address, Bytes, U256};
 use alloy_provider::{
     ext::{DebugApi, TraceApi},
     Provider,
@@ -726,23 +726,27 @@ async fn test_trace_filter() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
+    // Test default block ranges.
+    // From will be earliest, to will be best/latest
     let tracer = TraceFilter {
-        from_block: Some(0),
-        to_block: Some(1),
-        from_address: vec![from],
-        to_address: vec![to],
+        from_block: None,
+        to_block: None,
+        from_address: vec![],
+        to_address: vec![],
         mode: TraceFilterMode::Intersection,
         after: None,
         count: None,
     };
 
-    // specify the `from` field so that the client knows which account to use
-    let tx = TransactionRequest::default().to(to).value(U256::from(1)).from(from);
-    let tx = WithOtherFields::new(tx);
-
-    api.send_transaction(tx).await.unwrap();
-    api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
+    for i in 0..=5 {
+        // specify the `from` field so that the client knows which account to use
+        let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
 
     let traces = api.trace_filter(tracer).await.unwrap();
-    assert_eq!(traces.len(), 1);
+    assert_eq!(traces.len(), 5);
+
+    
 }
