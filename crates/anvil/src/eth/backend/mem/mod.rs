@@ -2077,7 +2077,7 @@ impl Backend {
                 Selfdestruct(self_destruct) => {
                     matcher.matches(self_destruct.address, Some(self_destruct.refund_address))
                 }
-                Reward(_) => filter.to_address.is_empty() && filter.from_address.is_empty(),
+                Reward(reward) => matcher.matches(reward.author, None),
             })
             .collect();
 

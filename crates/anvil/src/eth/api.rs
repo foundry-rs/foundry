@@ -1557,9 +1557,12 @@ impl EthApi {
         self.backend.trace_block(block).await
     }
 
-    pub async fn trace_filter(&self, filter: TraceFilter) -> Result<Vec<LocalizedTransactionTrace>> {
+    pub async fn trace_filter(
+        &self,
+        filter: TraceFilter,
+    ) -> Result<Vec<LocalizedTransactionTrace>> {
         node_info!("trace_filter");
-        self.backend.trace_filter(filter)
+        self.backend.trace_filter(filter).await
     }
 }
 
