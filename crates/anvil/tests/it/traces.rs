@@ -725,6 +725,8 @@ async fn test_trace_filter() {
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
+    let from_two = accounts[2].address();
+    let to_two = accounts[3].address();
 
     // Test default block ranges.
     // From will be earliest, to will be best/latest
@@ -748,5 +750,31 @@ async fn test_trace_filter() {
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 5);
 
-    
+    api.anvil_set_block(U256::from(0)).unwrap();
+
+    // Test filtering by address
+    let tracer = TraceFilter {
+        from_block: Some(0),
+        to_block: Some(5),
+        from_address: vec![from],
+        to_address: vec![to],
+        mode: TraceFilterMode::Intersection,
+        after: None,
+        count: None,
+    };
+
+    for i in 0..=5 {
+        let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+
+        let tx = TransactionRequest::default().to(to_two).value(U256::from(i)).from(from_two);
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    let traces = api.trace_filter(tracer).await.unwrap();
+    assert_eq!(traces.len(), 5);
+
+    api.anvil_set_block(U256::from(0)).unwrap();
 }
