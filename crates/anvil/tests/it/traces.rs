@@ -716,3 +716,11 @@ async fn test_trace_address_fork2() {
         }
     })
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+}
