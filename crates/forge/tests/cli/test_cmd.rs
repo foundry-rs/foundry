@@ -184,8 +184,6 @@ Ran 1 test for src/ATest.t.sol:ATest
 Ran 1 test suite in [..] 1 tests passed, 0 failed, 0 skipped (1 total tests)
 ...
 "#]]);
-
-    // assert!(cmd.stdout_lossy().contains("[PASS]") && !cmd.stdout_lossy().contains("[FAIL]"));
 });
 
 // tests that using the --match-path option works with absolute paths
