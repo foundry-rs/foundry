@@ -4,7 +4,7 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{b256, hex, Address, Bytes, U256};
+use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::{
     ext::{DebugApi, TraceApi},
     Provider,
@@ -22,8 +22,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use anvil::{eth::error::BlockchainError, spawn, Hardfork, NodeConfig};
-use anvil_rpc::error::RpcError;
+use anvil::{spawn, Hardfork, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {

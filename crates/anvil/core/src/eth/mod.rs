@@ -317,7 +317,7 @@ pub enum EthRequest {
     )]
     TraceBlock(BlockNumber),
 
-    // Trace filter: TODO
+    // Trace filter endpoint for parity's `trace_filter`
     #[cfg_attr(feature = "serde", serde(rename = "trace_filter",))]
     TraceFilter(TraceFilter),
 
