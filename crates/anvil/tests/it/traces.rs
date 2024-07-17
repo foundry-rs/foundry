@@ -750,10 +750,9 @@ async fn test_trace_filter() {
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 5);
 
-    let latest = provider.get_block_number().await.unwrap();
     // Test filtering by address
     let tracer = TraceFilter {
-        from_block: Some(latest),
+        from_block: Some(provider.get_block_number().await.unwrap()),
         to_block: None,
         from_address: vec![from_two],
         to_address: vec![to_two],
@@ -775,5 +774,33 @@ async fn test_trace_filter() {
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 5);
 
-    api.anvil_set_block(U256::from(0)).unwrap();
+    // Test for the following actions:
+    // Create (deploy the contract)
+    // Call (goodbye function)
+    // SelfDestruct (side-effect of goodbye)
+    let contract_addr =
+        SuicideContract::deploy_builder(provider.clone()).from(from).deploy().await.unwrap();
+    let contract = SuicideContract::new(contract_addr, provider.clone());
+    let _ = contract.goodbye().from(from).send().await.unwrap();
+
+    // Test TraceActions
+    let tracer = TraceFilter {
+        from_block: Some(provider.get_block_number().await.unwrap()),
+        to_block: None,
+        from_address: vec![from, contract_addr],
+        to_address: vec![], // Leave as 0 address
+        mode: TraceFilterMode::Union,
+        after: None,
+        count: None,
+    };
+
+    // Mine transactions to filter against
+    for i in 0..=5 {
+        let tx = TransactionRequest::default().to(to_two).value(U256::from(i)).from(from_two);
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    let traces = api.trace_filter(tracer).await.unwrap();
+    assert_eq!(traces.len(), 3);
 }
