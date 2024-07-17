@@ -560,7 +560,7 @@ impl<'a> InspectorStackRefMut<'a> {
             // Should we match, encode and propagate error as a revert reason?
             let result =
                 InterpreterResult { result: InstructionResult::Revert, output: Bytes::new(), gas };
-            return (result, None)
+            return (result, None);
         };
 
         // Commit changes after transaction
@@ -573,7 +573,7 @@ impl<'a> InspectorStackRefMut<'a> {
                 output: Bytes::from(e.to_string()),
                 gas,
             };
-            return (res, None)
+            return (res, None);
         }
         if let Err(e) = update_state(&mut res.state, &mut ecx.db, None) {
             let res = InterpreterResult {
@@ -581,7 +581,7 @@ impl<'a> InspectorStackRefMut<'a> {
                 output: Bytes::from(e.to_string()),
                 gas,
             };
-            return (res, None)
+            return (res, None);
         }
 
         // Merge transaction journal into the active journal.
@@ -653,10 +653,10 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         );
     }
 
-    fn log(&mut self, ecx: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>, log: &Log) {
         call_inspectors_adjust_depth!(
             [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
-            |inspector| inspector.log(ecx, log),
+            |inspector| inspector.log(interpreter, ecx, log),
             self,
             ecx
         );
@@ -689,7 +689,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
             if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner) {
                 if output.result.result != InstructionResult::Continue {
                     ecx.journaled_state.depth -= self.in_inner_context as usize;
-                    return Some(output)
+                    return Some(output);
                 }
             }
         }
@@ -708,7 +708,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
                 call.gas_limit,
                 call.value.get(),
             );
-            return Some(CallOutcome { result, memory_offset: call.return_memory_offset.clone() })
+            return Some(CallOutcome { result, memory_offset: call.return_memory_offset.clone() });
         }
 
         None
@@ -723,7 +723,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
         // Avoid processing twice.
         if self.in_inner_context && ecx.journaled_state.depth == 0 {
-            return outcome
+            return outcome;
         }
 
         let outcome = self.do_call_end(ecx, inputs, outcome);
@@ -770,7 +770,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
                 create.gas_limit,
                 create.value,
             );
-            return Some(CreateOutcome { result, address })
+            return Some(CreateOutcome { result, address });
         }
 
         None
@@ -785,7 +785,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
         // Avoid processing twice.
         if self.in_inner_context && ecx.journaled_state.depth == 0 {
-            return outcome
+            return outcome;
         }
 
         let result = outcome.result.result;
@@ -828,10 +828,14 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
             ecx
         );
 
-        if self.enable_isolation && !self.in_inner_context && ecx.journaled_state.depth == 1 {
-            let init_code = match &create.kind {
+        if matches!(create.kind, EOFCreateKind::Tx { .. }) &&
+            self.enable_isolation &&
+            !self.in_inner_context &&
+            ecx.journaled_state.depth == 1
+        {
+            let init_code = match &mut create.kind {
                 EOFCreateKind::Tx { initdata } => initdata.clone(),
-                EOFCreateKind::Opcode { initcode, .. } => initcode.raw.clone(),
+                EOFCreateKind::Opcode { .. } => unreachable!(),
             };
 
             let (result, address) = self.transact_inner(
@@ -842,7 +846,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
                 create.gas_limit,
                 create.value,
             );
-            return Some(CreateOutcome { result, address })
+            return Some(CreateOutcome { result, address });
         }
 
         None
@@ -857,7 +861,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
         // Avoid processing twice.
         if self.in_inner_context && ecx.journaled_state.depth == 0 {
-            return outcome
+            return outcome;
         }
 
         let result = outcome.result.result;
@@ -904,6 +908,12 @@ impl<'a, DB: DatabaseExt> InspectorExt<DB> for InspectorStackRefMut<'a> {
         );
 
         false
+    }
+
+    fn console_log(&mut self, input: String) {
+        call_inspectors!([&mut self.log_collector], |inspector| InspectorExt::<DB>::console_log(
+            inspector, input
+        ));
     }
 }
 
@@ -952,12 +962,29 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         self.as_mut().create_end(context, call, outcome)
     }
 
+    fn eofcreate(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        create: &mut EOFCreateInputs,
+    ) -> Option<CreateOutcome> {
+        self.as_mut().eofcreate(context, create)
+    }
+
+    fn eofcreate_end(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        call: &EOFCreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        self.as_mut().eofcreate_end(context, call, outcome)
+    }
+
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         self.as_mut().initialize_interp(interpreter, ecx)
     }
 
-    fn log(&mut self, ecx: &mut EvmContext<DB>, log: &Log) {
-        self.as_mut().log(ecx, log)
+    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>, log: &Log) {
+        self.as_mut().log(interpreter, ecx, log)
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {

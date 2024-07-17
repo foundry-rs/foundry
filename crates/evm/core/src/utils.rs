@@ -77,22 +77,7 @@ pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
     env.tx.gas_price = U256::from(tx.gas_price.unwrap_or_default());
     env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(U256::from);
     env.tx.nonce = Some(tx.nonce);
-    env.tx.access_list = tx
-        .access_list
-        .clone()
-        .unwrap_or_default()
-        .0
-        .into_iter()
-        .map(|item| {
-            (
-                item.address,
-                item.storage_keys
-                    .into_iter()
-                    .map(|key| alloy_primitives::U256::from_be_bytes(key.0))
-                    .collect(),
-            )
-        })
-        .collect();
+    env.tx.access_list = tx.access_list.clone().unwrap_or_default().0.into_iter().collect();
     env.tx.value = tx.value.to();
     env.tx.data = alloy_primitives::Bytes(tx.input.0.clone());
     env.tx.transact_to = tx.to.map(TxKind::Call).unwrap_or(TxKind::Create)

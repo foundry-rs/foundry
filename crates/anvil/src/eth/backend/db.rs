@@ -291,7 +291,7 @@ impl DatabaseRef for StateDb {
         self.0.storage_ref(address, index)
     }
 
-    fn block_hash_ref(&self, number: U256) -> DatabaseResult<B256> {
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
         self.0.block_hash_ref(number)
     }
 }
