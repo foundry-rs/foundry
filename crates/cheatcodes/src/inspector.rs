@@ -21,7 +21,6 @@ use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, SELECTOR_LEN};
 use foundry_config::Config;
-use foundry_evm_abi::Console;
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseExt, RevertDiagnostic},
@@ -138,19 +137,8 @@ pub trait CheatcodesExecutor {
         })
     }
 
-    fn console_log<DB: DatabaseExt>(
-        &mut self,
-        ccx: &mut CheatsCtxt<DB>,
-        message: String,
-    ) -> Result<(), EVMError<DB::Error>> {
-        self.with_evm(ccx, |evm| {
-            let log =
-                Log { address: CHEATCODE_ADDRESS, data: (&Console::log { val: message }).into() };
-
-            evm.context.external.log(&mut evm.context.evm, &log);
-
-            Ok(())
-        })
+    fn console_log<DB: DatabaseExt>(&mut self, ccx: &mut CheatsCtxt<DB>, message: String) {
+        self.get_inspector::<DB>(ccx.state).console_log(message);
     }
 }
 
@@ -980,7 +968,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, _interpreter: &mut Interpreter, _context: &mut EvmContext<DB>, log: &Log) {
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, log);
         }

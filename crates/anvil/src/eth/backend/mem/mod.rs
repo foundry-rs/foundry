@@ -2111,6 +2111,7 @@ impl Backend {
             state_root: Some(block.header.state_root),
             blob_gas_price: Some(blob_gas_price),
             blob_gas_used,
+            authorization_list: None,
         };
 
         Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
@@ -2262,7 +2263,7 @@ impl Backend {
             let account_proof = AccountProof {
                 address,
                 balance: account.info.balance,
-                nonce: U64::from(account.info.nonce),
+                nonce: account.info.nonce,
                 code_hash: account.info.code_hash,
                 storage_hash: storage_root(&account.storage),
                 account_proof: proof,

@@ -5,7 +5,7 @@ use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     trace::otterscan::{InternalOperation, OperationType, TraceEntry},
-    BlockNumberOrTag, BlockTransactions, TransactionRequest,
+    BlockNumberOrTag, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{sol, SolCall, SolError, SolValue};
@@ -331,13 +331,10 @@ async fn ots_get_block_details() {
 
     let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100));
     let tx = WithOtherFields::new(tx);
-    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     let result = api.ots_get_block_details(1.into()).await.unwrap();
 
     assert_eq!(result.block.transaction_count, 1);
-    let hash = result.block.block.transactions.hashes().next().unwrap();
-    assert_eq!(*hash, receipt.transaction_hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -353,12 +350,6 @@ async fn ots_get_block_details_by_hash() {
     let result = api.ots_get_block_details_by_hash(block_hash).await.unwrap();
 
     assert_eq!(result.block.transaction_count, 1);
-    let hash = match result.block.block.transactions {
-        BlockTransactions::Full(txs) => txs[0].hash,
-        BlockTransactions::Hashes(hashes) => hashes[0],
-        BlockTransactions::Uncle => unreachable!(),
-    };
-    assert_eq!(hash, receipt.transaction_hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]

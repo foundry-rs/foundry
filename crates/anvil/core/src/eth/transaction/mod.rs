@@ -296,6 +296,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
             other: Default::default(),
+            authorization_list: None,
         },
         TypedTransaction::EIP2930(t) => RpcTransaction {
             hash,
@@ -323,6 +324,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
             other: Default::default(),
+            authorization_list: None,
         },
         TypedTransaction::EIP1559(t) => RpcTransaction {
             hash,
@@ -350,6 +352,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
             other: Default::default(),
+            authorization_list: None,
         },
         TypedTransaction::EIP4844(t) => RpcTransaction {
             hash,
@@ -377,6 +380,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             max_fee_per_blob_gas: Some(t.tx().tx().max_fee_per_blob_gas),
             blob_versioned_hashes: Some(t.tx().tx().blob_versioned_hashes.clone()),
             other: Default::default(),
+            authorization_list: None,
         },
         TypedTransaction::Deposit(t) => RpcTransaction {
             hash,
@@ -399,6 +403,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
             other: Default::default(),
+            authorization_list: None,
         },
     }
 }
@@ -1463,6 +1468,7 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
                 blob_gas_used,
                 state_root,
                 inner: AnyReceiptEnvelope { inner: receipt_with_bloom, r#type },
+                authorization_list,
             },
         other,
     } = receipt;
@@ -1480,6 +1486,7 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
         blob_gas_price,
         blob_gas_used,
         state_root,
+        authorization_list,
         inner: match r#type {
             0x00 => TypedReceipt::Legacy(receipt_with_bloom),
             0x01 => TypedReceipt::EIP2930(receipt_with_bloom),
