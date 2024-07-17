@@ -263,7 +263,3 @@ tower-http = "0.5"
 soldeer = "0.2.17"
 
 proptest = "1"
-
-[patch.crates-io]
-foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "b0f6fe6" }
-revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", rev = "bd9cc40" }
