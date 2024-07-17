@@ -1,4 +1,5 @@
 use crate::{
+    debug::DebugTraceIdentifier,
     identifier::{
         AddressIdentity, LocalTraceIdentifier, SingleSignaturesIdentifier, TraceIdentifier,
     },
@@ -8,7 +9,7 @@ use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{Address, LogData, Selector, B256};
 use foundry_common::{
-    abi::get_indexed_event, fmt::format_token, ContractsByArtifact, SELECTOR_LEN,
+    abi::get_indexed_event, fmt::format_token, get_contract_name, ContractsByArtifact, SELECTOR_LEN,
 };
 use foundry_evm_core::{
     abi::{Console, HardhatConsole, Vm, HARDHAT_CONSOLE_SELECTOR_PATCHES},
@@ -17,6 +18,10 @@ use foundry_evm_core::{
         TEST_CONTRACT_ADDRESS,
     },
     decode::RevertDecoder,
+    precompiles::{
+        BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
+        RIPEMD_160, SHA_256,
+    },
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -84,6 +89,13 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Sets the debug identifier for the decoder.
+    #[inline]
+    pub fn with_debug_identifier(mut self, identifier: DebugTraceIdentifier) -> Self {
+        self.decoder.debug_identifier = Some(identifier);
+        self
+    }
+
     /// Build the decoder.
     #[inline]
     pub fn build(self) -> CallTraceDecoder {
@@ -120,6 +132,9 @@ pub struct CallTraceDecoder {
     pub signature_identifier: Option<SingleSignaturesIdentifier>,
     /// Verbosity level
     pub verbosity: u8,
+
+    /// Optional identifier of individual trace steps.
+    pub debug_identifier: Option<DebugTraceIdentifier>,
 }
 
 impl CallTraceDecoder {
@@ -160,6 +175,16 @@ impl CallTraceDecoder {
                 (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
                 (CALLER, "DefaultSender".to_string()),
                 (TEST_CONTRACT_ADDRESS, "DefaultTestContract".to_string()),
+                (EC_RECOVER, "ECRecover".to_string()),
+                (SHA_256, "SHA-256".to_string()),
+                (RIPEMD_160, "RIPEMD-160".to_string()),
+                (IDENTITY, "Identity".to_string()),
+                (MOD_EXP, "ModExp".to_string()),
+                (EC_ADD, "ECAdd".to_string()),
+                (EC_MUL, "ECMul".to_string()),
+                (EC_PAIRING, "ECPairing".to_string()),
+                (BLAKE_2F, "Blake2F".to_string()),
+                (POINT_EVALUATION, "PointEvaluation".to_string()),
             ]
             .into(),
             receive_contracts: Default::default(),
@@ -182,6 +207,8 @@ impl CallTraceDecoder {
 
             signature_identifier: None,
             verbosity: 0,
+
+            debug_identifier: None,
         }
     }
 
@@ -301,6 +328,12 @@ impl CallTraceDecoder {
             for log in node.logs.iter_mut() {
                 log.decoded = self.decode_event(&log.raw_log).await;
             }
+
+            if let Some(debug) = self.debug_identifier.as_ref() {
+                if let Some(identified) = self.contracts.get(&node.trace.address) {
+                    debug.identify_node_steps(node, get_contract_name(identified))
+                }
+            }
         }
     }
 
@@ -317,8 +350,7 @@ impl CallTraceDecoder {
             return DecodedCallTrace {
                 label,
                 call_data: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
-                return_data: (!trace.status.is_ok())
-                    .then(|| self.revert_decoder.decode(&trace.output, Some(trace.status))),
+                return_data: self.default_return_data(trace),
             };
         }
 
@@ -339,7 +371,11 @@ impl CallTraceDecoder {
                 }
             };
             let [func, ..] = &functions[..] else {
-                return DecodedCallTrace { label, call_data: None, return_data: None };
+                return DecodedCallTrace {
+                    label,
+                    call_data: None,
+                    return_data: self.default_return_data(trace),
+                };
             };
 
             DecodedCallTrace {
@@ -355,11 +391,7 @@ impl CallTraceDecoder {
             DecodedCallTrace {
                 label,
                 call_data: Some(DecodedCallData { signature, args }),
-                return_data: if !trace.success {
-                    Some(self.revert_decoder.decode(&trace.output, Some(trace.status)))
-                } else {
-                    None
-                },
+                return_data: self.default_return_data(trace),
             }
         }
     }
@@ -377,7 +409,7 @@ impl CallTraceDecoder {
 
             if args.is_none() {
                 if let Ok(v) = func.abi_decode_input(&trace.data[SELECTOR_LEN..], false) {
-                    args = Some(v.iter().map(|value| self.apply_label(value)).collect());
+                    args = Some(v.iter().map(|value| self.format_value(value)).collect());
                 }
             }
         }
@@ -490,34 +522,32 @@ impl CallTraceDecoder {
 
     /// Decodes a function's output into the given trace.
     fn decode_function_output(&self, trace: &CallTrace, funcs: &[Function]) -> Option<String> {
-        let data = &trace.output;
-        if trace.success {
-            if trace.address == CHEATCODE_ADDRESS {
-                if let Some(decoded) =
-                    funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func))
-                {
-                    return Some(decoded);
-                }
-            }
-
-            if let Some(values) =
-                funcs.iter().find_map(|func| func.abi_decode_output(data, false).ok())
-            {
-                // Functions coming from an external database do not have any outputs specified,
-                // and will lead to returning an empty list of values.
-                if values.is_empty() {
-                    return None;
-                }
-
-                return Some(
-                    values.iter().map(|value| self.apply_label(value)).format(", ").to_string(),
-                );
-            }
-
-            None
-        } else {
-            Some(self.revert_decoder.decode(data, Some(trace.status)))
+        if !trace.success {
+            return self.default_return_data(trace);
         }
+
+        if trace.address == CHEATCODE_ADDRESS {
+            if let Some(decoded) = funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func))
+            {
+                return Some(decoded);
+            }
+        }
+
+        if let Some(values) =
+            funcs.iter().find_map(|func| func.abi_decode_output(&trace.output, false).ok())
+        {
+            // Functions coming from an external database do not have any outputs specified,
+            // and will lead to returning an empty list of values.
+            if values.is_empty() {
+                return None;
+            }
+
+            return Some(
+                values.iter().map(|value| self.format_value(value)).format(", ").to_string(),
+            );
+        }
+
+        None
     }
 
     /// Custom decoding for cheatcode outputs.
@@ -531,6 +561,11 @@ impl CallTraceDecoder {
             _ => None,
         }
         .map(Into::into)
+    }
+
+    /// The default decoded return data for a trace.
+    fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
+        (!trace.success).then(|| self.revert_decoder.decode(&trace.output, Some(trace.status)))
     }
 
     /// Decodes an event.
@@ -561,7 +596,7 @@ impl CallTraceDecoder {
                             .map(|(param, input)| {
                                 // undo patched names
                                 let name = input.name.clone();
-                                (name, self.apply_label(&param))
+                                (name, self.format_value(&param))
                             })
                             .collect(),
                     ),
@@ -595,7 +630,8 @@ impl CallTraceDecoder {
         identifier.write().await.identify_functions(funcs_it).await;
     }
 
-    fn apply_label(&self, value: &DynSolValue) -> String {
+    /// Pretty-prints a value.
+    fn format_value(&self, value: &DynSolValue) -> String {
         if let DynSolValue::Address(addr) = value {
             if let Some(label) = self.labels.get(addr) {
                 return format!("{label}: [{addr}]");

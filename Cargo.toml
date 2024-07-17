@@ -172,36 +172,36 @@ revm-inspectors = { version = "0.3", features = ["serde"] }
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
 
 ## alloy
-alloy-consensus = { version = "0.1.2", default-features = false }
-alloy-contract = { version = "0.1.2", default-features = false }
-alloy-eips = { version = "0.1.2", default-features = false }
-alloy-genesis = { version = "0.1.2", default-features = false }
-alloy-json-rpc = { version = "0.1.2", default-features = false }
-alloy-network = { version = "0.1.2", default-features = false }
-alloy-node-bindings = { version = "0.1.2", default-features = false }
-alloy-provider = { version = "0.1.2", default-features = false }
-alloy-pubsub = { version = "0.1.2", default-features = false }
-alloy-rpc-client = { version = "0.1.2", default-features = false }
-alloy-rpc-types = { version = "0.1.2", default-features = false }
-alloy-serde = { version = "0.1.2", default-features = false }
-alloy-signer = { version = "0.1.2", default-features = false }
-alloy-signer-aws = { version = "0.1.2", default-features = false }
-alloy-signer-gcp = { version = "0.1.2", default-features = false }
-alloy-signer-ledger = { version = "0.1.2", default-features = false }
-alloy-signer-local = { version = "0.1.2", default-features = false }
-alloy-signer-trezor = { version = "0.1.2", default-features = false }
-alloy-transport = { version = "0.1.2", default-features = false }
-alloy-transport-http = { version = "0.1.2", default-features = false }
-alloy-transport-ipc = { version = "0.1.2", default-features = false }
-alloy-transport-ws = { version = "0.1.2", default-features = false }
+alloy-consensus = { version = "0.1.4", default-features = false }
+alloy-contract = { version = "0.1.4", default-features = false }
+alloy-eips = { version = "0.1.4", default-features = false }
+alloy-genesis = { version = "0.1.4", default-features = false }
+alloy-json-rpc = { version = "0.1.4", default-features = false }
+alloy-network = { version = "0.1.4", default-features = false }
+alloy-node-bindings = { version = "0.1.4", default-features = false }
+alloy-provider = { version = "0.1.4", default-features = false }
+alloy-pubsub = { version = "0.1.4", default-features = false }
+alloy-rpc-client = { version = "0.1.4", default-features = false }
+alloy-rpc-types = { version = "0.1.4", default-features = false }
+alloy-serde = { version = "0.1.4", default-features = false }
+alloy-signer = { version = "0.1.4", default-features = false }
+alloy-signer-aws = { version = "0.1.4", default-features = false }
+alloy-signer-gcp = { version = "0.1.4", default-features = false }
+alloy-signer-ledger = { version = "0.1.4", default-features = false }
+alloy-signer-local = { version = "0.1.4", default-features = false }
+alloy-signer-trezor = { version = "0.1.4", default-features = false }
+alloy-transport = { version = "0.1.4", default-features = false }
+alloy-transport-http = { version = "0.1.4", default-features = false }
+alloy-transport-ipc = { version = "0.1.4", default-features = false }
+alloy-transport-ws = { version = "0.1.4", default-features = false }
 
-alloy-dyn-abi = "0.7.3"
-alloy-json-abi = "0.7.3"
-alloy-primitives = { version = "0.7.3", features = ["getrandom", "rand"] }
-alloy-sol-macro-expander = "0.7.3"
-alloy-sol-macro-input = "0.7.3"
-alloy-sol-types = "0.7.3"
-syn-solidity = "0.7.3"
+alloy-dyn-abi = "0.7.7"
+alloy-json-abi = "0.7.7"
+alloy-primitives = { version = "0.7.7", features = ["getrandom", "rand"] }
+alloy-sol-macro-expander = "0.7.7"
+alloy-sol-macro-input = "0.7.7"
+alloy-sol-types = "0.7.7"
+syn-solidity = "0.7.7"
 
 alloy-chains = "0.1"
 alloy-rlp = "0.3.3"
@@ -260,4 +260,6 @@ reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
 tower-http = "0.5"
 # soldeer
-soldeer = "0.2.17"
+soldeer = "0.2.19"
+
+proptest = "1"

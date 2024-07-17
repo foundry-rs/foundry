@@ -74,6 +74,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             seed: Some(U256::from(1000)),
             failure_persist_dir: Some("test-cache/fuzz".into()),
             failure_persist_file: Some("failures".to_string()),
+            show_logs: false,
             ..Default::default()
         },
         invariant: InvariantConfig {
@@ -133,6 +134,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         build_info_path: None,
         fmt: Default::default(),
         doc: Default::default(),
+        bind_json: Default::default(),
         fs_permissions: Default::default(),
         labels: Default::default(),
         prague: true,

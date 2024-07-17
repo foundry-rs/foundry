@@ -12,6 +12,7 @@ use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use regex::Regex;
+use snapbox::cmd::OutputAssert;
 use std::{
     env,
     ffi::OsStr,
@@ -921,8 +922,8 @@ impl TestCommand {
 
     /// Runs the command and asserts that it resulted in success
     #[track_caller]
-    pub fn assert_success(&mut self) {
-        self.output();
+    pub fn assert_success(&mut self) -> OutputAssert {
+        self.assert().success()
     }
 
     /// Executes command, applies stdin function and returns output
@@ -1027,7 +1028,7 @@ impl TestCommand {
         eyre::eyre!("{}", self.make_error_message(out, expected_fail))
     }
 
-    fn make_error_message(&self, out: &Output, expected_fail: bool) -> String {
+    pub fn make_error_message(&self, out: &Output, expected_fail: bool) -> String {
         let msg = if expected_fail {
             "expected failure but command succeeded!"
         } else {
@@ -1055,6 +1056,10 @@ stderr:
             lossy_string(&out.stderr),
         )
     }
+
+    pub fn assert(&mut self) -> OutputAssert {
+        OutputAssert::new(self.execute())
+    }
 }
 
 /// Extension trait for [`Output`].
@@ -1071,6 +1076,12 @@ pub trait OutputExt {
 
     /// Ensure the command wrote the expected data to `stderr`.
     fn stderr_matches_path(&self, expected_path: impl AsRef<Path>);
+
+    /// Returns the stderr as lossy string
+    fn stderr_lossy(&self) -> String;
+
+    /// Returns the stdout as lossy string
+    fn stdout_lossy(&self) -> String;
 }
 
 /// Patterns to remove from fixtures before comparing output
@@ -1117,6 +1128,14 @@ impl OutputExt for Output {
         let expected = fs::read_to_string(expected_path).unwrap();
         let err = lossy_string(&self.stderr);
         similar_asserts::assert_eq!(normalize_output(&err), normalize_output(&expected));
+    }
+
+    fn stderr_lossy(&self) -> String {
+        lossy_string(&self.stderr)
+    }
+
+    fn stdout_lossy(&self) -> String {
+        lossy_string(&self.stdout)
     }
 }
 
