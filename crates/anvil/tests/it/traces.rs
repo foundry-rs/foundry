@@ -782,7 +782,6 @@ async fn test_trace_filter() {
     let contract_addr =
         SuicideContract::deploy_builder(provider.clone()).from(from).deploy().await.unwrap();
     let contract = SuicideContract::new(contract_addr, provider.clone());
-    let _ = contract.goodbye().from(from).send().await.unwrap();
 
     // Test TraceActions
     let tracer = TraceFilter {
@@ -795,6 +794,11 @@ async fn test_trace_filter() {
         count: None,
     };
 
+    // Execute call
+    let call = contract.goodbye().from(from);
+    let call = call.send().await.unwrap();
+    call.get_receipt().await.unwrap();
+
     // Mine transactions to filter against
     for i in 0..=5 {
         let tx = TransactionRequest::default().to(to_two).value(U256::from(i)).from(from_two);
@@ -804,9 +808,6 @@ async fn test_trace_filter() {
 
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 3);
-
-    // Assert block range
-    let _ = contract.goodbye().from(from).send().await.unwrap();
 
     // Test Range Error
     let latest = provider.get_block_number().await.unwrap();

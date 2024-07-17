@@ -2067,11 +2067,13 @@ impl Backend {
             )));
         }
 
+        // Acumulate tasks for block range
         let mut trace_tasks = vec![];
         for num in start..=end {
             trace_tasks.push(self.trace_block(num.into()));
         }
 
+        // Execute tasks and filter traces
         let traces = futures::future::try_join_all(trace_tasks).await?;
         let filtered_traces = traces
             .into_iter()
