@@ -2051,7 +2051,7 @@ impl Backend {
         Ok(None)
     }
 
-    // Returnes the traces matching a given filter
+    // Returns the traces matching a given filter
     pub async fn trace_filter(
         &self,
         filter: TraceFilter,
@@ -2067,7 +2067,7 @@ impl Backend {
             )));
         }
 
-        // Acumulate tasks for block range
+        // Accumulate tasks for block range
         let mut trace_tasks = vec![];
         for num in start..=end {
             trace_tasks.push(self.trace_block(num.into()));
