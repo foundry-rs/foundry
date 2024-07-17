@@ -701,3 +701,182 @@ contract FooTest is DSTest {
 "#]],
     );
 });
+
+forgetest!(test_yul_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Foo.sol",
+        r#"
+contract Foo {
+    uint256[] dynamicArray;
+
+    function readDynamicArrayLength() public view returns (uint256 length) {
+        assembly {
+            length := sload(dynamicArray.slot)
+        }
+    }
+
+    function switchAndIfStatements(uint256 n) public pure {
+        uint256 y;
+        assembly {
+            switch n
+            case 0 { y := 0 }
+            case 1 { y := 1 }
+            default { y := n }
+
+            if y { y := 2 }
+        }
+    }
+
+    function yulForLoop(uint256 n) public {
+        uint256 y;
+        assembly {
+            for { let i := 0 } lt(i, n) { i := add(i, 1) } { y := add(y, 1) }
+
+            let j := 0
+            for {} lt(j, n) { j := add(j, 1) } { j := add(j, 2) }
+        }
+    }
+
+    function hello() public pure returns (bool, uint256, bytes32) {
+        bool x;
+        uint256 y;
+        bytes32 z;
+
+        assembly {
+            x := 1
+            y := 0xa
+            z := "Hello World!"
+        }
+
+        return (x, y, z);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "FooTest.sol",
+        r#"
+import "./test.sol";
+import {Foo} from "./Foo.sol";
+
+contract FooTest is DSTest {
+    function test_foo_coverage() external {
+        Foo foo = new Foo();
+        foo.switchAndIfStatements(0);
+        foo.switchAndIfStatements(1);
+        foo.switchAndIfStatements(2);
+        foo.yulForLoop(2);
+        foo.hello();
+        foo.readDynamicArrayLength();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File        | % Lines         | % Statements    | % Branches    | % Funcs       |
+|-------------|-----------------|-----------------|---------------|---------------|
+| src/Foo.sol | 100.00% (17/17) | 100.00% (30/30) | 100.00% (1/1) | 100.00% (4/4) |
+| Total       | 100.00% (17/17) | 100.00% (30/30) | 100.00% (1/1) | 100.00% (4/4) |
+
+"#]],
+    );
+});
+
+forgetest!(test_misc_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Foo.sol",
+        r#"
+struct Custom {
+    int256 f1;
+}
+
+contract A {
+    function f(Custom memory custom) public returns (int256) {
+        return custom.f1;
+    }
+}
+
+contract B {
+    uint256 public x;
+
+    constructor(uint256 a) payable {
+        x = a;
+    }
+}
+
+contract C {
+    function create() public {
+        B b = new B{value: 1}(2);
+        b = (new B{value: 1})(2);
+        b = (new B){value: 1}(2);
+    }
+}
+
+contract D {
+    uint256 index;
+
+    function g() public {
+        (uint256 x,, uint256 y) = (7, true, 2);
+        (x, y) = (y, x);
+        (index,,) = (7, true, 2);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "FooTest.sol",
+        r#"
+import "./test.sol";
+import "./Foo.sol";
+
+interface Vm {
+    function deal(address account, uint256 newBalance) external;
+}
+
+contract FooTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function test_member_access_coverage() external {
+        A a = new A();
+        Custom memory cust = Custom(1);
+        a.f(cust);
+    }
+
+    function test_new_expression_coverage() external {
+        B b = new B(1);
+        b.x();
+        C c = new C();
+        vm.deal(address(c), 100 ether);
+        c.create();
+    }
+
+    function test_tuple_coverage() external {
+        D d = new D();
+        d.g();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File        | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------|---------------|---------------|---------------|---------------|
+| src/Foo.sol | 100.00% (8/8) | 100.00% (9/9) | 100.00% (0/0) | 100.00% (4/4) |
+| Total       | 100.00% (8/8) | 100.00% (9/9) | 100.00% (0/0) | 100.00% (4/4) |
+
+"#]],
+    );
+});

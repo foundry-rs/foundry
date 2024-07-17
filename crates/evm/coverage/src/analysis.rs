@@ -98,7 +98,7 @@ impl<'a> ContractVisitor<'a> {
     }
 
     fn visit_statement(&mut self, node: &Node) -> eyre::Result<()> {
-        // TODO: YulSwitch, YulForLoop, YulFunctionDefinition, YulVariableDeclaration
+        // TODO: YulFunctionDefinition
         match node.node_type {
             // Blocks
             NodeType::Block | NodeType::UncheckedBlock | NodeType::YulBlock => {
@@ -118,7 +118,8 @@ impl<'a> ContractVisitor<'a> {
             NodeType::YulAssignment |
             NodeType::YulBreak |
             NodeType::YulContinue |
-            NodeType::YulLeave => {
+            NodeType::YulLeave |
+            NodeType::YulVariableDeclaration => {
                 self.push_item(CoverageItem {
                     kind: CoverageItemKind::Statement,
                     loc: self.source_location_for(&node.src),
@@ -336,6 +337,51 @@ impl<'a> ContractVisitor<'a> {
 
                 Ok(())
             }
+            NodeType::YulSwitch => {
+                // Add coverage for each case statement amd their bodies.
+                for case in node
+                    .attribute::<Vec<Node>>("cases")
+                    .ok_or_else(|| eyre::eyre!("yul switch had no case"))?
+                {
+                    self.push_item(CoverageItem {
+                        kind: CoverageItemKind::Statement,
+                        loc: self.source_location_for(&case.src),
+                        hits: 0,
+                    });
+                    self.visit_statement(&case)?;
+
+                    if let Some(body) = case.body {
+                        self.push_item(CoverageItem {
+                            kind: CoverageItemKind::Statement,
+                            loc: self.source_location_for(&body.src),
+                            hits: 0,
+                        });
+                        self.visit_block(&body)?
+                    }
+                }
+                Ok(())
+            }
+            NodeType::YulForLoop => {
+                if let Some(condition) = node.attribute("condition") {
+                    self.visit_expression(&condition)?;
+                }
+                if let Some(pre) = node.attribute::<Node>("pre") {
+                    self.visit_block(&pre)?
+                }
+                if let Some(post) = node.attribute::<Node>("post") {
+                    self.visit_block(&post)?
+                }
+
+                if let Some(body) = &node.body {
+                    self.push_item(CoverageItem {
+                        kind: CoverageItemKind::Statement,
+                        loc: self.source_location_for(&body.src),
+                        hits: 0,
+                    });
+                    self.visit_block(body)?
+                }
+                Ok(())
+            }
             _ => {
                 warn!("unexpected node type, expected a statement: {:?}", node.node_type);
                 Ok(())
@@ -344,14 +390,11 @@ impl<'a> ContractVisitor<'a> {
     }
 
     fn visit_expression(&mut self, node: &Node) -> eyre::Result<()> {
-        // TODO
-        // elementarytypenameexpression
-        //  memberaccess
-        //  newexpression
-        //  tupleexpression
-        //  yulfunctioncall
         match node.node_type {
-            NodeType::Assignment | NodeType::UnaryOperation | NodeType::Conditional => {
+            NodeType::Assignment |
+            NodeType::UnaryOperation |
+            NodeType::Conditional |
+            NodeType::YulFunctionCall => {
                 self.push_item(CoverageItem {
                     kind: CoverageItemKind::Statement,
                     loc: self.source_location_for(&node.src),
@@ -443,6 +486,7 @@ impl<'a> ContractVisitor<'a> {
             NodeType::RevertStatement |
             NodeType::TryStatement |
             NodeType::VariableDeclarationStatement |
+            NodeType::YulVariableDeclaration |
             NodeType::WhileStatement => self.visit_statement(node),
             // Skip placeholder statements as they are never referenced in source maps.
             NodeType::PlaceholderStatement => Ok(()),
