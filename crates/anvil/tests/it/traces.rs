@@ -822,4 +822,19 @@ async fn test_trace_filter() {
 
     let traces = api.trace_filter(tracer).await;
     assert!(traces.is_err());
+
+    // Test invalid block range
+    let latest = provider.get_block_number().await.unwrap();
+    let tracer = TraceFilter {
+        from_block: Some(latest + 10),
+        to_block: Some(latest),
+        from_address: vec![],
+        to_address: vec![],
+        mode: TraceFilterMode::Union,
+        after: None,
+        count: None,
+    };
+
+    let traces = api.trace_filter(tracer).await;
+    assert!(traces.is_err());
 }

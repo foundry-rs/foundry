@@ -2061,6 +2061,11 @@ impl Backend {
         let end = filter.to_block.unwrap_or(self.best_number());
 
         let dist = end.saturating_sub(start);
+        if dist == 0 {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "invalid block range, ensure that to block is greater than from block".to_string(),
+            )));
+        }
         if dist > 300 {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(
                 "block range too large, currently limited to 300".to_string(),
