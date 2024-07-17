@@ -653,10 +653,10 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         );
     }
 
-    fn log(&mut self, ecx: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>, log: &Log) {
         call_inspectors_adjust_depth!(
             [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
-            |inspector| inspector.log(ecx, log),
+            |inspector| inspector.log(interpreter, ecx, log),
             self,
             ecx
         );
@@ -909,6 +909,12 @@ impl<'a, DB: DatabaseExt> InspectorExt<DB> for InspectorStackRefMut<'a> {
 
         false
     }
+
+    fn console_log(&mut self, input: String) {
+        call_inspectors!([&mut self.log_collector], |inspector| InspectorExt::<DB>::console_log(
+            inspector, input
+        ));
+    }
 }
 
 impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
@@ -977,8 +983,8 @@ impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
         self.as_mut().initialize_interp(interpreter, ecx)
     }
 
-    fn log(&mut self, ecx: &mut EvmContext<DB>, log: &Log) {
-        self.as_mut().log(ecx, log)
+    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>, log: &Log) {
+        self.as_mut().log(interpreter, ecx, log)
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
