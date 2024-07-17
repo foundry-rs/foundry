@@ -21,7 +21,6 @@ foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm-core.workspace = true
 foundry-wallets.workspace = true
-foundry-evm-abi.workspace = true
 
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
@@ -53,3 +52,6 @@ semver.workspace = true
 rustc-hash.workspace = true
 dialoguer = "0.11.0"
 rand = "0.8"
+
+[dev-dependencies]
+proptest.workspace = true

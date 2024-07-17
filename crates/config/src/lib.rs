@@ -16,6 +16,7 @@ use figment::{
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
+use filter::GlobMatcher;
 use foundry_compilers::{
     artifacts::{
         output_selection::{ContractOutputSelection, OutputSelection},
@@ -110,6 +111,9 @@ use soldeer::SoldeerConfig;
 mod vyper;
 use vyper::VyperConfig;
 
+mod bind_json;
+use bind_json::BindJsonConfig;
+
 /// Foundry configuration
 ///
 /// # Defaults
@@ -178,8 +182,7 @@ pub struct Config {
     /// additional solc include paths for `--include-path`
     pub include_paths: Vec<PathBuf>,
     /// glob patterns to skip
-    #[serde(with = "from_vec_glob")]
-    pub skip: Vec<globset::Glob>,
+    pub skip: Vec<GlobMatcher>,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -389,6 +392,8 @@ pub struct Config {
     pub fmt: FormatterConfig,
     /// Configuration for `forge doc`
     pub doc: DocConfig,
+    /// Configuration for `forge bind-json`
+    pub bind_json: BindJsonConfig,
     /// Configures the permissions of cheat codes that touch the file system.
     ///
     /// This includes what operations can be executed (read, write)
@@ -484,6 +489,7 @@ impl Config {
         "labels",
         "dependencies",
         "vyper",
+        "bind_json",
     ];
 
     /// File name of config toml file
@@ -901,7 +907,7 @@ impl Config {
     #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
         if self.prague {
-            return SpecId::PRAGUE
+            return SpecId::PRAGUE_EOF
         }
         evm_spec_id(&self.evm_version)
     }
@@ -1951,30 +1957,6 @@ pub(crate) mod from_opt_glob {
     }
 }
 
-/// Ser/de `globset::Glob` explicitly to handle `Option<Glob>` properly
-pub(crate) mod from_vec_glob {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(value: &[globset::Glob], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let value = value.iter().map(|g| g.glob()).collect::<Vec<_>>();
-        value.serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<globset::Glob>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: Vec<String> = Vec::deserialize(deserializer)?;
-        s.into_iter()
-            .map(|s| globset::Glob::new(&s))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(serde::de::Error::custom)
-    }
-}
-
 /// A helper wrapper around the root path used during Config detection
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -2142,6 +2124,7 @@ impl Default for Config {
             build_info_path: None,
             fmt: Default::default(),
             doc: Default::default(),
+            bind_json: Default::default(),
             labels: Default::default(),
             unchecked_cheatcode_artifacts: false,
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,

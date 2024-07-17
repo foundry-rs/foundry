@@ -189,7 +189,7 @@ fn handle_assertion_result<DB: DatabaseExt, E: CheatcodesExecutor, ERR>(
             if ccx.state.config.assertions_revert {
                 Err(msg.into())
             } else {
-                executor.console_log(ccx, msg)?;
+                executor.console_log(ccx, msg);
                 ccx.ecx.sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
                 Ok(Default::default())
             }

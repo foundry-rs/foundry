@@ -5,7 +5,89 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 import "../logs/console.sol";
 
+library JsonStructs {
+    address constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    // forge eip712 testdata/default/cheats/Json.t.sol -R 'cheats=testdata/cheats' -R 'ds-test=testdata/lib/ds-test/src' | grep ^FlatJson
+    string constant schema_FlatJson =
+        "FlatJson(uint256 a,int24[][] arr,string str,bytes b,address addr,bytes32 fixedBytes)";
+
+    // forge eip712 testdata/default/cheats/Json.t.sol -R 'cheats=testdata/cheats' -R 'ds-test=testdata/lib/ds-test/src' | grep ^NestedJson
+    string constant schema_NestedJson =
+        "NestedJson(FlatJson[] members,AnotherFlatJson inner,string name)AnotherFlatJson(bytes4 fixedBytes)FlatJson(uint256 a,int24[][] arr,string str,bytes b,address addr,bytes32 fixedBytes)";
+
+    function deserializeFlatJson(string memory json) internal pure returns (ParseJsonTest.FlatJson memory) {
+        return abi.decode(vm.parseJsonType(json, schema_FlatJson), (ParseJsonTest.FlatJson));
+    }
+
+    function deserializeFlatJson(string memory json, string memory path)
+        internal
+        pure
+        returns (ParseJsonTest.FlatJson memory)
+    {
+        return abi.decode(vm.parseJsonType(json, path, schema_FlatJson), (ParseJsonTest.FlatJson));
+    }
+
+    function deserializeFlatJsonArray(string memory json, string memory path)
+        internal
+        pure
+        returns (ParseJsonTest.FlatJson[] memory)
+    {
+        return abi.decode(vm.parseJsonTypeArray(json, path, schema_FlatJson), (ParseJsonTest.FlatJson[]));
+    }
+
+    function deserializeNestedJson(string memory json) internal pure returns (ParseJsonTest.NestedJson memory) {
+        return abi.decode(vm.parseJsonType(json, schema_NestedJson), (ParseJsonTest.NestedJson));
+    }
+
+    function deserializeNestedJson(string memory json, string memory path)
+        internal
+        pure
+        returns (ParseJsonTest.NestedJson memory)
+    {
+        return abi.decode(vm.parseJsonType(json, path, schema_NestedJson), (ParseJsonTest.NestedJson));
+    }
+
+    function deserializeNestedJsonArray(string memory json, string memory path)
+        internal
+        pure
+        returns (ParseJsonTest.NestedJson[] memory)
+    {
+        return abi.decode(vm.parseJsonType(json, path, schema_NestedJson), (ParseJsonTest.NestedJson[]));
+    }
+
+    function serialize(ParseJsonTest.FlatJson memory instance) internal pure returns (string memory) {
+        return vm.serializeJsonType(schema_FlatJson, abi.encode(instance));
+    }
+
+    function serialize(ParseJsonTest.NestedJson memory instance) internal pure returns (string memory) {
+        return vm.serializeJsonType(schema_NestedJson, abi.encode(instance));
+    }
+}
+
 contract ParseJsonTest is DSTest {
+    using JsonStructs for *;
+
+    struct FlatJson {
+        uint256 a;
+        int24[][] arr;
+        string str;
+        bytes b;
+        address addr;
+        bytes32 fixedBytes;
+    }
+
+    struct AnotherFlatJson {
+        bytes4 fixedBytes;
+    }
+
+    struct NestedJson {
+        FlatJson[] members;
+        AnotherFlatJson inner;
+        string name;
+    }
+
     Vm constant vm = Vm(HEVM_ADDRESS);
     string json;
 
@@ -97,7 +179,7 @@ contract ParseJsonTest is DSTest {
     }
 
     function test_coercionRevert() public {
-        vm._expectCheatcodeRevert("values at \".nestedObject\" must not be JSON objects");
+        vm._expectCheatcodeRevert("expected uint256, found JSON object");
         vm.parseJsonUint(json, ".nestedObject");
     }
 
@@ -206,6 +288,44 @@ contract ParseJsonTest is DSTest {
         vm._expectCheatcodeRevert("key \".*\" must return exactly one JSON object");
         vm.parseJsonKeys(jsonString, ".*");
     }
+
+    // forge eip712 testdata/default/cheats/Json.t.sol -R 'cheats=testdata/cheats' -R 'ds-test=testdata/lib/ds-test/src' | grep ^FlatJson
+    string constant schema_FlatJson =
+        "FlatJson(uint256 a,int24[][] arr,string str,bytes b,address addr,bytes32 fixedBytes)";
+
+    // forge eip712 testdata/default/cheats/Json.t.sol -R 'cheats=testdata/cheats' -R 'ds-test=testdata/lib/ds-test/src' | grep ^NestedJson
+    string constant schema_NestedJson =
+        "NestedJson(FlatJson[] members,AnotherFlatJson inner,string name)AnotherFlatJson(bytes4 fixedBytes)FlatJson(uint256 a,int24[][] arr,string str,bytes b,address addr,bytes32 fixedBytes)";
+
+    function test_parseJsonType() public {
+        string memory readJson = vm.readFile("fixtures/Json/nested_json_struct.json");
+        NestedJson memory data = readJson.deserializeNestedJson();
+        assertEq(data.members.length, 2);
+
+        FlatJson memory expected = FlatJson({
+            a: 200,
+            arr: new int24[][](0),
+            str: "some other string",
+            b: hex"0000000000000000000000000000000000000000",
+            addr: 0x167D91deaEEE3021161502873d3bcc6291081648,
+            fixedBytes: 0xed1c7beb1f00feaaaec5636950d6edb25a8d4fedc8deb2711287b64c4d27719d
+        });
+
+        assertEq(keccak256(abi.encode(data.members[1])), keccak256(abi.encode(expected)));
+        assertEq(bytes32(data.inner.fixedBytes), bytes32(bytes4(0x12345678)));
+
+        FlatJson[] memory members = JsonStructs.deserializeFlatJsonArray(readJson, ".members");
+
+        assertEq(keccak256(abi.encode(members)), keccak256(abi.encode(data.members)));
+    }
+
+    function test_parseJsonType_roundtrip() public {
+        string memory readJson = vm.readFile("fixtures/Json/nested_json_struct.json");
+        NestedJson memory data = readJson.deserializeNestedJson();
+        string memory serialized = data.serialize();
+        NestedJson memory deserialized = serialized.deserializeNestedJson();
+        assertEq(keccak256(abi.encode(data)), keccak256(abi.encode(deserialized)));
+    }
 }
 
 contract WriteJsonTest is DSTest {
@@ -277,13 +397,13 @@ contract WriteJsonTest is DSTest {
     // Github issue: https://github.com/foundry-rs/foundry/issues/5745
     function test_serializeRootObject() public {
         string memory serialized = vm.serializeJson(json1, '{"foo": "bar"}');
-        assertEq(serialized, '{"foo":"bar"}');
+        assertEq(serialized, '{"foo": "bar"}');
         serialized = vm.serializeBool(json1, "boolean", true);
         assertEq(vm.parseJsonString(serialized, ".foo"), "bar");
         assertEq(vm.parseJsonBool(serialized, ".boolean"), true);
 
         string memory overwritten = vm.serializeJson(json1, '{"value": 123}');
-        assertEq(overwritten, '{"value":123}');
+        assertEq(overwritten, '{"value": 123}');
     }
 
     struct simpleJson {

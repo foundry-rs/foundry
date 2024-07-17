@@ -64,7 +64,7 @@ use anvil_core::eth::{
 use anvil_rpc::error::RpcError;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
-    backend::{BackendError, BackendResult, DatabaseError, DatabaseResult, RevertSnapshotAction},
+    backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
@@ -277,7 +277,7 @@ impl Backend {
     /// Applies the configured genesis settings
     ///
     /// This will fund, create the genesis accounts
-    async fn apply_genesis(&self) -> BackendResult<()> {
+    async fn apply_genesis(&self) -> Result<(), DatabaseError> {
         trace!(target: "backend", "setting genesis balances");
 
         if self.fork.read().is_some() {
@@ -291,7 +291,7 @@ impl Backend {
                 genesis_accounts_futures.push(tokio::task::spawn(async move {
                     let db = db.read().await;
                     let info = db.basic_ref(address)?.unwrap_or_default();
-                    Ok::<_, BackendError>((address, info))
+                    Ok::<_, DatabaseError>((address, info))
                 }));
             }
 
@@ -299,19 +299,10 @@ impl Backend {
 
             let mut db = self.db.write().await;
 
-            // in fork mode we only set the balance, this way the accountinfo is fetched from the
-            // remote client, preserving code and nonce. The reason for that is private keys for dev
-            // accounts are commonly known and are used on testnets
-            let mut fork_genesis_infos = self.genesis.fork_genesis_account_infos.lock();
-            fork_genesis_infos.clear();
-
             for res in genesis_accounts {
-                let (address, mut info) = res.map_err(BackendError::display)??;
+                let (address, mut info) = res.unwrap()?;
                 info.balance = self.genesis.balance;
                 db.insert_account(address, info.clone());
-
-                // store the fetched AccountInfo, so we can cheaply reset in [Self::reset_fork()]
-                fork_genesis_infos.push(info);
             }
         } else {
             let mut db = self.db.write().await;
@@ -459,23 +450,9 @@ impl Backend {
                 fork.total_difficulty(),
             );
             self.states.write().clear();
+            self.db.write().await.clear();
 
-            // insert back all genesis accounts, by reusing cached `AccountInfo`s we don't need to
-            // fetch the data via RPC again
-            let mut db = self.db.write().await;
-
-            // clear database
-            db.clear();
-
-            let fork_genesis_infos = self.genesis.fork_genesis_account_infos.lock();
-            for (address, info) in
-                self.genesis.accounts.iter().copied().zip(fork_genesis_infos.iter().cloned())
-            {
-                db.insert_account(address, info);
-            }
-
-            // reset the genesis.json alloc
-            self.genesis.apply_genesis_json_alloc(db)?;
+            self.apply_genesis().await?;
 
             Ok(())
         } else {
@@ -1179,9 +1156,10 @@ impl Backend {
             data: input.into_input().unwrap_or_default(),
             chain_id: None,
             nonce,
-            access_list: access_list.unwrap_or_default().flattened(),
+            access_list: access_list.unwrap_or_default().into(),
             blob_hashes: blob_versioned_hashes.unwrap_or_default(),
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
+            authorization_list: None,
         };
 
         if env.block.basefee.is_zero() {
@@ -1788,43 +1766,23 @@ impl Backend {
         let block_number: U256 = U256::from(self.convert_block_number(block_number));
 
         if block_number < self.env.read().block.number {
+            if let Some((block_hash, block)) = self
+                .block_by_number(BlockNumber::Number(block_number.to::<u64>()))
+                .await?
+                .and_then(|block| Some((block.header.hash?, block)))
             {
-                let mut states = self.states.write();
-
-                if let Some((state, block)) = self
-                    .get_block(block_number.to::<u64>())
-                    .and_then(|block| Some((states.get(&block.header.hash_slow())?, block)))
-                {
+                if let Some(state) = self.states.write().get(&block_hash) {
                     let block = BlockEnv {
-                        number: U256::from(block.header.number),
-                        coinbase: block.header.beneficiary,
+                        number: block_number,
+                        coinbase: block.header.miner,
                         timestamp: U256::from(block.header.timestamp),
                         difficulty: block.header.difficulty,
-                        prevrandao: Some(block.header.mix_hash),
+                        prevrandao: block.header.mix_hash,
                         basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
                         gas_limit: U256::from(block.header.gas_limit),
                         ..Default::default()
                     };
                     return Ok(f(Box::new(state), block));
-                }
-            }
-
-            // there's an edge case in forking mode if the requested `block_number` is __exactly__
-            // the forked block, which should be fetched from remote but since we allow genesis
-            // accounts this may not be accurate data because an account could be provided via
-            // genesis
-            // So this provides calls the given provided function `f` with a genesis aware database
-            if let Some(fork) = self.get_fork() {
-                if block_number == U256::from(fork.block_number()) {
-                    let mut block = self.env.read().block.clone();
-                    let db = self.db.read().await;
-                    let gen_db = self.genesis.state_db_at_genesis(Box::new(&*db));
-
-                    block.number = block_number;
-                    block.timestamp = U256::from(fork.timestamp());
-                    block.basefee = U256::from(fork.base_fee().unwrap_or_default());
-
-                    return Ok(f(Box::new(&gen_db), block));
                 }
             }
 
@@ -2153,6 +2111,7 @@ impl Backend {
             state_root: Some(block.header.state_root),
             blob_gas_price: Some(blob_gas_price),
             blob_gas_used,
+            authorization_list: None,
         };
 
         Some(MinedTransactionReceipt { inner, out: info.out.map(|o| o.0.into()) })
@@ -2304,7 +2263,7 @@ impl Backend {
             let account_proof = AccountProof {
                 address,
                 balance: account.info.balance,
-                nonce: U64::from(account.info.nonce),
+                nonce: account.info.nonce,
                 code_hash: account.info.code_hash,
                 storage_hash: storage_root(&account.storage),
                 account_proof: proof,
