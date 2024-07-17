@@ -159,7 +159,7 @@ foundry-linking = { path = "crates/linking" }
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.5.0", default-features = false }
 foundry-compilers = { version = "0.9.0", default-features = false }
-foundry-fork-db = "0.1.1"
+foundry-fork-db = "0.2"
 solang-parser = "=0.3.3"
 
 ## revm
@@ -263,6 +263,3 @@ tower-http = "0.5"
 soldeer = "0.2.17"
 
 proptest = "1"
-
-[patch.crates-io]
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "3686905"}
