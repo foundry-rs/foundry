@@ -200,6 +200,7 @@ impl DebuggerContext<'_> {
             CallKind::CallCode => "Contract callcode",
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
+            CallKind::EOFCreate => "EOF contract creation",
         };
         let title = format!(
             "{} {} ",

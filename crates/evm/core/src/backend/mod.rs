@@ -1422,7 +1422,7 @@ impl DatabaseRef for Backend {
         }
     }
 
-    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             db.block_hash_ref(number)
         } else {
@@ -1467,7 +1467,7 @@ impl Database for Backend {
         }
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
         if let Some(db) = self.active_fork_db_mut() {
             Ok(db.block_hash(number)?)
         } else {
