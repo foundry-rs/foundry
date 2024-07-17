@@ -22,7 +22,8 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use anvil::{spawn, Hardfork, NodeConfig};
+use anvil::{eth::error::BlockchainError, spawn, Hardfork, NodeConfig};
+use anvil_rpc::error::RpcError;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
@@ -803,4 +804,22 @@ async fn test_trace_filter() {
 
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 3);
+
+    // Assert block range
+    let _ = contract.goodbye().from(from).send().await.unwrap();
+
+    // Test Range Error
+    let latest = provider.get_block_number().await.unwrap();
+    let tracer = TraceFilter {
+        from_block: Some(latest),
+        to_block: Some(latest + 301),
+        from_address: vec![],
+        to_address: vec![],
+        mode: TraceFilterMode::Union,
+        after: None,
+        count: None,
+    };
+
+    let traces = api.trace_filter(tracer).await;
+    assert!(traces.is_err());
 }

@@ -2058,9 +2058,14 @@ impl Backend {
     ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
         let matcher = filter.matcher();
         let start = filter.from_block.unwrap_or(0);
-        let end = if let Some(end) = filter.to_block { end } else { self.best_number() };
+        let end = filter.to_block.unwrap_or(self.best_number());
 
-        // TODO: define limits
+        let dist = end.saturating_sub(start);
+        if dist > 300 {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "block range too large, currently limited to 300".to_string(),
+            )));
+        }
 
         let mut trace_tasks = vec![];
         for num in start..=end {
