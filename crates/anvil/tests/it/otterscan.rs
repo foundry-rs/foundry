@@ -331,6 +331,7 @@ async fn ots_get_block_details() {
 
     let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100));
     let tx = WithOtherFields::new(tx);
+    provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     let result = api.ots_get_block_details(1.into()).await.unwrap();
 
