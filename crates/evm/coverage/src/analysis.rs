@@ -38,7 +38,7 @@ impl<'a> ContractVisitor<'a> {
                     self.visit_function_definition(node)?;
                 }
                 NodeType::ModifierDefinition => {
-                    self.visit_modifier_definition(node)?;
+                    self.visit_modifier_or_yul_fn_definition(node)?;
                 }
                 _ => {}
             }
@@ -70,7 +70,7 @@ impl<'a> ContractVisitor<'a> {
         }
     }
 
-    fn visit_modifier_definition(&mut self, node: &Node) -> eyre::Result<()> {
+    fn visit_modifier_or_yul_fn_definition(&mut self, node: &Node) -> eyre::Result<()> {
         let name: String =
             node.attribute("name").ok_or_else(|| eyre::eyre!("Modifier has no name"))?;
 
@@ -98,7 +98,6 @@ impl<'a> ContractVisitor<'a> {
     }
 
     fn visit_statement(&mut self, node: &Node) -> eyre::Result<()> {
-        // TODO: YulFunctionDefinition
         match node.node_type {
             // Blocks
             NodeType::Block | NodeType::UncheckedBlock | NodeType::YulBlock => {
@@ -382,6 +381,7 @@ impl<'a> ContractVisitor<'a> {
                 }
                 Ok(())
             }
+            NodeType::YulFunctionDefinition => self.visit_modifier_or_yul_fn_definition(node),
             _ => {
                 warn!("unexpected node type, expected a statement: {:?}", node.node_type);
                 Ok(())

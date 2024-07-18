@@ -751,6 +751,23 @@ contract Foo {
 
         return (x, y, z);
     }
+
+    function inlineFunction() public returns (uint256) {
+        uint256 result;
+        assembly {
+            function sum(a, b) -> c {
+                c := add(a, b)
+            }
+
+            function multiply(a, b) -> c {
+                for { let i := 0 } lt(i, b) { i := add(i, 1) } { c := add(c, a) }
+            }
+
+            result := sum(2, 3)
+            result := multiply(result, 5)
+        }
+        return result;
+    }
 }
     "#,
     )
@@ -771,6 +788,7 @@ contract FooTest is DSTest {
         foo.yulForLoop(2);
         foo.hello();
         foo.readDynamicArrayLength();
+        foo.inlineFunction();
     }
 }
     "#,
@@ -782,8 +800,8 @@ contract FooTest is DSTest {
 ...
 | File        | % Lines         | % Statements    | % Branches    | % Funcs       |
 |-------------|-----------------|-----------------|---------------|---------------|
-| src/Foo.sol | 100.00% (17/17) | 100.00% (30/30) | 100.00% (1/1) | 100.00% (4/4) |
-| Total       | 100.00% (17/17) | 100.00% (30/30) | 100.00% (1/1) | 100.00% (4/4) |
+| src/Foo.sol | 100.00% (23/23) | 100.00% (40/40) | 100.00% (1/1) | 100.00% (7/7) |
+| Total       | 100.00% (23/23) | 100.00% (40/40) | 100.00% (1/1) | 100.00% (7/7) |
 
 "#]],
     );
