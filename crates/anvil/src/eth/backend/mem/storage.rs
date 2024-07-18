@@ -73,7 +73,7 @@ impl InMemoryBlockStates {
         Self {
             states: Default::default(),
             on_disk_states: Default::default(),
-            in_memory_limit: in_memory_limit,
+            in_memory_limit,
             min_in_memory_limit: in_memory_limit.min(MIN_HISTORY_LIMIT),
             max_on_disk_limit: on_disk_limit,
             oldest_on_disk: Default::default(),
