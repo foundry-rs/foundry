@@ -2080,18 +2080,28 @@ impl Backend {
 
         // Execute tasks and filter traces
         let traces = futures::future::try_join_all(trace_tasks).await?;
-        let filtered_traces = traces
-            .into_iter()
-            .flatten()
-            .filter(|trace| match &trace.trace.action {
+        let filtered_traces =
+            traces.into_iter().flatten().filter(|trace| match &trace.trace.action {
                 Call(call) => matcher.matches(call.from, Some(call.to)),
                 Create(create) => matcher.matches(create.from, None),
                 Selfdestruct(self_destruct) => {
                     matcher.matches(self_destruct.address, Some(self_destruct.refund_address))
                 }
                 Reward(reward) => matcher.matches(reward.author, None),
-            })
-            .collect();
+            });
+
+        // Apply after and count
+        let filtered_traces: Vec<_> = if let Some(after) = filter.after {
+            filtered_traces.skip(after as usize).collect()
+        } else {
+            filtered_traces.collect()
+        };
+
+        let filtered_traces: Vec<_> = if let Some(count) = filter.count {
+            filtered_traces.into_iter().take(count as usize).collect()
+        } else {
+            filtered_traces
+        };
 
         Ok(filtered_traces)
     }

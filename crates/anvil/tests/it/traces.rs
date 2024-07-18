@@ -837,4 +837,24 @@ async fn test_trace_filter() {
 
     let traces = api.trace_filter(tracer).await;
     assert!(traces.is_err());
+
+    // Test after and count
+    let tracer = TraceFilter {
+        from_block: Some(provider.get_block_number().await.unwrap()),
+        to_block: None,
+        from_address: vec![],
+        to_address: vec![],
+        mode: TraceFilterMode::Union,
+        after: Some(3),
+        count: Some(5),
+    };
+
+    for i in 0..=10 {
+        let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    let traces = api.trace_filter(tracer).await.unwrap();
+    assert_eq!(traces.len(), 5);
 }
