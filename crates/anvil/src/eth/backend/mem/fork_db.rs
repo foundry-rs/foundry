@@ -1,7 +1,7 @@
 use crate::{
     eth::backend::db::{
         Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
-        SerializableState, StateDb,
+        SerializableState, SerializableTransaction, StateDb,
     },
     revm::primitives::AccountInfo,
 };
@@ -37,6 +37,7 @@ impl Db for ForkedDatabase {
         at: BlockEnv,
         best_number: U64,
         blocks: Vec<SerializableBlock>,
+        transactions: Vec<SerializableTransaction>,
     ) -> DatabaseResult<Option<SerializableState>> {
         let mut db = self.database().clone();
         let accounts = self
@@ -66,6 +67,7 @@ impl Db for ForkedDatabase {
             accounts,
             best_block_number: Some(best_number),
             blocks,
+            transactions,
         }))
     }
 
