@@ -907,7 +907,7 @@ impl Config {
     #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
         if self.prague {
-            return SpecId::PRAGUE
+            return SpecId::PRAGUE_EOF
         }
         evm_spec_id(&self.evm_version)
     }

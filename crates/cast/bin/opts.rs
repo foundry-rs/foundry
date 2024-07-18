@@ -259,18 +259,28 @@ pub enum CastSubcommand {
     },
 
     /// RLP encodes hex data, or an array of hex data.
+    ///
+    /// Accepts a hex-encoded string, or an array of hex-encoded strings.
+    /// Can be arbitrarily recursive.
+    ///
+    /// Examples:
+    /// - `cast to-rlp "[]"` -> `0xc0`
+    /// - `cast to-rlp "0x22"` -> `0x22`
+    /// - `cast to-rlp "[\"0x61\"]"` -> `0xc161`
+    /// - `cast to-rlp "[\"0xf1\", \"f2\"]"` -> `0xc481f181f2`
     #[command(visible_aliases = &["--to-rlp"])]
     ToRlp {
         /// The value to convert.
+        ///
+        /// This is a hex-encoded string, or an array of hex-encoded strings.
+        /// Can be arbitrarily recursive.
         value: Option<String>,
     },
 
-    /// Decodes RLP encoded data.
-    ///
-    /// Input must be hexadecimal.
+    /// Decodes RLP hex-encoded data.
     #[command(visible_aliases = &["--from-rlp"])]
     FromRlp {
-        /// The value to convert.
+        /// The RLP hex-encoded data.
         value: Option<String>,
     },
 

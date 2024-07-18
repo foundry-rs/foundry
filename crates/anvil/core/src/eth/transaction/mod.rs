@@ -7,7 +7,9 @@ use alloy_consensus::{
     TxEnvelope, TxLegacy, TxReceipt, TxType,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
-use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256, U64};
+use alloy_primitives::{
+    Address, Bloom, Bytes, Log, Parity, Signature, TxHash, TxKind, B256, U256, U64,
+};
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
     request::TransactionRequest, trace::otterscan::OtsReceipt, AccessList, AnyTransactionReceipt,
@@ -24,13 +26,6 @@ use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
 
 pub mod optimism;
-
-/// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
-#[cfg(feature = "impersonated-tx")]
-pub fn impersonated_signature() -> Signature {
-    Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false)
-        .unwrap()
-}
 
 /// Converts a [TransactionRequest] into a [TypedTransactionRequest].
 /// Should be removed once the call builder abstraction for providers is in place.
@@ -203,16 +198,23 @@ impl MaybeImpersonatedTransaction {
         self.transaction.recover()
     }
 
+    /// Returns whether the transaction is impersonated
+    ///
+    /// Note: this is feature gated so it does not conflict with the `Deref`ed
+    /// [TypedTransaction::hash] function by default.
+    #[cfg(feature = "impersonated-tx")]
+    pub fn is_impersonated(&self) -> bool {
+        self.impersonated_sender.is_some()
+    }
+
     /// Returns the hash of the transaction
     ///
     /// Note: this is feature gated so it does not conflict with the `Deref`ed
     /// [TypedTransaction::hash] function by default.
     #[cfg(feature = "impersonated-tx")]
     pub fn hash(&self) -> B256 {
-        if self.transaction.is_impersonated() {
-            if let Some(sender) = self.impersonated_sender {
-                return self.transaction.impersonated_hash(sender);
-            }
+        if let Some(sender) = self.impersonated_sender {
+            return self.transaction.impersonated_hash(sender)
         }
         self.transaction.hash()
     }
@@ -288,7 +290,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             signature: Some(RpcSignature {
                 r: t.signature().r(),
                 s: t.signature().s(),
-                v: U256::from(t.signature().v().y_parity_byte()),
+                v: U256::from(t.signature().v().to_u64()),
                 y_parity: None,
             }),
             access_list: None,
@@ -296,6 +298,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
             other: Default::default(),
+            authorization_list: None,
         },
         TypedTransaction::EIP2930(t) => RpcTransaction {
             hash,
@@ -315,7 +318,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             signature: Some(RpcSignature {
                 r: t.signature().r(),
                 s: t.signature().s(),
-                v: U256::from(t.signature().v().y_parity_byte()),
+                v: U256::from(t.signature().v().to_u64()),
                 y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
             }),
             access_list: Some(t.tx().access_list.clone()),
@@ -323,6 +326,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
             other: Default::default(),
+            authorization_list: None,
         },
         TypedTransaction::EIP1559(t) => RpcTransaction {
             hash,
@@ -342,7 +346,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             signature: Some(RpcSignature {
                 r: t.signature().r(),
                 s: t.signature().s(),
-                v: U256::from(t.signature().v().y_parity_byte()),
+                v: U256::from(t.signature().v().to_u64()),
                 y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
             }),
             access_list: Some(t.tx().access_list.clone()),
@@ -350,6 +354,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
             other: Default::default(),
+            authorization_list: None,
         },
         TypedTransaction::EIP4844(t) => RpcTransaction {
             hash,
@@ -369,7 +374,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             signature: Some(RpcSignature {
                 r: t.signature().r(),
                 s: t.signature().s(),
-                v: U256::from(t.signature().v().y_parity_byte()),
+                v: U256::from(t.signature().v().to_u64()),
                 y_parity: Some(alloy_rpc_types::Parity::from(t.signature().v().y_parity())),
             }),
             access_list: Some(t.tx().tx().access_list.clone()),
@@ -377,6 +382,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             max_fee_per_blob_gas: Some(t.tx().tx().max_fee_per_blob_gas),
             blob_versioned_hashes: Some(t.tx().tx().blob_versioned_hashes.clone()),
             other: Default::default(),
+            authorization_list: None,
         },
         TypedTransaction::Deposit(t) => RpcTransaction {
             hash,
@@ -399,6 +405,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
             other: Default::default(),
+            authorization_list: None,
         },
     }
 }
@@ -494,7 +501,7 @@ impl PendingTransaction {
                     gas_price: U256::from(*gas_price),
                     gas_priority_fee: None,
                     gas_limit: *gas_limit as u64,
-                    access_list: access_list.flattened(),
+                    access_list: access_list.clone().into(),
                     ..Default::default()
                 }
             }
@@ -521,7 +528,7 @@ impl PendingTransaction {
                     gas_price: U256::from(*max_fee_per_gas),
                     gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
                     gas_limit: *gas_limit as u64,
-                    access_list: access_list.flattened(),
+                    access_list: access_list.clone().into(),
                     ..Default::default()
                 }
             }
@@ -552,7 +559,7 @@ impl PendingTransaction {
                     max_fee_per_blob_gas: Some(U256::from(*max_fee_per_blob_gas)),
                     blob_hashes: blob_versioned_hashes.clone(),
                     gas_limit: *gas_limit as u64,
-                    access_list: access_list.flattened(),
+                    access_list: access_list.clone().into(),
                     ..Default::default()
                 }
             }
@@ -832,12 +839,6 @@ impl TypedTransaction {
         }
     }
 
-    /// Returns true if the transaction was impersonated (using the impersonate Signature)
-    #[cfg(feature = "impersonated-tx")]
-    pub fn is_impersonated(&self) -> bool {
-        self.signature() == impersonated_signature()
-    }
-
     /// Returns the hash if the transaction is impersonated (using a fake signature)
     ///
     /// This appends the `address` before hashing it
@@ -886,7 +887,7 @@ impl TypedTransaction {
             Self::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
                 B256::with_last_byte(1),
-                false,
+                Parity::Parity(false),
             )
             .unwrap(),
         }
@@ -1463,6 +1464,7 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
                 blob_gas_used,
                 state_root,
                 inner: AnyReceiptEnvelope { inner: receipt_with_bloom, r#type },
+                authorization_list,
             },
         other,
     } = receipt;
@@ -1480,6 +1482,7 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
         blob_gas_price,
         blob_gas_used,
         state_root,
+        authorization_list,
         inner: match r#type {
             0x00 => TypedReceipt::Legacy(receipt_with_bloom),
             0x01 => TypedReceipt::EIP2930(receipt_with_bloom),

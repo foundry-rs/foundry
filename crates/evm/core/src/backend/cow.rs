@@ -266,7 +266,7 @@ impl<'a> DatabaseRef for CowBackend<'a> {
         DatabaseRef::storage_ref(self.backend.as_ref(), address, index)
     }
 
-    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash_ref(self.backend.as_ref(), number)
     }
 }
@@ -286,7 +286,7 @@ impl<'a> Database for CowBackend<'a> {
         DatabaseRef::storage_ref(self, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash_ref(self, number)
     }
 }

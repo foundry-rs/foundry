@@ -126,10 +126,8 @@ impl<'a> ContractVisitor<'a> {
                 });
                 Ok(())
             }
-
             // Skip placeholder statements as they are never referenced in source maps.
             NodeType::PlaceholderStatement => Ok(()),
-
             // Return with eventual subcall
             NodeType::Return => {
                 self.push_item(CoverageItem {
@@ -142,7 +140,6 @@ impl<'a> ContractVisitor<'a> {
                 }
                 Ok(())
             }
-
             // Variable declaration
             NodeType::VariableDeclarationStatement => {
                 self.push_item(CoverageItem {
@@ -160,7 +157,7 @@ impl<'a> ContractVisitor<'a> {
                 self.visit_expression(
                     &node
                         .attribute("condition")
-                        .ok_or_else(|| eyre::eyre!("if statement had no condition"))?,
+                        .ok_or_else(|| eyre::eyre!("while statement had no condition"))?,
                 )?;
 
                 let body = node
@@ -199,7 +196,7 @@ impl<'a> ContractVisitor<'a> {
                 self.visit_expression(
                     &node
                         .attribute("condition")
-                        .ok_or_else(|| eyre::eyre!("while statement had no condition"))?,
+                        .ok_or_else(|| eyre::eyre!("if statement had no condition"))?,
                 )?;
 
                 let true_body: Node = node
@@ -300,15 +297,44 @@ impl<'a> ContractVisitor<'a> {
 
                 Ok(())
             }
-            // Try-catch statement
+            // Try-catch statement. Coverage is reported for expression, for each clause and their
+            // bodies (if any).
             NodeType::TryStatement => {
-                // TODO: Clauses
-                // TODO: This is branching, right?
                 self.visit_expression(
                     &node
                         .attribute("externalCall")
                         .ok_or_else(|| eyre::eyre!("try statement had no call"))?,
-                )
+                )?;
+
+                // Add coverage for each Try-catch clause.
+                for clause in node
+                    .attribute::<Vec<Node>>("clauses")
+                    .ok_or_else(|| eyre::eyre!("try statement had no clause"))?
+                {
+                    // Add coverage for clause statement.
+                    self.push_item(CoverageItem {
+                        kind: CoverageItemKind::Statement,
+                        loc: self.source_location_for(&clause.src),
+                        hits: 0,
+                    });
+                    self.visit_statement(&clause)?;
+
+                    // Add coverage for clause body only if it is not empty.
+                    if let Some(block) = clause.attribute::<Node>("block") {
+                        let statements: Vec<Node> =
+                            block.attribute("statements").unwrap_or_default();
+                        if !statements.is_empty() {
+                            self.push_item(CoverageItem {
+                                kind: CoverageItemKind::Statement,
+                                loc: self.source_location_for(&block.src),
+                                hits: 0,
+                            });
+                            self.visit_block(&block)?;
+                        }
+                    }
+                }
+
+                Ok(())
             }
             _ => {
                 warn!("unexpected node type, expected a statement: {:?}", node.node_type);

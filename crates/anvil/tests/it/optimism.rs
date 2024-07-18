@@ -3,7 +3,7 @@
 use crate::utils::http_provider_with_signer;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{b256, U128, U256};
+use alloy_primitives::{b256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{optimism::OptimismTransactionFields, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -29,7 +29,7 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
             source_hash: Some(b256!(
                 "0000000000000000000000000000000000000000000000000000000000000000"
             )),
-            mint: Some(U128::from(0)),
+            mint: Some(0),
             is_system_tx: Some(true),
         }
         .into(),
@@ -67,7 +67,7 @@ async fn test_send_value_deposit_transaction() {
             source_hash: Some(b256!(
                 "0000000000000000000000000000000000000000000000000000000000000000"
             )),
-            mint: Some(U128::from(0)),
+            mint: Some(0),
             is_system_tx: Some(true),
         }
         .into(),
@@ -119,7 +119,7 @@ async fn test_send_value_raw_deposit_transaction() {
             source_hash: Some(b256!(
                 "0000000000000000000000000000000000000000000000000000000000000000"
             )),
-            mint: Some(U128::from(0)),
+            mint: Some(0),
             is_system_tx: Some(true),
         }
         .into(),

@@ -35,7 +35,7 @@ use alloy_consensus::{transaction::eip4844::TxEip4844Variant, TxEnvelope};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::eip2718::Decodable2718;
-use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, B64, U256, U64};
+use alloy_primitives::{Address, Bytes, Parity, TxHash, TxKind, B256, B64, U256, U64};
 use alloy_rpc_types::{
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
@@ -52,6 +52,7 @@ use alloy_rpc_types::{
     Transaction,
 };
 use alloy_serde::WithOtherFields;
+use alloy_signer::Signature;
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
@@ -448,7 +449,7 @@ impl EthApi {
                     alloy_primitives::Signature::from_scalars_and_parity(
                         B256::with_last_byte(1),
                         B256::with_last_byte(1),
-                        false,
+                        Parity::Parity(false),
                     )
                     .unwrap();
                 return build_typed_transaction(request, nil_signature)
@@ -937,7 +938,7 @@ impl EthApi {
 
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
-            let bypass_signature = self.backend.cheats().bypass_signature();
+            let bypass_signature = self.impersonated_signature(&request);
             let transaction = sign::build_typed_transaction(request, bypass_signature)?;
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
@@ -2084,7 +2085,7 @@ impl EthApi {
 
         let request = self.build_typed_tx_request(request, nonce)?;
 
-        let bypass_signature = self.backend.cheats().bypass_signature();
+        let bypass_signature = self.impersonated_signature(&request);
         let transaction = sign::build_typed_transaction(request, bypass_signature)?;
 
         self.ensure_typed_transaction_supported(&transaction)?;
@@ -2581,6 +2582,28 @@ impl EthApi {
         self.backend.cheats().is_impersonated(addr)
     }
 
+    /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
+    fn impersonated_signature(&self, request: &TypedTransactionRequest) -> Signature {
+        match request {
+            // Only the legacy transaction type requires v to be in {27, 28}, thus
+            // requiring the use of Parity::NonEip155
+            TypedTransactionRequest::Legacy(_) => Signature::from_scalars_and_parity(
+                B256::with_last_byte(1),
+                B256::with_last_byte(1),
+                Parity::NonEip155(false),
+            ),
+            TypedTransactionRequest::EIP2930(_) |
+            TypedTransactionRequest::EIP1559(_) |
+            TypedTransactionRequest::EIP4844(_) |
+            TypedTransactionRequest::Deposit(_) => Signature::from_scalars_and_parity(
+                B256::with_last_byte(1),
+                B256::with_last_byte(1),
+                Parity::Parity(false),
+            ),
+        }
+        .unwrap()
+    }
+
     /// Returns the nonce of the `address` depending on the `block_number`
     async fn get_transaction_count(
         &self,
@@ -2743,7 +2766,9 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::OpcodeNotFound |
                 InstructionResult::CallNotAllowedInsideStatic |
                 InstructionResult::StateChangeDuringStaticCall |
-                InstructionResult::InvalidEFOpcode |
+                InstructionResult::InvalidExtDelegateCallTarget |
+                InstructionResult::InvalidEXTCALLTarget |
+                InstructionResult::InvalidFEOpcode |
                 InstructionResult::InvalidJump |
                 InstructionResult::NotActivated |
                 InstructionResult::StackUnderflow |
