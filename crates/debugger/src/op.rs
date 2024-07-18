@@ -18,23 +18,23 @@ impl OpcodeParam {
         match op {
             // Handle special cases requiring immediate bytes
             opcode::DUPN => immediate
-                .and_then(|i| i.get(0).copied())
-                .map(|i| vec![OpcodeParam { name: "dup_value", index: i as usize }]),
+                .and_then(|i| i.first().copied())
+                .map(|i| vec![Self { name: "dup_value", index: i as usize }]),
             opcode::SWAPN => immediate.and_then(|i| {
-                i.get(0).map(|i| {
+                i.first().map(|i| {
                     vec![
-                        OpcodeParam { name: "a", index: 1 },
-                        OpcodeParam { name: "swap_value", index: *i as usize },
+                        Self { name: "a", index: 1 },
+                        Self { name: "swap_value", index: *i as usize },
                     ]
                 })
             }),
             opcode::EXCHANGE => immediate.and_then(|i| {
-                i.get(0).map(|imm| {
-                    let n = imm >> 4 + 1;
-                    let m = imm & 0xf + 1;
+                i.first().map(|imm| {
+                    let n = (imm >> 4) + 1;
+                    let m = (imm & 0xf) + 1;
                     vec![
-                        OpcodeParam { name: "value1", index: n as usize },
-                        OpcodeParam { name: "value2", index: m as usize },
+                        Self { name: "value1", index: n as usize },
+                        Self { name: "value2", index: m as usize },
                     ]
                 })
             }),

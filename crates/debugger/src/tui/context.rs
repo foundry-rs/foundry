@@ -374,9 +374,7 @@ fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
 
     if step.pc != prev.pc + 1 + immediate_len {
         true
-    } else if step.code_section_idx != prev.code_section_idx {
-        true
     } else {
-        false
+        step.code_section_idx != prev.code_section_idx
     }
 }
