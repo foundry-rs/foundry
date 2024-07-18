@@ -25,8 +25,8 @@ contract Issue8168Test is DSTest {
         uint256 initial_fork2_ts = block.timestamp;
         vm.warp(block.timestamp + 2000);
         vm.roll(block.number + 200);
-        assertEq(block.timestamp, initial_fork1_ts + 2000);
-        assertEq(block.number, initial_fork1_number + 200);
+        assertEq(block.timestamp, initial_fork2_ts + 2000);
+        assertEq(block.number, initial_fork2_number + 200);
 
         vm.selectFork(fork1);
         assertEq(block.timestamp, initial_fork1_ts + 1000);
