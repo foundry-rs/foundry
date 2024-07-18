@@ -3544,6 +3544,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.5.0"
+source = "git+https://github.com/foundry-rs/block-explorers?rev=61beba3#61beba368e00d7ad9b25cd9ebbb1bb102855463b"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -3708,7 +3709,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.9.0"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea06d58fce261a37f7c90ec4d2f14af729825bf7abbda14b64f8d728bc701480"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3744,7 +3747,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.9.0"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0a0b1e385a5f9d88b0d6c9c8c1a5d89e33e5465e62096034abcd0dfd48a8618"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3752,7 +3757,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.9.0"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ff1e9120d86202a81a7729f33fabfc77c12beca7233765d36c49ebcd8da100b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3774,7 +3781,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.9.0"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b88e8a09b7689253885c5171512987d6dea96ac328b2384f6a0233a332ec8d9"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3787,7 +3796,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.9.0"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6ad521e38281f70e99a5487883179b4bfb74c855abebe5d5390d8e6d993503a"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -7107,6 +7118,7 @@ dependencies = [
 [[package]]
 name = "revm-inspectors"
 version = "0.5.1"
+source = "git+https://github.com/paradigmxyz/revm-inspectors?rev=085f8df#085f8df30deee4eb2ec4b431bbb2cafc0a2bb971"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",

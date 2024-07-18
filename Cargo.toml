@@ -158,7 +158,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.5.0", default-features = false }
-foundry-compilers = { version = "0.9.0", default-features = false }
+foundry-compilers = { version = "0.10.0", default-features = false }
 foundry-fork-db = "0.2"
 solang-parser = "=0.3.3"
 
@@ -265,6 +265,5 @@ soldeer = "0.2.19"
 proptest = "1"
 
 [patch.crates-io]
-revm-inspectors = { path = "../evm-inspectors" }
-foundry-compilers = { path = "../compilers/crates/compilers" }
-foundry-block-explorers = { path = "../block-explorers/crates/block-explorers" }
+revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", rev = "085f8df" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers", rev = "61beba3" }
