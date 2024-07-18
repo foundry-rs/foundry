@@ -534,6 +534,29 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn test_init_state_limits() {
+        let mut storage = InMemoryBlockStates::default();
+        assert_eq!(storage.in_memory_limit, DEFAULT_HISTORY_LIMIT);
+        assert_eq!(storage.min_in_memory_limit, MIN_HISTORY_LIMIT);
+        assert_eq!(storage.max_on_disk_limit, MAX_ON_DISK_HISTORY_LIMIT);
+
+        storage = storage.memory_only();
+        assert!(storage.is_memory_only());
+
+        storage = InMemoryBlockStates::new(1, 0);
+        assert!(storage.is_memory_only());
+        assert_eq!(storage.in_memory_limit, 1);
+        assert_eq!(storage.min_in_memory_limit, 1);
+        assert_eq!(storage.max_on_disk_limit, 0);
+
+        storage = InMemoryBlockStates::new(1, 2);
+        assert!(!storage.is_memory_only());
+        assert_eq!(storage.in_memory_limit, 1);
+        assert_eq!(storage.min_in_memory_limit, 1);
+        assert_eq!(storage.max_on_disk_limit, 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cached_state() {
         let mut storage = InMemoryBlockStates::new(1, 1);
         let one = B256::from(U256::from(1));

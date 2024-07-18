@@ -786,6 +786,12 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_max_persisted_states_config() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--max-persisted-states", "500"]);
+        assert_eq!(args.max_persisted_states, (Some(500)));
+    }
+
+    #[test]
     fn can_parse_disable_block_gas_limit() {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--disable-block-gas-limit"]);
         assert!(args.evm_opts.disable_block_gas_limit);
