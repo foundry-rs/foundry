@@ -263,3 +263,8 @@ tower-http = "0.5"
 soldeer = "0.2.19"
 
 proptest = "1"
+
+[patch.crates-io]
+revm-inspectors = { path = "../evm-inspectors" }
+foundry-compilers = { path = "../compilers/crates/compilers" }
+foundry-block-explorers = { path = "../block-explorers/crates/block-explorers" }

@@ -11,6 +11,7 @@ use foundry_compilers::{
         Compiler,
     },
     report::{BasicStdoutReporter, NoReporter, Report},
+    solc::SolcSettings,
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
 use num_format::{Locale, ToFormattedString};
@@ -405,7 +406,10 @@ pub fn etherscan_project(
     let compiler = SolcCompiler::Specific(solc);
 
     Ok(ProjectBuilder::<SolcCompiler>::default()
-        .settings(SolcConfig::builder().settings(settings).build().settings)
+        .settings(SolcSettings {
+            settings: SolcConfig::builder().settings(settings).build().settings,
+            ..Default::default()
+        })
         .paths(paths)
         .ephemeral()
         .no_artifacts()

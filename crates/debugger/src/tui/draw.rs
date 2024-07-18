@@ -377,10 +377,11 @@ impl DebuggerContext<'_> {
             .collect::<Vec<_>>();
 
         let title = format!(
-            "Address: {} | PC: {} | Gas used in call: {}",
+            "Address: {} | PC: {} | Gas used in call: {} | Code section: {}",
             self.address(),
             self.current_step().pc,
             self.current_step().gas_used,
+            self.current_step().code_section_idx,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)

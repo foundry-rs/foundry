@@ -3544,8 +3544,6 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ecb3c05dbf9454cf58c6c440f84c5d2c8f4e94edb4b16f87cfad9e4d818065a"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -3711,8 +3709,6 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f506a672502997fbc778f1d30eb4a06a58654049ccc6cd0bdb93a785175f682"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3749,8 +3745,6 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c352516419487416dde3250dbb56b576e0605429eb7b7b16f26849d924ee519"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3759,8 +3753,6 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49104d442d6f0266c07edbdd23baa9a1db0f01d04bfdc69b6ac060a57e6f3e27"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3772,6 +3764,7 @@ dependencies = [
  "semver 1.0.23",
  "serde",
  "serde_json",
+ "serde_repr",
  "thiserror",
  "tokio",
  "tracing",
@@ -3782,22 +3775,19 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f012d22d0690ad6b6bbcc8d70467325212ddea3457e8efda6affe17fb5ae938"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-core",
  "path-slash",
+ "semver 1.0.23",
  "serde",
 ]
 
 [[package]]
 name = "foundry-compilers-core"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23760fd6df67a9878ed0fe91e024bf1ff3b7358369cf54129539a8493177c6e7"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -7117,8 +7107,6 @@ dependencies = [
 [[package]]
 name = "revm-inspectors"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d485a7ccfbbcaf2d0c08c3d866dae279c6f71d7357862cbea637f23f27b7b695"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",

@@ -21,7 +21,7 @@ use foundry_compilers::{
     artifacts::{
         output_selection::{ContractOutputSelection, OutputSelection},
         remappings::{RelativeRemapping, Remapping},
-        serde_helpers, BytecodeHash, DebuggingSettings, EvmVersion, Libraries,
+        serde_helpers, BytecodeHash, DebuggingSettings, EofVersion, EvmVersion, Libraries,
         ModelCheckerSettings, ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings,
         Settings, SettingsMetadata, Severity,
     },
@@ -33,6 +33,7 @@ use foundry_compilers::{
         Compiler,
     },
     error::SolcError,
+    solc::{CliSettings, SolcSettings},
     ConfigurableArtifacts, Project, ProjectPathsConfig, VyperLanguage,
 };
 use inflector::Inflector;
@@ -442,6 +443,14 @@ pub struct Config {
 
     /// Whether `failed()` should be invoked to check if the test have failed.
     pub legacy_assertions: bool,
+
+    /// Optional additional CLI arguments to pass to `solc` binary.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_args: Vec<String>,
+
+    /// Optional EOF version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eof_version: Option<EofVersion>,
 
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
@@ -1277,7 +1286,7 @@ impl Config {
     /// - all libraries
     /// - the optimizer (including details, if configured)
     /// - evm version
-    pub fn solc_settings(&self) -> Result<Settings, SolcError> {
+    pub fn solc_settings(&self) -> Result<SolcSettings, SolcError> {
         // By default if no targets are specifically selected the model checker uses all targets.
         // This might be too much here, so only enable assertion checks.
         // If users wish to enable all options they need to do so explicitly.
@@ -1310,6 +1319,7 @@ impl Config {
             remappings: Vec::new(),
             // Set with `with_extra_output` below.
             output_selection: Default::default(),
+            eof_version: self.eof_version,
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection());
 
@@ -1318,7 +1328,10 @@ impl Config {
             settings = settings.with_ast();
         }
 
-        Ok(settings)
+        let cli_settings =
+            CliSettings { extra_args: self.extra_args.clone(), ..Default::default() };
+
+        Ok(SolcSettings { settings, cli_settings })
     }
 
     /// Returns the configured [VyperSettings] that includes:
@@ -2133,6 +2146,8 @@ impl Default for Config {
             assertions_revert: true,
             legacy_assertions: false,
             warnings: vec![],
+            extra_args: vec![],
+            eof_version: None,
             _non_exhaustive: (),
         }
     }
