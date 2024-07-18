@@ -533,8 +533,8 @@ mod tests {
         assert_eq!(storage.in_memory_limit, DEFAULT_HISTORY_LIMIT * 3);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_init_state_limits() {
+    #[test]
+    fn test_init_state_limits() {
         let mut storage = InMemoryBlockStates::default();
         assert_eq!(storage.in_memory_limit, DEFAULT_HISTORY_LIMIT);
         assert_eq!(storage.min_in_memory_limit, MIN_HISTORY_LIMIT);
