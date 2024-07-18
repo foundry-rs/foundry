@@ -1024,6 +1024,16 @@ impl DatabaseExt for Backend {
             return Ok(());
         }
 
+        // Update block number and timestamp of active fork (if any) with current env values,
+        // in order to preserve values changed by using `roll` and `warp` cheatcodes.
+        if let Some(active_fork_id) = self.active_fork_id() {
+            self.forks.update_block(
+                self.ensure_fork_id(active_fork_id).cloned()?,
+                env.block.number,
+                env.block.timestamp,
+            )?;
+        }
+
         let fork_id = self.ensure_fork_id(id).cloned()?;
         let idx = self.inner.ensure_fork_index(&fork_id)?;
         let fork_env = self
@@ -1100,7 +1110,7 @@ impl DatabaseExt for Backend {
         }
 
         self.active_fork_ids = Some((id, idx));
-        // update the environment accordingly
+        // Update current environment with environment of newly selected fork.
         update_current_env_with_fork_env(env, fork_env);
 
         Ok(())
