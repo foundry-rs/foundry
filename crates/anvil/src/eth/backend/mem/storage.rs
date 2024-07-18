@@ -558,7 +558,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cached_state() {
-        let mut storage = InMemoryBlockStates::new(1, 1);
+        let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
         let one = B256::from(U256::from(1));
         let two = B256::from(U256::from(2));
 
@@ -584,7 +584,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn can_decrease_state_cache_size() {
         let limit = 15;
-        let mut storage = InMemoryBlockStates::new(limit, limit);
+        let mut storage = InMemoryBlockStates::new(limit, MAX_ON_DISK_HISTORY_LIMIT);
 
         let num_states = 30;
         for idx in 0..num_states {
