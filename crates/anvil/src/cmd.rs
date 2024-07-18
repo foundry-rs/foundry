@@ -159,8 +159,16 @@ pub struct NodeArgs {
 
     /// Don't keep full chain history.
     /// If a number argument is specified, at most this number of states is kept in memory.
+    ///
+    /// If enabled, no state will be persisted on disk, so `max_persisted_states` will be 0.
     #[arg(long)]
     pub prune_history: Option<Option<usize>>,
+
+    /// Max number of states to persist on disk.
+    ///
+    /// Note that `prune_history` will overwrite `max_persisted_states` to 0.
+    #[arg(long)]
+    pub max_persisted_states: Option<usize>,
 
     /// Number of blocks with transactions to keep in memory.
     #[arg(long)]
@@ -237,6 +245,7 @@ impl NodeArgs {
             .set_pruned_history(self.prune_history)
             .with_init_state(self.load_state.or_else(|| self.state.and_then(|s| s.state)))
             .with_transaction_block_keeper(self.transaction_block_keeper)
+            .with_max_persisted_states(self.max_persisted_states)
             .with_optimism(self.evm_opts.optimism)
             .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
