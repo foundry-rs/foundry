@@ -34,6 +34,7 @@ use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
+use revm::primitives::Eof;
 use std::{
     borrow::Cow,
     io,
@@ -1989,6 +1990,12 @@ impl SimpleCast {
         let tx_hex = hex::decode(strip_0x(tx))?;
         let tx = TxEnvelope::decode_2718(&mut tx_hex.as_slice())?;
         Ok(tx)
+    }
+
+    pub fn decode_eof(eof: &str) -> Result<String> {
+        let eof_hex = hex::decode(strip_0x(eof))?;
+        let eof = Eof::decode(eof_hex.into())?;
+        Ok(pretty_eof(&eof)?)
     }
 }
 

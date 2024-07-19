@@ -38,7 +38,7 @@ ethers-contract-abigen = { workspace = true, features = ["providers"] }
 
 revm-inspectors.workspace = true
 
-comfy-table = "7"
+comfy-table.workspace = true
 eyre.workspace = true
 proptest.workspace = true
 rayon.workspace = true
