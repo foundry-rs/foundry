@@ -1,7 +1,7 @@
 //! In-memory blockchain storage
 use crate::eth::{
     backend::{
-        db::{MaybeFullDatabase, SerializableBlock, StateDb},
+        db::{MaybeFullDatabase, SerializableBlock, SerializableTransaction, StateDb},
         mem::cache::DiskStateCache,
     },
     error::BlockchainError,
@@ -334,6 +334,10 @@ impl BlockchainStorage {
         self.blocks.values().map(|block| block.clone().into()).collect()
     }
 
+    pub fn serialized_transactions(&self) -> Vec<SerializableTransaction> {
+        self.transactions.values().map(|tx: &MinedTransaction| tx.clone().into()).collect()
+    }
+
     /// Deserialize and add all blocks data to the backend storage
     pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
         for serializable_block in serializable_blocks.iter() {
@@ -342,6 +346,14 @@ impl BlockchainStorage {
             let block_number = block.header.number;
             self.blocks.insert(block_hash, block);
             self.hashes.insert(U64::from(block_number), block_hash);
+        }
+    }
+
+    /// Deserialize and add all blocks data to the backend storage
+    pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
+        for serializable_transaction in serializable_transactions.iter() {
+            let transaction: MinedTransaction = serializable_transaction.clone().into();
+            self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
     }
 }
@@ -613,7 +625,8 @@ mod tests {
         }
     }
 
-    // verifies that blocks in BlockchainStorage remain the same when dumped and reloaded
+    // verifies that blocks and transactions in BlockchainStorage remain the same when dumped and
+    // reloaded
     #[test]
     fn test_storage_dump_reload_cycle() {
         let mut dump_storage = BlockchainStorage::empty();
@@ -631,10 +644,12 @@ mod tests {
         dump_storage.blocks.insert(block_hash, block);
 
         let serialized_blocks = dump_storage.serialized_blocks();
+        let serialized_transactions = dump_storage.serialized_transactions();
 
         let mut load_storage = BlockchainStorage::empty();
 
         load_storage.load_blocks(serialized_blocks);
+        load_storage.load_transactions(serialized_transactions);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
         assert_eq!(loaded_block.header.gas_limit, partial_header.gas_limit);

@@ -169,7 +169,7 @@ pub enum TypedTransactionRequest {
 ///
 /// This is a helper that carries the `impersonated` sender so that the right hash
 /// [TypedTransaction::impersonated_hash] can be created.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MaybeImpersonatedTransaction {
     pub transaction: TypedTransaction,
     pub impersonated_sender: Option<Address>,
@@ -1110,7 +1110,7 @@ pub struct TransactionEssentials {
 }
 
 /// Represents all relevant information of an executed transaction
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransactionInfo {
     pub transaction_hash: B256,
     pub transaction_index: u64,
