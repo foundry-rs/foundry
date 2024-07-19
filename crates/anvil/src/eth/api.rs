@@ -31,11 +31,11 @@ use crate::{
     revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::{transaction::eip4844::TxEip4844Variant, TxEnvelope};
+use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, TxEnvelope};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::eip2718::Decodable2718;
-use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, B64, U256, U64};
+use alloy_primitives::{Address, Bytes, Parity, TxHash, TxKind, B256, B64, U256, U64};
 use alloy_rpc_types::{
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
@@ -43,6 +43,7 @@ use alloy_rpc_types::{
     request::TransactionRequest,
     state::StateOverride,
     trace::{
+        filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace,
     },
@@ -52,6 +53,7 @@ use alloy_rpc_types::{
     Transaction,
 };
 use alloy_serde::WithOtherFields;
+use alloy_signer::Signature;
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
@@ -153,6 +155,9 @@ impl EthApi {
         match request {
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
             EthRequest::Web3Sha3(content) => self.sha3(content).to_rpc_result(),
+            EthRequest::EthGetAccount(addr, block) => {
+                self.get_account(addr, block).await.to_rpc_result()
+            }
             EthRequest::EthGetBalance(addr, block) => {
                 self.balance(addr, block).await.to_rpc_result()
             }
@@ -291,6 +296,7 @@ impl EthApi {
             }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
+            EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
             }
@@ -448,7 +454,7 @@ impl EthApi {
                     alloy_primitives::Signature::from_scalars_and_parity(
                         B256::with_last_byte(1),
                         B256::with_last_byte(1),
-                        false,
+                        Parity::Parity(false),
                     )
                     .unwrap();
                 return build_typed_transaction(request, nil_signature)
@@ -653,6 +659,29 @@ impl EthApi {
         }
 
         self.backend.get_balance(address, Some(block_request)).await
+    }
+
+    /// Returns the ethereum account.
+    ///
+    /// Handler for ETH RPC call: `eth_getAccount`
+    pub async fn get_account(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+    ) -> Result<Account> {
+        node_info!("eth_getAccount");
+        let block_request = self.block_request(block_number).await?;
+
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(fork.get_account(address, number).await?)
+                }
+            }
+        }
+
+        self.backend.get_account_at_block(address, Some(block_request)).await
     }
 
     /// Returns content of the storage at given address.
@@ -937,7 +966,7 @@ impl EthApi {
 
         // if the sender is currently impersonated we need to "bypass" signing
         let pending_transaction = if self.is_impersonated(from) {
-            let bypass_signature = self.backend.cheats().bypass_signature();
+            let bypass_signature = self.impersonated_signature(&request);
             let transaction = sign::build_typed_transaction(request, bypass_signature)?;
             self.ensure_typed_transaction_supported(&transaction)?;
             trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
@@ -1555,6 +1584,17 @@ impl EthApi {
         node_info!("trace_block");
         self.backend.trace_block(block).await
     }
+
+    /// Returns filtered traces over blocks
+    ///
+    /// Handler for RPC call: `trace_filter`
+    pub async fn trace_filter(
+        &self,
+        filter: TraceFilter,
+    ) -> Result<Vec<LocalizedTransactionTrace>> {
+        node_info!("trace_filter");
+        self.backend.trace_filter(filter).await
+    }
 }
 
 // == impl EthApi anvil endpoints ==
@@ -2084,7 +2124,7 @@ impl EthApi {
 
         let request = self.build_typed_tx_request(request, nonce)?;
 
-        let bypass_signature = self.backend.cheats().bypass_signature();
+        let bypass_signature = self.impersonated_signature(&request);
         let transaction = sign::build_typed_transaction(request, bypass_signature)?;
 
         self.ensure_typed_transaction_supported(&transaction)?;
@@ -2581,6 +2621,28 @@ impl EthApi {
         self.backend.cheats().is_impersonated(addr)
     }
 
+    /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
+    fn impersonated_signature(&self, request: &TypedTransactionRequest) -> Signature {
+        match request {
+            // Only the legacy transaction type requires v to be in {27, 28}, thus
+            // requiring the use of Parity::NonEip155
+            TypedTransactionRequest::Legacy(_) => Signature::from_scalars_and_parity(
+                B256::with_last_byte(1),
+                B256::with_last_byte(1),
+                Parity::NonEip155(false),
+            ),
+            TypedTransactionRequest::EIP2930(_) |
+            TypedTransactionRequest::EIP1559(_) |
+            TypedTransactionRequest::EIP4844(_) |
+            TypedTransactionRequest::Deposit(_) => Signature::from_scalars_and_parity(
+                B256::with_last_byte(1),
+                B256::with_last_byte(1),
+                Parity::Parity(false),
+            ),
+        }
+        .unwrap()
+    }
+
     /// Returns the nonce of the `address` depending on the `block_number`
     async fn get_transaction_count(
         &self,
@@ -2743,7 +2805,9 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::OpcodeNotFound |
                 InstructionResult::CallNotAllowedInsideStatic |
                 InstructionResult::StateChangeDuringStaticCall |
-                InstructionResult::InvalidEFOpcode |
+                InstructionResult::InvalidExtDelegateCallTarget |
+                InstructionResult::InvalidEXTCALLTarget |
+                InstructionResult::InvalidFEOpcode |
                 InstructionResult::InvalidJump |
                 InstructionResult::NotActivated |
                 InstructionResult::StackUnderflow |

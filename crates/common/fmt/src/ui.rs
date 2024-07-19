@@ -181,6 +181,7 @@ impl UIfmt for AnyTransactionReceipt {
                         },
                     blob_gas_price,
                     blob_gas_used,
+                    authorization_list,
                 },
             other,
         } = self;
@@ -202,7 +203,8 @@ transactionHash         {}
 transactionIndex        {}
 type                    {}
 blobGasPrice            {}
-blobGasUsed             {}",
+blobGasUsed             {}
+authorizationList       {}",
             block_hash.pretty(),
             block_number.pretty(),
             contract_address.pretty(),
@@ -219,6 +221,10 @@ blobGasUsed             {}",
             transaction_type,
             blob_gas_price.pretty(),
             blob_gas_used.pretty(),
+            authorization_list
+                .as_ref()
+                .map(|l| serde_json::to_string(&l).unwrap())
+                .unwrap_or_default(),
         );
 
         if let Some(to) = to {

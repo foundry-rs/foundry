@@ -676,3 +676,21 @@ async fn test_invariant_selectors_weight() {
         )]),
     )
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_no_reverts_in_counterexample() {
+    let filter =
+        Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantSequenceNoReverts.t.sol");
+    let mut runner = TEST_DATA_DEFAULT.runner();
+    runner.test_options.invariant.fail_on_revert = false;
+    // Use original counterexample to test sequence len.
+    runner.test_options.invariant.shrink_run_limit = 0;
+
+    match get_counterexample!(runner, &filter) {
+        CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
+        CounterExample::Sequence(sequence) => {
+            // ensure original counterexample len is 10 (even without shrinking)
+            assert_eq!(sequence.len(), 10);
+        }
+    };
+}

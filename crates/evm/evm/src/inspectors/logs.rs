@@ -4,9 +4,12 @@ use foundry_common::{fmt::ConsoleFmt, ErrorExt};
 use foundry_evm_core::{
     abi::{patch_hh_console_selector, Console, HardhatConsole},
     constants::HARDHAT_CONSOLE_ADDRESS,
+    InspectorExt,
 };
 use revm::{
-    interpreter::{CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult},
+    interpreter::{
+        CallInputs, CallOutcome, Gas, InstructionResult, Interpreter, InterpreterResult,
+    },
     Database, EvmContext, Inspector,
 };
 
@@ -38,7 +41,7 @@ impl LogCollector {
 }
 
 impl<DB: Database> Inspector<DB> for LogCollector {
-    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>, log: &Log) {
         self.logs.push(log.clone());
     }
 
@@ -62,6 +65,16 @@ impl<DB: Database> Inspector<DB> for LogCollector {
         }
 
         None
+    }
+}
+
+impl<DB: Database> InspectorExt<DB> for LogCollector {
+    fn console_log(&mut self, input: String) {
+        self.logs.push(Log::new_unchecked(
+            HARDHAT_CONSOLE_ADDRESS,
+            vec![Console::log::SIGNATURE_HASH],
+            input.abi_encode().into(),
+        ));
     }
 }
 

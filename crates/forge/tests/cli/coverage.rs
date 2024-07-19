@@ -588,3 +588,313 @@ contract AContractTest is DSTest {
 
 "#]]);
 });
+
+forgetest!(test_try_catch_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Foo.sol",
+        r#"
+contract Foo {
+    address public owner;
+
+    constructor(address _owner) {
+        require(_owner != address(0), "invalid address");
+        assert(_owner != 0x0000000000000000000000000000000000000001);
+        owner = _owner;
+    }
+
+    function myFunc(uint256 x) public pure returns (string memory) {
+        require(x != 0, "require failed");
+        return "my func was called";
+    }
+}
+
+contract Bar {
+    event Log(string message);
+    event LogBytes(bytes data);
+
+    Foo public foo;
+
+    constructor() {
+        foo = new Foo(msg.sender);
+    }
+
+    function tryCatchExternalCall(uint256 _i) public {
+        try foo.myFunc(_i) returns (string memory result) {
+            emit Log(result);
+        } catch {
+            emit Log("external call failed");
+        }
+    }
+
+    function tryCatchNewContract(address _owner) public {
+        try new Foo(_owner) returns (Foo foo_) {
+            emit Log("Foo created");
+        } catch Error(string memory reason) {
+            emit Log(reason);
+        } catch (bytes memory reason) {}
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "FooTest.sol",
+        r#"
+import "./test.sol";
+import {Bar, Foo} from "./Foo.sol";
+
+interface Vm {
+    function expectRevert() external;
+}
+
+contract FooTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function test_happy_foo_coverage() external {
+        vm.expectRevert();
+        Foo foo = new Foo(address(0));
+        vm.expectRevert();
+        foo = new Foo(address(1));
+        foo = new Foo(address(2));
+    }
+
+    function test_happy_path_coverage() external {
+        Bar bar = new Bar();
+        bar.tryCatchNewContract(0x0000000000000000000000000000000000000002);
+        bar.tryCatchExternalCall(1);
+    }
+
+    function test_coverage() external {
+        Bar bar = new Bar();
+        bar.tryCatchNewContract(0x0000000000000000000000000000000000000000);
+        bar.tryCatchNewContract(0x0000000000000000000000000000000000000001);
+        bar.tryCatchExternalCall(0);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert coverage not 100% for happy paths only.
+    cmd.arg("coverage").args(["--mt".to_string(), "happy".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File        | % Lines        | % Statements   | % Branches    | % Funcs       |
+|-------------|----------------|----------------|---------------|---------------|
+| src/Foo.sol | 66.67% (10/15) | 66.67% (14/21) | 100.00% (4/4) | 100.00% (5/5) |
+| Total       | 66.67% (10/15) | 66.67% (14/21) | 100.00% (4/4) | 100.00% (5/5) |
+
+"#]],
+    );
+
+    // Assert 100% branch coverage (including clauses without body).
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File        | % Lines         | % Statements    | % Branches    | % Funcs       |
+|-------------|-----------------|-----------------|---------------|---------------|
+| src/Foo.sol | 100.00% (15/15) | 100.00% (21/21) | 100.00% (4/4) | 100.00% (5/5) |
+| Total       | 100.00% (15/15) | 100.00% (21/21) | 100.00% (4/4) | 100.00% (5/5) |
+
+"#]],
+    );
+});
+
+forgetest!(test_yul_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Foo.sol",
+        r#"
+contract Foo {
+    uint256[] dynamicArray;
+
+    function readDynamicArrayLength() public view returns (uint256 length) {
+        assembly {
+            length := sload(dynamicArray.slot)
+        }
+    }
+
+    function switchAndIfStatements(uint256 n) public pure {
+        uint256 y;
+        assembly {
+            switch n
+            case 0 { y := 0 }
+            case 1 { y := 1 }
+            default { y := n }
+
+            if y { y := 2 }
+        }
+    }
+
+    function yulForLoop(uint256 n) public {
+        uint256 y;
+        assembly {
+            for { let i := 0 } lt(i, n) { i := add(i, 1) } { y := add(y, 1) }
+
+            let j := 0
+            for {} lt(j, n) { j := add(j, 1) } { j := add(j, 2) }
+        }
+    }
+
+    function hello() public pure returns (bool, uint256, bytes32) {
+        bool x;
+        uint256 y;
+        bytes32 z;
+
+        assembly {
+            x := 1
+            y := 0xa
+            z := "Hello World!"
+        }
+
+        return (x, y, z);
+    }
+
+    function inlineFunction() public returns (uint256) {
+        uint256 result;
+        assembly {
+            function sum(a, b) -> c {
+                c := add(a, b)
+            }
+
+            function multiply(a, b) -> c {
+                for { let i := 0 } lt(i, b) { i := add(i, 1) } { c := add(c, a) }
+            }
+
+            result := sum(2, 3)
+            result := multiply(result, 5)
+        }
+        return result;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "FooTest.sol",
+        r#"
+import "./test.sol";
+import {Foo} from "./Foo.sol";
+
+contract FooTest is DSTest {
+    function test_foo_coverage() external {
+        Foo foo = new Foo();
+        foo.switchAndIfStatements(0);
+        foo.switchAndIfStatements(1);
+        foo.switchAndIfStatements(2);
+        foo.yulForLoop(2);
+        foo.hello();
+        foo.readDynamicArrayLength();
+        foo.inlineFunction();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File        | % Lines         | % Statements    | % Branches    | % Funcs       |
+|-------------|-----------------|-----------------|---------------|---------------|
+| src/Foo.sol | 100.00% (23/23) | 100.00% (40/40) | 100.00% (1/1) | 100.00% (7/7) |
+| Total       | 100.00% (23/23) | 100.00% (40/40) | 100.00% (1/1) | 100.00% (7/7) |
+
+"#]],
+    );
+});
+
+forgetest!(test_misc_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Foo.sol",
+        r#"
+struct Custom {
+    int256 f1;
+}
+
+contract A {
+    function f(Custom memory custom) public returns (int256) {
+        return custom.f1;
+    }
+}
+
+contract B {
+    uint256 public x;
+
+    constructor(uint256 a) payable {
+        x = a;
+    }
+}
+
+contract C {
+    function create() public {
+        B b = new B{value: 1}(2);
+        b = (new B{value: 1})(2);
+        b = (new B){value: 1}(2);
+    }
+}
+
+contract D {
+    uint256 index;
+
+    function g() public {
+        (uint256 x,, uint256 y) = (7, true, 2);
+        (x, y) = (y, x);
+        (index,,) = (7, true, 2);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "FooTest.sol",
+        r#"
+import "./test.sol";
+import "./Foo.sol";
+
+interface Vm {
+    function deal(address account, uint256 newBalance) external;
+}
+
+contract FooTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function test_member_access_coverage() external {
+        A a = new A();
+        Custom memory cust = Custom(1);
+        a.f(cust);
+    }
+
+    function test_new_expression_coverage() external {
+        B b = new B(1);
+        b.x();
+        C c = new C();
+        vm.deal(address(c), 100 ether);
+        c.create();
+    }
+
+    function test_tuple_coverage() external {
+        D d = new D();
+        d.g();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File        | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------|---------------|---------------|---------------|---------------|
+| src/Foo.sol | 100.00% (8/8) | 100.00% (9/9) | 100.00% (0/0) | 100.00% (4/4) |
+| Total       | 100.00% (8/8) | 100.00% (9/9) | 100.00% (0/0) | 100.00% (4/4) |
+
+"#]],
+    );
+});
