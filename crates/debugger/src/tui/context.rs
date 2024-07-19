@@ -3,7 +3,7 @@
 use crate::{DebugNode, Debugger, ExitReason};
 use alloy_primitives::{hex, Address};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use revm::interpreter::opcode;
+use revm::interpreter::OpCode;
 use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::ops::ControlFlow;
 
@@ -115,8 +115,8 @@ impl<'a> DebuggerContext<'a> {
     fn gen_opcode_list(&mut self) {
         self.opcode_list.clear();
         let debug_steps = &self.debugger.debug_arena[self.draw_memory.inner_call_index].steps;
-        for (i, step) in debug_steps.iter().enumerate() {
-            self.opcode_list.push(pretty_opcode(step, debug_steps.get(i + 1)));
+        for step in debug_steps {
+            self.opcode_list.push(pretty_opcode(step));
         }
     }
 
@@ -230,20 +230,20 @@ impl DebuggerContext<'_> {
 
             // Step forward
             KeyCode::Char('s') => self.repeat(|this| {
-                let remaining_ops = &this.opcode_list[this.current_step..];
-                if let Some((i, _)) = remaining_ops.iter().enumerate().skip(1).find(|&(i, op)| {
-                    let prev = &remaining_ops[i - 1];
-                    let prev_is_jump = prev.contains("JUMP") && prev != "JUMPDEST";
-                    let is_jumpdest = op == "JUMPDEST";
-                    prev_is_jump && is_jumpdest
-                }) {
-                    this.current_step += i;
+                let remaining_steps = &this.debug_steps()[this.current_step..];
+                if let Some((i, _)) =
+                    remaining_steps.iter().enumerate().skip(1).find(|(i, step)| {
+                        let prev = &remaining_steps[*i - 1];
+                        is_jump(step, prev)
+                    })
+                {
+                    this.current_step += i
                 }
             }),
 
             // Step backwards
             KeyCode::Char('a') => self.repeat(|this| {
-                let ops = &this.opcode_list[..this.current_step];
+                let ops = &this.debug_steps()[..this.current_step];
                 this.current_step = ops
                     .iter()
                     .enumerate()
@@ -251,9 +251,7 @@ impl DebuggerContext<'_> {
                     .rev()
                     .find(|&(i, op)| {
                         let prev = &ops[i - 1];
-                        let prev_is_jump = prev.contains("JUMP") && prev != "JUMPDEST";
-                        let is_jumpdest = op == "JUMPDEST";
-                        prev_is_jump && is_jumpdest
+                        is_jump(op, prev)
                     })
                     .map(|(i, _)| i)
                     .unwrap_or_default();
@@ -349,23 +347,34 @@ fn buffer_as_number(s: &str) -> usize {
     s.parse().unwrap_or(MIN).clamp(MIN, MAX)
 }
 
-fn pretty_opcode(step: &CallTraceStep, next_step: Option<&CallTraceStep>) -> String {
-    let op = step.op;
-    let instruction = op.get();
-    let push_size = if (opcode::PUSH1..=opcode::PUSH32).contains(&instruction) {
-        (instruction - opcode::PUSH0) as usize
+fn pretty_opcode(step: &CallTraceStep) -> String {
+    if let Some(immediate) = step.immediate_bytes.as_ref().filter(|b| !b.is_empty()) {
+        format!("{}(0x{})", step.op, hex::encode(immediate))
     } else {
-        0
-    };
-    if push_size == 0 {
-        return step.op.to_string();
+        step.op.to_string()
+    }
+}
+
+fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
+    if !matches!(
+        prev.op,
+        OpCode::JUMP |
+            OpCode::JUMPI |
+            OpCode::JUMPF |
+            OpCode::RJUMP |
+            OpCode::RJUMPI |
+            OpCode::RJUMPV |
+            OpCode::CALLF |
+            OpCode::RETF
+    ) {
+        return false
     }
 
-    // Get push byte as the top-most stack item on the next step
-    if let Some(pushed) = next_step.and_then(|s| s.stack.as_ref()).and_then(|s| s.last()) {
-        let bytes = &pushed.to_be_bytes_vec()[32 - push_size..];
-        format!("{op}(0x{})", hex::encode(bytes))
+    let immediate_len = prev.immediate_bytes.as_ref().map_or(0, |b| b.len());
+
+    if step.pc != prev.pc + 1 + immediate_len {
+        true
     } else {
-        op.to_string()
+        step.code_section_idx != prev.code_section_idx
     }
 }
