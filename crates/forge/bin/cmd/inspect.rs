@@ -423,8 +423,10 @@ fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String
     Ok(s)
 }
 
+/// Pretty-prints bytecode decoded EOF.
 fn print_eof(bytecode: Option<CompactBytecode>) -> Result<()> {
     let Some(mut bytecode) = bytecode else { eyre::bail!("No bytecode") };
+
     // Replace link references with zero address.
     if bytecode.object.is_unlinked() {
         for (file, references) in bytecode.link_references.clone() {
