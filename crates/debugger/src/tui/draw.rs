@@ -673,7 +673,7 @@ fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
         opcode::RETURNCONTRACT => (Some((BufferKind::Memory, 1, 2)), None),
         opcode::DATACOPY => (None, Some((1, 3))),
         opcode::EXTCALL | opcode::EXTSTATICCALL | opcode::EXTDELEGATECALL => {
-            (Some((BufferKind::Memory, 1, 2)), None)
+            (Some((BufferKind::Memory, 2, 3)), None)
         }
         _ => Default::default(),
     };
