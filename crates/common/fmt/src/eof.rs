@@ -27,15 +27,15 @@ pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
     table.add_row(vec!["type_size", &types_size.to_string()]);
     table.add_row(vec!["num_code_sections", &code_sizes.len().to_string()]);
     if !code_sizes.is_empty() {
-        table.add_row(vec!["code_sizes", &format!("{:?}", code_sizes)]);
+        table.add_row(vec!["code_sizes", &format!("{code_sizes:?}")]);
     }
     table.add_row(vec!["num_container_sections", &container_sizes.len().to_string()]);
     if !container_sizes.is_empty() {
-        table.add_row(vec!["container_sizes", &format!("{:?}", container_sizes)]);
+        table.add_row(vec!["container_sizes", &format!("{container_sizes:?}")]);
     }
     table.add_row(vec!["data_size", &data_size.to_string()]);
 
-    write!(result, "Header:\n{}", table)?;
+    write!(result, "Header:\n{table}")?;
 
     if !code_section.is_empty() {
         let mut table = Table::new();
