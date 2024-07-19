@@ -273,7 +273,7 @@ impl ClientFork {
         blocknumber: u64,
     ) -> Result<Account, TransportError> {
         trace!(target: "backend::fork", "get_account={:?}", address);
-        self.provider().get_account(address).block_id(blocknumber.into()).await
+        self.provider().get_account(address).await.block_id(blocknumber.into()).await
     }
 
     pub async fn transaction_by_block_number_and_index(
