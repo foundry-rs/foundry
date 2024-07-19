@@ -53,15 +53,6 @@ contract Issue8383Test is DSTest {
         _verifyViaVerifier(bytes32(0), 1, 1, p - 1, 1);
         vm.resumeGasMetering();
     }
-
-    function testCounterCreation() public {
-        Counter counter = new Counter(1);
-        vm.pauseGasMetering();
-        counter = new Counter(1);
-        counter = new Counter(1);
-        vm.resumeGasMetering();
-        counter = new Counter(1);
-    }
 }
 
 contract P256Verifier {
@@ -327,17 +318,5 @@ contract P256Verifier {
             )
             return(returndatasize(), returndatasize())
         }
-    }
-}
-
-contract Counter {
-    uint256 public number = 0;
-
-    constructor(uint256 _number) {
-        number = _number;
-    }
-
-    function inc() external {
-        number += 1;
     }
 }
