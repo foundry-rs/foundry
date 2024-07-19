@@ -210,6 +210,7 @@ impl TraceMode {
                 record_opcodes_filter: (self.is_jump() || self.is_jump_simple())
                     .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),
                 exclude_precompile_calls: false,
+                record_immediate_bytes: self.is_debug(),
             }
             .into()
         }
