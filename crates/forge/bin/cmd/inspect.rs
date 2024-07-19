@@ -72,10 +72,10 @@ impl InspectArgs {
         } else {
             project.find_contract_path(&contract.name)?
         };
-        let mut output = compiler.files([target_path]).compile(&project)?;
+        let mut output = compiler.files([target_path.clone()]).compile(&project)?;
 
         // Find the artifact
-        let artifact = output.remove_contract(&contract).ok_or_else(|| {
+        let artifact = output.remove(&target_path, &contract.name).ok_or_else(|| {
             eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
         })?;
 
@@ -363,7 +363,9 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
                 (Self::IrOptimized, Cos::IrOptimized) |
                 (Self::Metadata, Cos::Metadata) |
                 (Self::UserDoc, Cos::UserDoc) |
-                (Self::Ewasm, Cos::Ewasm(_))
+                (Self::Ewasm, Cos::Ewasm(_)) |
+                (Self::Eof, Cos::Evm(Eos::DeployedByteCode(_))) |
+                (Self::EofInit, Cos::Evm(Eos::ByteCode(_)))
         )
     }
 }
