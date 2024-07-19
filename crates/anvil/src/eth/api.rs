@@ -31,7 +31,7 @@ use crate::{
     revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::{transaction::eip4844::TxEip4844Variant, TxEnvelope};
+use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, TxEnvelope};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::eip2718::Decodable2718;
@@ -155,6 +155,9 @@ impl EthApi {
         match request {
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
             EthRequest::Web3Sha3(content) => self.sha3(content).to_rpc_result(),
+            EthRequest::EthGetAccount(addr, block) => {
+                self.get_account(addr, block).await.to_rpc_result()
+            }
             EthRequest::EthGetBalance(addr, block) => {
                 self.balance(addr, block).await.to_rpc_result()
             }
@@ -656,6 +659,29 @@ impl EthApi {
         }
 
         self.backend.get_balance(address, Some(block_request)).await
+    }
+
+    /// Returns the ethereum account.
+    ///
+    /// Handler for ETH RPC call: `eth_getAccount`
+    pub async fn get_account(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+    ) -> Result<Account> {
+        node_info!("eth_getAccount");
+        let block_request = self.block_request(block_number).await?;
+
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(fork.get_account(address, number).await?)
+                }
+            }
+        }
+
+        self.backend.get_account_at_block(address, Some(block_request)).await
     }
 
     /// Returns content of the storage at given address.

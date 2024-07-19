@@ -1,6 +1,7 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::PoolTransaction};
+use alloy_consensus::Account;
 use alloy_primitives::{Address, Bytes, StorageValue, B256, U256};
 use alloy_provider::{
     ext::{DebugApi, TraceApi},
@@ -264,6 +265,15 @@ impl ClientFork {
     pub async fn get_nonce(&self, address: Address, block: u64) -> Result<u64, TransportError> {
         trace!(target: "backend::fork", "get_nonce={:?}", address);
         self.provider().get_transaction_count(address).block_id(block.into()).await
+    }
+
+    pub async fn get_account(
+        &self,
+        address: Address,
+        blocknumber: u64,
+    ) -> Result<Account, TransportError> {
+        trace!(target: "backend::fork", "get_account={:?}", address);
+        self.provider().get_account(address).block_id(blocknumber.into()).await
     }
 
     pub async fn transaction_by_block_number_and_index(
