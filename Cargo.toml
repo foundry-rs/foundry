@@ -263,6 +263,3 @@ tower-http = "0.5"
 soldeer = "0.2.19"
 
 proptest = "1"
-
-[patch.crates-io]
-revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors", rev = "085f8df" }

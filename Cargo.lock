@@ -6693,7 +6693,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18bec9b0adc4eba778b33684b7ba3e7137789434769ee3ce3930463ef904cfca"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.71",
@@ -7118,8 +7118,9 @@ dependencies = [
 
 [[package]]
 name = "revm-inspectors"
-version = "0.5.1"
-source = "git+https://github.com/paradigmxyz/revm-inspectors?rev=085f8df#085f8df30deee4eb2ec4b431bbb2cafc0a2bb971"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af2dc001e37ac3b061dc9087876aea91e28756c188a97cd99416d23a5562ca73"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
