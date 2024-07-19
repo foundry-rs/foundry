@@ -1,5 +1,5 @@
 use crate::tx::{self, CastTxBuilder};
-use alloy_network::{AnyNetwork, EthereumWallet};
+use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
@@ -7,7 +7,7 @@ use alloy_signer::Signer;
 use alloy_transport::Transport;
 use cast::Cast;
 use clap::Parser;
-use eyre::Result;
+use eyre::{Report, Result};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
@@ -15,6 +15,8 @@ use foundry_cli::{
 use foundry_common::{cli_warn, ens::NameOrAddress};
 use foundry_config::Config;
 use std::{path::PathBuf, str::FromStr};
+use alloy_network::eip2718::Encodable2718;
+use alloy_primitives::hex;
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -34,6 +36,11 @@ pub struct SendTxArgs {
     /// Only print the transaction hash and exit immediately.
     #[arg(id = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
     cast_async: bool,
+
+    /// Only print the raw transaction and exit immediately.
+    /// Transaction is NOT sent.
+    #[arg(id = "print-raw-and-exit", long = "print-raw-and-exit", alias = "print-raw", env = "CAST_PRINT_RAW_AND_EXIT")]
+    print_raw_only: bool,
 
     /// The number of confirmations until the receipt is fetched.
     #[arg(long, default_value = "1")]
@@ -85,6 +92,7 @@ impl SendTxArgs {
             to,
             mut sig,
             cast_async,
+            print_raw_only,
             mut args,
             tx,
             confirmations,
@@ -144,8 +152,11 @@ impl SendTxArgs {
                 }
             }
 
-            let (tx, _) = builder.build(config.sender).await?;
+            if print_raw_only {
+                return Err(Report::msg("--print-raw-and-exit is not compatible with --unlocked"));
+            }
 
+            let (tx, _) = builder.build(config.sender).await?;
             cast_send(provider, tx, cast_async, confirmations, to_json).await
         // Case 2:
         // An option to use a local signer was provided.
@@ -157,13 +168,22 @@ impl SendTxArgs {
             let from = signer.address();
 
             tx::validate_from_address(eth.wallet.from, from)?;
+            let (tx, _) = builder.build(from).await?;
+
+            if print_raw_only {
+                let wallet = EthereumWallet::from(signer);
+                let mut tx = tx.clone();
+                alloy_network::TransactionBuilder::prep_for_submission(&mut tx);
+                let envelope = tx.build(&wallet).await?;
+                let raw = hex::encode(envelope.encoded_2718());
+                println!("0x{raw}");
+                return Ok(());
+            }
 
             let wallet = EthereumWallet::from(signer);
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(wallet)
                 .on_provider(&provider);
-
-            let (tx, _) = builder.build(from).await?;
 
             cast_send(provider, tx, cast_async, confirmations, to_json).await
         }
