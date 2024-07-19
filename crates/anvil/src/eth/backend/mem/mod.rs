@@ -41,11 +41,15 @@ use alloy_rpc_types::{
     serde_helpers::JsonStorageKey,
     state::StateOverride,
     trace::{
+        filter::TraceFilter,
         geth::{
             GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
             GethDebugTracingOptions, GethTrace, NoopFrame,
         },
-        parity::LocalizedTransactionTrace,
+        parity::{
+            Action::{Call, Create, Reward, Selfdestruct},
+            LocalizedTransactionTrace,
+        },
     },
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
@@ -62,6 +66,7 @@ use anvil_core::eth::{
     utils::meets_eip155,
 };
 use anvil_rpc::error::RpcError;
+
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
@@ -2004,6 +2009,61 @@ impl Backend {
         }
 
         Ok(None)
+    }
+
+    // Returns the traces matching a given filter
+    pub async fn trace_filter(
+        &self,
+        filter: TraceFilter,
+    ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
+        let matcher = filter.matcher();
+        let start = filter.from_block.unwrap_or(0);
+        let end = filter.to_block.unwrap_or(self.best_number());
+
+        let dist = end.saturating_sub(start);
+        if dist == 0 {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "invalid block range, ensure that to block is greater than from block".to_string(),
+            )));
+        }
+        if dist > 300 {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "block range too large, currently limited to 300".to_string(),
+            )));
+        }
+
+        // Accumulate tasks for block range
+        let mut trace_tasks = vec![];
+        for num in start..=end {
+            trace_tasks.push(self.trace_block(num.into()));
+        }
+
+        // Execute tasks and filter traces
+        let traces = futures::future::try_join_all(trace_tasks).await?;
+        let filtered_traces =
+            traces.into_iter().flatten().filter(|trace| match &trace.trace.action {
+                Call(call) => matcher.matches(call.from, Some(call.to)),
+                Create(create) => matcher.matches(create.from, None),
+                Selfdestruct(self_destruct) => {
+                    matcher.matches(self_destruct.address, Some(self_destruct.refund_address))
+                }
+                Reward(reward) => matcher.matches(reward.author, None),
+            });
+
+        // Apply after and count
+        let filtered_traces: Vec<_> = if let Some(after) = filter.after {
+            filtered_traces.skip(after as usize).collect()
+        } else {
+            filtered_traces.collect()
+        };
+
+        let filtered_traces: Vec<_> = if let Some(count) = filter.count {
+            filtered_traces.into_iter().take(count as usize).collect()
+        } else {
+            filtered_traces
+        };
+
+        Ok(filtered_traces)
     }
 
     /// Returns all receipts of the block
