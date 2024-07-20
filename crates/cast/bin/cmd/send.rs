@@ -57,7 +57,13 @@ pub struct SendTxArgs {
     eth: EthereumOpts,
 
     /// The path of blob data to be sent.
-    #[arg(long, value_name = "BLOB_DATA_PATH", conflicts_with = "legacy", requires = "blob", help_heading = "Transaction options")]
+    #[arg(
+        long,
+        value_name = "BLOB_DATA_PATH",
+        conflicts_with = "legacy",
+        requires = "blob",
+        help_heading = "Transaction options"
+    )]
     path: Option<PathBuf>,
 }
 
