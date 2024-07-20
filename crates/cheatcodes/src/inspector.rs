@@ -1340,7 +1340,7 @@ impl Cheatcodes {
                     opcode::CREATE | opcode::CREATE2 => {
                         // Set we're about to enter CREATE frame to meter its gas on first opcode
                         // inside it.
-                        self.gas_metering_create = Some(None);
+                        self.gas_metering_create = Some(None)
                     }
                     opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT | opcode::REVERT => {
                         match &self.gas_metering_create {
