@@ -2708,6 +2708,7 @@ impl EthApi {
             TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
             TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
             TypedTransaction::EIP4844(_) => self.backend.ensure_eip4844_active(),
+            TypedTransaction::EIP7702(_) => self.backend.ensure_eip7702_active(),
             TypedTransaction::Deposit(_) => self.backend.ensure_op_deposits_active(),
             TypedTransaction::Legacy(_) => Ok(()),
         }

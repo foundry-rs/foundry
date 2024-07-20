@@ -580,6 +580,11 @@ impl Backend {
         (self.spec_id() as u8) >= (SpecId::CANCUN as u8)
     }
 
+    /// Returns true for post Prague
+    pub fn is_eip7702(&self) -> bool {
+        (self.spec_id() as u8) >= (SpecId::PRAGUE as u8)
+    }
+
     /// Returns true if op-stack deposits are active
     pub fn is_optimism(&self) -> bool {
         self.env.read().handler_cfg.is_optimism
@@ -603,6 +608,13 @@ impl Backend {
 
     pub fn ensure_eip4844_active(&self) -> Result<(), BlockchainError> {
         if self.is_eip4844() {
+            return Ok(());
+        }
+        Err(BlockchainError::EIP4844TransactionUnsupportedAtHardfork)
+    }
+
+    pub fn ensure_eip7702_active(&self) -> Result<(), BlockchainError> {
+        if self.is_eip7702() {
             return Ok(());
         }
         Err(BlockchainError::EIP4844TransactionUnsupportedAtHardfork)
@@ -2135,6 +2147,11 @@ impl Backend {
                 .base_fee_per_gas
                 .unwrap_or_else(|| self.base_fee())
                 .saturating_add(t.tx().tx().max_priority_fee_per_gas),
+            TypedTransaction::EIP7702(t) => block
+                .header
+                .base_fee_per_gas
+                .unwrap_or_else(|| self.base_fee())
+                .saturating_add(t.tx().max_priority_fee_per_gas),
             TypedTransaction::Deposit(_) => 0_u128,
         };
 
@@ -2169,6 +2186,7 @@ impl Backend {
             TypedReceipt::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
             TypedReceipt::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
             TypedReceipt::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
+            TypedReceipt::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
             TypedReceipt::Deposit(r) => TypedReceipt::Deposit(DepositReceipt {
                 inner: receipt_with_bloom,
                 deposit_nonce: r.deposit_nonce,
@@ -2482,7 +2500,7 @@ impl TransactionValidator for Backend {
             // Light checks first: see if the blob fee cap is too low.
             if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas {
                 if let Some(blob_gas_and_price) = &env.block.blob_excess_gas_and_price {
-                    if max_fee_per_blob_gas.to::<u128>() < blob_gas_and_price.blob_gasprice {
+                    if max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice {
                         warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
                         return Err(InvalidTransactionError::BlobFeeCapTooLow);
                     }
