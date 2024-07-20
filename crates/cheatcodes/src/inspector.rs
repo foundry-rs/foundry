@@ -1352,8 +1352,7 @@ impl Cheatcodes {
                                 //
                                 // It would be nice if we had access to the interpreter in
                                 // `call_end`, as we could just do this there instead.
-                                interpreter.gas =
-                                    Gas::new(interpreter.gas.limit() - interpreter.gas.remaining());
+                                interpreter.gas = Gas::new(interpreter.gas.spent());
 
                                 // Make sure CREATE gas metering is resetted.
                                 self.gas_metering_create = None
