@@ -21,6 +21,8 @@ pub enum Hardfork {
     Paris,
     Shanghai,
     Cancun,
+    Prague,
+    PragueEOF,
     #[default]
     Latest,
 }
@@ -45,6 +47,8 @@ impl Hardfork {
             Self::Paris => 15537394,
             Self::Shanghai => 17034870,
             Self::Cancun | Self::Latest => 19426587,
+            // TODO: add block after activation
+            Self::Prague | Self::PragueEOF => unreachable!(),
         }
     }
 }
@@ -72,6 +76,8 @@ impl FromStr for Hardfork {
             "paris" | "merge" | "15" => Self::Paris,
             "shanghai" | "16" => Self::Shanghai,
             "cancun" | "17" => Self::Cancun,
+            "prague" | "18" => Self::Prague,
+            "pragueeof" | "19" | "prague-eof" => Self::PragueEOF,
             "latest" => Self::Latest,
             _ => return Err(format!("Unknown hardfork {s}")),
         };
@@ -99,6 +105,9 @@ impl From<Hardfork> for SpecId {
             Hardfork::Paris => Self::MERGE,
             Hardfork::Shanghai => Self::SHANGHAI,
             Hardfork::Cancun | Hardfork::Latest => Self::CANCUN,
+            Hardfork::Prague => Self::PRAGUE,
+            // TODO: switch to latest after activation
+            Hardfork::PragueEOF => Self::PRAGUE_EOF,
         }
     }
 }
