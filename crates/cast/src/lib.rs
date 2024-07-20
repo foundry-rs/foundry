@@ -2005,7 +2005,7 @@ impl SimpleCast {
     /// println!("{}", decoded);
     /// # Ok::<(), eyre::Report>(())
     pub fn decode_eof(eof: &str) -> Result<String> {
-        let eof_hex = hex::decode(strip_0x(eof))?;
+        let eof_hex = hex::decode(eof)?;
         let eof = Eof::decode(eof_hex.into())?;
         Ok(pretty_eof(&eof)?)
     }

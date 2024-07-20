@@ -310,8 +310,8 @@ impl_value_enum! {
         Ewasm             => "ewasm" | "e-wasm",
         Errors            => "errors" | "er",
         Events            => "events" | "ev",
-        Eof => "eof" | "eof-container" | "eof-deployed",
-        EofInit => "eof-init" | "eof-initcode" | "eof-initcontainer",
+        Eof               => "eof" | "eof-container" | "eof-deployed",
+        EofInit           => "eof-init" | "eof-initcode" | "eof-initcontainer",
     }
 }
 
