@@ -32,7 +32,7 @@ use crate::{
     revm::{db::DatabaseRef, primitives::AccountInfo},
     NodeConfig, PrecompileFactory,
 };
-use alloy_consensus::{Header, Receipt, ReceiptWithBloom};
+use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
 use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U256, U64};
 use alloy_rpc_types::{
@@ -1875,6 +1875,23 @@ impl Backend {
     ) -> Result<U256, BlockchainError> {
         self.with_database_at(block_request, |db, _| self.get_balance_with_state(db, address))
             .await?
+    }
+
+    pub async fn get_account_at_block(
+        &self,
+        address: Address,
+        block_request: Option<BlockRequest>,
+    ) -> Result<Account, BlockchainError> {
+        self.with_database_at(block_request, |block_db, _| {
+            let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+            let account = db.get(&address).cloned().unwrap_or_default();
+            let storage_root = storage_root(&account.storage);
+            let code_hash = account.info.code_hash;
+            let balance = account.info.balance;
+            let nonce = account.info.nonce;
+            Ok(Account { balance, nonce, code_hash, storage_root })
+        })
+        .await?
     }
 
     pub fn get_balance_with_state<D>(

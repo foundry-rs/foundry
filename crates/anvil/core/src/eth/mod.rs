@@ -86,6 +86,9 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_getBalance"))]
     EthGetBalance(Address, Option<BlockId>),
 
+    #[cfg_attr(feature = "serde", serde(rename = "eth_getAccount"))]
+    EthGetAccount(Address, Option<BlockId>),
+
     #[cfg_attr(feature = "serde", serde(rename = "eth_getStorageAt"))]
     EthGetStorageAt(Address, U256, Option<BlockId>),
 
