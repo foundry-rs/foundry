@@ -864,20 +864,26 @@ async fn test_reorg() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
 
-    
+    api.anvil_mine(Some(U256::from(10)), None).await.unwrap();
 
+    api.anvil_reorg(7).await.unwrap();
+
+    assert_eq!(provider.get_block_number().await.unwrap(), 3);
     // Flow:
     // 1. Rewind cannonical to a specified depth
     //    - Attempt to rewind to a valid depth (parent must exist)
     // 2. Delete the block from 1st uncle to last
     // 3. Insert new chain at common parent (the last cannonical block)
 
+    // API
+    // Delete state to common ancestor
+    // How?
+
     // API options:
     // anvil_mine
     // - for loop that mines blocks
     // - calls self.mine_one()
 }
-
 
 // APIs
 // =====
@@ -890,4 +896,4 @@ async fn test_reorg() {
 // ======
 // ======
 // -> pending block to mine current tx pool contents could repopulate
-// ====== 
+// ======

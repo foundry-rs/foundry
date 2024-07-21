@@ -32,7 +32,7 @@ use crate::{
     revm::{db::DatabaseRef, primitives::AccountInfo},
     NodeConfig, PrecompileFactory,
 };
-use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom};
+use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom, Sealable};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
 use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U256, U64};
 use alloy_rpc_types::{
@@ -93,6 +93,7 @@ use revm::{
         calc_blob_gasprice, BlobExcessGasAndPrice, HashMap, OptimismFields, ResultAndState,
     },
 };
+use serde_json::de;
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
@@ -2401,7 +2402,52 @@ impl Backend {
             .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
     }
 
-    pub async fn reorg(&mut self, depth: usize) {}
+    // Self reset snapshot
+    pub async fn reorg(&self, depth: u64) -> Result<(), BlockchainError> {
+        let current_height = self.best_number();
+        let common_height = if self.best_number() > depth { self.best_number() - depth } else { 0 };
+
+        // Common block
+        let block = self.get_block(BlockId::from(common_height)).unwrap();
+        // Rewind the chain to common ancestor
+        {
+            // Revert the state
+            let mut storage = self.blockchain.storage.write();
+            for height in ((common_height + 1)..=current_height).rev() {
+                // TODO extract this to common functionality
+                if let Some(hash) = storage.hashes.remove(&U64::from(height)) {
+                    if let Some(block) = storage.blocks.remove(&hash) {
+                        for tx in block.transactions {
+                            storage.transactions.remove(&tx.hash());
+                        }
+                    }
+                }
+            }
+
+            storage.best_number = U64::from(block.header.number);
+            storage.best_hash = block.header.hash();
+
+            let mut env = self.env.write();
+            env.block = BlockEnv {
+                number: U256::from(block.header.number),
+                timestamp: U256::from(block.header.timestamp),
+                difficulty: block.header.difficulty,
+                // ensures prevrandao is set
+                prevrandao: Some(block.header.mix_hash),
+                gas_limit: U256::from(block.header.gas_limit),
+                // Keep previous `coinbase` and `basefee` value
+                coinbase: env.block.coinbase,
+                basefee: env.block.basefee,
+                ..Default::default()
+            };
+        };
+
+        // for _ in 0..=depth {
+        //     self.do_mine_block(vec![]).await;
+        // }
+
+        Ok(())
+    }
 }
 
 /// Get max nonce from transaction pool by address
