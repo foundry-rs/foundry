@@ -2400,6 +2400,8 @@ impl Backend {
             .lock()
             .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
     }
+
+    pub async fn reorg(&mut self, depth: usize) {}
 }
 
 /// Get max nonce from transaction pool by address

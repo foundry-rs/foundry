@@ -1917,6 +1917,11 @@ impl EthApi {
         Ok(())
     }
 
+    pub async fn anvil_reorg(&mut self, depth: usize) -> Result<()> {
+        self.backend.reorg(depth);
+        Ok(())
+    }
+
     /// Snapshot the state of the blockchain at the current block.
     ///
     /// Handler for RPC call: `evm_snapshot`

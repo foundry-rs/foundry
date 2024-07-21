@@ -858,3 +858,36 @@ async fn test_trace_filter() {
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 5);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reorg() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider();
+
+    
+
+    // Flow:
+    // 1. Rewind cannonical to a specified depth
+    //    - Attempt to rewind to a valid depth (parent must exist)
+    // 2. Delete the block from 1st uncle to last
+    // 3. Insert new chain at common parent (the last cannonical block)
+
+    // API options:
+    // anvil_mine
+    // - for loop that mines blocks
+    // - calls self.mine_one()
+}
+
+
+// APIs
+// =====
+// -> Here we would pass in the transactions we wished to be mined into a block
+// let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
+// let outcome = self.backend.mine_block(transactions).await;
+
+// trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
+// self.pool.on_mined_block(outcome);
+// ======
+// ======
+// -> pending block to mine current tx pool contents could repopulate
+// ====== 
