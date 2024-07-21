@@ -2402,19 +2402,20 @@ impl Backend {
             .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
     }
 
-    // Self reset snapshot
-    pub async fn reorg(&self, depth: u64) -> Result<(), BlockchainError> {
+    // TODO
+    pub async fn reorg(&self, depth: u64, new_len: u64) -> Result<(), BlockchainError> {
         let current_height = self.best_number();
         let common_height = if self.best_number() > depth { self.best_number() - depth } else { 0 };
 
         // Common block
         let block = self.get_block(BlockId::from(common_height)).unwrap();
-        // Rewind the chain to common ancestor
+        let hash = block.header.hash();
         {
             // Revert the state
+            // Rewind the chain to common ancestor
             let mut storage = self.blockchain.storage.write();
             for height in ((common_height + 1)..=current_height).rev() {
-                // TODO extract this to common functionality
+                // TODO extract this to common functionality (from revert_snapshot)
                 if let Some(hash) = storage.hashes.remove(&U64::from(height)) {
                     if let Some(block) = storage.blocks.remove(&hash) {
                         for tx in block.transactions {
@@ -2425,26 +2426,25 @@ impl Backend {
             }
 
             storage.best_number = U64::from(block.header.number);
-            storage.best_hash = block.header.hash();
+            storage.best_hash = hash;
 
+            // Mutate env to update cannonical
             let mut env = self.env.write();
             env.block = BlockEnv {
                 number: U256::from(block.header.number),
                 timestamp: U256::from(block.header.timestamp),
                 difficulty: block.header.difficulty,
-                // ensures prevrandao is set
                 prevrandao: Some(block.header.mix_hash),
                 gas_limit: U256::from(block.header.gas_limit),
-                // Keep previous `coinbase` and `basefee` value
                 coinbase: env.block.coinbase,
                 basefee: env.block.basefee,
                 ..Default::default()
             };
         };
 
-        // for _ in 0..=depth {
-        //     self.do_mine_block(vec![]).await;
-        // }
+        for _ in 0 + 1..=new_len {
+            self.do_mine_block(vec![]).await;
+        }
 
         Ok(())
     }

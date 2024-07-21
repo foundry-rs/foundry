@@ -77,7 +77,7 @@ pub struct PoolTransaction {
     /// Markers required by the transaction
     pub requires: Vec<TxMarker>,
     /// Markers that this transaction provides
-    pub provides: Vec<TxMarker>,
+pub provides: Vec<TxMarker>,
     /// priority of the transaction
     pub priority: TransactionPriority,
 }

@@ -656,3 +656,38 @@ async fn can_remove_pool_transactions() {
     let final_txs = provider.txpool_inspect().await.unwrap();
     assert_eq!(final_txs.pending.len(), 0);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reorg() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider();
+
+    api.anvil_mine(Some(U256::from(10)), None).await.unwrap();
+
+    api.anvil_reorg(7, 3).await.unwrap();
+
+    assert_eq!(provider.get_block_number().await.unwrap(), 6);
+    // Flow:
+    // 1. Rewind cannonical to a specified depth
+    //    - Attempt to rewind to a valid depth (parent must exist)
+    // 2. Delete the block from 1st uncle to last
+    // 3. From uncle blocks, filter transactions against critera
+    //   - e.g from and to address
+    // 4. Insert new chain at common parent (the last cannonical block)
+    //  - use do_mine_block to supply transactions
+    // 5. Take a snapshot of re-orged state?
+
+    // API
+    // Delete state to common ancestor
+    // How (ergonimics)?
+    // number
+    // head - depth
+    // hash
+
+    // Edge cases:
+    // - Reorging on genesis block
+    // - Deleting snap shot of uncle blocks
+
+    // API options:
+    // - calls self.mine_one()
+}

@@ -1917,8 +1917,8 @@ impl EthApi {
         Ok(())
     }
 
-    pub async fn anvil_reorg(&self, depth: u64) -> Result<()> {
-        self.backend.reorg(depth).await;
+    pub async fn anvil_reorg(&self, depth: u64, new_len: u64) -> Result<()> {
+        self.backend.reorg(depth, new_len).await?;
         Ok(())
     }
 
