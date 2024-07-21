@@ -617,7 +617,7 @@ impl Backend {
         if self.is_eip7702() {
             return Ok(());
         }
-        Err(BlockchainError::EIP4844TransactionUnsupportedAtHardfork)
+        Err(BlockchainError::EIP7702TransactionUnsupportedAtHardfork)
     }
 
     /// Returns an error if op-stack deposits are not active
