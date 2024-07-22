@@ -490,6 +490,10 @@ pub enum CastSubcommand {
 
         /// The ABI-encoded calldata.
         calldata: String,
+
+        /// Print the decoded calldata as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
     },
 
     /// Decode ABI-encoded input or output data.

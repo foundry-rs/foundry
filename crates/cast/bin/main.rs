@@ -12,7 +12,7 @@ use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::get_event,
     ens::{namehash, ProviderEnsExt},
-    fmt::{format_tokens, format_uint_exp},
+    fmt::{format_token_raw, format_tokens, format_uint_exp},
     fs,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, decode_selectors,
@@ -175,10 +175,15 @@ async fn main() -> Result<()> {
                 println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?);
             }
         }
-        CastSubcommand::CalldataDecode { sig, calldata } => {
+        CastSubcommand::CalldataDecode { sig, calldata, json } => {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
-            let tokens = format_tokens(&tokens);
-            tokens.for_each(|t| println!("{t}"));
+            if json {
+                let tokens: Vec<String> = tokens.iter().map(format_token_raw).collect();
+                println!("{}", serde_json::to_string_pretty(&tokens).unwrap());
+            } else {
+                let tokens = format_tokens(&tokens);
+                tokens.for_each(|t| println!("{t}"));
+            }
         }
         CastSubcommand::CalldataEncode { sig, args } => {
             println!("{}", SimpleCast::calldata_encode(sig, &args)?);
