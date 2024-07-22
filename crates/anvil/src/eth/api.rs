@@ -52,15 +52,15 @@ use alloy_rpc_types::{
     BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
     Transaction,
 };
-use alloy_serde::WithOtherFields;
+use alloy_serde::{quantity::vec, WithOtherFields};
 use alloy_signer::Signature;
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
         block::BlockInfo,
         transaction::{
-            transaction_request_to_typed, PendingTransaction, ReceiptResponse, TypedTransaction,
-            TypedTransactionRequest,
+            to_alloy_transaction_with_hash_and_sender, transaction_request_to_typed,
+            PendingTransaction, ReceiptResponse, TypedTransaction, TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -1917,8 +1917,37 @@ impl EthApi {
         Ok(())
     }
 
-    pub async fn anvil_reorg(&self, depth: u64, new_len: u64) -> Result<()> {
-        self.backend.reorg(depth, new_len).await?;
+    pub async fn anvil_reorg(
+        &self,
+        depth: u64,
+        new_len: u64,
+        transactions: Option<Vec<TransactionRequest>>,
+    ) -> Result<()> {
+        let txs = if let Some(txs) = transactions {
+            let mut requests = Vec::with_capacity(txs.len());
+            for tx in txs {
+                let nonce = tx.nonce.ok_or_else(|| {
+                    BlockchainError::RpcError(RpcError::invalid_params(
+                        "sender not found for transaction",
+                    ))
+                })?;
+                let from = tx.from.ok_or_else(|| {
+                    BlockchainError::RpcError(RpcError::invalid_params(
+                        "sender not found for transaction",
+                    ))
+                })?;
+                let typed_request = self.build_typed_tx_request(WithOtherFields::new(tx), nonce)?;
+                let typed = self.sign_request(&from, typed_request)?;
+                let pending = PendingTransaction::new(typed)?;
+                requests.push(pending);
+            }
+            requests
+        } else {
+            vec![]
+        };
+
+        // How will you go from TypedTransaction ->
+        self.backend.reorg(depth, new_len, txs).await?;
         Ok(())
     }
 

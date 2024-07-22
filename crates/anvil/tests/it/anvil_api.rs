@@ -687,6 +687,7 @@ async fn test_reorg() {
     // Edge cases:
     // - Reorging on genesis block
     // - Deleting snap shot of uncle blocks
+    // - Limit reorg depth for performance
 
     // API options:
     // - calls self.mine_one()

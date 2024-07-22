@@ -2403,7 +2403,12 @@ impl Backend {
     }
 
     // TODO
-    pub async fn reorg(&self, depth: u64, new_len: u64) -> Result<(), BlockchainError> {
+    pub async fn reorg(
+        &self,
+        depth: u64,
+        new_len: u64,
+        txs: Vec<PendingTransaction>,
+    ) -> Result<(), BlockchainError> {
         let current_height = self.best_number();
         let common_height = if self.best_number() > depth { self.best_number() - depth } else { 0 };
 
@@ -2442,6 +2447,7 @@ impl Backend {
             };
         };
 
+        // Here we can use TryFrom RPC transaction -> Pool transaction
         for _ in 0 + 1..=new_len {
             self.do_mine_block(vec![]).await;
         }
