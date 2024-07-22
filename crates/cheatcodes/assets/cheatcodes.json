@@ -3553,6 +3553,46 @@
     },
     {
       "func": {
+        "id": "deployCode_0",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "declaration": "function deployCode(string calldata artifactPath) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string)",
+        "selector": "0x9a8325a0",
+        "selectorBytes": [
+          154,
+          131,
+          37,
+          160
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_1",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionaly accepts abi-encoded constructor arguments.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes)",
+        "selector": "0x29ce9dde",
+        "selectorBytes": [
+          41,
+          206,
+          157,
+          222
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "deriveKey_0",
         "description": "Derive a private key from a provided mnenomic string (or mnenomic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);",
@@ -4485,6 +4525,86 @@
           183,
           183,
           204
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmitAnonymous_0",
+        "description": "Prepare an expected anonymous log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an anonymous event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).",
+        "declaration": "function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmitAnonymous(bool,bool,bool,bool,bool)",
+        "selector": "0xc948db5e",
+        "selectorBytes": [
+          201,
+          72,
+          219,
+          94
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmitAnonymous_1",
+        "description": "Same as the previous method, but also checks supplied address against emitting contract.",
+        "declaration": "function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmitAnonymous(bool,bool,bool,bool,bool,address)",
+        "selector": "0x71c95899",
+        "selectorBytes": [
+          113,
+          201,
+          88,
+          153
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmitAnonymous_2",
+        "description": "Prepare an expected anonymous log with all topic and data checks enabled.\nCall this function, then emit an anonymous event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data.",
+        "declaration": "function expectEmitAnonymous() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmitAnonymous()",
+        "selector": "0x2e5f270c",
+        "selectorBytes": [
+          46,
+          95,
+          39,
+          12
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmitAnonymous_3",
+        "description": "Same as the previous method, but also checks supplied address against emitting contract.",
+        "declaration": "function expectEmitAnonymous(address emitter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmitAnonymous(address)",
+        "selector": "0x6fc68705",
+        "selectorBytes": [
+          111,
+          198,
+          135,
+          5
         ]
       },
       "group": "testing",
@@ -5753,6 +5873,66 @@
     },
     {
       "func": {
+        "id": "parseJsonTypeArray",
+        "description": "Parses a string of JSON data at `key` and coerces it to type array corresponding to `typeDescription`.",
+        "declaration": "function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonTypeArray(string,string,string)",
+        "selector": "0x0175d535",
+        "selectorBytes": [
+          1,
+          117,
+          213,
+          53
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonType_0",
+        "description": "Parses a string of JSON data and coerces it to type corresponding to `typeDescription`.",
+        "declaration": "function parseJsonType(string calldata json, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonType(string,string)",
+        "selector": "0xa9da313b",
+        "selectorBytes": [
+          169,
+          218,
+          49,
+          59
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonType_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to type corresponding to `typeDescription`.",
+        "declaration": "function parseJsonType(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonType(string,string,string)",
+        "selector": "0xe3f5ae33",
+        "selectorBytes": [
+          227,
+          245,
+          174,
+          51
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "parseJsonUint",
         "description": "Parses a string of JSON data at `key` and coerces it to `uint256`.",
         "declaration": "function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);",
@@ -6973,26 +7153,6 @@
     },
     {
       "func": {
-        "id": "rpc",
-        "description": "Performs an Ethereum JSON-RPC request to the current fork URL.",
-        "declaration": "function rpc(string calldata method, string calldata params) external returns (bytes memory data);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "rpc(string,string)",
-        "selector": "0x1206c8a8",
-        "selectorBytes": [
-          18,
-          6,
-          200,
-          168
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "rpcUrl",
         "description": "Returns the RPC url for the given alias.",
         "declaration": "function rpcUrl(string calldata rpcAlias) external view returns (string memory json);",
@@ -7048,6 +7208,46 @@
         ]
       },
       "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rpc_0",
+        "description": "Performs an Ethereum JSON-RPC request to the current fork URL.",
+        "declaration": "function rpc(string calldata method, string calldata params) external returns (bytes memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpc(string,string)",
+        "selector": "0x1206c8a8",
+        "selectorBytes": [
+          18,
+          6,
+          200,
+          168
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rpc_1",
+        "description": "Performs an Ethereum JSON-RPC request to the given endpoint.",
+        "declaration": "function rpc(string calldata urlOrAlias, string calldata method, string calldata params) external returns (bytes memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpc(string,string,string)",
+        "selector": "0x0199a220",
+        "selectorBytes": [
+          1,
+          153,
+          162,
+          32
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
@@ -7293,6 +7493,46 @@
     },
     {
       "func": {
+        "id": "serializeJsonType_0",
+        "description": "See `serializeJson`.",
+        "declaration": "function serializeJsonType(string calldata typeDescription, bytes memory value) external pure returns (string memory json);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "serializeJsonType(string,bytes)",
+        "selector": "0x6d4f96a6",
+        "selectorBytes": [
+          109,
+          79,
+          150,
+          166
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "serializeJsonType_1",
+        "description": "See `serializeJson`.",
+        "declaration": "function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value) external returns (string memory json);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "serializeJsonType(string,string,string,bytes)",
+        "selector": "0x6f93bccb",
+        "selectorBytes": [
+          111,
+          147,
+          188,
+          203
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "serializeString_0",
         "description": "See `serializeJson`.",
         "declaration": "function serializeString(string calldata objectKey, string calldata valueKey, string calldata value) external returns (string memory json);",
@@ -7390,6 +7630,26 @@
       "group": "json",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "setBlockhash",
+        "description": "Set blockhash for the current block.\nIt only sets the blockhash for blocks where `block.number - 256 <= number < block.number`.",
+        "declaration": "function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setBlockhash(uint256,bytes32)",
+        "selector": "0x5314b54a",
+        "selectorBytes": [
+          83,
+          20,
+          181,
+          74
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {

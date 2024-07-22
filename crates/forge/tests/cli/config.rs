@@ -64,12 +64,17 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         contract_pattern_inverse: None,
         path_pattern: None,
         path_pattern_inverse: None,
+        coverage_pattern_inverse: None,
+        test_failures_file: "test-cache/test-failures".into(),
+        threads: None,
+        show_progress: false,
         fuzz: FuzzConfig {
             runs: 1000,
             max_test_rejects: 100203,
             seed: Some(U256::from(1000)),
             failure_persist_dir: Some("test-cache/fuzz".into()),
             failure_persist_file: Some("failures".to_string()),
+            show_logs: false,
             ..Default::default()
         },
         invariant: InvariantConfig {
@@ -102,7 +107,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,
-        remappings: vec![Remapping::from_str("forge-std=lib/forge-std/").unwrap().into()],
+        remappings: vec![Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into()],
         libraries: vec![
             "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string()
         ],
@@ -129,6 +134,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         build_info_path: None,
         fmt: Default::default(),
         doc: Default::default(),
+        bind_json: Default::default(),
         fs_permissions: Default::default(),
         labels: Default::default(),
         prague: true,
@@ -139,7 +145,10 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         skip: vec![],
         dependencies: Default::default(),
         warnings: vec![],
+        assertions_revert: true,
         legacy_assertions: false,
+        extra_args: vec![],
+        eof_version: None,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());

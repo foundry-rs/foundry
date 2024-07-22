@@ -7,8 +7,11 @@ use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
-use foundry_evm_core::constants::{
-    CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
+use foundry_evm_core::{
+    constants::{
+        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
+    },
+    precompiles::PRECOMPILES,
 };
 use foundry_evm_fuzz::{
     invariant::{
@@ -32,6 +35,7 @@ use std::{cell::RefCell, collections::btree_map::Entry, sync::Arc};
 
 mod error;
 pub use error::{InvariantFailures, InvariantFuzzError};
+use foundry_evm_coverage::HitMaps;
 
 mod replay;
 pub use replay::{replay_error, replay_run};
@@ -109,6 +113,8 @@ pub struct InvariantTestData {
     pub gas_report_traces: Vec<Vec<CallTraceArena>>,
     // Last call results of the invariant test.
     pub last_call_results: Option<RawCallResult>,
+    // Coverage information collected from all fuzzed calls.
+    pub coverage: Option<HitMaps>,
 
     // Proptest runner to query for random values.
     // The strategy only comes with the first `input`. We fill the rest of the `inputs`
@@ -146,6 +152,7 @@ impl InvariantTest {
             last_run_inputs: vec![],
             gas_report_traces: vec![],
             last_call_results,
+            coverage: None,
             branch_runner,
         });
         Self { fuzz_state, targeted_contracts, execution_data }
@@ -174,6 +181,14 @@ impl InvariantTest {
     /// Set last invariant run call sequence.
     pub fn set_last_run_inputs(&self, inputs: &Vec<BasicTxDetails>) {
         self.execution_data.borrow_mut().last_run_inputs.clone_from(inputs);
+    }
+
+    /// Merge current collected coverage with the new coverage from last fuzzed call.
+    pub fn merge_coverage(&self, new_coverage: Option<HitMaps>) {
+        match &mut self.execution_data.borrow_mut().coverage {
+            Some(prev) => prev.merge(new_coverage.unwrap()),
+            opt => *opt = new_coverage,
+        }
     }
 
     /// End invariant test run by collecting results, cleaning collected artifacts and reverting
@@ -313,6 +328,9 @@ impl<'a> InvariantExecutor<'a> {
                         TestCaseError::fail(format!("Could not make raw evm call: {e}"))
                     })?;
 
+                // Collect coverage from last fuzzed call.
+                invariant_test.merge_coverage(call_result.coverage.clone());
+
                 if call_result.result.as_ref() == MAGIC_ASSUME {
                     current_run.inputs.pop();
                     current_run.assume_rejects_counter += 1;
@@ -421,6 +439,7 @@ impl<'a> InvariantExecutor<'a> {
             reverts: result.failures.reverts,
             last_run_inputs: result.last_run_inputs,
             gas_report_traces: result.gas_report_traces,
+            coverage: result.coverage,
         })
     }
 
@@ -611,6 +630,8 @@ impl<'a> InvariantExecutor<'a> {
             HARDHAT_CONSOLE_ADDRESS,
             DEFAULT_CREATE2_DEPLOYER,
         ]);
+        // Extend with precompiles - https://github.com/foundry-rs/foundry/issues/4287
+        excluded_senders.extend(PRECOMPILES);
         let sender_filters = SenderFilters::new(targeted_senders, excluded_senders);
 
         let selected =

@@ -1,10 +1,10 @@
 use crate::{
-    config::DEFAULT_MNEMONIC,
+    config::{ForkChoice, DEFAULT_MNEMONIC},
     eth::{backend::db::SerializableState, pool::transactions::TransactionOrder, EthApi},
     AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
 use alloy_genesis::Genesis;
-use alloy_primitives::{utils::Unit, U256};
+use alloy_primitives::{utils::Unit, B256, U256};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
@@ -208,10 +208,14 @@ impl NodeArgs {
             .with_genesis_balance(genesis_balance)
             .with_genesis_timestamp(self.timestamp)
             .with_port(self.port)
-            .with_fork_block_number(
-                self.evm_opts
-                    .fork_block_number
-                    .or_else(|| self.evm_opts.fork_url.as_ref().and_then(|f| f.block)),
+            .with_fork_choice(
+                match (self.evm_opts.fork_block_number, self.evm_opts.fork_transaction_hash) {
+                    (Some(block), None) => Some(ForkChoice::Block(block)),
+                    (None, Some(hash)) => Some(ForkChoice::Transaction(hash)),
+                    _ => {
+                        self.evm_opts.fork_url.as_ref().and_then(|f| f.block).map(ForkChoice::Block)
+                    }
+                },
             )
             .with_fork_headers(self.evm_opts.fork_headers)
             .with_fork_chain_id(self.evm_opts.fork_chain_id.map(u64::from).map(U256::from))
@@ -230,6 +234,7 @@ impl NodeArgs {
             .with_transaction_order(self.order)
             .with_genesis(self.init)
             .with_steps_tracing(self.evm_opts.steps_tracing)
+            .with_print_logs(!self.evm_opts.disable_console_log)
             .with_auto_impersonate(self.evm_opts.auto_impersonate)
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm_opts.code_size_limit)
@@ -398,6 +403,18 @@ pub struct AnvilEvmArgs {
     #[arg(long, requires = "fork_url", value_name = "BLOCK", help_heading = "Fork config")]
     pub fork_block_number: Option<u64>,
 
+    /// Fetch state from a specific transaction hash over a remote endpoint.
+    ///
+    /// See --fork-url.
+    #[arg(
+        long,
+        requires = "fork_url",
+        value_name = "TRANSACTION",
+        help_heading = "Fork config",
+        conflicts_with = "fork_block_number"
+    )]
+    pub fork_transaction_hash: Option<B256>,
+
     /// Initial retry backoff on encountering errors.
     ///
     /// See --fork-url.
@@ -494,6 +511,10 @@ pub struct AnvilEvmArgs {
     /// Enable steps tracing used for debug calls returning geth-style traces
     #[arg(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
+
+    /// Disable printing of `console.log` invocations to stdout.
+    #[arg(long, visible_alias = "no-console-log")]
+    pub disable_console_log: bool,
 
     /// Enable autoImpersonate on startup
     #[arg(long, visible_alias = "auto-impersonate")]

@@ -179,6 +179,7 @@ impl VerifyBytecodeArgs {
         // Get creation tx hash
         let creation_data = etherscan.contract_creation_data(self.address).await?;
 
+        trace!(creation_tx_hash = ?creation_data.transaction_hash);
         let mut transaction = provider
             .get_transaction_by_hash(creation_data.transaction_hash)
             .await
@@ -189,7 +190,7 @@ impl VerifyBytecodeArgs {
         let receipt = provider
             .get_transaction_receipt(creation_data.transaction_hash)
             .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transacrion receipt from RPC: {:?}", e))?;
+            .or_else(|e| eyre::bail!("Couldn't fetch transaction receipt from RPC: {:?}", e))?;
 
         let receipt = if let Some(receipt) = receipt {
             receipt
@@ -199,17 +200,19 @@ impl VerifyBytecodeArgs {
                 creation_data.transaction_hash
             );
         };
+
         // Extract creation code
-        let maybe_creation_code = if receipt.contract_address == Some(self.address) {
-            &transaction.input
-        } else if transaction.to == Some(DEFAULT_CREATE2_DEPLOYER) {
-            &transaction.input[32..]
-        } else {
-            eyre::bail!(
-                "Could not extract the creation code for contract at address {}",
-                self.address
-            );
-        };
+        let maybe_creation_code =
+            if receipt.to.is_none() && receipt.contract_address == Some(self.address) {
+                &transaction.input
+            } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
+                &transaction.input[32..]
+            } else {
+                eyre::bail!(
+                    "Could not extract the creation code for contract at address {}",
+                    self.address
+                );
+            };
 
         // If bytecode_hash is disabled then its always partial verification
         let (verification_type, has_metadata) =
@@ -235,6 +238,7 @@ impl VerifyBytecodeArgs {
             };
 
         // Append constructor args to the local_bytecode
+        trace!(%constructor_args);
         let mut local_bytecode_vec = local_bytecode.to_vec();
         local_bytecode_vec.extend_from_slice(&constructor_args);
 
@@ -256,6 +260,21 @@ impl VerifyBytecodeArgs {
             etherscan_metadata,
             &config,
         );
+
+        // If the creation code does not match, the runtime also won't match. Hence return.
+        if !did_match {
+            self.print_result(
+                (did_match, with_status),
+                BytecodeType::Runtime,
+                &mut json_results,
+                etherscan_metadata,
+                &config,
+            );
+            if self.json {
+                println!("{}", serde_json::to_string(&json_results)?);
+            }
+            return Ok(());
+        }
 
         // Get contract creation block
         let simulation_block = match self.block {
@@ -284,7 +303,7 @@ impl VerifyBytecodeArgs {
             TracingExecutor::get_fork_material(&fork_config, evm_opts).await?;
 
         let mut executor =
-            TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false);
+            TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false, false);
         env.block.number = U256::from(simulation_block);
         let block = provider.get_block(simulation_block.into(), true.into()).await?;
 
@@ -304,6 +323,20 @@ impl VerifyBytecodeArgs {
             env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
             env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
             env.block.gas_limit = U256::from(block.header.gas_limit);
+        }
+
+        // Replace the `input` with local creation code in the creation tx.
+        if let Some(to) = transaction.to {
+            if to == DEFAULT_CREATE2_DEPLOYER {
+                let mut input = transaction.input[..32].to_vec(); // Salt
+                input.extend_from_slice(&local_bytecode_vec);
+                transaction.input = Bytes::from(input);
+
+                // Deploy default CREATE2 deployer
+                executor.deploy_create2_deployer()?;
+            }
+        } else {
+            transaction.input = Bytes::from(local_bytecode_vec);
         }
 
         configure_tx_env(&mut env, &transaction);
@@ -348,9 +381,9 @@ impl VerifyBytecodeArgs {
         let onchain_runtime_code =
             provider.get_code_at(self.address).block_id(BlockId::number(simulation_block)).await?;
 
-        // Compare the runtime bytecode with the locally built bytecode
+        // Compare the onchain runtime bytecode with the runtime code from the fork.
         let (did_match, with_status) = try_match(
-            fork_runtime_code.bytecode(),
+            &fork_runtime_code.original_bytes(),
             &onchain_runtime_code,
             &constructor_args,
             &verification_type,
@@ -489,7 +522,7 @@ impl VerifyBytecodeArgs {
             let json_res = JsonResult {
                 bytecode_type,
                 matched: false,
-                verification_type: self.verification_type,
+                verification_type: res.1.unwrap(),
                 message: Some(format!(
                     "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
                 )),
@@ -571,7 +604,7 @@ fn try_match(
         Ok((true, Some(VerificationType::Full)))
     } else {
         try_partial_match(local_bytecode, bytecode, constructor_args, is_runtime, has_metadata)
-            .map(|matched| (matched, matched.then_some(VerificationType::Partial)))
+            .map(|matched| (matched, Some(VerificationType::Partial)))
     }
 }
 
@@ -583,36 +616,29 @@ fn try_partial_match(
     has_metadata: bool,
 ) -> Result<bool> {
     // 1. Check length of constructor args
-    if constructor_args.is_empty() {
+    if constructor_args.is_empty() || is_runtime {
         // Assume metadata is at the end of the bytecode
-        if has_metadata {
-            local_bytecode = extract_metadata_hash(local_bytecode)?;
-            bytecode = extract_metadata_hash(bytecode)?;
-        }
-
-        // Now compare the creation code and bytecode
-        return Ok(local_bytecode == bytecode);
-    }
-
-    if is_runtime {
-        if has_metadata {
-            local_bytecode = extract_metadata_hash(local_bytecode)?;
-            bytecode = extract_metadata_hash(bytecode)?;
-        }
-
-        // Now compare the local code and bytecode
-        return Ok(local_bytecode == bytecode);
+        return try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
     }
 
     // If not runtime, extract constructor args from the end of the bytecode
     bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
     local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
 
+    try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
+}
+
+fn try_extract_and_compare_bytecode(
+    mut local_bytecode: &[u8],
+    mut bytecode: &[u8],
+    has_metadata: bool,
+) -> Result<bool> {
     if has_metadata {
         local_bytecode = extract_metadata_hash(local_bytecode)?;
         bytecode = extract_metadata_hash(bytecode)?;
     }
 
+    // Now compare the local code and bytecode
     Ok(local_bytecode == bytecode)
 }
 

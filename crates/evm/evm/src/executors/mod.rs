@@ -14,17 +14,16 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256};
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
-    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult, GLOBAL_FAIL_SLOT},
+    backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
-        DEFAULT_CREATE2_DEPLOYER_CODE,
+        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
-    debug::DebugArena,
     decode::RevertDecoder,
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_traces::CallTraceArena;
+use foundry_evm_traces::{CallTraceArena, TraceMode};
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, InstructionResult},
@@ -81,6 +80,8 @@ pub struct Executor {
     /// the passed in environment, as those limits are used by the EVM for certain opcodes like
     /// `gaslimit`.
     gas_limit: u64,
+    /// Whether `failed()` should be called on the test contract to determine if the test failed.
+    legacy_assertions: bool,
 }
 
 impl Executor {
@@ -97,6 +98,7 @@ impl Executor {
         env: EnvWithHandlerCfg,
         inspector: InspectorStack,
         gas_limit: u64,
+        legacy_assertions: bool,
     ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // do not fail.
@@ -111,12 +113,12 @@ impl Executor {
             },
         );
 
-        Self { backend, env, inspector, gas_limit }
+        Self { backend, env, inspector, gas_limit, legacy_assertions }
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
         let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(self.env().clone()), self.spec_id());
-        Self::new(backend, env, self.inspector().clone(), self.gas_limit)
+        Self::new(backend, env, self.inspector().clone(), self.gas_limit, self.legacy_assertions)
     }
 
     /// Returns a reference to the EVM backend.
@@ -160,16 +162,16 @@ impl Executor {
         let create2_deployer_account = self
             .backend()
             .basic_ref(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or_else(|| DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+            .ok_or_else(|| BackendError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
-        // if the deployer is not currently deployed, deploy the default one
+        // If the deployer is not currently deployed, deploy the default one.
         if create2_deployer_account.code.map_or(true, |code| code.is_empty()) {
-            let creator = "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse().unwrap();
+            let creator = DEFAULT_CREATE2_DEPLOYER_DEPLOYER;
 
             // Probably 0, but just in case.
             let initial_balance = self.get_balance(creator)?;
-
             self.set_balance(creator, U256::MAX)?;
+
             let res =
                 self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
             trace!(create2=?res.address, "deployed local create2 deployer");
@@ -180,7 +182,7 @@ impl Executor {
     }
 
     /// Set the balance of an account.
-    pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<()> {
+    pub fn set_balance(&mut self, address: Address, amount: U256) -> BackendResult<()> {
         trace!(?address, ?amount, "setting account balance");
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.balance = amount;
@@ -189,12 +191,12 @@ impl Executor {
     }
 
     /// Gets the balance of an account
-    pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
+    pub fn get_balance(&self, address: Address) -> BackendResult<U256> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.balance).unwrap_or_default())
     }
 
     /// Set the nonce of an account.
-    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<()> {
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.nonce = nonce;
         self.backend_mut().insert_account_info(address, account);
@@ -202,24 +204,18 @@ impl Executor {
     }
 
     /// Returns the nonce of an account.
-    pub fn get_nonce(&self, address: Address) -> DatabaseResult<u64> {
+    pub fn get_nonce(&self, address: Address) -> BackendResult<u64> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
     }
 
     /// Returns `true` if the account has no code.
-    pub fn is_empty_code(&self, address: Address) -> DatabaseResult<bool> {
+    pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
     }
 
     #[inline]
-    pub fn set_tracing(&mut self, tracing: bool) -> &mut Self {
-        self.inspector_mut().tracing(tracing);
-        self
-    }
-
-    #[inline]
-    pub fn set_debugger(&mut self, debugger: bool) -> &mut Self {
-        self.inspector_mut().enable_debugger(debugger);
+    pub fn set_tracing(&mut self, mode: TraceMode) -> &mut Self {
+        self.inspector_mut().tracing(mode);
         self
     }
 
@@ -519,19 +515,21 @@ impl Executor {
         }
 
         // Check the global failure slot.
-        // TODO: Wire this up
-        let legacy = true;
-        if !legacy {
-            if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
-                if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
-                    return failed_slot.present_value().is_zero();
+        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
+            if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
+                if !failed_slot.present_value().is_zero() {
+                    return false;
                 }
             }
-            let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
-            else {
+        }
+        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT) {
+            if !failed_slot.is_zero() {
                 return false;
-            };
-            return failed_slot.is_zero();
+            }
+        }
+
+        if !self.legacy_assertions {
+            return true;
         }
 
         // Finally, resort to calling `DSTest::failed`.
@@ -713,8 +711,6 @@ pub struct RawCallResult {
     pub traces: Option<CallTraceArena>,
     /// The coverage info collected during the call
     pub coverage: Option<HitMaps>,
-    /// The debug nodes of the call
-    pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
     pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
@@ -743,7 +739,6 @@ impl Default for RawCallResult {
             labels: HashMap::new(),
             traces: None,
             coverage: None,
-            debug: None,
             transactions: None,
             state_changeset: HashMap::default(),
             env: EnvWithHandlerCfg::new_with_spec_id(Box::default(), SpecId::LATEST),
@@ -849,6 +844,7 @@ fn convert_executed_result(
         &env.tx.data,
         env.tx.transact_to.is_create(),
         &env.tx.access_list,
+        0,
     );
 
     let result = match &out {
@@ -856,7 +852,7 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData { mut logs, labels, traces, coverage, debug, cheatcodes, chisel_state } =
+    let InspectorData { mut logs, labels, traces, coverage, cheatcodes, chisel_state } =
         inspector.collect();
 
     if logs.is_empty() {
@@ -880,7 +876,6 @@ fn convert_executed_result(
         labels,
         traces,
         coverage,
-        debug,
         transactions,
         state_changeset,
         env,

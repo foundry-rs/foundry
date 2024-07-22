@@ -2,6 +2,7 @@
 
 use core::fmt;
 use foundry_compilers::FileFilter;
+use serde::{Deserialize, Serialize};
 use std::{
     convert::Infallible,
     path::{Path, PathBuf},
@@ -55,6 +56,14 @@ impl GlobMatcher {
             return self.matcher.is_match(format!("./{}", path.display()));
         }
 
+        if path.is_relative() && Path::new(self.glob().glob()).is_absolute() {
+            if let Ok(canonicalized_path) = dunce::canonicalize(path) {
+                return self.matcher.is_match(&canonicalized_path);
+            } else {
+                return false;
+            }
+        }
+
         false
     }
 
@@ -95,6 +104,27 @@ impl From<globset::Glob> for GlobMatcher {
         Self::new(glob)
     }
 }
+
+impl Serialize for GlobMatcher {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.glob().glob().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for GlobMatcher {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl PartialEq for GlobMatcher {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for GlobMatcher {}
 
 /// Bundles multiple `SkipBuildFilter` into a single `FileFilter`
 #[derive(Clone, Debug)]
@@ -196,9 +226,27 @@ mod tests {
     }
 
     #[test]
-    fn can_match_glob_paths() {
+    fn can_match_relative_glob_paths() {
         let matcher: GlobMatcher = "./test/*".parse().unwrap();
-        assert!(matcher.is_match(Path::new("test/Contract.sol")));
-        assert!(matcher.is_match(Path::new("./test/Contract.sol")));
+
+        // Absolute path that should match the pattern
+        assert!(matcher.is_match(Path::new("test/Contract.t.sol")));
+
+        // Relative path that should match the pattern
+        assert!(matcher.is_match(Path::new("./test/Contract.t.sol")));
+    }
+
+    #[test]
+    fn can_match_absolute_glob_paths() {
+        let matcher: GlobMatcher = "/home/user/projects/project/test/*".parse().unwrap();
+
+        // Absolute path that should match the pattern
+        assert!(matcher.is_match(Path::new("/home/user/projects/project/test/Contract.t.sol")));
+
+        // Absolute path that should not match the pattern
+        assert!(!matcher.is_match(Path::new("/home/user/other/project/test/Contract.t.sol")));
+
+        // Relative path that should not match an absolute pattern
+        assert!(!matcher.is_match(Path::new("projects/project/test/Contract.t.sol")));
     }
 }

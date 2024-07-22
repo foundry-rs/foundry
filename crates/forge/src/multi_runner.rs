@@ -13,8 +13,14 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use foundry_evm::{
-    backend::Backend, decode::RevertDecoder, executors::ExecutorBuilder, fork::CreateFork,
-    inspectors::CheatsConfig, opts::EvmOpts, revm,
+    backend::Backend,
+    decode::RevertDecoder,
+    executors::ExecutorBuilder,
+    fork::CreateFork,
+    inspectors::CheatsConfig,
+    opts::EvmOpts,
+    revm,
+    traces::{InternalTraceMode, TraceMode},
 };
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
@@ -60,6 +66,8 @@ pub struct MultiContractRunner {
     pub coverage: bool,
     /// Whether to collect debug info
     pub debug: bool,
+    /// Whether to enable steps tracking in the tracer.
+    pub decode_internal: InternalTraceMode,
     /// Settings related to fuzz and/or invariant tests
     pub test_options: TestOptions,
     /// Whether to enable call isolation
@@ -236,17 +244,22 @@ impl MultiContractRunner {
             Some(artifact_id.version.clone()),
         );
 
+        let trace_mode = TraceMode::default()
+            .with_debug(self.debug)
+            .with_decode_internal(self.decode_internal)
+            .with_verbosity(self.evm_opts.verbosity);
+
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack
                     .cheatcodes(Arc::new(cheats_config))
-                    .trace(self.evm_opts.verbosity >= 3 || self.debug)
-                    .debug(self.debug)
+                    .trace_mode(trace_mode)
                     .coverage(self.coverage)
                     .enable_isolation(self.isolation)
             })
             .spec(self.evm_spec)
             .gas_limit(self.evm_opts.gas_limit())
+            .legacy_assertions(self.config.legacy_assertions)
             .build(self.env.clone(), db);
 
         if !enabled!(tracing::Level::TRACE) {
@@ -298,6 +311,8 @@ pub struct MultiContractRunnerBuilder {
     pub coverage: bool,
     /// Whether or not to collect debug info
     pub debug: bool,
+    /// Whether to enable steps tracking in the tracer.
+    pub decode_internal: InternalTraceMode,
     /// Whether to enable call isolation
     pub isolation: bool,
     /// Settings related to fuzz and/or invariant tests
@@ -316,6 +331,7 @@ impl MultiContractRunnerBuilder {
             debug: Default::default(),
             isolation: Default::default(),
             test_options: Default::default(),
+            decode_internal: Default::default(),
         }
     }
 
@@ -354,6 +370,11 @@ impl MultiContractRunnerBuilder {
         self
     }
 
+    pub fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
+        self.decode_internal = mode;
+        self
+    }
+
     pub fn enable_isolation(mut self, enable: bool) -> Self {
         self.isolation = enable;
         self
@@ -364,12 +385,15 @@ impl MultiContractRunnerBuilder {
     pub fn build<C: Compiler>(
         self,
         root: &Path,
-        output: ProjectCompileOutput<C>,
+        output: &ProjectCompileOutput<C>,
         env: revm::primitives::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
-        let output = output.with_stripped_file_prefixes(root);
-        let linker = Linker::new(root, output.artifact_ids().collect());
+        let contracts = output
+            .artifact_ids()
+            .map(|(id, v)| (id.with_stripped_file_prefixes(root), v))
+            .collect();
+        let linker = Linker::new(root, contracts);
 
         // Build revert decoder from ABIs of all artifacts.
         let abis = linker
@@ -421,6 +445,7 @@ impl MultiContractRunnerBuilder {
             config: self.config,
             coverage: self.coverage,
             debug: self.debug,
+            decode_internal: self.decode_internal,
             test_options: self.test_options.unwrap_or_default(),
             isolation: self.isolation,
             known_contracts,

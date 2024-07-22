@@ -1,5 +1,6 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
 use alloy_primitives::{Address, TxHash};
+use alloy_rpc_types::Transaction as RpcTransaction;
 use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use parking_lot::RwLock;
 use std::{
@@ -116,6 +117,20 @@ impl PartialOrd for PoolTransaction {
 impl Ord for PoolTransaction {
     fn cmp(&self, other: &Self) -> Ordering {
         self.hash().cmp(&other.hash())
+    }
+}
+
+impl TryFrom<RpcTransaction> for PoolTransaction {
+    type Error = eyre::Error;
+    fn try_from(transaction: RpcTransaction) -> Result<Self, Self::Error> {
+        let typed_transaction = TypedTransaction::try_from(transaction)?;
+        let pending_transaction = PendingTransaction::new(typed_transaction)?;
+        Ok(Self {
+            pending_transaction,
+            requires: vec![],
+            provides: vec![],
+            priority: TransactionPriority(0),
+        })
     }
 }
 

@@ -17,7 +17,9 @@ use revm::{ContextPrecompiles, InnerEvmContext};
 
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
-pub use inspector::{BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, Context};
+pub use inspector::{
+    BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor, Context,
+};
 pub use spec::{CheatcodeDef, Vm};
 pub use Vm::ForgeContext;
 
@@ -65,8 +67,20 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     ///
     /// Implement this function if you need access to the EVM data.
     #[inline(always)]
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         self.apply(ccx.state)
+    }
+
+    /// Applies this cheatcode to the given context and executor.
+    ///
+    /// Implement this function if you need access to the executor.
+    #[inline(always)]
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        _executor: &mut E,
+    ) -> Result {
+        self.apply_stateful(ccx)
     }
 }
 
@@ -84,8 +98,8 @@ impl<T: Cheatcode> DynCheatcode for T {
     }
 }
 
-/// The cheatcode context, used in [`Cheatcode`].
-pub(crate) struct CheatsCtxt<'cheats, 'evm, DB: DatabaseExt> {
+/// The cheatcode context, used in `Cheatcode`.
+pub struct CheatsCtxt<'cheats, 'evm, DB: DatabaseExt> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'cheats mut Cheatcodes,
     /// The EVM data.
@@ -94,6 +108,8 @@ pub(crate) struct CheatsCtxt<'cheats, 'evm, DB: DatabaseExt> {
     pub(crate) precompiles: &'evm mut ContextPrecompiles<DB>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
+    /// Gas limit of the current cheatcode call.
+    pub(crate) gas_limit: u64,
 }
 
 impl<'cheats, 'evm, DB: DatabaseExt> std::ops::Deref for CheatsCtxt<'cheats, 'evm, DB> {

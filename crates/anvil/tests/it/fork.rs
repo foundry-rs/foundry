@@ -4,8 +4,8 @@ use crate::{
     abi::{Greeter, ERC721},
     utils::{http_provider, http_provider_with_signer},
 };
-use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{address, bytes, Address, Bytes, TxKind, U256};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
+use alloy_primitives::{address, bytes, Address, Bytes, TxHash, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     anvil::Forking,
@@ -19,7 +19,7 @@ use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint};
 use futures::StreamExt;
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc, thread::sleep, time::Duration};
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 const DEAD_BALANCE_AT_BLOCK_NUMBER: u128 = 12_556_069_338_441_120_059_867u128;
@@ -1202,4 +1202,144 @@ async fn test_fork_execution_reverted() {
     assert!(resp.is_err());
     let err = resp.unwrap_err();
     assert!(err.to_string().contains("execution reverted"));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/8227>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_immutable_fork_transaction_hash() {
+    use std::str::FromStr;
+
+    // Fork to a block with a specific transaction
+    let fork_tx_hash =
+        TxHash::from_str("39d64ebf9eb3f07ede37f8681bc3b61928817276c4c4680b6ef9eac9f88b6786")
+            .unwrap();
+    let (api, _) = spawn(
+        fork_config()
+            .with_blocktime(Some(Duration::from_millis(500)))
+            .with_fork_transaction_hash(Some(fork_tx_hash))
+            .with_eth_rpc_url(Some("https://rpc.immutable.com".to_string())),
+    )
+    .await;
+
+    let fork_block_number = 8521008;
+
+    // Make sure the fork starts from previous block
+    let mut block_number = api.block_number().unwrap().to::<u64>();
+    assert_eq!(block_number, fork_block_number - 1);
+
+    // Wait for fork to pass the target block
+    while block_number < fork_block_number {
+        sleep(Duration::from_millis(250));
+        block_number = api.block_number().unwrap().to::<u64>();
+    }
+
+    let block = api
+        .block_by_number(BlockNumberOrTag::Number(fork_block_number - 1))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(block.transactions.len(), 14);
+    let block = api
+        .block_by_number_full(BlockNumberOrTag::Number(fork_block_number))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(block.transactions.len(), 3);
+
+    // Validate the transactions preceding the target transaction exist
+    let expected_transactions = [
+        TxHash::from_str("1bfe33136edc3d26bd01ce75c8f5ae14fffe8b142d30395cb4b6d3dc3043f400")
+            .unwrap(),
+        TxHash::from_str("8c0ce5fb9ec2c8e03f7fcc69c7786393c691ce43b58a06d74d6733679308fc01")
+            .unwrap(),
+        fork_tx_hash,
+    ];
+    for expected in [
+        (expected_transactions[0], address!("8C1aB379E7263d37049505626D2F975288F5dF12")),
+        (expected_transactions[1], address!("df918d9D02d5C7Df6825a7046dBF3D10F705Aa76")),
+        (expected_transactions[2], address!("5Be88952ce249024613e0961eB437f5E9424A90c")),
+    ] {
+        let tx = api.backend.mined_transaction_by_hash(expected.0).unwrap();
+        assert_eq!(tx.inner.from, expected.1);
+    }
+
+    // Validate the order of transactions in the new block
+    for expected in [
+        (expected_transactions[0], 0),
+        (expected_transactions[1], 1),
+        (expected_transactions[2], 2),
+    ] {
+        let tx = api
+            .backend
+            .mined_block_by_number(BlockNumberOrTag::Number(fork_block_number))
+            .and_then(|b| b.header.hash)
+            .and_then(|hash| {
+                api.backend.mined_transaction_by_block_hash_and_index(hash, expected.1.into())
+            })
+            .unwrap();
+        assert_eq!(tx.inner.hash.to_string(), expected.0.to_string());
+    }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/4700>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_query_at_fork_block() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+    let info = api.anvil_node_info().await.unwrap();
+    let number = info.fork_config.fork_block_number.unwrap();
+    assert_eq!(number, BLOCK_NUMBER);
+
+    let address = Address::random();
+
+    let balance = provider.get_balance(address).await.unwrap();
+    api.evm_mine(None).await.unwrap();
+    api.anvil_set_balance(address, balance + U256::from(1)).await.unwrap();
+
+    let balance_before =
+        provider.get_balance(address).block_id(BlockId::number(number)).await.unwrap();
+
+    assert_eq!(balance_before, balance);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/4173>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reset_dev_account_nonce() {
+    let config: NodeConfig = fork_config();
+    let address = config.genesis_accounts[0].address();
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let info = api.anvil_node_info().await.unwrap();
+    let number = info.fork_config.fork_block_number.unwrap();
+    assert_eq!(number, BLOCK_NUMBER);
+
+    let nonce_before = provider.get_transaction_count(address).await.unwrap();
+
+    // Reset to older block with other nonce
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: None,
+        block_number: Some(BLOCK_NUMBER - 1_000_000),
+    }))
+    .await
+    .unwrap();
+
+    let nonce_after = provider.get_transaction_count(address).await.unwrap();
+
+    assert!(nonce_before > nonce_after);
+
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(address)
+                .to(address)
+                .nonce(nonce_after)
+                .gas_limit(21000u128),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    assert!(receipt.status());
 }

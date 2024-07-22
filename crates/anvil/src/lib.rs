@@ -45,7 +45,7 @@ use tokio::{
 mod service;
 
 mod config;
-pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
+pub use config::{AccountGenerator, ForkChoice, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 
 mod hardfork;
 pub use hardfork::Hardfork;
@@ -128,7 +128,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
     let backend = Arc::new(config.setup().await);
 
     if config.enable_auto_impersonate {
-        backend.auto_impersonate_account(true).await;
+        backend.auto_impersonate_account(true);
     }
 
     let fork = backend.get_fork();
@@ -161,7 +161,13 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
         let listener = pool.add_ready_listener();
         MiningMode::instant(max_transactions, listener)
     };
-    let miner = Miner::new(mode);
+
+    let miner = match &fork {
+        Some(fork) => {
+            Miner::new(mode).with_forced_transactions(fork.config.read().force_transactions.clone())
+        }
+        _ => Miner::new(mode),
+    };
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(signer_accounts));
     let mut signers = vec![dev_signer];
@@ -177,19 +183,15 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
         }
     }
 
-    let fees = backend.fees().clone();
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
         backend.new_block_notifications(),
         Arc::clone(&fee_history_cache),
-        fees,
         StorageInfo::new(Arc::clone(&backend)),
     );
     // create an entry for the best block
-    if let Some(best_block) =
-        backend.get_block(backend.best_number()).map(|block| block.header.hash_slow())
-    {
-        fee_history_service.insert_cache_entry_for_block(best_block);
+    if let Some(header) = backend.get_block(backend.best_number()).map(|block| block.header) {
+        fee_history_service.insert_cache_entry_for_block(header.hash_slow(), &header);
     }
 
     let filters = Filters::default();

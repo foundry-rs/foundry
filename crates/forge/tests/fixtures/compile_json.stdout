@@ -15,5 +15,6 @@
       "formattedMessage": "DeclarationError: Undeclared identifier. Did you mean \"newNumber\"?\n --> src/jsonError.sol:7:18:\n  |\n7 |         number = newnumber; // error here\n  |                  ^^^^^^^^^\n\n"
     }
   ],
-  "sources": {}
+  "sources": {},
+  "build_infos": ["{...}"]
 }

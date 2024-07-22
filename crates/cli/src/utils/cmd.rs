@@ -11,10 +11,11 @@ use foundry_compilers::{
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
-    debug::DebugArena,
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
+        debug::DebugTraceIdentifier,
+        decode_trace_arena,
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
@@ -34,7 +35,7 @@ pub fn remove_contract(
     path: &Path,
     name: &str,
 ) -> Result<(JsonAbi, CompactBytecode, CompactDeployedBytecode)> {
-    let contract = if let Some(contract) = output.remove(path.to_string_lossy(), name) {
+    let contract = if let Some(contract) = output.remove(path, name) {
         contract
     } else {
         let mut err = format!("could not find artifact: `{name}`");
@@ -315,20 +316,14 @@ pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> Result<Vec<
 pub struct TraceResult {
     pub success: bool,
     pub traces: Option<Traces>,
-    pub debug: Option<DebugArena>,
     pub gas_used: u64,
 }
 
 impl TraceResult {
     /// Create a new [`TraceResult`] from a [`RawCallResult`].
     pub fn from_raw(raw: RawCallResult, trace_kind: TraceKind) -> Self {
-        let RawCallResult { gas_used, traces, reverted, debug, .. } = raw;
-        Self {
-            success: !reverted,
-            traces: traces.map(|arena| vec![(trace_kind, arena)]),
-            debug,
-            gas_used,
-        }
+        let RawCallResult { gas_used, traces, reverted, .. } = raw;
+        Self { success: !reverted, traces: traces.map(|arena| vec![(trace_kind, arena)]), gas_used }
     }
 }
 
@@ -357,6 +352,7 @@ pub async fn handle_traces(
     chain: Option<Chain>,
     labels: Vec<String>,
     debug: bool,
+    decode_internal: bool,
 ) -> Result<()> {
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
@@ -384,6 +380,15 @@ pub async fn handle_traces(
         }
     }
 
+    if decode_internal {
+        let sources = if let Some(etherscan_identifier) = &etherscan_identifier {
+            etherscan_identifier.get_compiled_contracts().await?
+        } else {
+            Default::default()
+        };
+        decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
+    }
+
     if debug {
         let sources = if let Some(etherscan_identifier) = etherscan_identifier {
             etherscan_identifier.get_compiled_contracts().await?
@@ -391,7 +396,7 @@ pub async fn handle_traces(
             Default::default()
         };
         let mut debugger = Debugger::builder()
-            .debug_arena(result.debug.as_ref().expect("missing debug arena"))
+            .traces(result.traces.expect("missing traces"))
             .decoder(&decoder)
             .sources(sources)
             .build();
@@ -404,11 +409,12 @@ pub async fn handle_traces(
 }
 
 pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) -> Result<()> {
-    let traces = result.traces.as_ref().expect("No traces found");
+    let traces = result.traces.as_mut().expect("No traces found");
 
     println!("Traces:");
     for (_, arena) in traces {
-        println!("{}", render_trace_arena(arena, decoder).await?);
+        decode_trace_arena(arena, decoder).await?;
+        println!("{}", render_trace_arena(arena));
     }
     println!();
 

@@ -12,3 +12,6 @@ mod op;
 
 mod tui;
 pub use tui::{Debugger, DebuggerBuilder, ExitReason};
+
+mod node;
+pub use node::DebugNode;

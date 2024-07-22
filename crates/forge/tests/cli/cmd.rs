@@ -507,7 +507,21 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
         "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
     ])
     .arg(prj.root());
-    cmd.assert_non_empty_stdout();
+    let out = cmd.unchecked_output();
+    if out.stdout_lossy().contains("502 Bad Gateway") {
+        // etherscan nginx proxy issue, skip this test:
+        //
+        // stdout:
+        // Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from
+        // Etherscan... 2024-07-05T11:40:11.801765Z ERROR etherscan: Failed to deserialize
+        // response: expected value at line 1 column 1 res="<html>\r\n<head><title>502 Bad
+        // Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad
+        // Gateway</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
+
+        eprintln!("Skipping test due to 502 Bad Gateway: {}", cmd.make_error_message(&out, false));
+        return
+    }
+    cmd.ensure_success(&out).unwrap();
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -577,7 +591,7 @@ forgetest_init!(can_emit_extra_output, |prj, cmd| {
 
     let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
-        foundry_compilers::utils::read_json_file(artifact_path).unwrap();
+        foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
 
     cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
@@ -585,7 +599,7 @@ forgetest_init!(can_emit_extra_output, |prj, cmd| {
 
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
-    let _artifact: Metadata = foundry_compilers::utils::read_json_file(metadata_path).unwrap();
+    let _artifact: Metadata = foundry_compilers::utils::read_json_file(&metadata_path).unwrap();
 });
 
 // checks that extra output works
@@ -595,7 +609,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
 
     let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
-        foundry_compilers::utils::read_json_file(artifact_path).unwrap();
+        foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
     assert!(artifact.ir.is_some());
     assert!(artifact.ir_optimized.is_some());
@@ -614,7 +628,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
 
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
-    let _artifact: Metadata = foundry_compilers::utils::read_json_file(metadata_path).unwrap();
+    let _artifact: Metadata = foundry_compilers::utils::read_json_file(&metadata_path).unwrap();
 
     let iropt = prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.iropt"));
     std::fs::read_to_string(iropt).unwrap();

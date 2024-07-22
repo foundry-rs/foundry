@@ -15,7 +15,6 @@ workspace = true
 [dependencies]
 foundry-common.workspace = true
 foundry-compilers.workspace = true
-foundry-evm-core.workspace = true
 foundry-evm-traces.workspace = true
 revm-inspectors.workspace = true
 
@@ -26,3 +25,4 @@ eyre.workspace = true
 ratatui = { version = "0.26", default-features = false, features = ["crossterm"] }
 revm.workspace = true
 tracing.workspace = true
+serde.workspace = true

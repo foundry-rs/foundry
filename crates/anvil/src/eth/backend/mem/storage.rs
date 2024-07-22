@@ -1,15 +1,20 @@
 //! In-memory blockchain storage
 use crate::eth::{
     backend::{
-        db::{MaybeFullDatabase, SerializableBlock, StateDb},
+        db::{MaybeFullDatabase, SerializableBlock, SerializableTransaction, StateDb},
         mem::cache::DiskStateCache,
     },
+    error::BlockchainError,
     pool::transactions::PoolTransaction,
 };
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
 use alloy_rpc_types::{
     trace::{
-        geth::{DefaultFrame, GethDefaultTracingOptions},
+        geth::{
+            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
+            GethDebugTracingOptions, GethTrace, NoopFrame,
+        },
+        otterscan::{InternalOperation, OperationType},
         parity::LocalizedTransactionTrace,
     },
     BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
@@ -18,9 +23,12 @@ use anvil_core::eth::{
     block::{Block, PartialHeader},
     transaction::{MaybeImpersonatedTransaction, ReceiptResponse, TransactionInfo, TypedReceipt},
 };
+use anvil_rpc::error::RpcError;
 use foundry_evm::{
     revm::primitives::Env,
-    traces::{GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig},
+    traces::{
+        CallKind, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig,
+    },
 };
 use parking_lot::RwLock;
 use std::{
@@ -159,7 +167,7 @@ impl InMemoryBlockStates {
             if let Some(state) = self.on_disk_states.get_mut(hash) {
                 if let Some(cached) = self.disk_cache.read(*hash) {
                     state.init_from_snapshot(cached);
-                    return Some(state)
+                    return Some(state);
                 }
             }
             None
@@ -326,6 +334,10 @@ impl BlockchainStorage {
         self.blocks.values().map(|block| block.clone().into()).collect()
     }
 
+    pub fn serialized_transactions(&self) -> Vec<SerializableTransaction> {
+        self.transactions.values().map(|tx: &MinedTransaction| tx.clone().into()).collect()
+    }
+
     /// Deserialize and add all blocks data to the backend storage
     pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
         for serializable_block in serializable_blocks.iter() {
@@ -334,6 +346,14 @@ impl BlockchainStorage {
             let block_number = block.header.number;
             self.blocks.insert(block_hash, block);
             self.hashes.insert(U64::from(block_number), block_hash);
+        }
+    }
+
+    /// Deserialize and add all blocks data to the backend storage
+    pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
+        for serializable_transaction in serializable_transactions.iter() {
+            let transaction: MinedTransaction = serializable_transaction.clone().into();
+            self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
     }
 }
@@ -421,13 +441,76 @@ impl MinedTransaction {
         })
     }
 
-    pub fn geth_trace(&self, opts: GethDefaultTracingOptions) -> DefaultFrame {
-        GethTraceBuilder::new(self.info.traces.clone(), TracingInspectorConfig::default_geth())
-            .geth_traces(
-                self.receipt.cumulative_gas_used() as u64,
-                self.info.out.clone().unwrap_or_default().0.into(),
-                opts,
-            )
+    pub fn ots_internal_operations(&self) -> Vec<InternalOperation> {
+        self.info
+            .traces
+            .iter()
+            .filter_map(|node| {
+                let r#type = match node.trace.kind {
+                    _ if node.is_selfdestruct() => OperationType::OpSelfDestruct,
+                    CallKind::Call if !node.trace.value.is_zero() => OperationType::OpTransfer,
+                    CallKind::Create => OperationType::OpCreate,
+                    CallKind::Create2 => OperationType::OpCreate2,
+                    _ => return None,
+                };
+                let mut from = node.trace.caller;
+                let mut to = node.trace.address;
+                let mut value = node.trace.value;
+                if node.is_selfdestruct() {
+                    from = node.trace.address;
+                    to = node.trace.selfdestruct_refund_target.unwrap_or_default();
+                    value = node.trace.selfdestruct_transferred_value.unwrap_or_default();
+                }
+                Some(InternalOperation { r#type, from, to, value })
+            })
+            .collect()
+    }
+
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> Result<GethTrace, BlockchainError> {
+        let GethDebugTracingOptions { config, tracer, tracer_config, .. } = opts;
+
+        if let Some(tracer) = tracer {
+            match tracer {
+                GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                    GethDebugBuiltInTracerType::FourByteTracer => {
+                        let inspector = FourByteInspector::default();
+                        return Ok(FourByteFrame::from(inspector).into());
+                    }
+                    GethDebugBuiltInTracerType::CallTracer => {
+                        return match tracer_config.into_call_config() {
+                            Ok(call_config) => Ok(GethTraceBuilder::new(
+                                self.info.traces.clone(),
+                                TracingInspectorConfig::from_geth_config(&config),
+                            )
+                            .geth_call_traces(
+                                call_config,
+                                self.receipt.cumulative_gas_used() as u64,
+                            )
+                            .into()),
+                            Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
+                        };
+                    }
+                    GethDebugBuiltInTracerType::PreStateTracer |
+                    GethDebugBuiltInTracerType::NoopTracer |
+                    GethDebugBuiltInTracerType::MuxTracer => {}
+                },
+                GethDebugTracerType::JsTracer(_code) => {}
+            }
+
+            return Ok(NoopFrame::default().into());
+        }
+
+        // default structlog tracer
+        Ok(GethTraceBuilder::new(
+            self.info.traces.clone(),
+            TracingInspectorConfig::from_geth_config(&config),
+        )
+        .geth_traces(
+            self.receipt.cumulative_gas_used() as u64,
+            self.info.out.clone().unwrap_or_default(),
+            opts.config,
+        )
+        .into())
     }
 }
 
@@ -519,7 +602,8 @@ mod tests {
         }
     }
 
-    // verifies that blocks in BlockchainStorage remain the same when dumped and reloaded
+    // verifies that blocks and transactions in BlockchainStorage remain the same when dumped and
+    // reloaded
     #[test]
     fn test_storage_dump_reload_cycle() {
         let mut dump_storage = BlockchainStorage::empty();
@@ -537,10 +621,12 @@ mod tests {
         dump_storage.blocks.insert(block_hash, block);
 
         let serialized_blocks = dump_storage.serialized_blocks();
+        let serialized_transactions = dump_storage.serialized_transactions();
 
         let mut load_storage = BlockchainStorage::empty();
 
         load_storage.load_blocks(serialized_blocks);
+        load_storage.load_transactions(serialized_transactions);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
         assert_eq!(loaded_block.header.gas_limit, partial_header.gas_limit);

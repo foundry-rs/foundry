@@ -1,6 +1,7 @@
 //! Support for forking off another client
 
-use crate::eth::{backend::db::Db, error::BlockchainError};
+use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::PoolTransaction};
+use alloy_consensus::Account;
 use alloy_primitives::{Address, Bytes, StorageValue, B256, U256};
 use alloy_provider::{
     ext::{DebugApi, TraceApi},
@@ -116,6 +117,11 @@ impl ClientFork {
 
     pub fn block_number(&self) -> u64 {
         self.config.read().block_number
+    }
+
+    /// Returns the transaction hash we forked off of, if any.
+    pub fn transaction_hash(&self) -> Option<B256> {
+        self.config.read().transaction_hash
     }
 
     pub fn total_difficulty(&self) -> U256 {
@@ -259,6 +265,15 @@ impl ClientFork {
     pub async fn get_nonce(&self, address: Address, block: u64) -> Result<u64, TransportError> {
         trace!(target: "backend::fork", "get_nonce={:?}", address);
         self.provider().get_transaction_count(address).block_id(block.into()).await
+    }
+
+    pub async fn get_account(
+        &self,
+        address: Address,
+        blocknumber: u64,
+    ) -> Result<Account, TransportError> {
+        trace!(target: "backend::fork", "get_account={:?}", address);
+        self.provider().get_account(address).await.block_id(blocknumber.into()).await
     }
 
     pub async fn transaction_by_block_number_and_index(
@@ -579,6 +594,8 @@ pub struct ClientForkConfig {
     pub block_number: u64,
     /// The hash of the forked block
     pub block_hash: B256,
+    /// The transaction hash we forked off of, if any.
+    pub transaction_hash: Option<B256>,
     // TODO make provider agnostic
     pub provider: Arc<RetryProvider>,
     pub chain_id: u64,
@@ -601,6 +618,8 @@ pub struct ClientForkConfig {
     pub compute_units_per_second: u64,
     /// total difficulty of the chain until this block
     pub total_difficulty: U256,
+    /// Transactions to force include in the forked chain
+    pub force_transactions: Option<Vec<PoolTransaction>>,
 }
 
 impl ClientForkConfig {
@@ -614,8 +633,8 @@ impl ClientForkConfig {
         self.provider = Arc::new(
             ProviderBuilder::new(url.as_str())
                 .timeout(self.timeout)
-                .timeout_retry(self.retries)
-                .max_retry(10)
+                // .timeout_retry(self.retries)
+                .max_retry(self.retries)
                 .initial_backoff(self.backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .build()

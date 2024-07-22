@@ -24,6 +24,7 @@ use foundry_evm::{
     decode::decode_console_logs,
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
+        decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
@@ -154,7 +155,6 @@ impl PreExecutionState {
             setup_result.gas_used = script_result.gas_used;
             setup_result.logs.extend(script_result.logs);
             setup_result.traces.extend(script_result.traces);
-            setup_result.debug = script_result.debug;
             setup_result.labeled_addresses.extend(script_result.labeled_addresses);
             setup_result.returned = script_result.returned;
             setup_result.breakpoints = script_result.breakpoints;
@@ -429,7 +429,9 @@ impl PreSimulationState {
                 } || !result.success;
 
                 if should_include {
-                    shell::println(render_trace_arena(trace, decoder).await?)?;
+                    let mut trace = trace.clone();
+                    decode_trace_arena(&mut trace, decoder).await?;
+                    shell::println(render_trace_arena(&trace))?;
                 }
             }
             shell::println(String::new())?;
@@ -490,12 +492,18 @@ impl PreSimulationState {
         Ok(())
     }
 
-    pub fn run_debugger(&self) -> Result<()> {
+    pub fn run_debugger(self) -> Result<()> {
         let mut debugger = Debugger::builder()
-            .debug_arenas(self.execution_result.debug.as_deref().unwrap_or_default())
+            .traces(
+                self.execution_result
+                    .traces
+                    .into_iter()
+                    .filter(|(t, _)| t.is_execution())
+                    .collect(),
+            )
             .decoder(&self.execution_artifacts.decoder)
-            .sources(self.build_data.sources.clone())
-            .breakpoints(self.execution_result.breakpoints.clone())
+            .sources(self.build_data.sources)
+            .breakpoints(self.execution_result.breakpoints)
             .build();
         debugger.try_run()?;
         Ok(())

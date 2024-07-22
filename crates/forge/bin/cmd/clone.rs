@@ -288,7 +288,8 @@ impl CloneArgs {
 /// It will update the following fields:
 /// - `auto_detect_solc` to `false`
 /// - `solc_version` to the value from the metadata
-/// - `evm_version` to the value from the metadata
+/// - `evm_version` to the value from the metadata, if the metadata's evm_version is "Default", then
+///   this is derived from the solc version this contract was compiled with.
 /// - `via_ir` to the value from the metadata
 /// - `libraries` to the value from the metadata
 /// - `metadata` to the value from the metadata
@@ -571,7 +572,7 @@ pub fn find_main_contract<'a>(
             rv = Some((PathBuf::from(f), a));
         }
     }
-    rv.ok_or(eyre::eyre!("contract not found"))
+    rv.ok_or_else(|| eyre::eyre!("contract not found"))
 }
 
 #[cfg(test)]

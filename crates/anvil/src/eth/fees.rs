@@ -2,6 +2,7 @@ use crate::eth::{
     backend::{info::StorageInfo, notifications::NewBlockNotifications},
     error::BlockchainError,
 };
+use alloy_consensus::Header;
 use alloy_eips::{
     calc_next_block_base_fee, eip1559::BaseFeeParams, eip4844::MAX_DATA_GAS_PER_BLOCK,
 };
@@ -190,8 +191,6 @@ pub struct FeeHistoryService {
     cache: FeeHistoryCache,
     /// number of items to consider
     fee_history_limit: u64,
-    // current fee info
-    fees: FeeManager,
     /// a type that can fetch ethereum-storage data
     storage_info: StorageInfo,
 }
@@ -200,16 +199,9 @@ impl FeeHistoryService {
     pub fn new(
         new_blocks: NewBlockNotifications,
         cache: FeeHistoryCache,
-        fees: FeeManager,
         storage_info: StorageInfo,
     ) -> Self {
-        Self {
-            new_blocks,
-            cache,
-            fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
-            fees,
-            storage_info,
-        }
+        Self { new_blocks, cache, fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE, storage_info }
     }
 
     /// Returns the configured history limit
@@ -218,13 +210,17 @@ impl FeeHistoryService {
     }
 
     /// Inserts a new cache entry for the given block
-    pub(crate) fn insert_cache_entry_for_block(&self, hash: B256) {
-        let (result, block_number) = self.create_cache_entry(hash);
+    pub(crate) fn insert_cache_entry_for_block(&self, hash: B256, header: &Header) {
+        let (result, block_number) = self.create_cache_entry(hash, header);
         self.insert_cache_entry(result, block_number);
     }
 
     /// Create a new history entry for the block
-    fn create_cache_entry(&self, hash: B256) -> (FeeHistoryCacheItem, Option<u64>) {
+    fn create_cache_entry(
+        &self,
+        hash: B256,
+        header: &Header,
+    ) -> (FeeHistoryCacheItem, Option<u64>) {
         // percentile list from 0.0 to 100.0 with a 0.5 resolution.
         // this will create 200 percentile points
         let reward_percentiles: Vec<f64> = {
@@ -239,16 +235,18 @@ impl FeeHistoryService {
         };
 
         let mut block_number: Option<u64> = None;
-        let base_fee = self.fees.base_fee();
-        let excess_blob_gas_and_price = self.fees.excess_blob_gas_and_price();
+        let base_fee = header.base_fee_per_gas.unwrap_or_default();
+        let excess_blob_gas = header.excess_blob_gas;
+        let blob_gas_used = header.blob_gas_used;
+        let base_fee_per_blob_gas = header.blob_fee();
         let mut item = FeeHistoryCacheItem {
             base_fee,
             gas_used_ratio: 0f64,
             blob_gas_used_ratio: 0f64,
             rewards: Vec::new(),
-            excess_blob_gas: excess_blob_gas_and_price.as_ref().map(|g| g.excess_blob_gas as u128),
-            base_fee_per_blob_gas: excess_blob_gas_and_price.as_ref().map(|g| g.blob_gasprice),
-            blob_gas_used: excess_blob_gas_and_price.as_ref().map(|_| 0),
+            excess_blob_gas,
+            base_fee_per_blob_gas,
+            blob_gas_used,
         };
 
         let current_block = self.storage_info.block(hash);
@@ -287,6 +285,10 @@ impl FeeHistoryService {
                             .tx()
                             .max_priority_fee_per_gas
                             .min(t.tx().tx().max_fee_per_gas.saturating_sub(base_fee)),
+                        Some(TypedTransaction::EIP7702(t)) => t
+                            .tx()
+                            .max_priority_fee_per_gas
+                            .min(t.tx().max_fee_per_gas.saturating_sub(base_fee)),
                         Some(TypedTransaction::Deposit(_)) => 0,
                         None => 0,
                     };
@@ -345,10 +347,8 @@ impl Future for FeeHistoryService {
         let pin = self.get_mut();
 
         while let Poll::Ready(Some(notification)) = pin.new_blocks.poll_next_unpin(cx) {
-            let hash = notification.hash;
-
             // add the imported block.
-            pin.insert_cache_entry_for_block(hash);
+            pin.insert_cache_entry_for_block(notification.hash, notification.header.as_ref());
         }
 
         Poll::Pending

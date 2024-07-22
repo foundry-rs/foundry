@@ -21,11 +21,11 @@ mod ic;
 
 pub mod backend;
 pub mod constants;
-pub mod debug;
 pub mod decode;
 pub mod fork;
 pub mod opcodes;
 pub mod opts;
+pub mod precompiles;
 pub mod snapshot;
 pub mod utils;
 
@@ -44,6 +44,9 @@ pub trait InspectorExt<DB: Database>: Inspector<DB> {
     ) -> bool {
         false
     }
+
+    // Simulates `console.log` invocation.
+    fn console_log(&mut self, _input: String) {}
 }
 
 impl<DB: Database> InspectorExt<DB> for NoOpInspector {}

@@ -38,9 +38,9 @@ ethers-contract-abigen = { workspace = true, features = ["providers"] }
 
 revm-inspectors.workspace = true
 
-comfy-table = "7"
+comfy-table.workspace = true
 eyre.workspace = true
-proptest = "1"
+proptest.workspace = true
 rayon.workspace = true
 serde.workspace = true
 tracing.workspace = true
@@ -92,7 +92,10 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 toml = { version = "0.8", features = ["preserve_order"] }
 toml_edit = "0.22.4"
-watchexec = "2.3.2"
+watchexec = "4.1"
+watchexec-events = "3.0"
+watchexec-signals = "3.0"
+clearscreen = "3.0"
 evm-disassembler.workspace = true
 rustc-hash.workspace = true
 
@@ -100,7 +103,7 @@ rustc-hash.workspace = true
 axum = { workspace = true, features = ["ws"] }
 hyper.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
-opener = "0.6"
+opener = "0.7"
 
 # soldeer
 soldeer.workspace = true
