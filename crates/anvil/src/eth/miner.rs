@@ -9,6 +9,7 @@ use futures::{
 };
 use parking_lot::{lock_api::RwLockWriteGuard, RawRwLock, RwLock};
 use std::{
+    collections::BTreeSet,
     fmt,
     pin::Pin,
     sync::Arc,
@@ -126,11 +127,7 @@ impl MiningMode {
 
     pub fn mixed(max_transactions: usize, listener: Receiver<TxHash>, duration: Duration) -> Self {
         Self::Mixed(
-            ReadyTransactionMiner {
-                max_transactions,
-                has_pending_txs: None,
-                rx: listener.fuse(),
-            },
+            ReadyTransactionMiner { max_transactions, has_pending_txs: None, rx: listener.fuse() },
             FixedBlockTimeMiner::new(duration),
         )
     }
@@ -151,10 +148,14 @@ impl MiningMode {
 
                 match (auto_txs, fixed_txs) {
                     // Both auto and fixed transactions are ready, combine them
-                    (Poll::Ready(mut auto_txs), Poll::Ready(mut fixed_txs)) => {
-                        auto_txs.append(&mut fixed_txs);
-                        Poll::Ready(auto_txs)
-                    },
+                    (Poll::Ready(mut auto_txs), Poll::Ready(fixed_txs)) => {
+                        auto_txs.extend(fixed_txs);
+
+                        #[allow(clippy::mutable_key_type)]
+                        let unique_txs: BTreeSet<_> = auto_txs.into_iter().collect();
+
+                        Poll::Ready(unique_txs.into_iter().collect())
+                    }
                     // Only auto transactions are ready, return them
                     (Poll::Ready(auto_txs), Poll::Pending) => Poll::Ready(auto_txs),
                     // Only fixed transactions are ready or both are pending,

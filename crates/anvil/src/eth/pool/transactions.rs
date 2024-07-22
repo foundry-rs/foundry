@@ -107,6 +107,18 @@ impl fmt::Debug for PoolTransaction {
     }
 }
 
+impl PartialOrd for PoolTransaction {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PoolTransaction {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.hash().cmp(&other.hash())
+    }
+}
+
 /// A waiting pool of transaction that are pending, but not yet ready to be included in a new block.
 ///
 /// Keeps a set of transactions that are waiting for other transactions
