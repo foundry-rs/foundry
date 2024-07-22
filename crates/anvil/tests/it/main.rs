@@ -3,6 +3,7 @@ mod anvil;
 mod anvil_api;
 mod api;
 mod eip4844;
+mod eip7702;
 mod fork;
 mod gas;
 mod genesis;

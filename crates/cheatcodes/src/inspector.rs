@@ -1333,25 +1333,29 @@ impl Cheatcodes {
     fn meter_gas(&mut self, interpreter: &mut Interpreter) {
         match &self.gas_metering {
             None => {}
-            // need to store gas metering
+            // Need to store gas metering.
             Some(None) => self.gas_metering = Some(Some(interpreter.gas)),
             Some(Some(gas)) => {
                 match interpreter.current_opcode() {
                     opcode::CREATE | opcode::CREATE2 => {
-                        // set we're about to enter CREATE frame to meter its gas on first opcode
-                        // inside it
+                        // Set we're about to enter CREATE frame to meter its gas on first opcode
+                        // inside it.
                         self.gas_metering_create = Some(None)
                     }
                     opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT | opcode::REVERT => {
-                        // If we are ending current execution frame, we want to just fully reset gas
-                        // otherwise weird things with returning gas from a call happen
-                        // ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/evm_impl.rs#L190
-                        //
-                        // It would be nice if we had access to the interpreter in `call_end`, as we
-                        // could just do this there instead.
                         match &self.gas_metering_create {
                             None | Some(None) => {
-                                interpreter.gas = Gas::new(0);
+                                // If we are ending current execution frame, we want to reset
+                                // interpreter gas to the value of gas spent during frame, so only
+                                // the consumed gas is erased.
+                                // ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/evm_impl.rs#L190
+                                //
+                                // It would be nice if we had access to the interpreter in
+                                // `call_end`, as we could just do this there instead.
+                                interpreter.gas = Gas::new(interpreter.gas.spent());
+
+                                // Make sure CREATE gas metering is resetted.
+                                self.gas_metering_create = None
                             }
                             Some(Some(gas)) => {
                                 // If this was CREATE frame, set correct gas limit. This is needed
@@ -1367,18 +1371,18 @@ impl Cheatcodes {
                                 // post-create erase ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L279
                                 interpreter.gas = Gas::new(gas.limit());
 
-                                // reset CREATE gas metering because we're about to exit its frame
+                                // Reset CREATE gas metering because we're about to exit its frame.
                                 self.gas_metering_create = None
                             }
                         }
                     }
                     _ => {
-                        // if just starting with CREATE opcodes, record its inner frame gas
+                        // If just starting with CREATE opcodes, record its inner frame gas.
                         if self.gas_metering_create == Some(None) {
                             self.gas_metering_create = Some(Some(interpreter.gas))
                         }
 
-                        // dont monitor gas changes, keep it constant
+                        // Don't monitor gas changes, keep it constant.
                         interpreter.gas = *gas;
                     }
                 }

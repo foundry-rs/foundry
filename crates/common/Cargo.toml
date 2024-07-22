@@ -46,7 +46,7 @@ tower.workspace = true
 
 async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-comfy-table = "7"
+comfy-table.workspace = true
 dunce.workspace = true
 eyre.workspace = true
 num-format.workspace = true

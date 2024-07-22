@@ -157,8 +157,8 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.5.0", default-features = false }
-foundry-compilers = { version = "0.9.0", default-features = false }
+foundry-block-explorers = { version = "0.5.1", default-features = false }
+foundry-compilers = { version = "0.10.0", default-features = false }
 foundry-fork-db = "0.2"
 solang-parser = "=0.3.3"
 
@@ -263,3 +263,4 @@ tower-http = "0.5"
 soldeer = "0.2.19"
 
 proptest = "1"
+comfy-table = "7"
