@@ -567,6 +567,10 @@ async fn main() -> Result<()> {
 
             println!("{}", serde_json::to_string_pretty(&tx)?);
         }
+        CastSubcommand::DecodeEof { eof } => {
+            let eof = stdin::unwrap_line(eof)?;
+            println!("{}", SimpleCast::decode_eof(&eof)?);
+        }
     };
     Ok(())
 }

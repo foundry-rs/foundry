@@ -905,7 +905,7 @@ pub enum CastSubcommand {
     },
 
     /// Decodes a raw signed EIP 2718 typed transaction
-    #[command(visible_alias = "dt")]
+    #[command(visible_aliases = &["dt", "decode-tx"])]
     DecodeTransaction { tx: Option<String> },
 
     /// Extracts function selectors and arguments from bytecode
@@ -918,6 +918,10 @@ pub enum CastSubcommand {
         #[arg(long, short)]
         resolve: bool,
     },
+
+    /// Decodes EOF container bytes
+    #[command()]
+    DecodeEof { eof: Option<String> },
 }
 
 /// CLI arguments for `cast --to-base`.
