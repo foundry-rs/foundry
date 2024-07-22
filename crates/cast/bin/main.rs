@@ -12,7 +12,7 @@ use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::get_event,
     ens::{namehash, ProviderEnsExt},
-    fmt::{format_token_raw, format_tokens, format_uint_exp},
+    fmt::{format_uint_exp, print_tokens},
     fs,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, decode_selectors,
@@ -163,10 +163,9 @@ async fn main() -> Result<()> {
         }
 
         // ABI encoding & decoding
-        CastSubcommand::AbiDecode { sig, calldata, input } => {
+        CastSubcommand::AbiDecode { sig, calldata, input, json } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            let tokens = format_tokens(&tokens);
-            tokens.for_each(|t| println!("{t}"));
+            print_tokens(&tokens, json)
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
             if !packed {
@@ -177,13 +176,7 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::CalldataDecode { sig, calldata, json } => {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
-            if json {
-                let tokens: Vec<String> = tokens.iter().map(format_token_raw).collect();
-                println!("{}", serde_json::to_string_pretty(&tokens).unwrap());
-            } else {
-                let tokens = format_tokens(&tokens);
-                tokens.for_each(|t| println!("{t}"));
-            }
+            print_tokens(&tokens, json)
         }
         CastSubcommand::CalldataEncode { sig, args } => {
             println!("{}", SimpleCast::calldata_encode(sig, &args)?);
@@ -430,7 +423,7 @@ async fn main() -> Result<()> {
                 println!("{sig}");
             }
         }
-        CastSubcommand::FourByteDecode { calldata } => {
+        CastSubcommand::FourByteDecode { calldata, json } => {
             let calldata = stdin::unwrap_line(calldata)?;
             let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{sig}\"", i + 1));
@@ -445,9 +438,7 @@ async fn main() -> Result<()> {
             };
 
             let tokens = SimpleCast::calldata_decode(sig, &calldata, true)?;
-            for token in format_tokens(&tokens) {
-                println!("{token}");
-            }
+            print_tokens(&tokens, json)
         }
         CastSubcommand::FourByteEvent { topic } => {
             let topic = stdin::unwrap_line(topic)?;

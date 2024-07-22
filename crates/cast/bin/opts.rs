@@ -512,6 +512,10 @@ pub enum CastSubcommand {
         /// Whether to decode the input or output data.
         #[arg(long, short, help_heading = "Decode input data instead of output data")]
         input: bool,
+
+        /// Print the decoded calldata as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
     },
 
     /// ABI encode the given function argument, excluding the selector.
@@ -598,6 +602,10 @@ pub enum CastSubcommand {
     FourByteDecode {
         /// The ABI-encoded calldata.
         calldata: Option<String>,
+
+        /// Print the decoded calldata as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
     },
 
     /// Get the event signature for a given topic 0 from https://openchain.xyz.
