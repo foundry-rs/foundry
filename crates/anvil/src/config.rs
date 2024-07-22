@@ -633,7 +633,7 @@ impl NodeConfig {
         self
     }
 
-
+    /// If set to `true` auto mining will be disabled
     #[must_use]
     pub fn with_no_mining(mut self, no_mining: bool) -> Self {
         self.no_mining = no_mining;
