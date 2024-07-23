@@ -46,7 +46,7 @@ pub trait TestFunctionExt {
 
     /// Returns `true` if this function is a `beforeTestSelectors` function.
     fn is_before_test(&self) -> bool {
-        self.test_function_kind().is_before_test()
+        self.tfe_as_str().eq_ignore_ascii_case("beforetestselectors")
     }
 
     /// Returns `true` if this function is a fuzz test.
@@ -120,8 +120,6 @@ pub enum TestFunctionKind {
     AfterInvariant,
     /// `fixture*`.
     Fixture,
-    /// `beforeTestSelectors`.
-    BeforeTestSelectors,
     /// Unknown kind.
     Unknown,
 }
@@ -145,7 +143,6 @@ impl TestFunctionKind {
             _ if name.eq_ignore_ascii_case("setup") => Self::Setup,
             _ if name.eq_ignore_ascii_case("afterinvariant") => Self::AfterInvariant,
             _ if name.starts_with("fixture") => Self::Fixture,
-            _ if name.eq_ignore_ascii_case("beforetestselectors") => Self::BeforeTestSelectors,
             _ => Self::Unknown,
         }
     }
@@ -161,7 +158,6 @@ impl TestFunctionKind {
             Self::InvariantTest => "invariant",
             Self::AfterInvariant => "afterInvariant",
             Self::Fixture => "fixture",
-            Self::BeforeTestSelectors => "beforeTestSelectors",
             Self::Unknown => "unknown",
         }
     }
@@ -188,12 +184,6 @@ impl TestFunctionKind {
     #[inline]
     pub fn is_unit_test(&self) -> bool {
         matches!(self, Self::UnitTest { .. })
-    }
-
-    /// Returns `true` if this function is a `beforeTestSelectors` function.
-    #[inline]
-    pub const fn is_before_test(&self) -> bool {
-        matches!(self, Self::BeforeTestSelectors)
     }
 
     /// Returns `true` if this function is a fuzz test.
