@@ -35,6 +35,9 @@ jobs:
               with:
                   install: true
 
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@v3
+
             # Login against a Docker registry except on PR
             # https://github.com/docker/login-action
             - name: Log into registry ${{ env.REGISTRY }}
