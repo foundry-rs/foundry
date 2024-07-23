@@ -16,6 +16,7 @@ use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::eth::EthRequest;
 use foundry_evm::revm::primitives::SpecId;
+use k256::elliptic_curve::consts::U25;
 use std::{
     str::FromStr,
     time::{Duration, SystemTime},
@@ -662,11 +663,29 @@ async fn test_reorg() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
 
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
     api.anvil_mine(Some(U256::from(10)), None).await.unwrap();
 
-    api.anvil_reorg(7, 3).await.unwrap();
+    // Define transactions
+    let mut txs = vec![];
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    for i in 0..3 {
+        let nonce = nonce + (i as u64);
+        txs.push(TransactionRequest::default().from(from).to(to).value(U256::from(1)).nonce(nonce));
+    }
+
+    api.anvil_reorg(7, 3, Some(txs)).await.unwrap();
 
     assert_eq!(provider.get_block_number().await.unwrap(), 6);
+    for num in 4..7 {
+        let block = provider.get_block_by_number(num.into(), true).await.unwrap();
+        let block = block.unwrap();
+        assert!(!block.transactions.is_empty())
+    }
+
     // Flow:
     // 1. Rewind cannonical to a specified depth
     //    - Attempt to rewind to a valid depth (parent must exist)

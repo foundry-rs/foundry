@@ -52,15 +52,15 @@ use alloy_rpc_types::{
     BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
     Transaction,
 };
-use alloy_serde::{quantity::vec, WithOtherFields};
+use alloy_serde::WithOtherFields;
 use alloy_signer::Signature;
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
         block::BlockInfo,
         transaction::{
-            to_alloy_transaction_with_hash_and_sender, transaction_request_to_typed,
-            PendingTransaction, ReceiptResponse, TypedTransaction, TypedTransactionRequest,
+            transaction_request_to_typed, MaybeImpersonatedTransaction, PendingTransaction,
+            ReceiptResponse, TypedTransaction, TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -1926,11 +1926,13 @@ impl EthApi {
         let txs = if let Some(txs) = transactions {
             let mut requests = Vec::with_capacity(txs.len());
             for tx in txs {
+                // TODO: should nonce retrieved here?
                 let nonce = tx.nonce.ok_or_else(|| {
                     BlockchainError::RpcError(RpcError::invalid_params(
-                        "sender not found for transaction",
+                        "nonce not found for transaction",
                     ))
                 })?;
+                println!("TXS! {:#?}", tx);
                 let from = tx.from.ok_or_else(|| {
                     BlockchainError::RpcError(RpcError::invalid_params(
                         "sender not found for transaction",
@@ -1938,15 +1940,17 @@ impl EthApi {
                 })?;
                 let typed_request = self.build_typed_tx_request(WithOtherFields::new(tx), nonce)?;
                 let typed = self.sign_request(&from, typed_request)?;
-                let pending = PendingTransaction::new(typed)?;
-                requests.push(pending);
+                let impersonated = MaybeImpersonatedTransaction::new(typed);
+                let rpc_tx: Transaction = impersonated.into();
+                let pool_tx: PoolTransaction = rpc_tx.try_into().unwrap();
+                // Go to RPC transaction -> pool transaction
+                requests.push(pool_tx);
             }
             requests
         } else {
             vec![]
         };
 
-        // How will you go from TypedTransaction ->
         self.backend.reorg(depth, new_len, txs).await?;
         Ok(())
     }
