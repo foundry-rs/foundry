@@ -579,6 +579,14 @@ impl TestResult {
         format!("{self} {name} {}", self.kind.report())
     }
 
+    /// Function to merge logs, addresses, traces and coverage from a call result into test result.
+    pub fn merge_call_result(&mut self, call_result: &RawCallResult) {
+        self.logs.extend(call_result.logs.clone());
+        self.labeled_addresses.extend(call_result.labels.clone());
+        self.traces.extend(call_result.traces.clone().map(|traces| (TraceKind::Execution, traces)));
+        self.merge_coverages(call_result.coverage.clone());
+    }
+
     /// Function to merge given coverage in current test result coverage.
     pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
         let old_coverage = std::mem::take(&mut self.coverage);

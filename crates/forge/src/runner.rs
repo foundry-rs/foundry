@@ -5,6 +5,7 @@ use crate::{
     multi_runner::{is_matching_test, TestContract},
     progress::{start_fuzz_progress, TestsProgress},
     result::{SuiteResult, TestResult, TestSetup},
+    utils::get_function,
     TestFilter, TestOptions,
 };
 use alloy_dyn_abi::DynSolValue;
@@ -24,7 +25,7 @@ use foundry_evm::{
         invariant::{
             check_sequence, replay_error, replay_run, InvariantExecutor, InvariantFuzzError,
         },
-        CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
+        CallResult, EvmError, ExecutionErr, Executor, ITest, RawCallResult,
     },
     fuzz::{
         fixture_name,
@@ -270,6 +271,7 @@ impl<'a> ContractRunner<'a> {
                 ));
             }
         }
+
         // There are multiple setUp function, so we return a single test result for `setUp`
         if setup_fns.len() > 1 {
             return SuiteResult::new(
@@ -412,10 +414,12 @@ impl<'a> ContractRunner<'a> {
 
     /// Runs a single unit test.
     ///
-    /// Calls the given functions and returns the `TestResult`.
+    /// Calls the given function (and before test functions, if any) and returns the `TestResult`.
     ///
-    /// State modifications are not committed to the evm database but discarded after the call,
-    /// similar to `eth_call`.
+    /// Configured before test functions are called in order and state modifications committed to
+    /// the EVM database (therefore the unit test call will be made on modified state).
+    /// State modifications of before test functions and unit test function call are discarded after
+    /// test ends, similar to `eth_call`.
     pub fn run_unit_test(
         &self,
         func: &Function,
@@ -423,10 +427,68 @@ impl<'a> ContractRunner<'a> {
         setup: TestSetup,
     ) -> TestResult {
         let address = setup.address;
-        let test_result = TestResult::new(setup);
+        let mut test_result = TestResult::new(setup);
+        let mut executor = self.executor.clone();
 
-        // Run unit test
-        let (mut raw_call_result, reason) = match self.executor.call(
+        // Apply before test configured functions (if any).
+        for ITest::BeforeTestSelectors { test_selector, before_selectors } in
+            executor.call_sol_default(address, &ITest::beforeTestSelectorsCall {}).beforeSelectors
+        {
+            if test_selector == func.selector() {
+                for selector in before_selectors {
+                    let before_func =
+                        get_function(self.name, selector, &self.contract.abi).unwrap();
+
+                    // Before test functions should be mutable without arguments and should not be
+                    // invariant tests, fuzz tests or fixtures (other unit test within same contract
+                    // or even current test are valid options).
+                    if before_func.is_invariant_test() ||
+                        before_func.is_fixture() ||
+                        before_func.is_fuzz_test() ||
+                        !before_func.inputs.is_empty() ||
+                        matches!(
+                            before_func.state_mutability,
+                            alloy_json_abi::StateMutability::Pure |
+                                alloy_json_abi::StateMutability::View
+                        )
+                    {
+                        error!(
+                            "function {} cannot be used as a before test selector",
+                            before_func.signature()
+                        );
+                    } else {
+                        // Apply before test call and collect results.
+                        // To continue unit test execution the call should be success.
+                        let (mut call_result, reason) = match executor.transact(
+                            self.sender,
+                            address,
+                            before_func,
+                            &[],
+                            U256::ZERO,
+                            Some(self.revert_decoder),
+                        ) {
+                            Ok(res) => (res.raw, None),
+                            Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
+                            Err(EvmError::SkipError) => return test_result.single_skip(),
+                            Err(err) => return test_result.single_fail(err),
+                        };
+
+                        // Add before test call result traces to the unit test result.
+                        test_result.merge_call_result(&call_result);
+
+                        // Exit unit test if before test call is not success.
+                        if !executor.is_raw_call_mut_success(address, &mut call_result, should_fail)
+                        {
+                            return test_result.single_result(false, reason, call_result);
+                        }
+                    }
+                }
+                break
+            }
+        }
+
+        // Run current unit test.
+        let (mut raw_call_result, reason) = match executor.call(
             self.sender,
             address,
             func,
@@ -440,8 +502,7 @@ impl<'a> ContractRunner<'a> {
             Err(err) => return test_result.single_fail(err),
         };
 
-        let success =
-            self.executor.is_raw_call_mut_success(address, &mut raw_call_result, should_fail);
+        let success = executor.is_raw_call_mut_success(address, &mut raw_call_result, should_fail);
         test_result.single_result(success, reason, raw_call_result)
     }
 

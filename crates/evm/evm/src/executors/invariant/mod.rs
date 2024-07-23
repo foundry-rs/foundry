@@ -532,6 +532,7 @@ impl<'a> InvariantExecutor<'a> {
     /// targetArtifactSelectors > excludeArtifacts > targetArtifacts
     pub fn select_contract_artifacts(&mut self, invariant_address: Address) -> Result<()> {
         let result = self
+            .executor
             .call_sol_default(invariant_address, &IInvariantTest::targetArtifactSelectorsCall {});
 
         // Insert them into the executor `targeted_abi`.
@@ -542,10 +543,12 @@ impl<'a> InvariantExecutor<'a> {
             self.artifact_filters.targeted.entry(identifier).or_default().extend(selectors);
         }
 
-        let selected =
-            self.call_sol_default(invariant_address, &IInvariantTest::targetArtifactsCall {});
-        let excluded =
-            self.call_sol_default(invariant_address, &IInvariantTest::excludeArtifactsCall {});
+        let selected = self
+            .executor
+            .call_sol_default(invariant_address, &IInvariantTest::targetArtifactsCall {});
+        let excluded = self
+            .executor
+            .call_sol_default(invariant_address, &IInvariantTest::excludeArtifactsCall {});
 
         // Insert `excludeArtifacts` into the executor `excluded_abi`.
         for contract in excluded.excludedArtifacts {
@@ -620,10 +623,14 @@ impl<'a> InvariantExecutor<'a> {
         &self,
         to: Address,
     ) -> Result<(SenderFilters, FuzzRunIdentifiedContracts)> {
-        let targeted_senders =
-            self.call_sol_default(to, &IInvariantTest::targetSendersCall {}).targetedSenders;
-        let mut excluded_senders =
-            self.call_sol_default(to, &IInvariantTest::excludeSendersCall {}).excludedSenders;
+        let targeted_senders = self
+            .executor
+            .call_sol_default(to, &IInvariantTest::targetSendersCall {})
+            .targetedSenders;
+        let mut excluded_senders = self
+            .executor
+            .call_sol_default(to, &IInvariantTest::excludeSendersCall {})
+            .excludedSenders;
         // Extend with default excluded addresses - https://github.com/foundry-rs/foundry/issues/4163
         excluded_senders.extend([
             CHEATCODE_ADDRESS,
@@ -634,10 +641,14 @@ impl<'a> InvariantExecutor<'a> {
         excluded_senders.extend(PRECOMPILES);
         let sender_filters = SenderFilters::new(targeted_senders, excluded_senders);
 
-        let selected =
-            self.call_sol_default(to, &IInvariantTest::targetContractsCall {}).targetedContracts;
-        let excluded =
-            self.call_sol_default(to, &IInvariantTest::excludeContractsCall {}).excludedContracts;
+        let selected = self
+            .executor
+            .call_sol_default(to, &IInvariantTest::targetContractsCall {})
+            .targetedContracts;
+        let excluded = self
+            .executor
+            .call_sol_default(to, &IInvariantTest::excludeContractsCall {})
+            .excludedContracts;
 
         let contracts = self
             .setup_contracts
@@ -678,6 +689,7 @@ impl<'a> InvariantExecutor<'a> {
         targeted_contracts: &mut TargetedContracts,
     ) -> Result<()> {
         let interfaces = self
+            .executor
             .call_sol_default(invariant_address, &IInvariantTest::targetInterfacesCall {})
             .targetedInterfaces;
 
@@ -735,13 +747,15 @@ impl<'a> InvariantExecutor<'a> {
         }
 
         // Collect contract functions marked as target for fuzzing campaign.
-        let selectors = self.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
+        let selectors =
+            self.executor.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
         for IInvariantTest::FuzzSelector { addr, selectors } in selectors.targetedSelectors {
             self.add_address_with_functions(addr, &selectors, false, targeted_contracts)?;
         }
 
         // Collect contract functions excluded from fuzzing campaign.
-        let selectors = self.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
+        let selectors =
+            self.executor.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
         for IInvariantTest::FuzzSelector { addr, selectors } in selectors.excludedSelectors {
             self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
         }
@@ -772,17 +786,6 @@ impl<'a> InvariantExecutor<'a> {
         };
         contract.add_selectors(selectors.iter().copied(), should_exclude)?;
         Ok(())
-    }
-
-    fn call_sol_default<C: SolCall>(&self, to: Address, args: &C) -> C::Return
-    where
-        C::Return: Default,
-    {
-        self.executor
-            .call_sol(CALLER, to, args, U256::ZERO, None)
-            .map(|c| c.decoded_result)
-            .inspect_err(|e| warn!(target: "forge::test", "failed calling {:?}: {e}", C::SIGNATURE))
-            .unwrap_or_default()
     }
 }
 
