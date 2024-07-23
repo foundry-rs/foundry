@@ -128,10 +128,10 @@ pub fn format_tokens_raw(tokens: &[DynSolValue]) -> impl Iterator<Item = String>
 /// parameter.
 pub fn print_tokens(tokens: &[DynSolValue], json: bool) {
     if json {
-        let tokens: Vec<String> = format_tokens_raw(&tokens).collect();
+        let tokens: Vec<String> = format_tokens_raw(tokens).collect();
         println!("{}", serde_json::to_string_pretty(&tokens).unwrap());
     } else {
-        let tokens = format_tokens(&tokens);
+        let tokens = format_tokens(tokens);
         tokens.for_each(|t| println!("{t}"));
     }
 }
