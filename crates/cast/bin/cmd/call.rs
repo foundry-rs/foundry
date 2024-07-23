@@ -162,7 +162,13 @@ impl CallArgs {
                 config.fork_block_number = Some(block_number);
             }
 
-            let (env, fork, chain) = TracingExecutor::get_fork_material(&config, evm_opts).await?;
+            let (mut env, fork, chain) =
+                TracingExecutor::get_fork_material(&config, evm_opts).await?;
+
+            // modify settings that usually set in eth_call
+            env.cfg.disable_block_gas_limit = true;
+            env.block.gas_limit = U256::MAX;
+
             let mut executor = TracingExecutor::new(env, fork, evm_version, debug, decode_internal);
 
             let value = tx.value.unwrap_or_default();
