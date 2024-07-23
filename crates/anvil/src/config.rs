@@ -637,7 +637,11 @@ impl NodeConfig {
     }
 
     #[must_use]
-    pub fn with_mixed_mining<D: Into<Duration>>(mut self, mixed_mining: bool, block_time: Option<D>) -> Self {
+    pub fn with_mixed_mining<D: Into<Duration>>(
+        mut self,
+        mixed_mining: bool,
+        block_time: Option<D>,
+    ) -> Self {
         self.block_time = block_time.map(Into::into);
         self.mixed_mining = mixed_mining;
         self

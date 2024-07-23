@@ -151,9 +151,10 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
     let mode = if let Some(block_time) = block_time {
         if mixed_mining {
             let listener = pool.add_ready_listener();
-            MiningMode::mixed(max_transactions, listener, block_time);
+            MiningMode::mixed(max_transactions, listener, block_time)
+        } else {
+            MiningMode::interval(block_time)
         }
-        MiningMode::interval(block_time)
     } else if no_mining {
         MiningMode::None
     } else {

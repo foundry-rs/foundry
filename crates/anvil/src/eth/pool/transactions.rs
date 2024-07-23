@@ -108,18 +108,6 @@ impl fmt::Debug for PoolTransaction {
     }
 }
 
-impl PartialOrd for PoolTransaction {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for PoolTransaction {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.hash().cmp(&other.hash())
-    }
-}
-
 impl TryFrom<RpcTransaction> for PoolTransaction {
     type Error = eyre::Error;
     fn try_from(transaction: RpcTransaction) -> Result<Self, Self::Error> {

@@ -9,7 +9,6 @@ use futures::{
 };
 use parking_lot::{lock_api::RwLockWriteGuard, RawRwLock, RwLock};
 use std::{
-    collections::BTreeSet,
     fmt,
     pin::Pin,
     sync::Arc,
@@ -175,18 +174,20 @@ impl MiningMode {
                 match (auto_txs, fixed_txs) {
                     // Both auto and fixed transactions are ready, combine them
                     (Poll::Ready(mut auto_txs), Poll::Ready(fixed_txs)) => {
-                        auto_txs.extend(fixed_txs);
-
-                        #[allow(clippy::mutable_key_type)]
-                        let unique_txs: BTreeSet<_> = auto_txs.into_iter().collect();
-
-                        Poll::Ready(unique_txs.into_iter().collect())
+                        for tx in fixed_txs {
+                            // filter unique transactions
+                            if auto_txs.iter().any(|auto_tx| auto_tx.hash() == tx.hash()) {
+                                continue;
+                            }
+                            auto_txs.push(tx);
+                        }
+                        Poll::Ready(auto_txs)
                     }
                     // Only auto transactions are ready, return them
                     (Poll::Ready(auto_txs), Poll::Pending) => Poll::Ready(auto_txs),
                     // Only fixed transactions are ready or both are pending,
                     // return fixed transactions or pending status
-                    (_, fixed_txs) => fixed_txs,
+                    (Poll::Pending, fixed_txs) => fixed_txs,
                 }
             }
         }
