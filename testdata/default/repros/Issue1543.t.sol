@@ -25,7 +25,7 @@ contract Issue1543Test is DSTest {
     }
 
     function beforeTestSelectors() public pure returns (BeforeTestSelectors[] memory) {
-        BeforeTestSelectors[] memory targets = new BeforeTestSelectors[](3);
+        BeforeTestSelectors[] memory targets = new BeforeTestSelectors[](4);
         bytes4[] memory selectors = new bytes4[](1);
         selectors[0] = this.kill_contract.selector;
         targets[0] = BeforeTestSelectors(this.testKill.selector, selectors);
@@ -39,6 +39,11 @@ contract Issue1543Test is DSTest {
         selectors = new bytes4[](1);
         selectors[0] = this.setB.selector;
         targets[2] = BeforeTestSelectors(this.testB.selector, selectors);
+
+        selectors = new bytes4[](2);
+        selectors[0] = this.testA.selector;
+        selectors[1] = this.setB.selector;
+        targets[3] = BeforeTestSelectors(this.testC.selector, selectors);
 
         return targets;
     }
@@ -77,5 +82,10 @@ contract Issue1543Test is DSTest {
 
     function testB() public {
         require(b == 100);
+    }
+
+    function testC(uint256 x) public {
+        assertEq(a, 1);
+        assertEq(b, 100);
     }
 }
