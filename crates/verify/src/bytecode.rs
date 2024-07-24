@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
@@ -56,11 +56,6 @@ pub struct VerifyBytecodeArgs {
     #[clap(short = 'r', long, value_name = "RPC_URL", env = "ETH_RPC_URL")]
     pub rpc_url: Option<String>,
 
-    /// Verfication Type: `full` or `partial`.
-    /// Ref: <https://docs.sourcify.dev/docs/full-vs-partial-match/>
-    #[clap(long, default_value = "full", value_name = "TYPE")]
-    pub verification_type: VerificationType,
-
     #[clap(flatten)]
     pub etherscan_opts: EtherscanOpts,
 
@@ -86,14 +81,13 @@ impl figment::Provider for VerifyBytecodeArgs {
     fn data(
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
-        let mut dict = figment::value::Dict::new();
+        let mut dict = self.etherscan_opts.dict();
         if let Some(block) = &self.block {
             dict.insert("block".into(), figment::value::Value::serialize(block)?);
         }
         if let Some(rpc_url) = &self.rpc_url {
             dict.insert("eth_rpc_url".into(), rpc_url.to_string().into());
         }
-        dict.insert("verification_type".into(), self.verification_type.to_string().into());
 
         Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
     }
@@ -150,7 +144,7 @@ impl VerifyBytecodeArgs {
         }
 
         // Get the constructor args from etherscan
-        let constructor_args = if let Some(args) = source_code.items.first() {
+        let mut constructor_args = if let Some(args) = source_code.items.first() {
             args.constructor_arguments.clone()
         } else {
             eyre::bail!("No constructor arguments found for contract at address {}", self.address);
@@ -158,22 +152,28 @@ impl VerifyBytecodeArgs {
 
         // Get user provided constructor args
         let provided_constructor_args = if let Some(args) = self.constructor_args.to_owned() {
-            args
+            Some(args)
         } else if let Some(path) = self.constructor_args_path.to_owned() {
             // Read from file
             let res = read_constructor_args_file(path)?;
             // Convert res to Bytes
-            res.join("")
+            Some(res.join(""))
         } else {
-            constructor_args.to_string()
-        };
+            None
+        }
+        .map(hex::decode)
+        .transpose()?;
 
-        // Constructor args mismatch
-        if provided_constructor_args != constructor_args.to_string() && !self.json {
-            println!(
-                "{}",
-                "The provided constructor args do not match the constructor args from etherscan. This will result in a mismatch - Using the args from etherscan".red().bold(),
-            );
+        if let Some(provided) = provided_constructor_args {
+            if provided != constructor_args && !self.json {
+                println!(
+                    "{}",
+                    format!("The provided constructor args do not match the constructor args from etherscan ({constructor_args}).")
+                        .yellow()
+                        .bold(),
+                );
+            }
+            constructor_args = provided.into();
         }
 
         // Get creation tx hash
@@ -215,17 +215,8 @@ impl VerifyBytecodeArgs {
             };
 
         // If bytecode_hash is disabled then its always partial verification
-        let (verification_type, has_metadata) =
-            match (&self.verification_type, config.bytecode_hash) {
-                (VerificationType::Full, BytecodeHash::None) => (VerificationType::Partial, false),
-                (VerificationType::Partial, BytecodeHash::None) => {
-                    (VerificationType::Partial, false)
-                }
-                (VerificationType::Full, _) => (VerificationType::Full, true),
-                (VerificationType::Partial, _) => (VerificationType::Partial, true),
-            };
+        let has_metadata = config.bytecode_hash == BytecodeHash::None;
 
-        trace!(?verification_type, has_metadata);
         // Etherscan compilation metadata
         let etherscan_metadata = source_code.items.first().unwrap();
 
@@ -243,18 +234,17 @@ impl VerifyBytecodeArgs {
         local_bytecode_vec.extend_from_slice(&constructor_args);
 
         // Cmp creation code with locally built bytecode and maybe_creation_code
-        let (did_match, with_status) = try_match(
+        let match_type = match_bytecodes(
             local_bytecode_vec.as_slice(),
             maybe_creation_code,
             &constructor_args,
-            &verification_type,
             false,
             has_metadata,
-        )?;
+        );
 
         let mut json_results: Vec<JsonResult> = vec![];
         self.print_result(
-            (did_match, with_status),
+            match_type,
             BytecodeType::Creation,
             &mut json_results,
             etherscan_metadata,
@@ -262,9 +252,9 @@ impl VerifyBytecodeArgs {
         );
 
         // If the creation code does not match, the runtime also won't match. Hence return.
-        if !did_match {
+        if match_type.is_none() {
             self.print_result(
-                (did_match, with_status),
+                None,
                 BytecodeType::Runtime,
                 &mut json_results,
                 etherscan_metadata,
@@ -382,17 +372,16 @@ impl VerifyBytecodeArgs {
             provider.get_code_at(self.address).block_id(BlockId::number(simulation_block)).await?;
 
         // Compare the onchain runtime bytecode with the runtime code from the fork.
-        let (did_match, with_status) = try_match(
+        let match_type = match_bytecodes(
             &fork_runtime_code.original_bytes(),
             &onchain_runtime_code,
             &constructor_args,
-            &verification_type,
             true,
             has_metadata,
-        )?;
+        );
 
         self.print_result(
-            (did_match, with_status),
+            match_type,
             BytecodeType::Runtime,
             &mut json_results,
             etherscan_metadata,
@@ -483,29 +472,24 @@ impl VerifyBytecodeArgs {
 
     fn print_result(
         &self,
-        res: (bool, Option<VerificationType>),
+        res: Option<VerificationType>,
         bytecode_type: BytecodeType,
         json_results: &mut Vec<JsonResult>,
         etherscan_config: &Metadata,
         config: &Config,
     ) {
-        if res.0 {
+        if let Some(res) = res {
             if !self.json {
                 println!(
                     "{} with status {}",
                     format!("{bytecode_type:?} code matched").green().bold(),
-                    res.1.unwrap().green().bold()
+                    res.green().bold()
                 );
             } else {
-                let json_res = JsonResult {
-                    bytecode_type,
-                    matched: true,
-                    verification_type: res.1.unwrap(),
-                    message: None,
-                };
+                let json_res = JsonResult { bytecode_type, match_type: Some(res), message: None };
                 json_results.push(json_res);
             }
-        } else if !res.0 && !self.json {
+        } else if !self.json {
             println!(
                 "{}",
                 format!(
@@ -518,11 +502,10 @@ impl VerifyBytecodeArgs {
             for mismatch in mismatches {
                 println!("{}", mismatch.red().bold());
             }
-        } else if !res.0 && self.json {
+        } else {
             let json_res = JsonResult {
                 bytecode_type,
-                matched: false,
-                verification_type: res.1.unwrap(),
+                match_type: res,
                 message: Some(format!(
                     "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
                 )),
@@ -585,36 +568,34 @@ pub enum BytecodeType {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonResult {
     pub bytecode_type: BytecodeType,
-    pub matched: bool,
-    pub verification_type: VerificationType,
+    pub match_type: Option<VerificationType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
 
-fn try_match(
+fn match_bytecodes(
     local_bytecode: &[u8],
     bytecode: &[u8],
     constructor_args: &[u8],
-    match_type: &VerificationType,
     is_runtime: bool,
     has_metadata: bool,
-) -> Result<(bool, Option<VerificationType>)> {
+) -> Option<VerificationType> {
     // 1. Try full match
-    if *match_type == VerificationType::Full && local_bytecode == bytecode {
-        Ok((true, Some(VerificationType::Full)))
+    if local_bytecode == bytecode {
+        Some(VerificationType::Full)
     } else {
-        try_partial_match(local_bytecode, bytecode, constructor_args, is_runtime, has_metadata)
-            .map(|matched| (matched, Some(VerificationType::Partial)))
+        is_partial_match(local_bytecode, bytecode, constructor_args, is_runtime, has_metadata)
+            .then_some(VerificationType::Partial)
     }
 }
 
-fn try_partial_match(
+fn is_partial_match(
     mut local_bytecode: &[u8],
     mut bytecode: &[u8],
     constructor_args: &[u8],
     is_runtime: bool,
     has_metadata: bool,
-) -> Result<bool> {
+) -> bool {
     // 1. Check length of constructor args
     if constructor_args.is_empty() || is_runtime {
         // Assume metadata is at the end of the bytecode
@@ -632,24 +613,24 @@ fn try_extract_and_compare_bytecode(
     mut local_bytecode: &[u8],
     mut bytecode: &[u8],
     has_metadata: bool,
-) -> Result<bool> {
+) -> bool {
     if has_metadata {
-        local_bytecode = extract_metadata_hash(local_bytecode)?;
-        bytecode = extract_metadata_hash(bytecode)?;
+        local_bytecode = extract_metadata_hash(local_bytecode);
+        bytecode = extract_metadata_hash(bytecode);
     }
 
     // Now compare the local code and bytecode
-    Ok(local_bytecode == bytecode)
+    local_bytecode == bytecode
 }
 
 /// @dev This assumes that the metadata is at the end of the bytecode
-fn extract_metadata_hash(bytecode: &[u8]) -> Result<&[u8]> {
+fn extract_metadata_hash(bytecode: &[u8]) -> &[u8] {
     // Get the last two bytes of the bytecode to find the length of CBOR metadata
     let metadata_len = &bytecode[bytecode.len() - 2..];
     let metadata_len = u16::from_be_bytes([metadata_len[0], metadata_len[1]]);
 
     // Now discard the metadata from the bytecode
-    Ok(&bytecode[..bytecode.len() - 2 - metadata_len as usize])
+    &bytecode[..bytecode.len() - 2 - metadata_len as usize]
 }
 
 fn find_mismatch_in_settings(
