@@ -132,6 +132,9 @@ pub enum MiningMode {
     Auto(ReadyTransactionMiner),
     /// A miner that constructs a new block every `interval` tick
     FixedBlockTime(FixedBlockTimeMiner),
+
+    /// A minner that uses both Auto and FixedBlockTime
+    Mixed(ReadyTransactionMiner, FixedBlockTimeMiner),
 }
 
 impl MiningMode {
@@ -147,6 +150,13 @@ impl MiningMode {
         Self::FixedBlockTime(FixedBlockTimeMiner::new(duration))
     }
 
+    pub fn mixed(max_transactions: usize, listener: Receiver<TxHash>, duration: Duration) -> Self {
+        Self::Mixed(
+            ReadyTransactionMiner { max_transactions, has_pending_txs: None, rx: listener.fuse() },
+            FixedBlockTimeMiner::new(duration),
+        )
+    }
+
     /// polls the [Pool] and returns those transactions that should be put in a block, if any.
     pub fn poll(
         &mut self,
@@ -157,6 +167,29 @@ impl MiningMode {
             Self::None => Poll::Pending,
             Self::Auto(miner) => miner.poll(pool, cx),
             Self::FixedBlockTime(miner) => miner.poll(pool, cx),
+            Self::Mixed(auto, fixed) => {
+                let auto_txs = auto.poll(pool, cx);
+                let fixed_txs = fixed.poll(pool, cx);
+
+                match (auto_txs, fixed_txs) {
+                    // Both auto and fixed transactions are ready, combine them
+                    (Poll::Ready(mut auto_txs), Poll::Ready(fixed_txs)) => {
+                        for tx in fixed_txs {
+                            // filter unique transactions
+                            if auto_txs.iter().any(|auto_tx| auto_tx.hash() == tx.hash()) {
+                                continue;
+                            }
+                            auto_txs.push(tx);
+                        }
+                        Poll::Ready(auto_txs)
+                    }
+                    // Only auto transactions are ready, return them
+                    (Poll::Ready(auto_txs), Poll::Pending) => Poll::Ready(auto_txs),
+                    // Only fixed transactions are ready or both are pending,
+                    // return fixed transactions or pending status
+                    (Poll::Pending, fixed_txs) => fixed_txs,
+                }
+            }
         }
     }
 }
