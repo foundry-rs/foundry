@@ -1,4 +1,8 @@
-use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
+use super::{
+    bytecode::VerifyBytecodeArgs,
+    provider::VerificationProvider,
+    verify::{VerifyArgs, VerifyCheckArgs},
+};
 use crate::provider::VerificationContext;
 use async_trait::async_trait;
 use eyre::Result;
@@ -66,6 +70,10 @@ impl VerificationProvider for SourcifyVerificationProvider {
             .await?;
 
         self.process_sourcify_response(resp.map(|r| r.result))
+    }
+
+    async fn verify_bytecode(&mut self, __args: VerifyBytecodeArgs) -> Result<()> {
+        unimplemented!("Sourcify does not support bytecode verification")
     }
 
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {

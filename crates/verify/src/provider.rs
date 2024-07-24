@@ -1,6 +1,8 @@
 use super::{
-    etherscan::EtherscanVerificationProvider, sourcify::SourcifyVerificationProvider, VerifyArgs,
-    VerifyCheckArgs,
+    bytecode::VerifyBytecodeArgs,
+    etherscan::EtherscanVerificationProvider,
+    sourcify::SourcifyVerificationProvider,
+    verify::{VerifyArgs, VerifyCheckArgs},
 };
 use alloy_json_abi::JsonAbi;
 use async_trait::async_trait;
@@ -109,6 +111,9 @@ pub trait VerificationProvider {
 
     /// Sends the actual verify request for the targeted contract.
     async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()>;
+
+    /// Send the actual verify request for the targeted bytecode.
+    async fn verify_bytecode(&mut self, args: VerifyBytecodeArgs) -> Result<()>;
 
     /// Checks whether the contract is verified.
     async fn check(&self, args: VerifyCheckArgs) -> Result<()>;
