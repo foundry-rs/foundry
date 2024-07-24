@@ -102,6 +102,7 @@ impl VerifyBytecodeArgs {
         let config = self.load_config_emit_warnings();
         let provider = utils::get_provider(&config)?;
 
+        // Get the bytecode at the address, bailing if it doesn't exist.
         let code = provider.get_code_at(self.address).await?;
         if code.is_empty() {
             eyre::bail!("No bytecode found at address {}", self.address);
@@ -115,20 +116,18 @@ impl VerifyBytecodeArgs {
             );
         }
 
-        // If chain is not set, we try to get it from the RPC
-        // If RPC is not set, the default chain is used
+        // If chain is not set, we try to get it from the RPC.
+        // If RPC is not set, the default chain is used.
         let chain = match config.get_rpc_url() {
             Some(_) => utils::get_chain(config.chain, provider).await?,
             None => config.chain.unwrap_or_default(),
         };
 
-        // Set Etherscan options
+        // Set Etherscan options.
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
         let verifier_url = self.verifier.verifier_url.clone();
-        println!("Start verifying contract `{}` deployed on {chain}", self.address);
-
         self.verifier
             .verifier
             .client(&self.etherscan.key())?

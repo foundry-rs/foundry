@@ -177,8 +177,8 @@ impl VerifyArgs {
             )
         }
 
-        // If chain is not set, we try to get it from the RPC
-        // If RPC is not set, the default chain is used
+        // If chain is not set, we try to get it from the RPC.
+        // If RPC is not set, the default chain is used.
         let chain = match config.get_rpc_url() {
             Some(_) => {
                 let provider = utils::get_provider(&config)?;
@@ -189,6 +189,7 @@ impl VerifyArgs {
 
         let context = self.resolve_context().await?;
 
+        // Set Etherscan options.
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
