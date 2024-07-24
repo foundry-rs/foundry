@@ -1,6 +1,4 @@
-//! # foundry-verify
-//!
-//! Smart contract verification.
+//! The `forge verify-bytecode` command.
 
 use crate::{
     etherscan::EtherscanVerificationProvider,

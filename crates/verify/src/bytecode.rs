@@ -1,13 +1,17 @@
+//! The `forge verify-bytecode` command.
+
 use crate::{types::VerificationType, utils::is_host_only, verify::VerifierArgs};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
-use foundry_common::provider::ProviderBuilder;
+use foundry_cli::{
+    opts::EtherscanOpts,
+    utils::{self, LoadConfig},
+};
 use foundry_compilers::info::ContractInfo;
-use foundry_config::{figment, impl_figment_convert, Chain, Config};
+use foundry_config::{figment, impl_figment_convert, Config};
 use reqwest::Url;
 use std::path::PathBuf;
 use yansi::Paint;
@@ -96,7 +100,7 @@ impl VerifyBytecodeArgs {
     pub async fn run(mut self) -> Result<()> {
         // Setup
         let config = self.load_config_emit_warnings();
-        let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
+        let provider = utils::get_provider(&config)?;
 
         let code = provider.get_code_at(self.address).await?;
         if code.is_empty() {
@@ -113,11 +117,9 @@ impl VerifyBytecodeArgs {
 
         // If chain is not set, we try to get it from the RPC
         // If RPC is not set, the default chain is used
-        let chain = if config.get_rpc_url().is_some() {
-            let chain_id = provider.get_chain_id().await?;
-            Chain::from(chain_id)
-        } else {
-            config.chain.unwrap_or_default()
+        let chain = match config.get_rpc_url() {
+            Some(_) => utils::get_chain(config.chain, provider).await?,
+            None => config.chain.unwrap_or_default(),
         };
 
         // Set Etherscan options

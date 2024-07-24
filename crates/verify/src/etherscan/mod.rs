@@ -17,7 +17,6 @@ use foundry_block_explorers::{
 use foundry_cli::utils::{get_provider, read_constructor_args_file, LoadConfig};
 use foundry_common::{
     abi::encode_function_args,
-    provider::ProviderBuilder,
     retry::{Retry, RetryError},
     shell,
 };
@@ -161,7 +160,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
     async fn verify_bytecode(&mut self, args: VerifyBytecodeArgs) -> Result<()> {
         let (etherscan, config) = self.prepare_verify_bytecode_request(&args).await?;
-        let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
+        let provider = get_provider(&config)?;
 
         // Get the constructor args using `source_code` endpoint.
         let source_code = etherscan.contract_source_code(args.address).await?;
