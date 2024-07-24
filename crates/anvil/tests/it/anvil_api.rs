@@ -664,17 +664,20 @@ async fn test_reorg() {
     let provider = handle.ws_provider();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
-    let from = accounts[0].address();
-    let to = accounts[1].address();
-
     api.anvil_mine(Some(U256::from(10)), None).await.unwrap();
 
     // Define transactions
     let mut txs = vec![];
-    let nonce = provider.get_transaction_count(from).await.unwrap();
     for i in 0..3 {
-        let nonce = nonce + (i as u64);
-        txs.push(TransactionRequest::default().from(from).to(to).value(U256::from(1)).nonce(nonce));
+        let from = accounts[i].address();
+        let nonce = provider.get_transaction_count(from).await.unwrap();
+        let to = accounts[i + 1].address();
+        for j in 0..5 {
+            let nonce = nonce + (i as u64);
+            let tx =
+                TransactionRequest::default().from(from).to(to).value(U256::from(j)).nonce(nonce);
+            txs.push((tx, i as u64));
+        }
     }
 
     api.anvil_reorg(7, 3, Some(txs)).await.unwrap();

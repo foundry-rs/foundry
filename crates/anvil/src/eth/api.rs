@@ -78,8 +78,15 @@ use foundry_evm::{
     },
 };
 use futures::channel::{mpsc::Receiver, oneshot};
+use itertools::Itertools;
 use parking_lot::RwLock;
-use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    hash::Hash,
+    sync::Arc,
+    time::Duration,
+};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -1921,36 +1928,42 @@ impl EthApi {
         &self,
         depth: u64,
         new_len: u64,
-        transactions: Option<Vec<TransactionRequest>>,
+        tx_block_pairs: Option<Vec<(TransactionRequest, u64)>>,
     ) -> Result<()> {
-        let txs = if let Some(txs) = transactions {
-            let mut requests = Vec::with_capacity(txs.len());
-            for tx in txs {
-                // TODO: should nonce retrieved here?
+        let txs = if let Some(mut pairs) = tx_block_pairs {
+            // Sort by block number
+            pairs.sort_by(|a, b| a.1.cmp(&b.1));
+
+            // Transform requests to signed requests
+            let mut signed_block_txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::new();
+            for pair in pairs {
+                let (tx, block_number) = pair;
                 let nonce = tx.nonce.ok_or_else(|| {
                     BlockchainError::RpcError(RpcError::invalid_params(
                         "nonce not found for transaction",
                     ))
                 })?;
-                println!("TXS! {:#?}", tx);
                 let from = tx.from.ok_or_else(|| {
                     BlockchainError::RpcError(RpcError::invalid_params(
                         "sender not found for transaction",
                     ))
                 })?;
+
+                // TODO: can this conversion be cleaned up?
                 let typed_request = self.build_typed_tx_request(WithOtherFields::new(tx), nonce)?;
                 let typed = self.sign_request(&from, typed_request)?;
-                let impersonated = MaybeImpersonatedTransaction::new(typed);
-                let rpc_tx: Transaction = impersonated.into();
-                let pool_tx: PoolTransaction = rpc_tx.try_into().unwrap();
-                // Go to RPC transaction -> pool transaction
-                requests.push(pool_tx);
-            }
-            requests
-        } else {
-            vec![]
-        };
+                let pool_tx: PoolTransaction = typed.try_into().ok().ok_or_else(|| {
+                    BlockchainError::RpcError(RpcError::invalid_params(
+                        "sender not found for transaction",
+                    ))
+                })?;
 
+                signed_block_txs.entry(block_number).or_insert(Vec::new()).push(Arc::new(pool_tx));
+            }
+            signed_block_txs
+        } else {
+            HashMap::new()
+        };
         self.backend.reorg(depth, new_len, txs).await?;
         Ok(())
     }

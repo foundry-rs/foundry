@@ -2407,7 +2407,7 @@ impl Backend {
         &self,
         depth: u64,
         new_len: u64,
-        txs: Vec<PoolTransaction>,
+        txs: HashMap<u64, Vec<Arc<PoolTransaction>>>,
     ) -> Result<(), BlockchainError> {
         let current_height = self.best_number();
         let common_height = if self.best_number() > depth { self.best_number() - depth } else { 0 };
@@ -2447,11 +2447,13 @@ impl Backend {
             };
         };
 
-        // Here we can use TryFrom RPC transaction -> Pool transaction
-        // TODO: handle mapping of many tx's to 1 block
         for i in 0..new_len {
-            let tx = Arc::new(txs[i as usize].clone());
-            self.do_mine_block(vec![tx]).await;
+            let to_be_mined = match txs.get(&i) {
+                Some(txs) => txs.clone(),
+                None => vec![],
+            };
+
+            println!("{:#?}", self.do_mine_block(to_be_mined).await);
         }
 
         Ok(())
