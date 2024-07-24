@@ -1,4 +1,5 @@
-use alloy_primitives::{hex, Address, Bytes, U256};
+use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
@@ -8,11 +9,10 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, provider::ProviderBuilder};
+use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::ProviderBuilder};
 use foundry_compilers::{
-    artifacts::{BytecodeHash, BytecodeObject, CompactContractBytecode, EvmVersion},
+    artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion},
     info::ContractInfo,
-    Artifact,
 };
 use foundry_config::{figment, filter::SkipBuildFilter, impl_figment_convert, Chain, Config};
 use foundry_evm::{
@@ -42,11 +42,11 @@ pub struct VerifyBytecodeArgs {
     /// The constructor args to generate the creation code.
     #[clap(
         long,
+        num_args(1..),
         conflicts_with = "constructor_args_path",
         value_name = "ARGS",
-        visible_alias = "encoded-constructor-args"
     )]
-    pub constructor_args: Option<String>,
+    pub constructor_args: Option<Vec<String>>,
 
     /// The path to a file containing the constructor arguments.
     #[clap(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
@@ -143,6 +143,18 @@ impl VerifyBytecodeArgs {
             eyre::bail!("Contract name mismatch");
         }
 
+        // Obtain Etherscan compilation metadata
+        let etherscan_metadata = source_code.items.first().unwrap();
+
+        // Obtain local artifact
+        let artifact =
+            if let Ok(local_bytecode) = self.build_using_cache(etherscan_metadata, &config) {
+                trace!("using cache");
+                local_bytecode
+            } else {
+                self.build_project(&config)?
+            };
+
         // Get the constructor args from etherscan
         let mut constructor_args = if let Some(args) = source_code.items.first() {
             args.constructor_arguments.clone()
@@ -150,18 +162,21 @@ impl VerifyBytecodeArgs {
             eyre::bail!("No constructor arguments found for contract at address {}", self.address);
         };
 
-        // Get user provided constructor args
-        let provided_constructor_args = if let Some(args) = self.constructor_args.to_owned() {
-            Some(args)
-        } else if let Some(path) = self.constructor_args_path.to_owned() {
+        // Get and encode user provided constructor args
+        let provided_constructor_args = if let Some(path) = self.constructor_args_path.to_owned() {
             // Read from file
-            let res = read_constructor_args_file(path)?;
-            // Convert res to Bytes
-            Some(res.join(""))
+            Some(read_constructor_args_file(path)?)
         } else {
-            None
+            self.constructor_args.to_owned()
         }
-        .map(hex::decode)
+        .map(|args| {
+            if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
+                encode_args(&constructor.inputs, &args)
+                    .map(|args| DynSolValue::Tuple(args).abi_encode())
+            } else {
+                Ok(Vec::new())
+            }
+        })
         .transpose()?;
 
         if let Some(provided) = provided_constructor_args {
@@ -217,16 +232,10 @@ impl VerifyBytecodeArgs {
         // If bytecode_hash is disabled then its always partial verification
         let has_metadata = config.bytecode_hash == BytecodeHash::None;
 
-        // Etherscan compilation metadata
-        let etherscan_metadata = source_code.items.first().unwrap();
-
-        let local_bytecode =
-            if let Some(local_bytecode) = self.build_using_cache(etherscan_metadata, &config) {
-                trace!("using cache");
-                local_bytecode
-            } else {
-                self.build_project(&config)?
-            };
+        let local_bytecode = artifact
+            .bytecode
+            .and_then(|b| b.into_bytes())
+            .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
 
         // Append constructor args to the local_bytecode
         trace!(%constructor_args);
@@ -394,41 +403,34 @@ impl VerifyBytecodeArgs {
         Ok(())
     }
 
-    fn build_project(&self, config: &Config) -> Result<Bytes> {
+    fn build_project(&self, config: &Config) -> Result<CompactContractBytecode> {
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
 
-        let output = compiler.compile(&project)?;
+        let mut output = compiler.compile(&project)?;
 
         let artifact = output
-            .find_contract(&self.contract)
+            .remove_contract(&self.contract)
             .ok_or_eyre("Build Error: Contract artifact not found locally")?;
 
-        let local_bytecode = artifact
-            .get_bytecode_object()
-            .ok_or_eyre("Contract artifact does not have bytecode")?;
-
-        let local_bytecode = match local_bytecode.as_ref() {
-            BytecodeObject::Bytecode(bytes) => bytes,
-            BytecodeObject::Unlinked(_) => {
-                eyre::bail!("Unlinked bytecode is not supported for verification")
-            }
-        };
-
-        Ok(local_bytecode.to_owned())
+        Ok(artifact.into_contract_bytecode())
     }
 
-    fn build_using_cache(&self, etherscan_settings: &Metadata, config: &Config) -> Option<Bytes> {
-        let project = config.project().ok()?;
-        let cache = project.read_cache_file().ok()?;
-        let cached_artifacts = cache.read_artifacts::<CompactContractBytecode>().ok()?;
+    fn build_using_cache(
+        &self,
+        etherscan_settings: &Metadata,
+        config: &Config,
+    ) -> Result<CompactContractBytecode> {
+        let project = config.project()?;
+        let cache = project.read_cache_file()?;
+        let cached_artifacts = cache.read_artifacts::<CompactContractBytecode>()?;
 
         for (key, value) in cached_artifacts {
             let name = self.contract.name.to_owned() + ".sol";
             let version = etherscan_settings.compiler_version.to_owned();
             // Ignores vyper
             if version.starts_with("vyper:") {
-                return None;
+                eyre::bail!("Vyper contracts are not supported")
             }
             // Parse etherscan version string
             let version =
@@ -436,10 +438,8 @@ impl VerifyBytecodeArgs {
 
             // Check if `out/directory` name matches the contract name
             if key.ends_with(name.as_str()) {
-                let artifacts =
-                    value.iter().flat_map(|(_, artifacts)| artifacts.iter()).collect::<Vec<_>>();
                 let name = name.replace(".sol", ".json");
-                for artifact in artifacts {
+                for artifact in value.into_values().flatten() {
                     // Check if ABI file matches the name
                     if !artifact.file.ends_with(&name) {
                         continue;
@@ -455,19 +455,12 @@ impl VerifyBytecodeArgs {
                         }
                     }
 
-                    return artifact
-                        .artifact
-                        .bytecode
-                        .as_ref()
-                        .and_then(|bytes| bytes.bytes().to_owned())
-                        .cloned();
+                    return Ok(artifact.artifact)
                 }
-
-                return None
             }
         }
 
-        None
+        eyre::bail!("couldn't find cached artifact for contract {}", self.contract.name)
     }
 
     fn print_result(
