@@ -1,9 +1,7 @@
 use super::{provider::VerificationProvider, verify::VerifyCheckArgs};
 use crate::{
-    bytecode::{VerificationType, VerifyBytecodeArgs},
-    provider::VerificationContext,
-    retry::RETRY_CHECK_ON_VERIFY,
-    verify::VerifyArgs,
+    bytecode::VerifyBytecodeArgs, provider::VerificationContext, retry::RETRY_CHECK_ON_VERIFY,
+    types::VerificationType, verify::VerifyArgs,
 };
 use alloy_json_abi::Function;
 use alloy_primitives::hex;
@@ -115,7 +113,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         // Get creation tx hash
         let creation_data = etherscan.contract_creation_data(args.address).await?;
 
-        trace!(creation_tx_hash = ?creation_data.transaction_hash);
+        trace!(target: "forge::verify", creation_tx_hash = ?creation_data.transaction_hash);
 
         let mut transaction = provider
             .get_transaction_by_hash(creation_data.transaction_hash)
@@ -163,7 +161,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 (VerificationType::Partial, _) => (VerificationType::Partial, true),
             };
 
-        trace!(?verification_type, has_metadata);
+        trace!(target: "forge::verify", ?verification_type, has_metadata);
 
         // Etherscan compilation metadata
         let etherscan_metadata = source_code.items.first().unwrap();
@@ -178,7 +176,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
         };
 
         // Append constructor args to the local_bytecode
-        trace!(%constructor_args);
+        trace!(target: "forge::verify", %constructor_args);
+
         let mut local_bytecode_vec = local_bytecode.to_vec();
         local_bytecode_vec.extend_from_slice(&constructor_args);
 

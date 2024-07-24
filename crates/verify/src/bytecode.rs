@@ -1,4 +1,4 @@
-use crate::{utils::is_host_only, verify::VerifierArgs};
+use crate::{types::VerificationType, utils::is_host_only, verify::VerifierArgs};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -9,8 +9,7 @@ use foundry_common::provider::ProviderBuilder;
 use foundry_compilers::info::ContractInfo;
 use foundry_config::{figment, impl_figment_convert, Chain, Config};
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
-use std::{fmt, path::PathBuf, str::FromStr};
+use std::path::PathBuf;
 use yansi::Paint;
 
 impl_figment_convert!(VerifyBytecodeArgs);
@@ -152,49 +151,6 @@ impl VerifyBytecodeArgs {
                }
 
                err
-            });
-
-        Ok(())
-    }
-}
-
-/// Enum to represent the type of verification: `full` or `partial`.
-/// Ref: <https://docs.sourcify.dev/docs/full-vs-partial-match/>
-#[derive(Debug, Clone, clap::ValueEnum, Default, PartialEq, Eq, Serialize, Deserialize, Copy)]
-pub enum VerificationType {
-    #[default]
-    #[serde(rename = "full")]
-    Full,
-    #[serde(rename = "partial")]
-    Partial,
-}
-
-impl FromStr for VerificationType {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "full" => Ok(Self::Full),
-            "partial" => Ok(Self::Partial),
-            _ => eyre::bail!("Invalid verification type"),
-        }
-    }
-}
-
-impl From<VerificationType> for String {
-    fn from(v: VerificationType) -> Self {
-        match v {
-            VerificationType::Full => "full".to_string(),
-            VerificationType::Partial => "partial".to_string(),
-        }
-    }
-}
-
-impl fmt::Display for VerificationType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Full => write!(f, "full"),
-            Self::Partial => write!(f, "partial"),
-        }
+            })
     }
 }

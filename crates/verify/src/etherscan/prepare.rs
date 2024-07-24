@@ -1,4 +1,4 @@
-use crate::bytecode::{VerificationType, VerifyBytecodeArgs};
+use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_primitives::Bytes;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
@@ -8,10 +8,27 @@ use foundry_compilers::{
     Artifact,
 };
 use foundry_config::Config;
-use reqwest::Url;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
+
+/// Enum to represent the type of bytecode being verified
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub enum BytecodeType {
+    #[serde(rename = "creation")]
+    Creation,
+    #[serde(rename = "runtime")]
+    Runtime,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JsonResult {
+    pub bytecode_type: BytecodeType,
+    pub matched: bool,
+    pub verification_type: VerificationType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
 
 pub fn build_project(args: &VerifyBytecodeArgs, config: &Config) -> Result<Bytes> {
     let project = config.project()?;
@@ -139,24 +156,6 @@ pub fn print_result(
         };
         json_results.push(json_res);
     }
-}
-
-/// Enum to represent the type of bytecode being verified
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-pub enum BytecodeType {
-    #[serde(rename = "creation")]
-    Creation,
-    #[serde(rename = "runtime")]
-    Runtime,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct JsonResult {
-    pub bytecode_type: BytecodeType,
-    pub matched: bool,
-    pub verification_type: VerificationType,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
 }
 
 pub fn try_match(

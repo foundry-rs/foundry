@@ -2,10 +2,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod etherscan;
-use etherscan::EtherscanVerificationProvider;
 
 pub mod provider;
-use provider::VerificationProvider;
 
 pub mod bytecode;
 
@@ -16,6 +14,8 @@ mod sourcify;
 
 pub mod verify;
 pub use verify::{VerifierArgs, VerifyArgs, VerifyCheckArgs};
+
+mod types;
 
 mod utils;
 
