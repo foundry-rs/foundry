@@ -73,7 +73,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
     }
 
     async fn verify_bytecode(&mut self, __args: VerifyBytecodeArgs) -> Result<()> {
-        unimplemented!("Sourcify does not support bytecode verification")
+        unimplemented!("Sourcify support has not yet been implemented for bytecode verification")
     }
 
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
