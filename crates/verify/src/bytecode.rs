@@ -1,5 +1,5 @@
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use clap::{Parser, ValueHint};
@@ -43,13 +43,26 @@ pub struct VerifyBytecodeArgs {
     #[clap(
         long,
         num_args(1..),
-        conflicts_with = "constructor_args_path",
+        conflicts_with_all = &["constructor_args_path", "encoded_constructor_args"],
         value_name = "ARGS",
     )]
     pub constructor_args: Option<Vec<String>>,
 
+    /// The ABI-encoded constructor arguments.
+    #[arg(
+        long,
+        conflicts_with_all = &["constructor_args_path", "constructor_args"],
+        value_name = "HEX",
+    )]
+    pub encoded_constructor_args: Option<String>,
+
     /// The path to a file containing the constructor arguments.
-    #[clap(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
+    #[arg(
+        long,
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH",
+        conflicts_with_all = &["constructor_args", "encoded_constructor_args"]
+    )]
     pub constructor_args_path: Option<PathBuf>,
 
     /// The rpc url to use for verification.
@@ -177,7 +190,8 @@ impl VerifyBytecodeArgs {
                 Ok(Vec::new())
             }
         })
-        .transpose()?;
+        .transpose()?
+        .or(self.encoded_constructor_args.to_owned().map(hex::decode).transpose()?);
 
         if let Some(provided) = provided_constructor_args {
             if provided != constructor_args && !self.json {
