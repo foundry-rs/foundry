@@ -103,7 +103,7 @@ pub trait VerificationProvider {
     /// [`VerifyArgs`] are valid to begin with. This should prevent situations where there's a
     /// contract deployment that's executed before the verify request and the subsequent verify task
     /// fails due to misconfiguration.
-    async fn preflight_check(
+    async fn preflight_verify_check(
         &mut self,
         args: VerifyArgs,
         context: VerificationContext,

@@ -356,13 +356,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_host_only() {
-        assert!(!is_host_only(&Url::parse("https://blockscout.net/api").unwrap()));
-        assert!(is_host_only(&Url::parse("https://blockscout.net/").unwrap()));
-        assert!(is_host_only(&Url::parse("https://blockscout.net").unwrap()));
-    }
-
-    #[test]
     fn can_parse_verify_contract() {
         let args: VerifyArgs = VerifyArgs::parse_from([
             "foundry-cli",

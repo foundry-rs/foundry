@@ -64,286 +64,12 @@ trait EtherscanSourceProvider: Send + Sync + Debug {
 
 #[async_trait::async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
-    async fn preflight_check(
+    async fn preflight_verify_check(
         &mut self,
         args: VerifyArgs,
         context: VerificationContext,
     ) -> Result<()> {
         let _ = self.prepare_verify_request(&args, &context).await?;
-        Ok(())
-    }
-
-    async fn verify_bytecode(&mut self, args: VerifyBytecodeArgs) -> Result<()> {
-        let (etherscan, config) = self.prepare_verify_bytecode_request(&args).await?;
-        let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
-
-        // Get the constructor args using `source_code` endpoint
-        let source_code = etherscan.contract_source_code(args.address).await?;
-
-        // Check if the contract name matches
-        let name = source_code.items.first().map(|item| item.contract_name.to_owned());
-        if name.as_ref() != Some(&args.contract.name) {
-            eyre::bail!("Contract name mismatch");
-        }
-
-        // Get the constructor args from etherscan
-        let constructor_args = if let Some(args) = source_code.items.first() {
-            args.constructor_arguments.clone()
-        } else {
-            eyre::bail!("No constructor arguments found for contract at address {}", args.address);
-        };
-
-        // Get user provided constructor args
-        let provided_constructor_args = if let Some(args) = args.constructor_args.to_owned() {
-            args
-        } else if let Some(path) = args.constructor_args_path.to_owned() {
-            // Read from file
-            let res = read_constructor_args_file(path)?;
-            // Convert res to Bytes
-            res.join("")
-        } else {
-            constructor_args.to_string()
-        };
-
-        // Constructor args mismatch
-        if provided_constructor_args != constructor_args.to_string() && !args.json {
-            println!("{}", "The provided constructor args do not match the constructor args from etherscan. This will result in a mismatch - Using the args from etherscan".red().bold());
-        }
-
-        // Get creation tx hash
-        let creation_data = etherscan.contract_creation_data(args.address).await?;
-
-        trace!(target: "forge::verify", creation_tx_hash = ?creation_data.transaction_hash);
-
-        let mut transaction = provider
-            .get_transaction_by_hash(creation_data.transaction_hash)
-            .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
-            .ok_or_else(|| {
-                eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
-            })?;
-
-        let receipt = provider
-            .get_transaction_receipt(creation_data.transaction_hash)
-            .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction receipt from RPC: {:?}", e))?;
-
-        let receipt = if let Some(receipt) = receipt {
-            receipt
-        } else {
-            eyre::bail!(
-                "Receipt not found for transaction hash {}",
-                creation_data.transaction_hash
-            );
-        };
-
-        // Extract creation code
-        let maybe_creation_code =
-            if receipt.to.is_none() && receipt.contract_address == Some(args.address) {
-                &transaction.input
-            } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
-                &transaction.input[32..]
-            } else {
-                eyre::bail!(
-                    "Could not extract the creation code for contract at address {}",
-                    args.address
-                );
-            };
-
-        // If bytecode_hash is disabled then its always partial verification
-        let (verification_type, has_metadata) =
-            match (&args.verification_type, config.bytecode_hash) {
-                (VerificationType::Full, BytecodeHash::None) => (VerificationType::Partial, false),
-                (VerificationType::Partial, BytecodeHash::None) => {
-                    (VerificationType::Partial, false)
-                }
-                (VerificationType::Full, _) => (VerificationType::Full, true),
-                (VerificationType::Partial, _) => (VerificationType::Partial, true),
-            };
-
-        trace!(target: "forge::verify", ?verification_type, has_metadata);
-
-        // Etherscan compilation metadata
-        let etherscan_metadata = source_code.items.first().unwrap();
-
-        let local_bytecode = if let Some(local_bytecode) =
-            prepare::build_using_cache(&args, etherscan_metadata, &config)
-        {
-            trace!("using cache");
-            local_bytecode
-        } else {
-            prepare::build_project(&args, &config)?
-        };
-
-        // Append constructor args to the local_bytecode
-        trace!(target: "forge::verify", %constructor_args);
-
-        let mut local_bytecode_vec = local_bytecode.to_vec();
-        local_bytecode_vec.extend_from_slice(&constructor_args);
-
-        // Cmp creation code with locally built bytecode and maybe_creation_code
-        let (did_match, with_status) = prepare::try_match(
-            local_bytecode_vec.as_slice(),
-            maybe_creation_code,
-            &constructor_args,
-            &verification_type,
-            false,
-            has_metadata,
-        )?;
-
-        let mut json_results: Vec<JsonResult> = vec![];
-        prepare::print_result(
-            &args,
-            (did_match, with_status),
-            BytecodeType::Creation,
-            &mut json_results,
-            etherscan_metadata,
-            &config,
-        );
-
-        // If the creation code does not match, the runtime also won't match. Hence return.
-        if !did_match {
-            prepare::print_result(
-                &args,
-                (did_match, with_status),
-                BytecodeType::Runtime,
-                &mut json_results,
-                etherscan_metadata,
-                &config,
-            );
-            if args.json {
-                println!("{}", serde_json::to_string(&json_results)?);
-            }
-            return Ok(());
-        }
-
-        // Get contract creation block
-        let simulation_block = match args.block {
-            Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
-            Some(_) => eyre::bail!("Invalid block number"),
-            None => {
-                let provider = get_provider(&config)?;
-                provider
-            .get_transaction_by_hash(creation_data.transaction_hash)
-            .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
-                eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
-            })?
-            .block_number.ok_or_else(|| {
-                eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
-            })?
-            }
-        };
-
-        // Fork the chain at `simulation_block`
-        let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
-        fork_config.fork_block_number = Some(simulation_block - 1);
-        fork_config.evm_version =
-            etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default());
-        let (mut env, fork, _chain) =
-            TracingExecutor::get_fork_material(&fork_config, evm_opts).await?;
-
-        let mut executor =
-            TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false, false);
-        env.block.number = U256::from(simulation_block);
-        let block = provider.get_block(simulation_block.into(), true.into()).await?;
-
-        // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
-        // block.
-        let prev_block_id = BlockId::number(simulation_block - 1);
-        let prev_block_nonce = provider
-            .get_transaction_count(creation_data.contract_creator)
-            .block_id(prev_block_id)
-            .await?;
-        transaction.nonce = prev_block_nonce;
-
-        if let Some(ref block) = block {
-            env.block.timestamp = U256::from(block.header.timestamp);
-            env.block.coinbase = block.header.miner;
-            env.block.difficulty = block.header.difficulty;
-            env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-            env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
-            env.block.gas_limit = U256::from(block.header.gas_limit);
-        }
-
-        // Replace the `input` with local creation code in the creation tx.
-        if let Some(to) = transaction.to {
-            if to == DEFAULT_CREATE2_DEPLOYER {
-                let mut input = transaction.input[..32].to_vec(); // Salt
-                input.extend_from_slice(&local_bytecode_vec);
-                transaction.input = Bytes::from(input);
-
-                // Deploy default CREATE2 deployer
-                executor.deploy_create2_deployer()?;
-            }
-        } else {
-            transaction.input = Bytes::from(local_bytecode_vec);
-        }
-
-        configure_tx_env(&mut env, &transaction);
-
-        let env_with_handler =
-            EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(SpecId::LATEST));
-
-        let contract_address = if let Some(to) = transaction.to {
-            if to != DEFAULT_CREATE2_DEPLOYER {
-                eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
-            }
-            let result = executor.transact_with_env(env_with_handler.clone())?;
-
-            if result.result.len() != 20 {
-                eyre::bail!("Failed to deploy contract on fork at block {simulation_block}: call result is not exactly 20 bytes");
-            }
-
-            Address::from_slice(&result.result)
-        } else {
-            let deploy_result = executor.deploy_with_env(env_with_handler, None)?;
-            deploy_result.address
-        };
-
-        // State commited using deploy_with_env, now get the runtime bytecode from the db.
-        let fork_runtime_code = executor
-            .backend_mut()
-            .basic(contract_address)?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "Failed to get runtime code for contract deployed on fork at address {}",
-                    contract_address
-                )
-            })?
-            .code
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "Bytecode does not exist for contract deployed on fork at address {}",
-                    contract_address
-                )
-            })?;
-
-        let onchain_runtime_code =
-            provider.get_code_at(args.address).block_id(BlockId::number(simulation_block)).await?;
-
-        // Compare the onchain runtime bytecode with the runtime code from the fork.
-        let (did_match, with_status) = prepare::try_match(
-            &fork_runtime_code.original_bytes(),
-            &onchain_runtime_code,
-            &constructor_args,
-            &verification_type,
-            true,
-            has_metadata,
-        )?;
-
-        prepare::print_result(
-            &args,
-            (did_match, with_status),
-            BytecodeType::Runtime,
-            &mut json_results,
-            etherscan_metadata,
-            &config,
-        );
-
-        if args.json {
-            println!("{}", serde_json::to_string(&json_results)?);
-        }
-
         Ok(())
     }
 
@@ -433,6 +159,279 @@ impl VerificationProvider for EtherscanVerificationProvider {
         Ok(())
     }
 
+    async fn verify_bytecode(&mut self, args: VerifyBytecodeArgs) -> Result<()> {
+        let (etherscan, config) = self.prepare_verify_bytecode_request(&args).await?;
+        let provider = ProviderBuilder::new(&config.get_rpc_url_or_localhost_http()?).build()?;
+
+        // Get the constructor args using `source_code` endpoint.
+        let source_code = etherscan.contract_source_code(args.address).await?;
+
+        // Check if the contract name matches.
+        let name = source_code.items.first().map(|item| item.contract_name.to_owned());
+        if name.as_ref() != Some(&args.contract.name) {
+            eyre::bail!("Contract name mismatch");
+        }
+
+        // Get the constructor args from Etherscan.
+        let constructor_args = if let Some(args) = source_code.items.first() {
+            args.constructor_arguments.clone()
+        } else {
+            eyre::bail!("No constructor arguments found for contract at address {}", args.address);
+        };
+
+        // Get user provided constructor args.
+        let provided_constructor_args = if let Some(args) = args.constructor_args.to_owned() {
+            args
+        } else if let Some(path) = args.constructor_args_path.to_owned() {
+            // Read from file
+            let res = read_constructor_args_file(path)?;
+            // Convert res to Bytes
+            res.join("")
+        } else {
+            constructor_args.to_string()
+        };
+
+        if provided_constructor_args != constructor_args.to_string() && !args.json {
+            println!("{}", "The provided constructor args do not match the constructor args from Etherscan. This will result in a mismatch - Using the args from Etherscan".red().bold());
+        }
+
+        // Get creation tx hash.
+        let creation_data = etherscan.contract_creation_data(args.address).await?;
+
+        trace!(target: "forge::verify", creation_tx_hash = ?creation_data.transaction_hash);
+
+        let mut transaction = provider
+            .get_transaction_by_hash(creation_data.transaction_hash)
+            .await
+            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
+            .ok_or_else(|| {
+                eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
+            })?;
+
+        let receipt = provider
+            .get_transaction_receipt(creation_data.transaction_hash)
+            .await
+            .or_else(|e| eyre::bail!("Couldn't fetch transaction receipt from RPC: {:?}", e))?;
+
+        let receipt = if let Some(receipt) = receipt {
+            receipt
+        } else {
+            eyre::bail!(
+                "Receipt not found for transaction hash {}",
+                creation_data.transaction_hash
+            );
+        };
+
+        // Extract creation code.
+        let maybe_creation_code =
+            if receipt.to.is_none() && receipt.contract_address == Some(args.address) {
+                &transaction.input
+            } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
+                &transaction.input[32..]
+            } else {
+                eyre::bail!(
+                    "Could not extract the creation code for contract at address {}",
+                    args.address
+                );
+            };
+
+        // If bytecode_hash is disabled then its always partial verification
+        let (verification_type, has_metadata) =
+            match (&args.verification_type, config.bytecode_hash) {
+                (VerificationType::Full, BytecodeHash::None) => (VerificationType::Partial, false),
+                (VerificationType::Partial, BytecodeHash::None) => {
+                    (VerificationType::Partial, false)
+                }
+                (VerificationType::Full, _) => (VerificationType::Full, true),
+                (VerificationType::Partial, _) => (VerificationType::Partial, true),
+            };
+
+        trace!(target: "forge::verify", ?verification_type, has_metadata);
+
+        // Etherscan compilation metadata
+        let etherscan_metadata = source_code.items.first().unwrap();
+
+        let local_bytecode = if let Some(local_bytecode) =
+            prepare::build_using_cache(&args, etherscan_metadata, &config)
+        {
+            trace!("using cache");
+            local_bytecode
+        } else {
+            prepare::build_project(&args, &config)?
+        };
+
+        // Append constructor args to the local_bytecode
+        trace!(target: "forge::verify", %constructor_args);
+
+        let mut local_bytecode_vec = local_bytecode.to_vec();
+        local_bytecode_vec.extend_from_slice(&constructor_args);
+
+        // Compare creation code with locally built bytecode and `maybe_creation_code`.
+        let (did_match, with_status) = prepare::try_match(
+            local_bytecode_vec.as_slice(),
+            maybe_creation_code,
+            &constructor_args,
+            &verification_type,
+            false,
+            has_metadata,
+        )?;
+
+        let mut json_results: Vec<JsonResult> = vec![];
+        prepare::print_result(
+            &args,
+            (did_match, with_status),
+            BytecodeType::Creation,
+            &mut json_results,
+            etherscan_metadata,
+            &config,
+        );
+
+        // If the creation code does not match, the runtime also won't match. Hence return.
+        if !did_match {
+            prepare::print_result(
+                &args,
+                (did_match, with_status),
+                BytecodeType::Runtime,
+                &mut json_results,
+                etherscan_metadata,
+                &config,
+            );
+            if args.json {
+                println!("{}", serde_json::to_string(&json_results)?);
+            }
+            return Ok(());
+        }
+
+        // Get contract creation block.
+        let simulation_block = match args.block {
+            Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
+            Some(_) => eyre::bail!("Invalid block number"),
+            None => {
+                let provider = get_provider(&config)?;
+                provider
+            .get_transaction_by_hash(creation_data.transaction_hash)
+            .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
+                eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
+            })?
+            .block_number.ok_or_else(|| {
+                eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
+            })?
+            }
+        };
+
+        // Fork the chain at `simulation_block`.
+        let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
+        fork_config.fork_block_number = Some(simulation_block - 1);
+        fork_config.evm_version =
+            etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default());
+        let (mut env, fork, _chain) =
+            TracingExecutor::get_fork_material(&fork_config, evm_opts).await?;
+
+        let mut executor =
+            TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false, false);
+        env.block.number = U256::from(simulation_block);
+        let block = provider.get_block(simulation_block.into(), true.into()).await?;
+
+        // Workaround for the `NonceTooHigh` issue as we're not simulating prior txs of the same
+        // block.
+        let prev_block_id = BlockId::number(simulation_block - 1);
+        let prev_block_nonce = provider
+            .get_transaction_count(creation_data.contract_creator)
+            .block_id(prev_block_id)
+            .await?;
+        transaction.nonce = prev_block_nonce;
+
+        if let Some(ref block) = block {
+            env.block.timestamp = U256::from(block.header.timestamp);
+            env.block.coinbase = block.header.miner;
+            env.block.difficulty = block.header.difficulty;
+            env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
+            env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
+            env.block.gas_limit = U256::from(block.header.gas_limit);
+        }
+
+        // Replace the `input` with local creation code in the creation transaction.
+        if let Some(to) = transaction.to {
+            if to == DEFAULT_CREATE2_DEPLOYER {
+                let mut input = transaction.input[..32].to_vec(); // SALT
+                input.extend_from_slice(&local_bytecode_vec);
+                transaction.input = Bytes::from(input);
+
+                // Deploy default CREATE2 deployer.
+                executor.deploy_create2_deployer()?;
+            }
+        } else {
+            transaction.input = Bytes::from(local_bytecode_vec);
+        }
+
+        configure_tx_env(&mut env, &transaction);
+
+        let env_with_handler =
+            EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(SpecId::LATEST));
+
+        let contract_address = if let Some(to) = transaction.to {
+            if to != DEFAULT_CREATE2_DEPLOYER {
+                eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
+            }
+            let result = executor.transact_with_env(env_with_handler.clone())?;
+
+            if result.result.len() != 20 {
+                eyre::bail!("Failed to deploy contract on fork at block {simulation_block}: call result is not exactly 20 bytes");
+            }
+
+            Address::from_slice(&result.result)
+        } else {
+            let deploy_result = executor.deploy_with_env(env_with_handler, None)?;
+            deploy_result.address
+        };
+
+        // State commited using deploy_with_env, now get the runtime bytecode from the db.
+        let fork_runtime_code = executor
+            .backend_mut()
+            .basic(contract_address)?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "Failed to get runtime code for contract deployed on fork at address {}",
+                    contract_address
+                )
+            })?
+            .code
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "Bytecode does not exist for contract deployed on fork at address {}",
+                    contract_address
+                )
+            })?;
+
+        let onchain_runtime_code =
+            provider.get_code_at(args.address).block_id(BlockId::number(simulation_block)).await?;
+
+        // Compare the onchain runtime bytecode with the runtime code from the fork.
+        let (did_match, with_status) = prepare::try_match(
+            &fork_runtime_code.original_bytes(),
+            &onchain_runtime_code,
+            &constructor_args,
+            &verification_type,
+            true,
+            has_metadata,
+        )?;
+
+        prepare::print_result(
+            &args,
+            (did_match, with_status),
+            BytecodeType::Runtime,
+            &mut json_results,
+            etherscan_metadata,
+            &config,
+        );
+
+        if args.json {
+            println!("{}", serde_json::to_string(&json_results)?);
+        }
+
+        Ok(())
+    }
+
     /// Executes the command to check verification status on Etherscan
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
         let config = args.try_load_config_emit_warnings()?;
@@ -499,7 +498,7 @@ impl EtherscanVerificationProvider {
         }
     }
 
-    /// Configures the API request to the etherscan API using the given [`VerifyArgs`].
+    /// Configures the API request to the Etherscan API using the given [`VerifyArgs`].
     async fn prepare_verify_request(
         &mut self,
         args: &VerifyArgs,
@@ -517,7 +516,7 @@ impl EtherscanVerificationProvider {
         Ok((etherscan, verify_args))
     }
 
-    /// Configures the API request to the etherscan API using the given [`VerifyBytecodeArgs`].
+    /// Configures the API request to the Etherscan API using the given [`VerifyBytecodeArgs`].
     async fn prepare_verify_bytecode_request(
         &mut self,
         args: &VerifyBytecodeArgs,
@@ -533,7 +532,7 @@ impl EtherscanVerificationProvider {
         Ok((etherscan, config))
     }
 
-    /// Queries the etherscan API to verify if the contract is already verified.
+    /// Queries the Etherscan API to verify if the contract is already verified.
     async fn is_contract_verified(
         &self,
         etherscan: &Client,
@@ -551,7 +550,7 @@ impl EtherscanVerificationProvider {
         Ok(true)
     }
 
-    /// Create an etherscan client
+    /// Create an Etherscan client.
     pub(crate) fn client(
         &self,
         chain: Chain,
@@ -590,10 +589,10 @@ impl EtherscanVerificationProvider {
         builder
             .with_api_key(etherscan_key.unwrap_or_default())
             .build()
-            .wrap_err("Failed to create etherscan client")
+            .wrap_err("Failed to create Etherscan client")
     }
 
-    /// Creates the `VerifyContract` etherscan request in order to verify the contract
+    /// Creates the `VerifyContract` Etherscan request in order to verify the contract
     ///
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
@@ -623,7 +622,7 @@ impl EtherscanVerificationProvider {
             // we explicitly set this __undocumented__ argument to true if provided by the user,
             // though this info is also available in the compiler settings of the standard json
             // object if standard json is used
-            // unclear how etherscan interprets this field in standard-json mode
+            // unclear how Etherscan interprets this field in standard-json mode
             verify_args = verify_args.via_ir(true);
         }
 
@@ -881,6 +880,6 @@ mod tests {
         let context = args.resolve_context().await.unwrap();
 
         let mut etherscan = EtherscanVerificationProvider::default();
-        etherscan.preflight_check(args, context).await.unwrap();
+        etherscan.preflight_verify_check(args, context).await.unwrap();
     });
 }

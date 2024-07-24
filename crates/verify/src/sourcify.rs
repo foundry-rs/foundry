@@ -21,7 +21,7 @@ pub struct SourcifyVerificationProvider;
 
 #[async_trait]
 impl VerificationProvider for SourcifyVerificationProvider {
-    async fn preflight_check(
+    async fn preflight_verify_check(
         &mut self,
         args: VerifyArgs,
         context: VerificationContext,

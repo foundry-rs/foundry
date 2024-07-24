@@ -7,3 +7,15 @@ use reqwest::Url;
 pub fn is_host_only(url: &Url) -> bool {
     matches!(url.path(), "/" | "")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_host_only() {
+        assert!(!is_host_only(&Url::parse("https://blockscout.net/api").unwrap()));
+        assert!(is_host_only(&Url::parse("https://blockscout.net/").unwrap()));
+        assert!(is_host_only(&Url::parse("https://blockscout.net").unwrap()));
+    }
+}
