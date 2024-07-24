@@ -673,7 +673,7 @@ async fn test_reorg() {
         let nonce = provider.get_transaction_count(from).await.unwrap();
         let to = accounts[i + 1].address();
         for j in 0..5 {
-            let nonce = nonce + (i as u64);
+            let nonce = nonce + (j as u64);
             let tx =
                 TransactionRequest::default().from(from).to(to).value(U256::from(j)).nonce(nonce);
             txs.push((tx, i as u64));
