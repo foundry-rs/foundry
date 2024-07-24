@@ -1,7 +1,9 @@
-use super::{provider::VerificationProvider, verify::VerifyCheckArgs};
 use crate::{
-    bytecode::VerifyBytecodeArgs, provider::VerificationContext, retry::RETRY_CHECK_ON_VERIFY,
-    types::VerificationType, verify::VerifyArgs,
+    bytecode::VerifyBytecodeArgs,
+    provider::{VerificationContext, VerificationProvider},
+    retry::RETRY_CHECK_ON_VERIFY,
+    types::VerificationType,
+    verify::{VerifyArgs, VerifyCheckArgs},
 };
 use alloy_json_abi::Function;
 use alloy_primitives::hex;

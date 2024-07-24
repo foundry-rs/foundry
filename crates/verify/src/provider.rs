@@ -1,4 +1,4 @@
-use super::{
+use crate::{
     bytecode::VerifyBytecodeArgs,
     etherscan::EtherscanVerificationProvider,
     sourcify::SourcifyVerificationProvider,

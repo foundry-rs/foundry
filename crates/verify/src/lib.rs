@@ -8,6 +8,7 @@ mod etherscan;
 pub mod provider;
 
 pub mod bytecode;
+pub use bytecode::VerifyBytecodeArgs;
 
 pub mod retry;
 pub use retry::RetryArgs;

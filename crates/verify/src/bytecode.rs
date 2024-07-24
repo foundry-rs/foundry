@@ -58,7 +58,7 @@ pub struct VerifyBytecodeArgs {
     pub etherscan: EtherscanOpts,
 
     /// Verifier options.
-    #[command(flatten)]
+    #[clap(flatten)]
     pub verifier: VerifierArgs,
 
     /// Suppress logs and emit json results to stdout

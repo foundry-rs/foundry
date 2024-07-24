@@ -1,9 +1,8 @@
-use super::{
+use crate::{
     bytecode::VerifyBytecodeArgs,
-    provider::VerificationProvider,
+    provider::{VerificationContext, VerificationProvider},
     verify::{VerifyArgs, VerifyCheckArgs},
 };
-use crate::provider::VerificationContext;
 use async_trait::async_trait;
 use eyre::Result;
 use foundry_common::{fs, retry::Retry};
