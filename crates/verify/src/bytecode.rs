@@ -184,6 +184,13 @@ impl VerifyBytecodeArgs {
         }
         .map(|args| {
             if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
+                if constructor.inputs.len() != args.len() {
+                    eyre::bail!(
+                        "Mismatch of constructor arguments length. Expected {}, got {}",
+                        constructor.inputs.len(),
+                        args.len()
+                    );
+                }
                 encode_args(&constructor.inputs, &args)
                     .map(|args| DynSolValue::Tuple(args).abi_encode())
             } else {
