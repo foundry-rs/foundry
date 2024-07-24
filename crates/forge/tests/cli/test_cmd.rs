@@ -904,6 +904,7 @@ forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
 });
 
 // tests internal functions trace
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace, |prj, cmd| {
     prj.wipe_contracts();
     prj.clear();
@@ -971,6 +972,7 @@ Traces:
 });
 
 // tests internal functions trace with memory decoding
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace_memory, |prj, cmd| {
     prj.wipe_contracts();
     prj.clear();
