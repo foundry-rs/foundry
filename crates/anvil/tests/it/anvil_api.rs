@@ -15,6 +15,7 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::eth::EthRequest;
+use foundry_common::shell::println;
 use foundry_evm::revm::primitives::SpecId;
 use k256::elliptic_curve::consts::U25;
 use std::{
@@ -674,8 +675,12 @@ async fn test_reorg() {
         let to = accounts[i + 1].address();
         for j in 0..5 {
             let nonce = nonce + (j as u64);
-            let tx =
-                TransactionRequest::default().from(from).to(to).value(U256::from(j)).nonce(nonce);
+            let tx = TransactionRequest::default()
+                .from(from)
+                .to(to)
+                .value(U256::from(j))
+                .nonce(nonce)
+                .gas_limit(1000000);
             txs.push((tx, i as u64));
         }
     }
@@ -686,7 +691,7 @@ async fn test_reorg() {
     for num in 4..7 {
         let block = provider.get_block_by_number(num.into(), true).await.unwrap();
         let block = block.unwrap();
-        assert!(!block.transactions.is_empty())
+        assert_eq!(block.transactions.len(), 5);
     }
 
     // Flow:

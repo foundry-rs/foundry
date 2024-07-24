@@ -1930,10 +1930,7 @@ impl EthApi {
         new_len: u64,
         tx_block_pairs: Option<Vec<(TransactionRequest, u64)>>,
     ) -> Result<()> {
-        let txs = if let Some(mut pairs) = tx_block_pairs {
-            // Sort by block number
-            pairs.sort_by(|a, b| a.1.cmp(&b.1));
-
+        let txs = if let Some(pairs) = tx_block_pairs {
             // Transform requests to signed requests
             let mut signed_block_txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::new();
             for pair in pairs {

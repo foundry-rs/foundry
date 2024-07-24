@@ -152,7 +152,6 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 }
                 TransactionExecutionOutcome::Invalid(tx, e) => {
                     trace!(target: "backend", ?tx,  "skipping invalid transaction");
-                    println!("TX EXECUTION ERROR {:#?}", e);
                     invalid.push(tx);
                     continue
                 }

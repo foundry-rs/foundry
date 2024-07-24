@@ -2452,8 +2452,7 @@ impl Backend {
                 Some(txs) => txs.clone(),
                 None => vec![],
             };
-
-            println!("{:#?}", self.do_mine_block(to_be_mined).await);
+            self.do_mine_block(to_be_mined).await;
         }
 
         Ok(())
