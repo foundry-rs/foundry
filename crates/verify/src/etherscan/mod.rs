@@ -305,17 +305,14 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let simulation_block = match args.block {
             Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
             Some(_) => eyre::bail!("Invalid block number"),
-            None => {
-                let provider = get_provider(&config)?;
-                provider
-            .get_transaction_by_hash(creation_data.transaction_hash)
-            .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
-                eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
+            None => provider
+                .get_transaction_by_hash(creation_data.transaction_hash)
+                .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
+                    eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
+                })?
+                .block_number.ok_or_else(|| {
+                    eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
             })?
-            .block_number.ok_or_else(|| {
-                eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
-            })?
-            }
         };
 
         // Fork the chain at `simulation_block`.
