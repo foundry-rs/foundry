@@ -1,5 +1,4 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
-
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_common::compile::ProjectCompiler;
@@ -40,81 +39,6 @@ pub fn match_bytecodes(
         is_partial_match(local_bytecode, bytecode, constructor_args, is_runtime, has_metadata)
             .then_some(VerificationType::Partial)
     }
-}
-
-fn is_partial_match(
-    mut local_bytecode: &[u8],
-    mut bytecode: &[u8],
-    constructor_args: &[u8],
-    is_runtime: bool,
-    has_metadata: bool,
-) -> bool {
-    // 1. Check length of constructor args
-    if constructor_args.is_empty() || is_runtime {
-        // Assume metadata is at the end of the bytecode
-        return try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
-    }
-
-    // If not runtime, extract constructor args from the end of the bytecode
-    bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
-    local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
-
-    try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
-}
-
-fn try_extract_and_compare_bytecode(
-    mut local_bytecode: &[u8],
-    mut bytecode: &[u8],
-    has_metadata: bool,
-) -> bool {
-    if has_metadata {
-        local_bytecode = extract_metadata_hash(local_bytecode);
-        bytecode = extract_metadata_hash(bytecode);
-    }
-
-    // Now compare the local code and bytecode
-    local_bytecode == bytecode
-}
-
-/// @dev This assumes that the metadata is at the end of the bytecode
-fn extract_metadata_hash(bytecode: &[u8]) -> &[u8] {
-    // Get the last two bytes of the bytecode to find the length of CBOR metadata
-    let metadata_len = &bytecode[bytecode.len() - 2..];
-    let metadata_len = u16::from_be_bytes([metadata_len[0], metadata_len[1]]);
-
-    // Now discard the metadata from the bytecode
-    &bytecode[..bytecode.len() - 2 - metadata_len as usize]
-}
-
-fn find_mismatch_in_settings(
-    etherscan_settings: &Metadata,
-    local_settings: &Config,
-) -> Vec<String> {
-    let mut mismatches: Vec<String> = vec![];
-    if etherscan_settings.evm_version != local_settings.evm_version.to_string().to_lowercase() {
-        let str = format!(
-            "EVM version mismatch: local={}, onchain={}",
-            local_settings.evm_version, etherscan_settings.evm_version
-        );
-        mismatches.push(str);
-    }
-    let local_optimizer: u64 = if local_settings.optimizer { 1 } else { 0 };
-    if etherscan_settings.optimization_used != local_optimizer {
-        let str = format!(
-            "Optimizer mismatch: local={}, onchain={}",
-            local_settings.optimizer, etherscan_settings.optimization_used
-        );
-        mismatches.push(str);
-    }
-    if etherscan_settings.runs != local_settings.optimizer_runs as u64 {
-        let str = format!(
-            "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs, etherscan_settings.runs
-        );
-        mismatches.push(str);
-    }
-
-    mismatches
 }
 
 pub fn build_project(
@@ -221,4 +145,79 @@ pub fn print_result(
         };
         json_results.push(json_res);
     }
+}
+
+fn is_partial_match(
+    mut local_bytecode: &[u8],
+    mut bytecode: &[u8],
+    constructor_args: &[u8],
+    is_runtime: bool,
+    has_metadata: bool,
+) -> bool {
+    // 1. Check length of constructor args
+    if constructor_args.is_empty() || is_runtime {
+        // Assume metadata is at the end of the bytecode
+        return try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
+    }
+
+    // If not runtime, extract constructor args from the end of the bytecode
+    bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
+    local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
+
+    try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
+}
+
+fn try_extract_and_compare_bytecode(
+    mut local_bytecode: &[u8],
+    mut bytecode: &[u8],
+    has_metadata: bool,
+) -> bool {
+    if has_metadata {
+        local_bytecode = extract_metadata_hash(local_bytecode);
+        bytecode = extract_metadata_hash(bytecode);
+    }
+
+    // Now compare the local code and bytecode
+    local_bytecode == bytecode
+}
+
+/// @dev This assumes that the metadata is at the end of the bytecode
+fn extract_metadata_hash(bytecode: &[u8]) -> &[u8] {
+    // Get the last two bytes of the bytecode to find the length of CBOR metadata
+    let metadata_len = &bytecode[bytecode.len() - 2..];
+    let metadata_len = u16::from_be_bytes([metadata_len[0], metadata_len[1]]);
+
+    // Now discard the metadata from the bytecode
+    &bytecode[..bytecode.len() - 2 - metadata_len as usize]
+}
+
+fn find_mismatch_in_settings(
+    etherscan_settings: &Metadata,
+    local_settings: &Config,
+) -> Vec<String> {
+    let mut mismatches: Vec<String> = vec![];
+    if etherscan_settings.evm_version != local_settings.evm_version.to_string().to_lowercase() {
+        let str = format!(
+            "EVM version mismatch: local={}, onchain={}",
+            local_settings.evm_version, etherscan_settings.evm_version
+        );
+        mismatches.push(str);
+    }
+    let local_optimizer: u64 = if local_settings.optimizer { 1 } else { 0 };
+    if etherscan_settings.optimization_used != local_optimizer {
+        let str = format!(
+            "Optimizer mismatch: local={}, onchain={}",
+            local_settings.optimizer, etherscan_settings.optimization_used
+        );
+        mismatches.push(str);
+    }
+    if etherscan_settings.runs != local_settings.optimizer_runs as u64 {
+        let str = format!(
+            "Optimizer runs mismatch: local={}, onchain={}",
+            local_settings.optimizer_runs, etherscan_settings.runs
+        );
+        mismatches.push(str);
+    }
+
+    mismatches
 }

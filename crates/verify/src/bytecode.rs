@@ -1,8 +1,7 @@
 //! The `forge verify-bytecode` command.
 
 use crate::{utils::is_host_only, verify::VerifierArgs};
-use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{hex, Address, Bytes, U256};
+use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::{Parser, ValueHint};
@@ -11,20 +10,10 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, LoadConfig},
 };
-use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::ProviderBuilder};
-use foundry_compilers::{
-    artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion},
-    info::ContractInfo,
-};
-use foundry_config::{figment, filter::SkipBuildFilter, impl_figment_convert, Chain, Config};
-use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
-};
+use foundry_compilers::info::ContractInfo;
+use foundry_config::{figment, impl_figment_convert, Config};
 use reqwest::Url;
-use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
-use semver::Version;
-use serde::{Deserialize, Serialize};
-use std::{fmt, path::PathBuf, str::FromStr};
+use std::path::PathBuf;
 use yansi::Paint;
 
 impl_figment_convert!(VerifyBytecodeArgs);
