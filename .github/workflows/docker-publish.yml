@@ -23,7 +23,6 @@ jobs:
             id-token: write
             packages: write
             contents: read
-        timeout-minutes: 120
         steps:
             - name: Checkout repository
               id: checkout
