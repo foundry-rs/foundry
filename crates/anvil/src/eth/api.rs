@@ -59,8 +59,8 @@ use anvil_core::{
     eth::{
         block::BlockInfo,
         transaction::{
-            transaction_request_to_typed, MaybeImpersonatedTransaction, PendingTransaction,
-            ReceiptResponse, TypedTransaction, TypedTransactionRequest,
+            transaction_request_to_typed, PendingTransaction, ReceiptResponse, TypedTransaction,
+            TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -78,12 +78,10 @@ use foundry_evm::{
     },
 };
 use futures::channel::{mpsc::Receiver, oneshot};
-use itertools::Itertools;
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
-    hash::Hash,
     sync::Arc,
     time::Duration,
 };
@@ -1930,6 +1928,9 @@ impl EthApi {
         new_len: u64,
         tx_block_pairs: Option<Vec<(TransactionRequest, u64)>>,
     ) -> Result<()> {
+        // TODO: validation
+        // - tx_block_pairs matches new_len length
+        // - tx's for a given block will not exhaust the block gas limit
         let txs = if let Some(pairs) = tx_block_pairs {
             // Transform requests to signed requests
             let mut signed_block_txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::new();
@@ -1937,21 +1938,26 @@ impl EthApi {
                 let (tx, block_number) = pair;
                 let nonce = tx.nonce.ok_or_else(|| {
                     BlockchainError::RpcError(RpcError::invalid_params(
-                        "nonce not found for transaction",
+                        "Nonce must be set for transaction",
                     ))
                 })?;
                 let from = tx.from.ok_or_else(|| {
                     BlockchainError::RpcError(RpcError::invalid_params(
-                        "sender not found for transaction",
+                        "From address must be set for transaction",
                     ))
                 })?;
+                if tx.gas.is_none() {
+                    return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                        "Gas limit must be set for transaction",
+                    )));
+                }
 
-                // TODO: can this conversion be cleaned up?
                 let typed_request = self.build_typed_tx_request(WithOtherFields::new(tx), nonce)?;
+                // This passes, but what if tx sender is not within signers?
                 let typed = self.sign_request(&from, typed_request)?;
                 let pool_tx: PoolTransaction = typed.try_into().ok().ok_or_else(|| {
                     BlockchainError::RpcError(RpcError::invalid_params(
-                        "sender not found for transaction",
+                        "Sender not found for transaction",
                     ))
                 })?;
 
@@ -1961,6 +1967,7 @@ impl EthApi {
         } else {
             HashMap::new()
         };
+
         self.backend.reorg(depth, new_len, txs).await?;
         Ok(())
     }

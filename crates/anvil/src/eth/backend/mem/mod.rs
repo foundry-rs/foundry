@@ -93,7 +93,6 @@ use revm::{
         calc_blob_gasprice, BlobExcessGasAndPrice, HashMap, OptimismFields, ResultAndState,
     },
 };
-use serde_json::de;
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
@@ -2410,14 +2409,20 @@ impl Backend {
         txs: HashMap<u64, Vec<Arc<PoolTransaction>>>,
     ) -> Result<(), BlockchainError> {
         let current_height = self.best_number();
-        let common_height = if self.best_number() > depth { self.best_number() - depth } else { 0 };
+        // Find block to reorg back to
+        let common_height = if self.best_number() > depth {
+            self.best_number() - depth
+        } else {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "reorg depth exceeds chain height",
+            )));
+        };
 
         // Common block
         let block = self.get_block(BlockId::from(common_height)).unwrap();
         let hash = block.header.hash();
         {
-            // Revert the state
-            // Rewind the chain to common ancestor
+            // Revert the state, rewinding the chain to common ancestor
             let mut storage = self.blockchain.storage.write();
             for height in ((common_height + 1)..=current_height).rev() {
                 // TODO extract this to common functionality (from revert_snapshot)
@@ -2429,7 +2434,6 @@ impl Backend {
                     }
                 }
             }
-
             storage.best_number = U64::from(block.header.number);
             storage.best_hash = hash;
 
@@ -2447,6 +2451,7 @@ impl Backend {
             };
         };
 
+        // Create the newly reorged
         for i in 0..new_len {
             let to_be_mined = match txs.get(&i) {
                 Some(txs) => txs.clone(),

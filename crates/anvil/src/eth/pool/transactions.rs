@@ -1,7 +1,7 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
 use alloy_primitives::{Address, TxHash};
 use alloy_rpc_types::Transaction as RpcTransaction;
-use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction, TypedTransactionRequest};
+use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use parking_lot::RwLock;
 use std::{
     cmp::Ordering,

@@ -15,9 +15,7 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::eth::EthRequest;
-use foundry_common::shell::println;
 use foundry_evm::revm::primitives::SpecId;
-use k256::elliptic_curve::consts::U25;
 use std::{
     str::FromStr,
     time::{Duration, SystemTime},
@@ -693,29 +691,4 @@ async fn test_reorg() {
         let block = block.unwrap();
         assert_eq!(block.transactions.len(), 5);
     }
-
-    // Flow:
-    // 1. Rewind cannonical to a specified depth
-    //    - Attempt to rewind to a valid depth (parent must exist)
-    // 2. Delete the block from 1st uncle to last
-    // 3. From uncle blocks, filter transactions against critera
-    //   - e.g from and to address
-    // 4. Insert new chain at common parent (the last cannonical block)
-    //  - use do_mine_block to supply transactions
-    // 5. Take a snapshot of re-orged state?
-
-    // API
-    // Delete state to common ancestor
-    // How (ergonimics)?
-    // number
-    // head - depth
-    // hash
-
-    // Edge cases:
-    // - Reorging on genesis block
-    // - Deleting snap shot of uncle blocks
-    // - Limit reorg depth for performance
-
-    // API options:
-    // - calls self.mine_one()
 }
