@@ -173,8 +173,8 @@ forgetest!(test_assert_coverage, |prj, cmd| {
         "AContract.sol",
         r#"
 contract AContract {
-    function checkA() external pure returns (bool) {
-        assert(10 > 2);
+    function checkA(uint256 a) external pure returns (bool) {
+        assert(a > 2);
         return true;
     }
 }
@@ -188,26 +188,66 @@ contract AContract {
 import "./test.sol";
 import {AContract} from "./AContract.sol";
 
+interface Vm {
+    function expectRevert() external;
+}
+
 contract AContractTest is DSTest {
-    function testA() external {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+    function testAssertBranch() external {
         AContract a = new AContract();
-        bool result = a.checkA();
+        bool result = a.checkA(10);
         assertTrue(result);
+    }
+
+    function testAssertRevertBranch() external {
+        AContract a = new AContract();
+        vm.expectRevert();
+        a.checkA(1);
     }
 }
     "#,
     )
     .unwrap();
 
+    // Assert 50% branch coverage for assert failure.
+    cmd.arg("coverage")
+        .args(["--mt".to_string(), "testAssertRevertBranch".to_string()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+| File              | % Lines      | % Statements | % Branches   | % Funcs       |
+|-------------------|--------------|--------------|--------------|---------------|
+| src/AContract.sol | 50.00% (1/2) | 50.00% (1/2) | 50.00% (1/2) | 100.00% (1/1) |
+| Total             | 50.00% (1/2) | 50.00% (1/2) | 50.00% (1/2) | 100.00% (1/1) |
+
+"#]]);
+
+    // Assert 50% branch coverage for proper assert.
+    cmd.forge_fuse()
+        .arg("coverage")
+        .args(["--mt".to_string(), "testAssertBranch".to_string()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches   | % Funcs       |
+|-------------------|---------------|---------------|--------------|---------------|
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 50.00% (1/2) | 100.00% (1/1) |
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 50.00% (1/2) | 100.00% (1/1) |
+
+"#]]);
+
     // Assert 100% coverage (assert properly covered).
-    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"
 ...
 | File              | % Lines       | % Statements  | % Branches    | % Funcs       |
 |-------------------|---------------|---------------|---------------|---------------|
-| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (1/1) |
-| Total             | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (1/1) |
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (2/2) | 100.00% (1/1) |
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 100.00% (2/2) | 100.00% (1/1) |
 
-"#]]);
+"#]],
+    );
 });
 
 forgetest!(test_require_coverage, |prj, cmd| {
@@ -254,6 +294,20 @@ contract AContractTest is DSTest {
     // Assert 50% branch coverage if only revert tested.
     cmd.arg("coverage")
         .args(["--mt".to_string(), "testRequireRevert".to_string()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches   | % Funcs       |
+|-------------------|---------------|---------------|--------------|---------------|
+| src/AContract.sol | 100.00% (1/1) | 100.00% (1/1) | 50.00% (1/2) | 100.00% (1/1) |
+| Total             | 100.00% (1/1) | 100.00% (1/1) | 50.00% (1/2) | 100.00% (1/1) |
+
+"#]]);
+
+    // Assert 50% branch coverage if only happy path tested.
+    cmd.forge_fuse()
+        .arg("coverage")
+        .args(["--mt".to_string(), "testRequireNoRevert".to_string()])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -384,7 +438,7 @@ contract Foo {
 
     function foo(uint256 a) external pure {
         if (a < 10) {
-            if (a == 1) {
+            if (a < 3) {
                 assert(a == 1);
             } else {
                 assert(a == 5);
@@ -423,16 +477,23 @@ import {Foo} from "./Foo.sol";
 
 interface Vm {
     function expectRevert(bytes calldata revertData) external;
+    function expectRevert() external;
 }
 
 contract FooTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     Foo internal foo = new Foo();
 
-    function test_issue_7784() external view {
+    function test_issue_7784() external {
         foo.foo(1);
+        vm.expectRevert();
+        foo.foo(2);
+        vm.expectRevert();
+        foo.foo(4);
         foo.foo(5);
         foo.foo(60);
+        vm.expectRevert();
+        foo.foo(70);
     }
 
     function test_issue_4310() external {
@@ -506,13 +567,16 @@ contract FooTest is DSTest {
     )
     .unwrap();
 
-    // Assert 100% coverage.
+    // TODO: fix following issues for 100% coverage
+    // https://github.com/foundry-rs/foundry/issues/4309
+    // https://github.com/foundry-rs/foundry/issues/4310
+    // https://github.com/foundry-rs/foundry/issues/4315
     cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
 ...
-| File        | % Lines         | % Statements    | % Branches      | % Funcs       |
-|-------------|-----------------|-----------------|-----------------|---------------|
-| src/Foo.sol | 100.00% (20/20) | 100.00% (23/23) | 100.00% (12/12) | 100.00% (7/7) |
-| Total       | 100.00% (20/20) | 100.00% (23/23) | 100.00% (12/12) | 100.00% (7/7) |
+| File        | % Lines         | % Statements    | % Branches     | % Funcs       |
+|-------------|-----------------|-----------------|----------------|---------------|
+| src/Foo.sol | 100.00% (20/20) | 100.00% (23/23) | 83.33% (15/18) | 100.00% (7/7) |
+| Total       | 100.00% (20/20) | 100.00% (23/23) | 83.33% (15/18) | 100.00% (7/7) |
 
 "#]]);
 });
@@ -681,10 +745,10 @@ contract FooTest is DSTest {
     cmd.arg("coverage").args(["--mt".to_string(), "happy".to_string()]).assert_success().stdout_eq(
         str![[r#"
 ...
-| File        | % Lines        | % Statements   | % Branches    | % Funcs       |
-|-------------|----------------|----------------|---------------|---------------|
-| src/Foo.sol | 66.67% (10/15) | 66.67% (14/21) | 100.00% (4/4) | 100.00% (5/5) |
-| Total       | 66.67% (10/15) | 66.67% (14/21) | 100.00% (4/4) | 100.00% (5/5) |
+| File        | % Lines        | % Statements   | % Branches   | % Funcs       |
+|-------------|----------------|----------------|--------------|---------------|
+| src/Foo.sol | 66.67% (10/15) | 66.67% (14/21) | 83.33% (5/6) | 100.00% (5/5) |
+| Total       | 66.67% (10/15) | 66.67% (14/21) | 83.33% (5/6) | 100.00% (5/5) |
 
 "#]],
     );
@@ -695,8 +759,8 @@ contract FooTest is DSTest {
 ...
 | File        | % Lines         | % Statements    | % Branches    | % Funcs       |
 |-------------|-----------------|-----------------|---------------|---------------|
-| src/Foo.sol | 100.00% (15/15) | 100.00% (21/21) | 100.00% (4/4) | 100.00% (5/5) |
-| Total       | 100.00% (15/15) | 100.00% (21/21) | 100.00% (4/4) | 100.00% (5/5) |
+| src/Foo.sol | 100.00% (15/15) | 100.00% (21/21) | 100.00% (6/6) | 100.00% (5/5) |
+| Total       | 100.00% (15/15) | 100.00% (21/21) | 100.00% (6/6) | 100.00% (5/5) |
 
 "#]],
     );
