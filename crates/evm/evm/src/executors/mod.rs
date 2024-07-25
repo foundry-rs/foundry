@@ -48,17 +48,11 @@ pub use trace::TracingExecutor;
 
 sol! {
     interface ITest {
-        #[derive(Default)]
-        struct BeforeTestSelectors {
-            bytes4 test_selector;
-            bytes4[] before_selectors;
-        }
-
         function setUp() external;
         function failed() external view returns (bool failed);
 
         #[derive(Default)]
-        function beforeTestSelectors() public view returns (BeforeTestSelectors[] memory beforeSelectors);
+        function beforeTestSetup(bytes4 testSelector) public view returns (bytes[] memory beforeTestCalldata);
     }
 }
 

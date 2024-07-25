@@ -24,28 +24,29 @@ contract Issue1543Test is DSTest {
         killer = new SelfDestructor();
     }
 
-    function beforeTestSelectors() public pure returns (BeforeTestSelectors[] memory) {
-        BeforeTestSelectors[] memory targets = new BeforeTestSelectors[](4);
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = this.kill_contract.selector;
-        targets[0] = BeforeTestSelectors(this.testKill.selector, selectors);
+    function beforeTestSetup(bytes4 testSelector) public pure returns (bytes[] memory beforeTestCalldata) {
+        if (testSelector == this.testKill.selector) {
+            beforeTestCalldata = new bytes[](1);
+            beforeTestCalldata[0] = abi.encodePacked(this.kill_contract.selector);
+        }
 
-        selectors = new bytes4[](3);
-        selectors[0] = this.testA.selector;
-        selectors[1] = this.testA.selector;
-        selectors[2] = this.testA.selector;
-        targets[1] = BeforeTestSelectors(this.testA.selector, selectors);
+        if (testSelector == this.testA.selector) {
+            beforeTestCalldata = new bytes[](3);
+            beforeTestCalldata[0] = abi.encodePacked(this.testA.selector);
+            beforeTestCalldata[1] = abi.encodePacked(this.testA.selector);
+            beforeTestCalldata[2] = abi.encodePacked(this.testA.selector);
+        }
 
-        selectors = new bytes4[](1);
-        selectors[0] = this.setB.selector;
-        targets[2] = BeforeTestSelectors(this.testB.selector, selectors);
+        if (testSelector == this.testB.selector) {
+            beforeTestCalldata = new bytes[](1);
+            beforeTestCalldata[0] = abi.encodePacked(this.setB.selector);
+        }
 
-        selectors = new bytes4[](2);
-        selectors[0] = this.testA.selector;
-        selectors[1] = this.setB.selector;
-        targets[3] = BeforeTestSelectors(this.testC.selector, selectors);
-
-        return targets;
+        if (testSelector == this.testC.selector) {
+            beforeTestCalldata = new bytes[](2);
+            beforeTestCalldata[0] = abi.encodePacked(this.testA.selector);
+            beforeTestCalldata[1] = abi.encodeWithSignature("setBWithValue(uint256)", 111);
+        }
     }
 
     function kill_contract() external {
@@ -84,8 +85,12 @@ contract Issue1543Test is DSTest {
         require(b == 100);
     }
 
-    function testC(uint256 x) public {
+    function setBWithValue(uint256 value) public {
+        b = value;
+    }
+
+    function testC(uint256 h) public {
         assertEq(a, 1);
-        assertEq(b, 100);
+        assertEq(b, 111);
     }
 }

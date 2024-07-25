@@ -449,9 +449,9 @@ impl TestResult {
     }
 
     /// Returns the failed result with reason for single test.
-    pub fn single_fail(mut self, err: EvmError) -> Self {
+    pub fn single_fail(mut self, reason: Option<String>) -> Self {
         self.status = TestStatus::Failure;
-        self.reason = Some(err.to_string());
+        self.reason = reason;
         self
     }
 
