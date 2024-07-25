@@ -149,7 +149,7 @@ pub fn find_anchor_branch(
                     ItemAnchor {
                         item_id,
                         // The first branch is the opcode directly after JUMPI
-                        instruction: pc + 1,
+                        instruction: pc + 2,
                     },
                     ItemAnchor { item_id, instruction: pc_jump },
                 ));
