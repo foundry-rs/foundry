@@ -1955,6 +1955,9 @@ impl EthApi {
                 let typed_request = self.build_typed_tx_request(WithOtherFields::new(tx), nonce)?;
                 // This passes, but what if tx sender is not within signers?
                 let typed = self.sign_request(&from, typed_request)?;
+                // This fails in the executor with insufficient balance
+                // let bypass_signature = self.impersonated_signature(&typed_request);
+                // let typed = sign::build_typed_transaction(typed, bypass_signature)?;
                 let pool_tx: PoolTransaction = typed.try_into().ok().ok_or_else(|| {
                     BlockchainError::RpcError(RpcError::invalid_params(
                         "Sender not found for transaction",
