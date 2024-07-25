@@ -22,6 +22,7 @@ serde_json.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types.workspace = true
+alloy-dyn-abi.workspace = true
 revm-primitives.workspace = true
 serde.workspace = true
 eyre.workspace = true
