@@ -50,9 +50,11 @@ contract Dummy {}
     cmd.args(["test"]);
 
     // run command and assert
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/warn_no_tests.stdout"),
-    );
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+No tests found in project! Forge looks for functions that starts with `test`.
+
+"#]]);
 });
 
 // tests that warning is displayed with pattern when no tests match
@@ -71,9 +73,17 @@ contract Dummy {}
     cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
 
     // run command and assert
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/warn_no_tests_match.stdout"),
-    );
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+No tests match the provided pattern:
+	match-test: `testA.*`
+	no-match-test: `testB.*`
+	match-contract: `TestC.*`
+	no-match-contract: `TestD.*`
+	match-path: `*TestE*`
+	no-match-path: `*TestF*`
+
+"#]]);
 });
 
 // tests that suggestion is provided with pattern when no tests match
@@ -96,10 +106,19 @@ contract TestC {
     cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
 
     // run command and assert
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/suggest_when_no_tests_match.stdout"),
-    );
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+No tests match the provided pattern:
+	match-test: `testA.*`
+	no-match-test: `testB.*`
+	match-contract: `TestC.*`
+	no-match-contract: `TestD.*`
+	match-path: `*TestE*`
+	no-match-path: `*TestF*`
+
+Did you mean `test1`?
+
+"#]]);
 });
 
 // tests that direct import paths are handled correctly
@@ -266,10 +285,16 @@ forgetest_init!(can_test_repeatedly, |_prj, cmd| {
     cmd.assert_non_empty_stdout();
 
     for _ in 0..5 {
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_test_repeatedly.stdout"),
-        );
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, μ: [..], ~: [..])
+[PASS] test_Increment() (gas: 31303)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in [..] ([..] CPU time)
+
+Ran 1 test suite in [..] ([..] CPU time): 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
     }
 });
 
