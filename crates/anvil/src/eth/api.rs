@@ -59,8 +59,8 @@ use anvil_core::{
     eth::{
         block::BlockInfo,
         transaction::{
-            transaction_request_to_typed, PendingTransaction, ReceiptResponse, TypedTransaction,
-            TypedTransactionRequest,
+            transaction_request_to_typed, MaybeImpersonatedTransaction, PendingTransaction,
+            ReceiptResponse, TypedTransaction, TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -1932,7 +1932,6 @@ impl EthApi {
         // - tx_block_pairs matches new_len length
         // - tx's for a given block will not exhaust the block gas limit
         let txs = if let Some(pairs) = tx_block_pairs {
-            // Transform requests to signed requests
             let mut signed_block_txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::new();
             for pair in pairs {
                 let (tx, block_number) = pair;
@@ -1952,18 +1951,20 @@ impl EthApi {
                     )));
                 }
 
-                let typed_request = self.build_typed_tx_request(WithOtherFields::new(tx), nonce)?;
-                // This passes, but what if tx sender is not within signers?
-                let typed = self.sign_request(&from, typed_request)?;
-                // This fails in the executor with insufficient balance
-                // let bypass_signature = self.impersonated_signature(&typed_request);
-                // let typed = sign::build_typed_transaction(typed, bypass_signature)?;
-                let pool_tx: PoolTransaction = typed.try_into().ok().ok_or_else(|| {
-                    BlockchainError::RpcError(RpcError::invalid_params(
-                        "Sender not found for transaction",
-                    ))
-                })?;
+                let request = self.build_typed_tx_request(WithOtherFields::new(tx), nonce)?;
+                let pending = if self.is_impersonated(from) {
+                    let bypass_signature = self.impersonated_signature(&request);
+                    let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+                    self.ensure_typed_transaction_supported(&transaction)?;
+                    PendingTransaction::with_impersonated(transaction, from)
+                } else {
+                    let transaction = self.sign_request(&from, request)?;
+                    self.ensure_typed_transaction_supported(&transaction)?;
+                    PendingTransaction::new(transaction)?
+                };
+                self.backend.validate_pool_transaction(&pending).await?;
 
+                let pool_tx = PoolTransaction::new(pending);
                 signed_block_txs.entry(block_number).or_insert(Vec::new()).push(Arc::new(pool_tx));
             }
             signed_block_txs

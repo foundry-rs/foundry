@@ -1,6 +1,7 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
 use alloy_primitives::{Address, TxHash};
 use alloy_rpc_types::Transaction as RpcTransaction;
+use alloy_serde::quantity::vec;
 use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use parking_lot::RwLock;
 use std::{
@@ -85,6 +86,14 @@ pub struct PoolTransaction {
 // == impl PoolTransaction ==
 
 impl PoolTransaction {
+    pub fn new(transaction: PendingTransaction) -> Self {
+        Self {
+            pending_transaction: transaction,
+            requires: vec![],
+            provides: vec![],
+            priority: TransactionPriority(0),
+        }
+    }
     /// Returns the hash of this transaction
     pub fn hash(&self) -> TxHash {
         *self.pending_transaction.hash()
@@ -121,21 +130,6 @@ impl TryFrom<RpcTransaction> for PoolTransaction {
         })
     }
 }
-
-// TODO: revist this
-impl TryFrom<TypedTransaction> for PoolTransaction {
-    type Error = eyre::Error;
-    fn try_from(transaction: TypedTransaction) -> Result<Self, Self::Error> {
-        let pending_transaction = PendingTransaction::new(transaction)?;
-        Ok(Self {
-            pending_transaction,
-            requires: vec![],
-            provides: vec![],
-            priority: TransactionPriority(0),
-        })
-    }
-}
-
 /// A waiting pool of transaction that are pending, but not yet ready to be included in a new block.
 ///
 /// Keeps a set of transactions that are waiting for other transactions
