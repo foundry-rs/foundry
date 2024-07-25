@@ -1,7 +1,8 @@
 //! The `forge verify-bytecode` command.
 
-use crate::{types::VerificationType, utils::is_host_only, verify::VerifierArgs};
-use alloy_primitives::Address;
+use crate::{utils::is_host_only, verify::VerifierArgs};
+use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::{Parser, ValueHint};
@@ -10,10 +11,20 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, LoadConfig},
 };
-use foundry_compilers::info::ContractInfo;
-use foundry_config::{figment, impl_figment_convert, Config};
+use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::ProviderBuilder};
+use foundry_compilers::{
+    artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion},
+    info::ContractInfo,
+};
+use foundry_config::{figment, filter::SkipBuildFilter, impl_figment_convert, Chain, Config};
+use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
+};
 use reqwest::Url;
-use std::path::PathBuf;
+use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
+use semver::Version;
+use serde::{Deserialize, Serialize};
+use std::{fmt, path::PathBuf, str::FromStr};
 use yansi::Paint;
 
 impl_figment_convert!(VerifyBytecodeArgs);
@@ -34,26 +45,33 @@ pub struct VerifyBytecodeArgs {
     /// The constructor args to generate the creation code.
     #[clap(
         long,
-        conflicts_with = "constructor_args_path",
+        num_args(1..),
+        conflicts_with_all = &["constructor_args_path", "encoded_constructor_args"],
         value_name = "ARGS",
-        visible_alias = "encoded-constructor-args"
     )]
-    pub constructor_args: Option<String>,
+    pub constructor_args: Option<Vec<String>>,
+
+    /// The ABI-encoded constructor arguments.
+    #[arg(
+        long,
+        conflicts_with_all = &["constructor_args_path", "constructor_args"],
+        value_name = "HEX",
+    )]
+    pub encoded_constructor_args: Option<String>,
 
     /// The path to a file containing the constructor arguments.
-    #[clap(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
+    #[arg(
+        long,
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH",
+        conflicts_with_all = &["constructor_args", "encoded_constructor_args"]
+    )]
     pub constructor_args_path: Option<PathBuf>,
 
     /// The rpc url to use for verification.
     #[clap(short = 'r', long, value_name = "RPC_URL", env = "ETH_RPC_URL")]
     pub rpc_url: Option<String>,
 
-    /// Verfication Type: `full` or `partial`.
-    /// Ref: <https://docs.sourcify.dev/docs/full-vs-partial-match/>
-    #[clap(long, default_value = "full", value_name = "TYPE")]
-    pub verification_type: VerificationType,
-
-    /// The Etherscan (or equivalent) API key and chain ID.
     #[clap(flatten)]
     pub etherscan: EtherscanOpts,
 
@@ -81,14 +99,13 @@ impl figment::Provider for VerifyBytecodeArgs {
     fn data(
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
-        let mut dict = figment::value::Dict::new();
+        let mut dict = self.etherscan.dict();
         if let Some(block) = &self.block {
             dict.insert("block".into(), figment::value::Value::serialize(block)?);
         }
         if let Some(rpc_url) = &self.rpc_url {
             dict.insert("eth_rpc_url".into(), rpc_url.to_string().into());
         }
-        dict.insert("verification_type".into(), self.verification_type.to_string().into());
 
         Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
     }

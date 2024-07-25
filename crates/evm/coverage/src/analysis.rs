@@ -417,7 +417,7 @@ impl<'a> ContractVisitor<'a> {
                     if let Some(NodeType::Identifier) = expr.as_ref().map(|expr| &expr.node_type) {
                         // Might be a require call, add branch coverage.
                         let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
-                        if let Some("require") = name.as_deref() {
+                        if let Some("require" | "assert") = name.as_deref() {
                             let branch_id = self.branch_id;
                             self.branch_id += 1;
                             self.push_item(CoverageItem {

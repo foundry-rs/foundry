@@ -2,9 +2,9 @@ use crate::{
     bytecode::VerifyBytecodeArgs,
     provider::{VerificationContext, VerificationProvider},
     retry::RETRY_CHECK_ON_VERIFY,
-    types::VerificationType,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
+use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
 use alloy_primitives::hex;
 use alloy_provider::Provider;
@@ -18,7 +18,7 @@ use foundry_block_explorers::{
 };
 use foundry_cli::utils::{get_provider, read_constructor_args_file, LoadConfig};
 use foundry_common::{
-    abi::encode_function_args,
+    abi::{encode_args, encode_function_args},
     retry::{Retry, RetryError},
     shell,
 };
@@ -164,39 +164,73 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let (etherscan, config) = self.prepare_verify_bytecode_request(&args).await?;
         let provider = get_provider(&config)?;
 
-        // Get the constructor args using `source_code` endpoint.
+        // Get the constructor args using `source_code` endpoint
         let source_code = etherscan.contract_source_code(args.address).await?;
 
-        // Check if the contract name matches.
+        // Check if the contract name matches
         let name = source_code.items.first().map(|item| item.contract_name.to_owned());
         if name.as_ref() != Some(&args.contract.name) {
             eyre::bail!("Contract name mismatch");
         }
 
-        // Get the constructor args from Etherscan.
-        let constructor_args = if let Some(args) = source_code.items.first() {
+        // Obtain Etherscan compilation metadata
+        let etherscan_metadata = source_code.items.first().unwrap();
+
+        // Obtain local artifact
+        let artifact = if let Ok(local_bytecode) =
+            prepare::build_using_cache(&args, etherscan_metadata, &config)
+        {
+            trace!("using cache");
+            local_bytecode
+        } else {
+            prepare::build_project(&args, &config)?
+        };
+
+        // Get the constructor args from etherscan
+        let mut constructor_args = if let Some(args) = source_code.items.first() {
             args.constructor_arguments.clone()
         } else {
             eyre::bail!("No constructor arguments found for contract at address {}", args.address);
         };
 
-        // Get user provided constructor args.
-        let provided_constructor_args = if let Some(args) = args.constructor_args.to_owned() {
-            args
-        } else if let Some(path) = args.constructor_args_path.to_owned() {
+        // Get and encode user provided constructor args
+        let provided_constructor_args = if let Some(path) = args.constructor_args_path.to_owned() {
             // Read from file
-            let res = read_constructor_args_file(path)?;
-            // Convert res to Bytes
-            res.join("")
+            Some(read_constructor_args_file(path)?)
         } else {
-            constructor_args.to_string()
-        };
+            args.constructor_args.to_owned()
+        }
+        .map(|args| {
+            if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
+                if constructor.inputs.len() != args.len() {
+                    eyre::bail!(
+                        "Mismatch of constructor arguments length. Expected {}, got {}",
+                        constructor.inputs.len(),
+                        args.len()
+                    );
+                }
+                encode_args(&constructor.inputs, &args)
+                    .map(|args| DynSolValue::Tuple(args).abi_encode())
+            } else {
+                Ok(Vec::new())
+            }
+        })
+        .transpose()?
+        .or(args.encoded_constructor_args.to_owned().map(hex::decode).transpose()?);
 
-        if provided_constructor_args != constructor_args.to_string() && !args.json {
-            println!("{}", "The provided constructor args do not match the constructor args from Etherscan. This will result in a mismatch - Using the args from Etherscan".red().bold());
+        if let Some(provided) = provided_constructor_args {
+            if provided != constructor_args && !args.json {
+                println!(
+                    "{}",
+                    format!("The provided constructor args do not match the constructor args from etherscan ({constructor_args}).")
+                        .yellow()
+                        .bold(),
+                );
+            }
+            constructor_args = provided.into();
         }
 
-        // Get creation tx hash.
+        // Get creation tx hash
         let creation_data = etherscan.contract_creation_data(args.address).await?;
 
         trace!(target: "forge::verify", creation_tx_hash = ?creation_data.transaction_hash);
@@ -208,7 +242,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .ok_or_else(|| {
                 eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
             })?;
-
         let receipt = provider
             .get_transaction_receipt(creation_data.transaction_hash)
             .await
@@ -223,7 +256,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             );
         };
 
-        // Extract creation code.
+        // Extract creation code
         let maybe_creation_code =
             if receipt.to.is_none() && receipt.contract_address == Some(args.address) {
                 &transaction.input
@@ -237,29 +270,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
             };
 
         // If bytecode_hash is disabled then its always partial verification
-        let (verification_type, has_metadata) =
-            match (&args.verification_type, config.bytecode_hash) {
-                (VerificationType::Full, BytecodeHash::None) => (VerificationType::Partial, false),
-                (VerificationType::Partial, BytecodeHash::None) => {
-                    (VerificationType::Partial, false)
-                }
-                (VerificationType::Full, _) => (VerificationType::Full, true),
-                (VerificationType::Partial, _) => (VerificationType::Partial, true),
-            };
+        let has_metadata = config.bytecode_hash == BytecodeHash::None;
 
-        trace!(target: "forge::verify", ?verification_type, has_metadata);
-
-        // Etherscan compilation metadata
-        let etherscan_metadata = source_code.items.first().unwrap();
-
-        let local_bytecode = if let Some(local_bytecode) =
-            prepare::build_using_cache(&args, etherscan_metadata, &config)
-        {
-            trace!("using cache");
-            local_bytecode
-        } else {
-            prepare::build_project(&args, &config)?
-        };
+        let local_bytecode = artifact
+            .bytecode
+            .and_then(|b| b.into_bytes())
+            .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
 
         // Append constructor args to the local_bytecode
         trace!(target: "forge::verify", %constructor_args);
@@ -268,19 +284,18 @@ impl VerificationProvider for EtherscanVerificationProvider {
         local_bytecode_vec.extend_from_slice(&constructor_args);
 
         // Compare creation code with locally built bytecode and `maybe_creation_code`.
-        let (did_match, with_status) = prepare::try_match(
+        let match_type = prepare::match_bytecodes(
             local_bytecode_vec.as_slice(),
             maybe_creation_code,
             &constructor_args,
-            &verification_type,
             false,
             has_metadata,
-        )?;
+        );
 
         let mut json_results: Vec<JsonResult> = vec![];
         prepare::print_result(
             &args,
-            (did_match, with_status),
+            match_type,
             BytecodeType::Creation,
             &mut json_results,
             etherscan_metadata,
@@ -288,10 +303,10 @@ impl VerificationProvider for EtherscanVerificationProvider {
         );
 
         // If the creation code does not match, the runtime also won't match. Hence return.
-        if !did_match {
+        if match_type.is_none() {
             prepare::print_result(
                 &args,
-                (did_match, with_status),
+                None,
                 BytecodeType::Runtime,
                 &mut json_results,
                 etherscan_metadata,
@@ -307,14 +322,16 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let simulation_block = match args.block {
             Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
             Some(_) => eyre::bail!("Invalid block number"),
-            None => provider
-                .get_transaction_by_hash(creation_data.transaction_hash)
-                .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
-                    eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
-                })?
-                .block_number.ok_or_else(|| {
-                    eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
-            })?
+            None => {
+                provider
+                    .get_transaction_by_hash(creation_data.transaction_hash)
+                    .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
+                        eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
+                    })?
+                    .block_number.ok_or_else(|| {
+                        eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
+                    })?
+            }
         };
 
         // Fork the chain at `simulation_block`.
@@ -330,7 +347,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         env.block.number = U256::from(simulation_block);
         let block = provider.get_block(simulation_block.into(), true.into()).await?;
 
-        // Workaround for the `NonceTooHigh` issue as we're not simulating prior txs of the same
+        // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
         // block.
         let prev_block_id = BlockId::number(simulation_block - 1);
         let prev_block_nonce = provider
@@ -348,14 +365,14 @@ impl VerificationProvider for EtherscanVerificationProvider {
             env.block.gas_limit = U256::from(block.header.gas_limit);
         }
 
-        // Replace the `input` with local creation code in the creation transaction.
+        // Replace the `input` with local creation code in the creation tx.
         if let Some(to) = transaction.to {
             if to == DEFAULT_CREATE2_DEPLOYER {
-                let mut input = transaction.input[..32].to_vec(); // SALT
+                let mut input = transaction.input[..32].to_vec(); // Salt
                 input.extend_from_slice(&local_bytecode_vec);
                 transaction.input = Bytes::from(input);
 
-                // Deploy default CREATE2 deployer.
+                // Deploy default CREATE2 deployer
                 executor.deploy_create2_deployer()?;
             }
         } else {
@@ -405,18 +422,17 @@ impl VerificationProvider for EtherscanVerificationProvider {
             provider.get_code_at(args.address).block_id(BlockId::number(simulation_block)).await?;
 
         // Compare the onchain runtime bytecode with the runtime code from the fork.
-        let (did_match, with_status) = prepare::try_match(
+        let match_type = prepare::match_bytecodes(
             &fork_runtime_code.original_bytes(),
             &onchain_runtime_code,
             &constructor_args,
-            &verification_type,
             true,
             has_metadata,
-        )?;
+        );
 
         prepare::print_result(
             &args,
-            (did_match, with_status),
+            match_type,
             BytecodeType::Runtime,
             &mut json_results,
             etherscan_metadata,
@@ -426,7 +442,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
         if args.json {
             println!("{}", serde_json::to_string(&json_results)?);
         }
-
         Ok(())
     }
 

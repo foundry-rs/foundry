@@ -926,6 +926,12 @@ impl TestCommand {
         self.assert().success()
     }
 
+    /// Runs the command and asserts that it failed.
+    #[track_caller]
+    pub fn assert_failure(&mut self) -> OutputAssert {
+        self.assert().failure()
+    }
+
     /// Executes command, applies stdin function and returns output
     #[track_caller]
     pub fn execute(&mut self) -> Output {
