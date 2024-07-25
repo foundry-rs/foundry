@@ -176,12 +176,12 @@ async fn can_estimate_gas_with_undersized_max_fee_per_gas() {
     let simple_storage_contract =
         SimpleStorage::deploy(&provider, init_value.clone()).await.unwrap();
 
-    let undersized_max_fee_per_gas = 1 as u128;
+    let undersized_max_fee_per_gas = 1_u128;
 
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     let latest_block_base_fee_per_gas = latest_block.header.base_fee_per_gas.unwrap();
 
-    assert_eq!(undersized_max_fee_per_gas < latest_block_base_fee_per_gas, true);
+    assert!(undersized_max_fee_per_gas < latest_block_base_fee_per_gas);
 
     let estimated_gas = simple_storage_contract
         .setValue("new_value".to_string())
@@ -191,7 +191,7 @@ async fn can_estimate_gas_with_undersized_max_fee_per_gas() {
         .await
         .unwrap();
 
-    assert_eq!(estimated_gas > 0, true);
+    assert!(estimated_gas > 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -289,9 +289,9 @@ async fn can_call_with_undersized_max_fee_per_gas() {
 
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     let latest_block_base_fee_per_gas = latest_block.header.base_fee_per_gas.unwrap();
-    let undersized_max_fee_per_gas = 1 as u128;
+    let undersized_max_fee_per_gas = 1_u128;
 
-    assert_eq!(undersized_max_fee_per_gas < latest_block_base_fee_per_gas, true);
+    assert!(undersized_max_fee_per_gas < latest_block_base_fee_per_gas);
 
     let last_sender = simple_storage_contract
         .lastSender()
