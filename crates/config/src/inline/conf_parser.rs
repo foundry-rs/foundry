@@ -37,12 +37,14 @@ where
     /// - `Err(InlineConfigParserError)` in case of wrong configuration.
     fn try_merge(&self, configs: &[String]) -> Result<Option<Self>, InlineConfigParserError>;
 
-    /// Validates and merges the natspec configs into the current config.
+    /// Validates and merges the natspec configs for current profile into the current config.
     fn merge(&self, natspec: &NatSpec) -> Result<Option<Self>, InlineConfigError> {
         let config_key = Self::config_key();
 
-        let configs =
-            natspec.config_lines().filter(|l| l.contains(&config_key)).collect::<Vec<String>>();
+        let configs = natspec
+            .current_profile_configs()
+            .filter(|l| l.contains(&config_key))
+            .collect::<Vec<String>>();
 
         self.try_merge(&configs).map_err(|e| {
             let line = natspec.debug_context();
