@@ -4553,6 +4553,86 @@
     },
     {
       "func": {
+        "id": "expectEmitAnonymous_0",
+        "description": "Prepare an expected anonymous log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an anonymous event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).",
+        "declaration": "function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmitAnonymous(bool,bool,bool,bool,bool)",
+        "selector": "0xc948db5e",
+        "selectorBytes": [
+          201,
+          72,
+          219,
+          94
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmitAnonymous_1",
+        "description": "Same as the previous method, but also checks supplied address against emitting contract.",
+        "declaration": "function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmitAnonymous(bool,bool,bool,bool,bool,address)",
+        "selector": "0x71c95899",
+        "selectorBytes": [
+          113,
+          201,
+          88,
+          153
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmitAnonymous_2",
+        "description": "Prepare an expected anonymous log with all topic and data checks enabled.\nCall this function, then emit an anonymous event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data.",
+        "declaration": "function expectEmitAnonymous() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmitAnonymous()",
+        "selector": "0x2e5f270c",
+        "selectorBytes": [
+          46,
+          95,
+          39,
+          12
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmitAnonymous_3",
+        "description": "Same as the previous method, but also checks supplied address against emitting contract.",
+        "declaration": "function expectEmitAnonymous(address emitter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmitAnonymous(address)",
+        "selector": "0x6fc68705",
+        "selectorBytes": [
+          111,
+          198,
+          135,
+          5
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectEmit_0",
         "description": "Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).",
         "declaration": "function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;",

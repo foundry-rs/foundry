@@ -127,7 +127,8 @@ impl CoverageArgs {
             // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350
             // And also in new releases of solidity:
             // https://github.com/ethereum/solidity/issues/13972#issuecomment-1628632202
-            project.settings.solc = project.settings.solc.with_via_ir_minimum_optimization()
+            project.settings.solc.settings =
+                project.settings.solc.settings.with_via_ir_minimum_optimization()
         } else {
             project.settings.solc.optimizer.disable();
             project.settings.solc.optimizer.runs = None;
@@ -252,7 +253,8 @@ impl CoverageArgs {
         let known_contracts = runner.known_contracts.clone();
 
         let filter = self.test.filter(&config);
-        let outcome = self.test.run_tests(runner, config.clone(), verbosity, &filter).await?;
+        let outcome =
+            self.test.run_tests(runner, config.clone(), verbosity, &filter, output).await?;
 
         outcome.ensure_ok()?;
 

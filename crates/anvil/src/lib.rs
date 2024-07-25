@@ -142,13 +142,19 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
         no_mining,
         transaction_order,
         genesis,
+        mixed_mining,
         ..
     } = config.clone();
 
     let pool = Arc::new(Pool::default());
 
     let mode = if let Some(block_time) = block_time {
-        MiningMode::interval(block_time)
+        if mixed_mining {
+            let listener = pool.add_ready_listener();
+            MiningMode::mixed(max_transactions, listener, block_time)
+        } else {
+            MiningMode::interval(block_time)
+        }
     } else if no_mining {
         MiningMode::None
     } else {
@@ -178,19 +184,15 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
         }
     }
 
-    let fees = backend.fees().clone();
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
         backend.new_block_notifications(),
         Arc::clone(&fee_history_cache),
-        fees,
         StorageInfo::new(Arc::clone(&backend)),
     );
     // create an entry for the best block
-    if let Some(best_block) =
-        backend.get_block(backend.best_number()).map(|block| block.header.hash_slow())
-    {
-        fee_history_service.insert_cache_entry_for_block(best_block);
+    if let Some(header) = backend.get_block(backend.best_number()).map(|block| block.header) {
+        fee_history_service.insert_cache_entry_for_block(header.hash_slow(), &header);
     }
 
     let filters = Filters::default();

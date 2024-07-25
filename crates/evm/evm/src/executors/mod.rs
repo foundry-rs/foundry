@@ -23,7 +23,7 @@ use foundry_evm_core::{
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_traces::CallTraceArena;
+use foundry_evm_traces::{CallTraceArena, TraceMode};
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, InstructionResult},
@@ -214,8 +214,8 @@ impl Executor {
     }
 
     #[inline]
-    pub fn set_tracing(&mut self, tracing: bool, debug: bool) -> &mut Self {
-        self.inspector_mut().tracing(tracing, debug);
+    pub fn set_tracing(&mut self, mode: TraceMode) -> &mut Self {
+        self.inspector_mut().tracing(mode);
         self
     }
 
@@ -844,6 +844,7 @@ fn convert_executed_result(
         &env.tx.data,
         env.tx.transact_to.is_create(),
         &env.tx.access_list,
+        0,
     );
 
     let result = match &out {

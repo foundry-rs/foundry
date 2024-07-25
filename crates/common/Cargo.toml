@@ -17,7 +17,6 @@ foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-common-fmt.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
-foundry-linking.workspace = true
 
 alloy-contract.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
@@ -48,7 +47,7 @@ tower.workspace = true
 
 async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
-comfy-table = "7"
+comfy-table.workspace = true
 dunce.workspace = true
 eyre.workspace = true
 num-format.workspace = true

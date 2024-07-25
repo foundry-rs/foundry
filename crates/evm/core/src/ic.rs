@@ -4,6 +4,7 @@ use rustc_hash::FxHashMap;
 /// Maps from program counter to instruction counter.
 ///
 /// Inverse of [`IcPcMap`].
+#[derive(Debug, Clone)]
 pub struct PcIcMap {
     pub inner: FxHashMap<usize, usize>,
 }

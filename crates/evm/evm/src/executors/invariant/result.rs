@@ -147,6 +147,10 @@ pub(crate) fn can_continue(
             invariant_data.failures.error = Some(InvariantFuzzError::Revert(case_data));
 
             return Ok(RichInvariantResults::new(false, None));
+        } else if call_result.reverted {
+            // If we don't fail test on revert then remove last reverted call from inputs.
+            // This improves shrinking performance as irrelevant calls won't be checked again.
+            invariant_run.inputs.pop();
         }
     }
     Ok(RichInvariantResults::new(true, call_results))

@@ -34,6 +34,7 @@ use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
+use revm::primitives::Eof;
 use std::{
     borrow::Cow,
     io,
@@ -1355,7 +1356,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::to_rlp("[]").unwrap(), "0xc0".to_string());
     /// assert_eq!(Cast::to_rlp("0x22").unwrap(), "0x22".to_string());
     /// assert_eq!(Cast::to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
-    /// assert_eq!(Cast::to_rlp("[\"0xf1\",\"f2\"]").unwrap(), "0xc481f181f2".to_string());
+    /// assert_eq!(Cast::to_rlp("[\"0xf1\", \"f2\"]").unwrap(), "0xc481f181f2".to_string());
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_rlp(value: &str) -> Result<String> {
@@ -1989,6 +1990,24 @@ impl SimpleCast {
         let tx_hex = hex::decode(strip_0x(tx))?;
         let tx = TxEnvelope::decode_2718(&mut tx_hex.as_slice())?;
         Ok(tx)
+    }
+
+    /// Decodes EOF container bytes
+    /// Pretty prints the decoded EOF container contents
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// let eof = "0xef0001010004020001005604002000008000046080806040526004361015e100035f80fd5f3560e01c63773d45e01415e1ffee6040600319360112e10028600435906024358201809211e100066020918152f3634e487b7160e01b5f52601160045260245ffd5f80fd0000000000000000000000000124189fc71496f8660db5189f296055ed757632";
+    /// let decoded = Cast::decode_eof(&eof)?;
+    /// println!("{}", decoded);
+    /// # Ok::<(), eyre::Report>(())
+    pub fn decode_eof(eof: &str) -> Result<String> {
+        let eof_hex = hex::decode(eof)?;
+        let eof = Eof::decode(eof_hex.into())?;
+        Ok(pretty_eof(&eof)?)
     }
 }
 

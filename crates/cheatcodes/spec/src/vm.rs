@@ -777,6 +777,27 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectEmit(address emitter) external;
 
+    /// Prepare an expected anonymous log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).
+    /// Call this function, then emit an anonymous event, then call a function. Internally after the call, we check if
+    /// logs were emitted in the expected order with the expected topics and data (as specified by the booleans).
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;
+
+    /// Same as the previous method, but also checks supplied address against emitting contract.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter)
+        external;
+
+    /// Prepare an expected anonymous log with all topic and data checks enabled.
+    /// Call this function, then emit an anonymous event, then call a function. Internally after the call, we check if
+    /// logs were emitted in the expected order with the expected topics and data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectEmitAnonymous() external;
+
+    /// Same as the previous method, but also checks supplied address against emitting contract.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectEmitAnonymous(address emitter) external;
+
     /// Expects an error on next call with any revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert() external;

@@ -90,8 +90,7 @@ impl CoverageReport {
                 else {
                     continue;
                 };
-                let mut summary = summaries.entry(path).or_default();
-                summary += item;
+                *summaries.entry(path).or_default() += item;
             }
         }
 
@@ -395,37 +394,6 @@ impl AddAssign<&Self> for CoverageSummary {
 }
 
 impl AddAssign<&CoverageItem> for CoverageSummary {
-    fn add_assign(&mut self, item: &CoverageItem) {
-        match item.kind {
-            CoverageItemKind::Line => {
-                self.line_count += 1;
-                if item.hits > 0 {
-                    self.line_hits += 1;
-                }
-            }
-            CoverageItemKind::Statement => {
-                self.statement_count += 1;
-                if item.hits > 0 {
-                    self.statement_hits += 1;
-                }
-            }
-            CoverageItemKind::Branch { .. } => {
-                self.branch_count += 1;
-                if item.hits > 0 {
-                    self.branch_hits += 1;
-                }
-            }
-            CoverageItemKind::Function { .. } => {
-                self.function_count += 1;
-                if item.hits > 0 {
-                    self.function_hits += 1;
-                }
-            }
-        }
-    }
-}
-
-impl AddAssign<&CoverageItem> for &mut CoverageSummary {
     fn add_assign(&mut self, item: &CoverageItem) {
         match item.kind {
             CoverageItemKind::Line => {

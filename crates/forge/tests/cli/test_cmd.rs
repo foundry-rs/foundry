@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use foundry_config::{Config, FuzzConfig};
 use foundry_test_utils::{
-    rpc,
+    rpc, str,
     util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
 };
 use std::{path::PathBuf, str::FromStr};
@@ -50,9 +50,11 @@ contract Dummy {}
     cmd.args(["test"]);
 
     // run command and assert
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/warn_no_tests.stdout"),
-    );
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+No tests found in project! Forge looks for functions that starts with `test`.
+
+"#]]);
 });
 
 // tests that warning is displayed with pattern when no tests match
@@ -71,9 +73,17 @@ contract Dummy {}
     cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
 
     // run command and assert
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/warn_no_tests_match.stdout"),
-    );
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+No tests match the provided pattern:
+	match-test: `testA.*`
+	no-match-test: `testB.*`
+	match-contract: `TestC.*`
+	no-match-contract: `TestD.*`
+	match-path: `*TestE*`
+	no-match-path: `*TestF*`
+
+"#]]);
 });
 
 // tests that suggestion is provided with pattern when no tests match
@@ -96,10 +106,19 @@ contract TestC {
     cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
 
     // run command and assert
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/suggest_when_no_tests_match.stdout"),
-    );
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+No tests match the provided pattern:
+	match-test: `testA.*`
+	no-match-test: `testB.*`
+	match-contract: `TestC.*`
+	no-match-contract: `TestD.*`
+	match-path: `*TestE*`
+	no-match-path: `*TestF*`
+
+Did you mean `test1`?
+
+"#]]);
 });
 
 // tests that direct import paths are handled correctly
@@ -155,7 +174,7 @@ forgetest!(can_test_with_match_path, |prj, cmd| {
         r#"
 import "./test.sol";
 contract ATest is DSTest {
-    function testArray(uint64[2] calldata values) external {
+    function testPass() external {
         assertTrue(true);
     }
 }
@@ -176,8 +195,57 @@ contract FailTest is DSTest {
     )
     .unwrap();
 
-    cmd.args(["test", "--match-path", "*src/ATest.t.sol"]);
-    assert!(cmd.stdout_lossy().contains("[PASS]") && !cmd.stdout_lossy().contains("[FAIL]"));
+    cmd.args(["test", "--match-path", "*src/ATest.t.sol"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/ATest.t.sol:ATest
+[PASS] testPass() (gas: 190)
+...
+Ran 1 test suite in [..] 1 tests passed, 0 failed, 0 skipped (1 total tests)
+...
+"#]]);
+});
+
+// tests that using the --match-path option works with absolute paths
+forgetest!(can_test_with_match_path_absolute, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
+import "./test.sol";
+contract ATest is DSTest {
+    function testPass() external {
+        assertTrue(true);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "FailTest.t.sol",
+        r#"
+import "./test.sol";
+contract FailTest is DSTest {
+    function testNothing() external {
+        assertTrue(false);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let test_path = prj.root().join("src/ATest.t.sol");
+    let test_path = test_path.to_string_lossy();
+
+    cmd.args(["test", "--match-path", test_path.as_ref()]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/ATest.t.sol:ATest
+[PASS] testPass() (gas: 190)
+...
+Ran 1 test suite in [..] 1 tests passed, 0 failed, 0 skipped (1 total tests)
+...
+"#]]);
 });
 
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
@@ -217,10 +285,16 @@ forgetest_init!(can_test_repeatedly, |_prj, cmd| {
     cmd.assert_non_empty_stdout();
 
     for _ in 0..5 {
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_test_repeatedly.stdout"),
-        );
+        cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, μ: [..], ~: [..])
+[PASS] test_Increment() (gas: 31303)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in [..] ([..] CPU time)
+
+Ran 1 test suite in [..] ([..] CPU time): 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
     }
 });
 
@@ -852,4 +926,125 @@ forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
     cmd.args(["test", "-vv"]);
     let stdout = cmd.stdout_lossy();
     assert!(!stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+});
+
+// tests internal functions trace
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(internal_functions_trace, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.clear();
+
+    // Disable optimizer because for simple contract most functions will get inlined.
+    prj.write_config(Config { optimizer: false, ..Default::default() });
+
+    prj.add_test(
+        "Simple",
+        r#"pragma solidity 0.8.24;
+        import {Test, console2} from "forge-std/Test.sol";
+contract SimpleContract {
+    uint256 public num;
+    address public addr;
+
+    function _setNum(uint256 _num) internal returns(uint256 prev) {
+        prev = num;
+        num = _num;
+    }
+
+    function _setAddr(address _addr) internal returns(address prev) {
+        prev = addr;
+        addr = _addr;
+    }
+
+    function increment() public {
+        _setNum(num + 1);
+    }
+
+    function setValues(uint256 _num, address _addr) public {
+        _setNum(_num);
+        _setAddr(_addr);
+    }
+}
+
+contract SimpleContractTest is Test {
+    function test() public {
+        SimpleContract c = new SimpleContract();
+        c.increment();
+        c.setValues(100, address(0x123));
+    }
+}
+     "#,
+    )
+    .unwrap();
+    cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
+...
+Traces:
+  [250463] SimpleContractTest::test()
+    ├─ [171014] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 854 bytes of code
+    ├─ [22638] SimpleContract::increment()
+    │   ├─ [20150] SimpleContract::_setNum(1)
+    │   │   └─ ← 0
+    │   └─ ← [Stop] 
+    ├─ [23219] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
+    │   ├─ [250] SimpleContract::_setNum(100)
+    │   │   └─ ← 1
+    │   ├─ [22339] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
+    │   │   └─ ← 0x0000000000000000000000000000000000000000
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
+...
+"#]]);
+});
+
+// tests internal functions trace with memory decoding
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(internal_functions_trace_memory, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.clear();
+
+    // Disable optimizer because for simple contract most functions will get inlined.
+    prj.write_config(Config { optimizer: false, ..Default::default() });
+
+    prj.add_test(
+        "Simple",
+        r#"pragma solidity 0.8.24;
+import {Test, console2} from "forge-std/Test.sol";
+
+contract SimpleContract {
+    string public str = "initial value";
+
+    function _setStr(string memory _str) internal returns(string memory prev) {
+        prev = str;
+        str = _str;
+    }
+
+    function setStr(string memory _str) public {
+        _setStr(_str);
+    }
+}
+
+contract SimpleContractTest is Test {
+    function test() public {
+        SimpleContract c = new SimpleContract();
+        c.setStr("new value");
+    }
+}
+     "#,
+    )
+    .unwrap();
+    cmd.args(["test", "-vvvv", "--decode-internal", "test"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Traces:
+  [421960] SimpleContractTest::test()
+    ├─ [385978] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 1814 bytes of code
+    ├─ [2534] SimpleContract::setStr("new value")
+    │   ├─ [1600] SimpleContract::_setStr("new value")
+    │   │   └─ ← "initial value"
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
+...
+"#
+    ]]);
 });

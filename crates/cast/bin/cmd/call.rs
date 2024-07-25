@@ -43,6 +43,9 @@ pub struct CallArgs {
     #[arg(long, requires = "trace")]
     debug: bool,
 
+    #[arg(long, requires = "trace")]
+    decode_internal: bool,
+
     /// Labels to apply to the traces; format: `address:label`.
     /// Can only be used with `--trace`.
     #[arg(long, requires = "trace")]
@@ -106,6 +109,7 @@ impl CallArgs {
             trace,
             evm_version,
             debug,
+            decode_internal,
             labels,
             data,
         } = self;
@@ -158,8 +162,14 @@ impl CallArgs {
                 config.fork_block_number = Some(block_number);
             }
 
-            let (env, fork, chain) = TracingExecutor::get_fork_material(&config, evm_opts).await?;
-            let mut executor = TracingExecutor::new(env, fork, evm_version, debug);
+            let (mut env, fork, chain) =
+                TracingExecutor::get_fork_material(&config, evm_opts).await?;
+
+            // modify settings that usually set in eth_call
+            env.cfg.disable_block_gas_limit = true;
+            env.block.gas_limit = U256::MAX;
+
+            let mut executor = TracingExecutor::new(env, fork, evm_version, debug, decode_internal);
 
             let value = tx.value.unwrap_or_default();
             let input = tx.inner.input.into_input().unwrap_or_default();
@@ -175,7 +185,7 @@ impl CallArgs {
                 ),
             };
 
-            handle_traces(trace, &config, chain, labels, debug).await?;
+            handle_traces(trace, &config, chain, labels, debug, decode_internal).await?;
 
             return Ok(());
         }

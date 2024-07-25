@@ -44,7 +44,7 @@ impl DatabaseRef for MemDb {
         DatabaseRef::storage_ref(&self.inner, address, index)
     }
 
-    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash_ref(&self.inner, number)
     }
 }
@@ -65,7 +65,7 @@ impl Database for MemDb {
         Database::storage(&mut self.inner, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
         Database::block_hash(&mut self.inner, number)
     }
 }
@@ -111,7 +111,7 @@ impl DatabaseRef for EmptyDBWrapper {
         Ok(self.0.storage_ref(address, index)?)
     }
 
-    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         Ok(self.0.block_hash_ref(number)?)
     }
 }

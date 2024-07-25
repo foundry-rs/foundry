@@ -1,15 +1,17 @@
+use alloy_primitives::Address;
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
-use eyre::Result;
+use eyre::{Context, Result};
+use forge::revm::primitives::Eof;
 use foundry_cli::opts::{CompilerArgs, CoreBuildArgs};
-use foundry_common::compile::ProjectCompiler;
+use foundry_common::{compile::ProjectCompiler, fmt::pretty_eof};
 use foundry_compilers::{
     artifacts::{
         output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
             EvmOutputSelection, EwasmOutputSelection,
         },
-        StorageLayout,
+        CompactBytecode, StorageLayout,
     },
     info::ContractInfo,
     utils::canonicalize,
@@ -39,7 +41,7 @@ pub struct InspectArgs {
 
 impl InspectArgs {
     pub fn run(self) -> Result<()> {
-        let Self { mut contract, field, build, pretty } = self;
+        let Self { contract, field, build, pretty } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
@@ -64,16 +66,16 @@ impl InspectArgs {
 
         // Build the project
         let project = modified_build_args.project()?;
-        let mut compiler = ProjectCompiler::new().quiet(true);
-        if let Some(contract_path) = &mut contract.path {
-            let target_path = canonicalize(&*contract_path)?;
-            *contract_path = target_path.to_string_lossy().to_string();
-            compiler = compiler.files([target_path]);
-        }
-        let output = compiler.compile(&project)?;
+        let compiler = ProjectCompiler::new().quiet(true);
+        let target_path = if let Some(path) = &contract.path {
+            canonicalize(project.root().join(path))?
+        } else {
+            project.find_contract_path(&contract.name)?
+        };
+        let mut output = compiler.files([target_path.clone()]).compile(&project)?;
 
         // Find the artifact
-        let artifact = output.find_contract(&contract).ok_or_else(|| {
+        let artifact = output.remove(&target_path, &contract.name).ok_or_else(|| {
             eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
         })?;
 
@@ -160,6 +162,12 @@ impl InspectArgs {
                 }
                 print_json(&out)?;
             }
+            ContractArtifactField::Eof => {
+                print_eof(artifact.deployed_bytecode.and_then(|b| b.bytecode))?;
+            }
+            ContractArtifactField::EofInit => {
+                print_eof(artifact.bytecode)?;
+            }
         };
 
         Ok(())
@@ -214,6 +222,8 @@ pub enum ContractArtifactField {
     Ewasm,
     Errors,
     Events,
+    Eof,
+    EofInit,
 }
 
 macro_rules! impl_value_enum {
@@ -300,6 +310,8 @@ impl_value_enum! {
         Ewasm             => "ewasm" | "e-wasm",
         Errors            => "errors" | "er",
         Events            => "events" | "ev",
+        Eof               => "eof" | "eof-container" | "eof-deployed",
+        EofInit           => "eof-init" | "eof-initcode" | "eof-initcontainer",
     }
 }
 
@@ -324,6 +336,10 @@ impl From<ContractArtifactField> for ContractOutputSelection {
             Caf::Ewasm => Self::Ewasm(EwasmOutputSelection::All),
             Caf::Errors => Self::Abi,
             Caf::Events => Self::Abi,
+            Caf::Eof => Self::Evm(EvmOutputSelection::DeployedByteCode(
+                DeployedBytecodeOutputSelection::All,
+            )),
+            Caf::EofInit => Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)),
         }
     }
 }
@@ -347,7 +363,9 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
                 (Self::IrOptimized, Cos::IrOptimized) |
                 (Self::Metadata, Cos::Metadata) |
                 (Self::UserDoc, Cos::UserDoc) |
-                (Self::Ewasm, Cos::Ewasm(_))
+                (Self::Ewasm, Cos::Ewasm(_)) |
+                (Self::Eof, Cos::Evm(Eos::DeployedByteCode(_))) |
+                (Self::EofInit, Cos::Evm(Eos::ByteCode(_)))
         )
     }
 }
@@ -405,6 +423,30 @@ fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String
         None => format!("{value_ref:#}"),
     };
     Ok(s)
+}
+
+/// Pretty-prints bytecode decoded EOF.
+fn print_eof(bytecode: Option<CompactBytecode>) -> Result<()> {
+    let Some(mut bytecode) = bytecode else { eyre::bail!("No bytecode") };
+
+    // Replace link references with zero address.
+    if bytecode.object.is_unlinked() {
+        for (file, references) in bytecode.link_references.clone() {
+            for (name, _) in references {
+                bytecode.link(&file, &name, Address::ZERO);
+            }
+        }
+    }
+
+    let Some(bytecode) = bytecode.object.into_bytes() else {
+        eyre::bail!("Failed to link bytecode");
+    };
+
+    let eof = Eof::decode(bytecode).wrap_err("Failed to decode EOF")?;
+
+    println!("{}", pretty_eof(&eof)?);
+
+    Ok(())
 }
 
 #[cfg(test)]

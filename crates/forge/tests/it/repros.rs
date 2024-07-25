@@ -331,6 +331,10 @@ test_repro!(6634; |config| {
   config.runner.config = Arc::new(prj_config);
 });
 
+// https://github.com/foundry-rs/foundry/issues/7457
+test_repro!(7457);
+
+// https://github.com/foundry-rs/foundry/issues/7481
 test_repro!(7481);
 
 // https://github.com/foundry-rs/foundry/issues/5739
@@ -354,3 +358,9 @@ test_repro!(8277);
 
 // https://github.com/foundry-rs/foundry/issues/8287
 test_repro!(8287);
+
+// https://github.com/foundry-rs/foundry/issues/8168
+test_repro!(8168);
+
+// https://github.com/foundry-rs/foundry/issues/8383
+test_repro!(8383);
