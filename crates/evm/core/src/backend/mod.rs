@@ -1275,22 +1275,7 @@ impl DatabaseExt for Backend {
         env.tx.gas_price = U256::from(tx.gas_price.or(tx.max_fee_per_gas).unwrap_or_default());
         env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(U256::from);
         env.tx.nonce = tx.nonce;
-        env.tx.access_list = tx
-            .access_list
-            .clone()
-            .unwrap_or_default()
-            .0
-            .into_iter()
-            .map(|item| {
-                (
-                    item.address,
-                    item.storage_keys
-                        .into_iter()
-                        .map(|key| alloy_primitives::U256::from_be_bytes(key.0))
-                        .collect(),
-                )
-            })
-            .collect();
+        env.tx.access_list = tx.access_list.clone().unwrap_or_default().0.into_iter().collect();
         env.tx.value =
             tx.value.ok_or_else(|| eyre::eyre!("transact_from_tx: No `value` field found"))?;
         env.tx.data = tx.input.into_input().unwrap_or_default();
