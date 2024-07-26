@@ -54,6 +54,7 @@ semver.workspace = true
 rustc-hash.workspace = true
 dialoguer = "0.11.0"
 rand = "0.8"
+chrono.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

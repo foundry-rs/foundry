@@ -1,5 +1,6 @@
 //! Implementations of [`Testing`](spec::Group::Testing) cheatcodes.
 
+use chrono::DateTime;
 use std::env;
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Error, Result, Vm::*};
@@ -38,11 +39,16 @@ impl Cheatcode for breakpoint_1Call {
 impl Cheatcode for getFoundryVersionCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        let version = env!("CARGO_PKG_VERSION");
-        let git_sha = env::var("VERGEN_GIT_SHA").unwrap_or_else(|_| "unknown".to_string());
-        let build_timestamp =
-            env::var("VERGEN_BUILD_TIMESTAMP").unwrap_or_else(|_| "unknown".to_string());
-        let foundry_version = format!("{version} ({git_sha} {build_timestamp})");
+        let cargo_version = env!("CARGO_PKG_VERSION");
+        let build_timestamp = env::var("VERGEN_BUILD_TIMESTAMP")
+            .map(|ts| {
+                DateTime::parse_from_rfc3339(&ts)
+                    .expect("Invalid build timestamp format")
+                    .format("%Y%m%d%H%M")
+                    .to_string()
+            })
+            .unwrap_or_else(|_| "unknown".to_string());
+        let foundry_version = format!("{cargo_version}+{build_timestamp}");
         Ok(foundry_version.abi_encode())
     }
 }
