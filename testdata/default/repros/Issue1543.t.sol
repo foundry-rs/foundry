@@ -3,11 +3,6 @@ pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 
-struct BeforeTestSelectors {
-    bytes4 test_selector;
-    bytes4[] before_selectors;
-}
-
 contract SelfDestructor {
     function kill() external {
         selfdestruct(payable(msg.sender));
