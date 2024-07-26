@@ -13,8 +13,6 @@ pub struct TransactionOpts {
     /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
     /// specified in wei, or as a string with a unit type.
     ///
-    ///
-    ///
     /// Examples: 1ether, 10gwei, 0.01ether
     #[arg(
         long,
