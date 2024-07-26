@@ -9,6 +9,7 @@ contract GetFoundryVersionTest is DSTest {
 
     function testChainId() public {
         string memory version = vm.getFoundryVersion();
-        assertEq(version, ""); // TODO: Update the test.
+        uint256 buildId = vm.parseUint(vm.split(version, "+")[1]);
+        require(buildId >= 202406111234, "too old");
     }
 }
