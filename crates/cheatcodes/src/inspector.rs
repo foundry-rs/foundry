@@ -1880,8 +1880,14 @@ fn trace_span_and_call(dyn_cheat: &mut DynCheatCache) -> tracing::span::EnteredS
 
 fn fill_and_trace_return(dyn_cheat: &mut DynCheatCache, result: &mut Result) {
     if let Err(e) = result {
-        if e.is_str() && !dyn_cheat.get().name().contains("assert") {
-            *e = fmt_err!("vm.{}: {}", dyn_cheat.get().name(), e);
+        if e.is_str() {
+            let name = dyn_cheat.get().name();
+            // Skip showing the cheatcode name for:
+            // - assertions: too verbose, and can already be inferred from the error message
+            // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
+            if !name.contains("assert") && name != "rpcUrl" {
+                *e = fmt_err!("vm.{name}: {e}");
+            }
         }
     }
     trace!(
