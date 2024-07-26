@@ -1,5 +1,7 @@
 //! Implementations of [`Testing`](spec::Group::Testing) cheatcodes.
 
+use std::env;
+
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Error, Result, Vm::*};
 use alloy_primitives::Address;
 use alloy_sol_types::SolValue;
@@ -30,6 +32,18 @@ impl Cheatcode for breakpoint_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { char, value } = self;
         breakpoint(ccx.state, &ccx.caller, char, *value)
+    }
+}
+
+impl Cheatcode for getFoundryVersionCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        let version = env!("CARGO_PKG_VERSION");
+        let git_sha = env::var("VERGEN_GIT_SHA").unwrap_or_else(|_| "unknown".to_string());
+        let build_timestamp =
+            env::var("VERGEN_BUILD_TIMESTAMP").unwrap_or_else(|_| "unknown".to_string());
+        let foundry_version = format!("{version} ({git_sha} {build_timestamp})");
+        Ok(foundry_version.abi_encode())
     }
 }
 

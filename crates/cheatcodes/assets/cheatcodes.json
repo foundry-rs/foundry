@@ -4993,6 +4993,26 @@
     },
     {
       "func": {
+        "id": "getFoundryVersion",
+        "description": "Returns the Foundry version.",
+        "declaration": "function getFoundryVersion() external view returns (string memory version);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getFoundryVersion()",
+        "selector": "0xea991bb5",
+        "selectorBytes": [
+          234,
+          153,
+          27,
+          181
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getLabel",
         "description": "Gets the label for the specified address.",
         "declaration": "function getLabel(address account) external view returns (string memory currentLabel);",

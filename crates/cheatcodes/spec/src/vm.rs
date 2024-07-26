@@ -702,6 +702,10 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function breakpoint(string calldata char, bool value) external;
 
+    /// Returns the Foundry version.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function getFoundryVersion() external view returns (string memory version);
+
     /// Returns the RPC url for the given alias.
     #[cheatcode(group = Testing, safety = Safe)]
     function rpcUrl(string calldata rpcAlias) external view returns (string memory json);
