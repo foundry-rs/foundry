@@ -19,9 +19,8 @@ use crate::{
 use alloy_primitives::{hex, Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use foundry_common::{evm::Breakpoints, SELECTOR_LEN};
+use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_config::Config;
-use foundry_evm_abi::Console;
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseExt, RevertDiagnostic},
@@ -92,6 +91,7 @@ pub trait CheatcodesExecutor {
             db: &mut ccx.ecx.db as &mut dyn DatabaseExt,
             error,
             l1_block_info,
+            valid_authorizations: std::mem::take(&mut ccx.ecx.valid_authorizations),
         };
 
         let mut evm = new_evm_with_existing_context(inner, &mut inspector as _);
@@ -102,6 +102,7 @@ pub trait CheatcodesExecutor {
         ccx.ecx.env = evm.context.evm.inner.env;
         ccx.ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
         ccx.ecx.error = evm.context.evm.inner.error;
+        ccx.ecx.valid_authorizations = evm.context.evm.inner.valid_authorizations;
 
         Ok(res)
     }
@@ -136,19 +137,8 @@ pub trait CheatcodesExecutor {
         })
     }
 
-    fn console_log<DB: DatabaseExt>(
-        &mut self,
-        ccx: &mut CheatsCtxt<DB>,
-        message: String,
-    ) -> Result<(), EVMError<DB::Error>> {
-        self.with_evm(ccx, |evm| {
-            let log =
-                Log { address: CHEATCODE_ADDRESS, data: (&Console::log { val: message }).into() };
-
-            evm.context.external.log(&mut evm.context.evm, &log);
-
-            Ok(())
-        })
+    fn console_log<DB: DatabaseExt>(&mut self, ccx: &mut CheatsCtxt<DB>, message: String) {
+        self.get_inspector::<DB>(ccx.state).console_log(message);
     }
 }
 
@@ -198,12 +188,12 @@ impl Context {
 }
 
 /// Helps collecting transactions from different forks.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct BroadcastableTransaction {
     /// The optional RPC URL.
     pub rpc: Option<String>,
     /// The transaction to broadcast.
-    pub transaction: TransactionRequest,
+    pub transaction: TransactionMaybeSigned,
 }
 
 /// List of transactions that can be broadcasted.
@@ -499,7 +489,7 @@ impl Cheatcodes {
                             gas,
                         },
                         address: None,
-                    })
+                    });
                 }
 
                 ecx.env.tx.caller = broadcast.new_origin;
@@ -523,7 +513,8 @@ impl Cheatcodes {
                                 None
                             },
                             ..Default::default()
-                        },
+                        }
+                        .into(),
                     });
 
                     input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));
@@ -730,7 +721,7 @@ impl Cheatcodes {
         let ecx = &mut ecx.inner;
 
         if call.target_address == HARDHAT_CONSOLE_ADDRESS {
-            return None
+            return None;
         }
 
         // Handle expected calls
@@ -779,7 +770,7 @@ impl Cheatcodes {
                         gas,
                     },
                     memory_offset: call.return_memory_offset.clone(),
-                })
+                });
             }
         }
 
@@ -837,7 +828,7 @@ impl Cheatcodes {
                                 gas,
                             },
                             memory_offset: call.return_memory_offset.clone(),
-                        })
+                        });
                     }
 
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call.gas_limit);
@@ -859,7 +850,8 @@ impl Cheatcodes {
                                 None
                             },
                             ..Default::default()
-                        },
+                        }
+                        .into(),
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
@@ -879,7 +871,7 @@ impl Cheatcodes {
                             gas,
                         },
                         memory_offset: call.return_memory_offset.clone(),
-                    })
+                    });
                 }
             }
         }
@@ -902,6 +894,9 @@ impl Cheatcodes {
                 CallScheme::CallCode => crate::Vm::AccountAccessKind::CallCode,
                 CallScheme::DelegateCall => crate::Vm::AccountAccessKind::DelegateCall,
                 CallScheme::StaticCall => crate::Vm::AccountAccessKind::StaticCall,
+                CallScheme::ExtCall => crate::Vm::AccountAccessKind::Call,
+                CallScheme::ExtStaticCall => crate::Vm::AccountAccessKind::StaticCall,
+                CallScheme::ExtDelegateCall => crate::Vm::AccountAccessKind::DelegateCall,
             };
             // Record this call by pushing it to a new pending vector; all subsequent calls at
             // that depth will be pushed to the same vector. When the call ends, the
@@ -975,7 +970,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, _interpreter: &mut Interpreter, _context: &mut EvmContext<DB>, log: &Log) {
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, log);
         }
@@ -1086,7 +1081,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Exit early for calls to cheatcodes as other logic is not relevant for cheatcode
         // invocations
         if cheatcode_call {
-            return outcome
+            return outcome;
         }
 
         // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
@@ -1161,7 +1156,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             if self.expected_emits.iter().any(|expected| !expected.found) {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = "log != expected log".abi_encode().into();
-                return outcome
+                return outcome;
             } else {
                 // All emits were found, we're good.
                 // Clear the queue, as we expect the user to declare more events for the next call
@@ -1179,7 +1174,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if outcome.result.is_revert() {
             if let Some(err) = diag {
                 outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
-                return outcome
+                return outcome;
             }
         }
 
@@ -1340,25 +1335,29 @@ impl Cheatcodes {
     fn meter_gas(&mut self, interpreter: &mut Interpreter) {
         match &self.gas_metering {
             None => {}
-            // need to store gas metering
+            // Need to store gas metering.
             Some(None) => self.gas_metering = Some(Some(interpreter.gas)),
             Some(Some(gas)) => {
                 match interpreter.current_opcode() {
                     opcode::CREATE | opcode::CREATE2 => {
-                        // set we're about to enter CREATE frame to meter its gas on first opcode
-                        // inside it
+                        // Set we're about to enter CREATE frame to meter its gas on first opcode
+                        // inside it.
                         self.gas_metering_create = Some(None)
                     }
                     opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT | opcode::REVERT => {
-                        // If we are ending current execution frame, we want to just fully reset gas
-                        // otherwise weird things with returning gas from a call happen
-                        // ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/evm_impl.rs#L190
-                        //
-                        // It would be nice if we had access to the interpreter in `call_end`, as we
-                        // could just do this there instead.
                         match &self.gas_metering_create {
                             None | Some(None) => {
-                                interpreter.gas = Gas::new(0);
+                                // If we are ending current execution frame, we want to reset
+                                // interpreter gas to the value of gas spent during frame, so only
+                                // the consumed gas is erased.
+                                // ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/evm_impl.rs#L190
+                                //
+                                // It would be nice if we had access to the interpreter in
+                                // `call_end`, as we could just do this there instead.
+                                interpreter.gas = Gas::new(interpreter.gas.spent());
+
+                                // Make sure CREATE gas metering is resetted.
+                                self.gas_metering_create = None
                             }
                             Some(Some(gas)) => {
                                 // If this was CREATE frame, set correct gas limit. This is needed
@@ -1374,18 +1373,18 @@ impl Cheatcodes {
                                 // post-create erase ref: https://github.com/bluealloy/revm/blob/2cb991091d32330cfe085320891737186947ce5a/crates/revm/src/instructions/host.rs#L279
                                 interpreter.gas = Gas::new(gas.limit());
 
-                                // reset CREATE gas metering because we're about to exit its frame
+                                // Reset CREATE gas metering because we're about to exit its frame.
                                 self.gas_metering_create = None
                             }
                         }
                     }
                     _ => {
-                        // if just starting with CREATE opcodes, record its inner frame gas
+                        // If just starting with CREATE opcodes, record its inner frame gas.
                         if self.gas_metering_create == Some(None) {
                             self.gas_metering_create = Some(Some(interpreter.gas))
                         }
 
-                        // dont monitor gas changes, keep it constant
+                        // Don't monitor gas changes, keep it constant.
                         interpreter.gas = *gas;
                     }
                 }

@@ -1,11 +1,11 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
-    artifacts::Settings,
     cache::CompilerCache,
     compilers::multi::MultiCompiler,
     error::Result as SolcResult,
     project_util::{copy_dir, TempProject},
+    solc::SolcSettings,
     ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
@@ -547,7 +547,7 @@ impl TestProject {
     #[track_caller]
     pub fn assert_create_dirs_exists(&self) {
         self.paths().create_all().unwrap_or_else(|_| panic!("Failed to create project paths"));
-        CompilerCache::<Settings>::default()
+        CompilerCache::<SolcSettings>::default()
             .write(&self.paths().cache)
             .expect("Failed to create cache");
         self.assert_all_paths_exist();
@@ -924,6 +924,12 @@ impl TestCommand {
     #[track_caller]
     pub fn assert_success(&mut self) -> OutputAssert {
         self.assert().success()
+    }
+
+    /// Runs the command and asserts that it failed.
+    #[track_caller]
+    pub fn assert_failure(&mut self) -> OutputAssert {
+        self.assert().failure()
     }
 
     /// Executes command, applies stdin function and returns output

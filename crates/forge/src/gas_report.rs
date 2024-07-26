@@ -84,7 +84,8 @@ impl GasReport {
         if trace.depth > 1 &&
             (trace.kind == CallKind::Call ||
                 trace.kind == CallKind::Create ||
-                trace.kind == CallKind::Create2)
+                trace.kind == CallKind::Create2 ||
+                trace.kind == CallKind::EOFCreate)
         {
             return;
         }
@@ -143,7 +144,7 @@ impl Display for GasReport {
         for (name, contract) in &self.contracts {
             if contract.functions.is_empty() {
                 trace!(name, "gas report contract without functions");
-                continue
+                continue;
             }
 
             let mut table = Table::new();

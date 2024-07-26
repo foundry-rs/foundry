@@ -4,12 +4,14 @@ use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     fork::{CreateFork, ForkId, MultiFork},
     snapshot::Snapshots,
-    utils::configure_tx_env,
+    utils::{configure_tx_env, new_evm_with_inspector},
     InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{keccak256, uint, Address, B256, U256};
-use alloy_rpc_types::{Block, BlockNumberOrTag, BlockTransactions, Transaction};
+use alloy_primitives::{keccak256, uint, Address, TxKind, B256, U256};
+use alloy_rpc_types::{
+    Block, BlockNumberOrTag, BlockTransactions, Transaction, TransactionRequest,
+};
 use alloy_serde::WithOtherFields;
 use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
@@ -20,7 +22,7 @@ use revm::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
         Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, EvmState, EvmStorageSlot,
-        HashMap as Map, Log, ResultAndState, SpecId, TxKind, KECCAK_EMPTY,
+        HashMap as Map, Log, ResultAndState, SpecId, KECCAK_EMPTY,
     },
     Database, DatabaseCommit, JournaledState,
 };
@@ -198,6 +200,15 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         id: Option<LocalForkId>,
         transaction: B256,
         env: &mut Env,
+        journaled_state: &mut JournaledState,
+        inspector: &mut dyn InspectorExt<Backend>,
+    ) -> eyre::Result<()>;
+
+    /// Executes a given TransactionRequest, commits the new state to the DB
+    fn transact_from_tx(
+        &mut self,
+        transaction: TransactionRequest,
+        env: &Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt<Backend>,
     ) -> eyre::Result<()>;
@@ -1024,6 +1035,16 @@ impl DatabaseExt for Backend {
             return Ok(());
         }
 
+        // Update block number and timestamp of active fork (if any) with current env values,
+        // in order to preserve values changed by using `roll` and `warp` cheatcodes.
+        if let Some(active_fork_id) = self.active_fork_id() {
+            self.forks.update_block(
+                self.ensure_fork_id(active_fork_id).cloned()?,
+                env.block.number,
+                env.block.timestamp,
+            )?;
+        }
+
         let fork_id = self.ensure_fork_id(id).cloned()?;
         let idx = self.inner.ensure_fork_index(&fork_id)?;
         let fork_env = self
@@ -1100,7 +1121,7 @@ impl DatabaseExt for Backend {
         }
 
         self.active_fork_ids = Some((id, idx));
-        // update the environment accordingly
+        // Update current environment with environment of newly selected fork.
         update_current_env_with_fork_env(env, fork_env);
 
         Ok(())
@@ -1234,6 +1255,48 @@ impl DatabaseExt for Backend {
             &persistent_accounts,
             inspector,
         )
+    }
+
+    fn transact_from_tx(
+        &mut self,
+        tx: TransactionRequest,
+        env: &Env,
+        journaled_state: &mut JournaledState,
+        inspector: &mut dyn InspectorExt<Self>,
+    ) -> eyre::Result<()> {
+        trace!(?tx, "execute signed transaction");
+
+        let mut env = env.clone();
+
+        env.tx.caller =
+            tx.from.ok_or_else(|| eyre::eyre!("transact_from_tx: No `from` field found"))?;
+        env.tx.gas_limit =
+            tx.gas.ok_or_else(|| eyre::eyre!("transact_from_tx: No `gas` field found"))? as u64;
+        env.tx.gas_price = U256::from(tx.gas_price.or(tx.max_fee_per_gas).unwrap_or_default());
+        env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(U256::from);
+        env.tx.nonce = tx.nonce;
+        env.tx.access_list = tx.access_list.clone().unwrap_or_default().0.into_iter().collect();
+        env.tx.value =
+            tx.value.ok_or_else(|| eyre::eyre!("transact_from_tx: No `value` field found"))?;
+        env.tx.data = tx.input.into_input().unwrap_or_default();
+        env.tx.transact_to =
+            tx.to.ok_or_else(|| eyre::eyre!("transact_from_tx: No `to` field found"))?;
+        env.tx.chain_id = tx.chain_id;
+
+        self.commit(journaled_state.state.clone());
+
+        let res = {
+            let db = self.clone();
+            let env = self.env_with_handler_cfg(env);
+            let mut evm = new_evm_with_inspector(db, env, inspector);
+            evm.context.evm.journaled_state.depth = journaled_state.depth + 1;
+            evm.transact()?
+        };
+
+        self.commit(res.state);
+        update_state(&mut journaled_state.state, self, None)?;
+
+        Ok(())
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
@@ -1422,7 +1485,7 @@ impl DatabaseRef for Backend {
         }
     }
 
-    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             db.block_hash_ref(number)
         } else {
@@ -1467,7 +1530,7 @@ impl Database for Backend {
         }
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
         if let Some(db) = self.active_fork_db_mut() {
             Ok(db.block_hash(number)?)
         } else {

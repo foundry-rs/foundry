@@ -31,7 +31,7 @@ use crate::{
     revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::{transaction::eip4844::TxEip4844Variant, TxEnvelope};
+use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, TxEnvelope};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::eip2718::Decodable2718;
@@ -43,6 +43,7 @@ use alloy_rpc_types::{
     request::TransactionRequest,
     state::StateOverride,
     trace::{
+        filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace,
     },
@@ -154,6 +155,9 @@ impl EthApi {
         match request {
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
             EthRequest::Web3Sha3(content) => self.sha3(content).to_rpc_result(),
+            EthRequest::EthGetAccount(addr, block) => {
+                self.get_account(addr, block).await.to_rpc_result()
+            }
             EthRequest::EthGetBalance(addr, block) => {
                 self.balance(addr, block).await.to_rpc_result()
             }
@@ -292,6 +296,7 @@ impl EthApi {
             }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
+            EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
             }
@@ -654,6 +659,29 @@ impl EthApi {
         }
 
         self.backend.get_balance(address, Some(block_request)).await
+    }
+
+    /// Returns the ethereum account.
+    ///
+    /// Handler for ETH RPC call: `eth_getAccount`
+    pub async fn get_account(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+    ) -> Result<Account> {
+        node_info!("eth_getAccount");
+        let block_request = self.block_request(block_number).await?;
+
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(fork.get_account(address, number).await?)
+                }
+            }
+        }
+
+        self.backend.get_account_at_block(address, Some(block_request)).await
     }
 
     /// Returns content of the storage at given address.
@@ -1555,6 +1583,17 @@ impl EthApi {
     pub async fn trace_block(&self, block: BlockNumber) -> Result<Vec<LocalizedTransactionTrace>> {
         node_info!("trace_block");
         self.backend.trace_block(block).await
+    }
+
+    /// Returns filtered traces over blocks
+    ///
+    /// Handler for RPC call: `trace_filter`
+    pub async fn trace_filter(
+        &self,
+        filter: TraceFilter,
+    ) -> Result<Vec<LocalizedTransactionTrace>> {
+        node_info!("trace_filter");
+        self.backend.trace_filter(filter).await
     }
 }
 
@@ -2669,6 +2708,7 @@ impl EthApi {
             TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
             TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
             TypedTransaction::EIP4844(_) => self.backend.ensure_eip4844_active(),
+            TypedTransaction::EIP7702(_) => self.backend.ensure_eip7702_active(),
             TypedTransaction::Deposit(_) => self.backend.ensure_op_deposits_active(),
             TypedTransaction::Legacy(_) => Ok(()),
         }
@@ -2766,7 +2806,9 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::OpcodeNotFound |
                 InstructionResult::CallNotAllowedInsideStatic |
                 InstructionResult::StateChangeDuringStaticCall |
-                InstructionResult::InvalidEFOpcode |
+                InstructionResult::InvalidExtDelegateCallTarget |
+                InstructionResult::InvalidEXTCALLTarget |
+                InstructionResult::InvalidFEOpcode |
                 InstructionResult::InvalidJump |
                 InstructionResult::NotActivated |
                 InstructionResult::StackUnderflow |

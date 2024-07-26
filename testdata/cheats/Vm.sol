@@ -148,6 +148,7 @@ interface Vm {
     function blobhashes(bytes32[] calldata hashes) external;
     function breakpoint(string calldata char) external;
     function breakpoint(string calldata char, bool value) external;
+    function broadcastRawTransaction(bytes calldata data) external;
     function broadcast() external;
     function broadcast(address signer) external;
     function broadcast(uint256 privateKey) external;

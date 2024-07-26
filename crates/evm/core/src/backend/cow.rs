@@ -10,6 +10,7 @@ use crate::{
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -190,6 +191,16 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         self.backend_mut(env).transact(id, transaction, env, journaled_state, inspector)
     }
 
+    fn transact_from_tx(
+        &mut self,
+        transaction: TransactionRequest,
+        env: &Env,
+        journaled_state: &mut JournaledState,
+        inspector: &mut dyn InspectorExt<Backend>,
+    ) -> eyre::Result<()> {
+        self.backend_mut(env).transact_from_tx(transaction, env, journaled_state, inspector)
+    }
+
     fn active_fork_id(&self) -> Option<LocalForkId> {
         self.backend.active_fork_id()
     }
@@ -266,7 +277,7 @@ impl<'a> DatabaseRef for CowBackend<'a> {
         DatabaseRef::storage_ref(self.backend.as_ref(), address, index)
     }
 
-    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash_ref(self.backend.as_ref(), number)
     }
 }
@@ -286,7 +297,7 @@ impl<'a> Database for CowBackend<'a> {
         DatabaseRef::storage_ref(self, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash_ref(self, number)
     }
 }

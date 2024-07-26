@@ -200,6 +200,7 @@ impl DebuggerContext<'_> {
             CallKind::CallCode => "Contract callcode",
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
+            CallKind::EOFCreate => "EOF contract creation",
         };
         let title = format!(
             "{} {} ",
@@ -376,10 +377,11 @@ impl DebuggerContext<'_> {
             .collect::<Vec<_>>();
 
         let title = format!(
-            "Address: {} | PC: {} | Gas used in call: {}",
+            "Address: {} | PC: {} | Gas used in call: {} | Code section: {}",
             self.address(),
             self.current_step().pc,
             self.current_step().gas_used,
+            self.current_step().code_section_idx,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)
@@ -398,7 +400,7 @@ impl DebuggerContext<'_> {
 
         let min_len = decimal_digits(stack_len).max(2);
 
-        let params = OpcodeParam::of(step.op.get());
+        let params = OpcodeParam::of(step.op.get(), step.immediate_bytes.as_ref());
 
         let text: Vec<Line<'_>> = stack
             .map(|stack| {
@@ -408,7 +410,9 @@ impl DebuggerContext<'_> {
                     .enumerate()
                     .skip(self.draw_memory.current_stack_startline)
                     .map(|(i, stack_item)| {
-                        let param = params.iter().find(|param| param.index == i);
+                        let param = params
+                            .as_ref()
+                            .and_then(|params| params.iter().find(|param| param.index == i));
 
                         let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
 
@@ -664,6 +668,13 @@ fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
         opcode::CALL | opcode::CALLCODE => (Some((BufferKind::Memory, 4, 5)), None),
         opcode::DELEGATECALL | opcode::STATICCALL => (Some((BufferKind::Memory, 3, 4)), None),
         opcode::MCOPY => (Some((BufferKind::Memory, 2, 3)), Some((1, 3))),
+        opcode::RETURNDATALOAD => (Some((BufferKind::Returndata, 1, -1)), None),
+        opcode::EOFCREATE => (Some((BufferKind::Memory, 3, 4)), None),
+        opcode::RETURNCONTRACT => (Some((BufferKind::Memory, 1, 2)), None),
+        opcode::DATACOPY => (None, Some((1, 3))),
+        opcode::EXTCALL | opcode::EXTSTATICCALL | opcode::EXTDELEGATECALL => {
+            (Some((BufferKind::Memory, 2, 3)), None)
+        }
         _ => Default::default(),
     };
 

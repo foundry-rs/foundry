@@ -170,4 +170,4 @@ update of the files.
 [`cheatcodes/spec/src/vm.rs`]: ../../crates/cheatcodes/spec/src/vm.rs
 [`cheatcodes`]: ../../crates/cheatcodes/
 [`spec::Cheatcodes::new`]: ../../crates/cheatcodes/spec/src/lib.rs#L74
-[`testdata/cheats/`]: ../../testdata/cheats/
+[`testdata/cheats/`]: ../../testdata/default/cheats/
