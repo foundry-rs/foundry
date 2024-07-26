@@ -158,7 +158,7 @@ impl Error {
     }
 
     /// Returns the kind of this error.
-    #[inline(always)]
+    #[inline]
     pub fn kind(&self) -> ErrorKind<'_> {
         let data = self.data();
         if self.is_str {
@@ -170,32 +170,38 @@ impl Error {
     }
 
     /// Returns the raw data of this error.
-    #[inline(always)]
+    #[inline]
     pub fn data(&self) -> &[u8] {
         unsafe { &*self.data }
     }
 
-    #[inline(always)]
+    /// Returns `true` if this error is a human-readable string.
+    #[inline]
+    pub fn is_str(&self) -> bool {
+        self.is_str
+    }
+
+    #[inline]
     fn new_str(data: &'static str) -> Self {
         Self::_new(true, false, data.as_bytes())
     }
 
-    #[inline(always)]
+    #[inline]
     fn new_string(data: String) -> Self {
         Self::_new(true, true, Box::into_raw(data.into_boxed_str().into_boxed_bytes()))
     }
 
-    #[inline(always)]
+    #[inline]
     fn new_bytes(data: &'static [u8]) -> Self {
         Self::_new(false, false, data)
     }
 
-    #[inline(always)]
+    #[inline]
     fn new_vec(data: Vec<u8>) -> Self {
         Self::_new(false, true, Box::into_raw(data.into_boxed_slice()))
     }
 
-    #[inline(always)]
+    #[inline]
     fn _new(is_str: bool, drop: bool, data: *const [u8]) -> Self {
         debug_assert!(!data.is_null());
         Self { is_str, drop, data }
