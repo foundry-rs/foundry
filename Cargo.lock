@@ -3444,6 +3444,7 @@ name = "forge-script"
 version = "0.2.0"
 dependencies = [
  "alloy-chains",
+ "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-eips",
  "alloy-json-abi",
@@ -3563,11 +3564,13 @@ dependencies = [
 name = "foundry-cheatcodes"
 version = "0.2.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-genesis",
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rlp",
  "alloy-rpc-types",
  "alloy-signer",
  "alloy-signer-local",
@@ -3649,6 +3652,7 @@ dependencies = [
 name = "foundry-common"
 version = "0.2.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-contract",
  "alloy-dyn-abi",
  "alloy-json-abi",
