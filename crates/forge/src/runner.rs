@@ -625,7 +625,7 @@ impl<'a> ContractRunner<'a> {
 
     /// Runs a fuzzed test.
     ///
-    /// Applies before test txes (if any), fuzz the current function and returns the
+    /// Applies the before test txes (if any), fuzzes the current function and returns the
     /// `TestResult`.
     ///
     /// Before test txes are applied in order and state modifications committed to the EVM database
