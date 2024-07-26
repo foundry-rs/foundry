@@ -332,14 +332,6 @@ impl ExecutedState {
             self.script_config.evm_opts.get_remote_chain_id().await,
         )?;
 
-        // Decoding traces using etherscan is costly as we run into rate limits,
-        // causing scripts to run for a very long time unnecessarily.
-        // Therefore, we only try and use etherscan if the user has provided an API key.
-        let should_use_etherscan_traces = self.script_config.config.etherscan_api_key.is_some();
-        if !should_use_etherscan_traces {
-            identifier.etherscan = None;
-        }
-
         for (_, trace) in &self.execution_result.traces {
             decoder.identify(trace, &mut identifier);
         }
