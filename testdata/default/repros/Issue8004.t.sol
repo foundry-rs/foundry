@@ -9,18 +9,18 @@ contract NonPersistentHelper is DSTest {
     uint256 public curState;
 
     function createSelectFork() external {
-        vm.createSelectFork("rpcAlias");
+        vm.createSelectFork("mainnet");
         curState += 1;
     }
 
     function createSelectForkAtBlock() external {
-        vm.createSelectFork("rpcAlias", 19000000);
+        vm.createSelectFork("mainnet", 19000000);
         curState += 1;
     }
 
     function createSelectForkAtTx() external {
         vm.createSelectFork(
-            "rpcAlias", vm.parseBytes32("0xb5c978f15d01fcc9b4d78967e8189e35ecc21ff4e78315ea5d616f3467003c84")
+            "mainnet", vm.parseBytes32("0xb5c978f15d01fcc9b4d78967e8189e35ecc21ff4e78315ea5d616f3467003c84")
         );
         curState += 1;
     }
@@ -66,7 +66,7 @@ contract Issue8004CreateSelectForkTest is DSTest {
     }
 
     function testNonPersistentHelperSelectFork() external {
-        uint256 forkId = vm.createFork("rpcAlias");
+        uint256 forkId = vm.createFork("mainnet");
         helper.selectFork(forkId);
         assertEq(helper.curState(), 1);
     }
@@ -78,7 +78,7 @@ contract Issue8004RollForkTest is DSTest {
     uint256 forkId;
 
     function setUp() public {
-        forkId = vm.createSelectFork("rpcAlias");
+        forkId = vm.createSelectFork("mainnet");
         helper = new NonPersistentHelper();
     }
 
