@@ -582,10 +582,13 @@ pub(crate) fn handle_expect_revert(
         Ok(success_return())
     } else {
         let stringify = |data: &[u8]| {
-            String::abi_decode(data, false)
-                .ok()
-                .or_else(|| std::str::from_utf8(data).ok().map(ToOwned::to_owned))
-                .unwrap_or_else(|| hex::encode_prefixed(data))
+            if let Ok(s) = String::abi_decode(data, false) {
+                return s;
+            }
+            if data.is_ascii() {
+                return std::str::from_utf8(data).unwrap().to_owned();
+            }
+            hex::encode_prefixed(data)
         };
         Err(fmt_err!(
             "Error != expected error: {} != {}",
