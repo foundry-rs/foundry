@@ -23,8 +23,8 @@ contract ForkTest is DSTest {
 
     // this will create two _different_ forks during setup
     function setUp() public {
-        forkA = vm.createFork("https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf", mainblock);
-        forkB = vm.createFork("https://eth-mainnet.alchemyapi.io/v2/9VWGraLx0tMiSWx05WH-ywgSVmMxs66W", mainblock - 1);
+        forkA = vm.createFork("mainnet", mainblock);
+        forkB = vm.createFork("mainnet2", mainblock - 1);
         testValue = 999;
     }
 
@@ -35,7 +35,7 @@ contract ForkTest is DSTest {
 
     // ensures we can create and select in one step
     function testCreateSelect() public {
-        uint256 fork = vm.createSelectFork("https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf");
+        uint256 fork = vm.createSelectFork("mainnet");
         assertEq(fork, vm.activeFork());
     }
 
@@ -114,12 +114,12 @@ contract ForkTest is DSTest {
 
     // ensures forks change chain ids automatically
     function testCanAutoUpdateChainId() public {
-        vm.createSelectFork("https://polygon-pokt.nodies.app"); // Polygon mainnet RPC URL
-        assertEq(block.chainid, 137);
+        vm.createSelectFork("sepolia");
+        assertEq(block.chainid, 11155111);
     }
 
     // ensures forks storage is cached at block
     function testStorageCaching() public {
-        vm.createSelectFork("https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf", 19800000);
+        vm.createSelectFork("mainnet", 19800000);
     }
 }

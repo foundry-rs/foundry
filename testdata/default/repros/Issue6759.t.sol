@@ -9,9 +9,9 @@ contract Issue6759Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testCreateMulti() public {
-        uint256 fork1 = vm.createFork("rpcAlias", 10);
-        uint256 fork2 = vm.createFork("rpcAlias", 10);
-        uint256 fork3 = vm.createFork("rpcAlias", 10);
+        uint256 fork1 = vm.createFork("mainnet", 10);
+        uint256 fork2 = vm.createFork("mainnet", 10);
+        uint256 fork3 = vm.createFork("mainnet", 10);
         assert(fork1 != fork2);
         assert(fork1 != fork3);
         assert(fork2 != fork3);

@@ -11,7 +11,7 @@ contract Issue2723Test is DSTest {
     function testRollFork() public {
         address coinbase = 0x0193d941b50d91BE6567c7eE1C0Fe7AF498b4137;
 
-        vm.createSelectFork("rpcAlias", 9);
+        vm.createSelectFork("mainnet", 9);
 
         assertEq(block.number, 9);
         assertEq(coinbase.balance, 11250000000000000000);

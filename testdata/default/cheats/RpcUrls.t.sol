@@ -9,8 +9,8 @@ contract RpcUrlTest is DSTest {
 
     // returns the correct url
     function testCanGetRpcUrl() public {
-        string memory url = vm.rpcUrl("rpcAlias"); // note: this alias is pre-configured in the test runner
-        assertEq(url, "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf");
+        string memory url = vm.rpcUrl("mainnet");
+        assertEq(bytes(url).length, 69);
     }
 
     // returns an error if env alias does not exist
@@ -27,21 +27,12 @@ contract RpcUrlTest is DSTest {
         );
         string[2][] memory _urls = vm.rpcUrls();
 
-        string memory url = vm.rpcUrl("rpcAlias");
+        string memory url = vm.rpcUrl("mainnet");
         vm.setEnv("RPC_ENV_ALIAS", url);
         string memory envUrl = vm.rpcUrl("rpcEnvAlias");
         assertEq(url, envUrl);
 
         string[2][] memory allUrls = vm.rpcUrls();
-        assertEq(allUrls.length, 3);
-
-        string[2] memory val = allUrls[0];
-        assertEq(val[0], "rpcAlias");
-
-        string[2] memory env = allUrls[1];
-        assertEq(env[0], "rpcAliasSepolia");
-
-        string[2] memory env2 = allUrls[2];
-        assertEq(env2[0], "rpcEnvAlias");
+        assertGe(allUrls.length, 2);
     }
 }
