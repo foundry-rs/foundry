@@ -15,7 +15,7 @@ contract Issue6032Test is DSTest {
 
         address counterAddress = address(counter);
         // Enter the fork
-        vm.createSelectFork("rpcAlias");
+        vm.createSelectFork("mainnet");
         assert(counterAddress.code.length > 0);
         // `Counter` is not deployed on the fork, which is expected.
 

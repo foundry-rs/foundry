@@ -9,8 +9,8 @@ contract Issue8168Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testForkWarpRollPreserved() public {
-        uint256 fork1 = vm.createFork("rpcAlias");
-        uint256 fork2 = vm.createFork("rpcAlias");
+        uint256 fork1 = vm.createFork("mainnet");
+        uint256 fork2 = vm.createFork("mainnet");
 
         vm.selectFork(fork1);
         uint256 initial_fork1_number = block.number;
