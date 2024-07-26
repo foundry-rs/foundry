@@ -201,10 +201,25 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
         .abi_encode())
 }
 
-fn encode_vrs(sig: alloy_primitives::Signature) -> Vec<u8> {
+fn encode_rvs(sig: alloy_primitives::Signature) -> Vec<u8> {
+    // Retrieve v, r and s from signature.
     let v = sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte());
+    let r = B256::from(sig.r());
+    let mut vs = B256::from(sig.s());
 
-    (U256::from(v), B256::from(sig.r()), B256::from(sig.s())).abi_encode()
+    // Implement EIP-2098 compact signature.
+    if v == 28 {
+        // If v is 28, ensure the leftmost bit of s is 1.
+        vs = vs | (B256::from(U256::from(1) << 255));
+    } else if v == 27 {
+        // If v is 27, ensure the leftmost bit of s is 0.
+        vs = vs & !(B256::from(U256::from(1) << 255));
+    } else {
+        panic!("Invalid v value: {}", v);
+    }
+
+    // Return r and modified s as a compact signature.
+    (r, vs).abi_encode()
 }
 
 pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
@@ -212,7 +227,7 @@ pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
     let wallet = parse_wallet(private_key)?;
     let sig = wallet.sign_hash_sync(digest)?;
     debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
-    Ok(encode_vrs(sig))
+    Ok(encode_rvs(sig))
 }
 
 pub(super) fn sign_with_wallet<DB: DatabaseExt>(
@@ -244,7 +259,7 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
 
     let sig = foundry_common::block_on(wallet.sign_hash(digest))?;
     debug_assert_eq!(sig.recover_address_from_prehash(digest)?, signer);
-    Ok(encode_vrs(sig))
+    Ok(encode_rvs(sig))
 }
 
 pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcodes) -> Result {

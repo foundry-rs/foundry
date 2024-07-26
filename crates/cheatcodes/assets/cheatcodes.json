@@ -7754,8 +7754,8 @@
     {
       "func": {
         "id": "sign_0",
-        "description": "Signs `digest` with `privateKey` using the secp256k1 curve.",
-        "declaration": "function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "description": "Signs `digest` with `privateKey` using the secp256k1 curve.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.",
+        "declaration": "function sign(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);",
         "visibility": "external",
         "mutability": "pure",
         "signature": "sign(uint256,bytes32)",
@@ -7774,8 +7774,8 @@
     {
       "func": {
         "id": "sign_1",
-        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nIf `--sender` is provided, the signer with provided address is used, otherwise,\nif exactly one signer is provided to the script, that signer is used.\nRaises error if signer passed through `--sender` does not match any unlocked signers or\nif `--sender` is not provided and not exactly one signer is passed to the script.",
-        "declaration": "function sign(bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.\nIf `--sender` is provided, the signer with provided address is used, otherwise,\nif exactly one signer is provided to the script, that signer is used.\nRaises error if signer passed through `--sender` does not match any unlocked signers or\nif `--sender` is not provided and not exactly one signer is passed to the script.",
+        "declaration": "function sign(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);",
         "visibility": "external",
         "mutability": "pure",
         "signature": "sign(bytes32)",
@@ -7794,8 +7794,8 @@
     {
       "func": {
         "id": "sign_2",
-        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nRaises error if none of the signers passed into the script have provided address.",
-        "declaration": "function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.\nRaises error if none of the signers passed into the script have provided address.",
+        "declaration": "function sign(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);",
         "visibility": "external",
         "mutability": "pure",
         "signature": "sign(address,bytes32)",
@@ -7815,7 +7815,7 @@
       "func": {
         "id": "sign_3",
         "description": "Signs data with a `Wallet`.",
-        "declaration": "function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);",
+        "declaration": "function sign(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);",
         "visibility": "external",
         "mutability": "",
         "signature": "sign((address,uint256,uint256,uint256),bytes32)",

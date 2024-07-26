@@ -10,10 +10,21 @@ contract SignTest is DSTest {
     function testSignDigest(uint248 pk, bytes32 digest) public {
         vm.assume(pk != 0);
 
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        (bytes32 r, bytes32 vs) = vm.sign(pk, digest);
+
+        // Extract `s` from `vs`.
+        // The mask 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff has all bits set to 1 except the leftmost bit, which is 0.
+        // Performing a bitwise AND operation with this mask clears the leftmost bit of `vs`, giving us `s`.
+        bytes32 s = bytes32(uint256(vs) & ((1 << 255) - 1));
+
+        // Extract `v` from `vs`.
+        // We shift `vs` right by 255 bits to isolate the leftmost bit.
+        // Converting this to uint8 gives us the parity bit (0 or 1).
+        // Adding 27 converts this parity bit to the correct `v` value (27 or 28).
+        uint8 v = uint8(uint256(vs) >> 255) + 27;
+
         address expected = vm.addr(pk);
         address actual = ecrecover(digest, v, r, s);
-
         assertEq(actual, expected, "digest signer did not match");
     }
 

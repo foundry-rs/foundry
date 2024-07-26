@@ -383,10 +383,10 @@ interface Vm {
     function setNonce(address account, uint64 newNonce) external;
     function setNonceUnsafe(address account, uint64 newNonce) external;
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
-    function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
-    function sign(bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
-    function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
-    function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
+    function sign(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
+    function sign(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
+    function sign(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
+    function sign(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);
     function skip(bool skipTest) external;
     function sleep(uint256 duration) external;
     function snapshot() external returns (uint256 snapshotId);
