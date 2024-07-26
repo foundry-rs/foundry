@@ -688,10 +688,6 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function lastCallGas() external view returns (Gas memory gas);
 
-    /// takes a signed transaction as bytes and executes it
-    #[cheatcode(group = Evm, safety = Safe)]
-    function broadcastRawTransaction(bytes calldata data) external;
-
     // ======== Test Assertions and Utilities ========
 
     /// If the condition is false, discard this run's fuzz inputs and generate new ones.
@@ -1762,6 +1758,10 @@ interface Vm {
     /// Stops collecting onchain transactions.
     #[cheatcode(group = Scripting)]
     function stopBroadcast() external;
+
+    /// Takes a signed transaction and broadcasts it to the network.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function broadcastRawTransaction(bytes calldata data) external;
 
     // ======== Utilities ========
 

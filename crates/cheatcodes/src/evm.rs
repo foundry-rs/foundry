@@ -582,19 +582,19 @@ impl Cheatcode for broadcastRawTransactionCall {
             fmt_err!("broadcastRawTransaction: error decoding transaction ({err})")
         })?;
 
-        if ccx.state.broadcast.is_some() {
-            ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
-                rpc: ccx.db.active_fork_url(),
-                transaction: tx.clone().try_into()?,
-            });
-        }
-
         ccx.ecx.db.transact_from_tx(
-            tx.into(),
+            tx.clone().into(),
             &ccx.ecx.env,
             &mut ccx.ecx.journaled_state,
             &mut executor.get_inspector(ccx.state),
         )?;
+
+        if ccx.state.broadcast.is_some() {
+            ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
+                rpc: ccx.db.active_fork_url(),
+                transaction: tx.try_into()?,
+            });
+        }
 
         Ok(Default::default())
     }
