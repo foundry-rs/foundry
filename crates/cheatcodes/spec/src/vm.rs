@@ -1760,7 +1760,7 @@ interface Vm {
     function stopBroadcast() external;
 
     /// Takes a signed transaction and broadcasts it to the network.
-    #[cheatcode(group = Evm, safety = Safe)]
+    #[cheatcode(group = Scripting)]
     function broadcastRawTransaction(bytes calldata data) external;
 
     // ======== Utilities ========
