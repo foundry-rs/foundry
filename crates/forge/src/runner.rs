@@ -36,6 +36,7 @@ use foundry_evm::{
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{
+    borrow::Cow,
     cmp::min,
     collections::{BTreeMap, HashMap},
     time::Instant,
@@ -683,13 +684,13 @@ impl<'a> ContractRunner<'a> {
         setup: TestSetup,
     ) -> Result<(Executor, TestResult, Address), TestResult> {
         let address = setup.address;
-        let mut executor = self.executor.clone();
+        let mut executor = Cow::Borrowed(&self.executor);
         let mut test_result = TestResult::new(setup);
 
         // Apply before test configured functions (if any).
-        let before_test_fns: Vec<_> =
-            self.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).collect();
-        if before_test_fns.len() == 1 {
+        if self.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).count() ==
+            1
+        {
             for calldata in executor
                 .call_sol_default(
                     address,
@@ -698,7 +699,7 @@ impl<'a> ContractRunner<'a> {
                 .beforeTestCalldata
             {
                 // Apply before test configured calldata.
-                match executor.transact_raw(self.sender, address, calldata, U256::ZERO) {
+                match executor.to_mut().transact_raw(self.sender, address, calldata, U256::ZERO) {
                     Ok(call_result) => {
                         // Merge tx result traces in unit test result.
                         test_result.merge_call_result(&call_result);
@@ -712,6 +713,6 @@ impl<'a> ContractRunner<'a> {
                 }
             }
         }
-        Ok((executor, test_result, address))
+        Ok((executor.into_owned(), test_result, address))
     }
 }
