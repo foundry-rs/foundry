@@ -163,7 +163,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
             _ => chain.as_str(),
         }
     };
-    let full = if prefix == "" { network.to_string() } else { format!("{prefix}-{network}") };
+    let full = if prefix.is_empty() { network.to_string() } else { format!("{prefix}-{network}") };
 
     match (is_ws, is_infura) {
         (false, true) => format!("https://{full}.infura.io/v3/{key}"),
