@@ -103,7 +103,7 @@ contract WalletTest is DSTest {
         // Extract `s` from `vs`.
         // The mask 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff has all bits set to 1 except the leftmost bit, which is 0.
         // Performing a bitwise AND operation with this mask clears the leftmost bit of `vs`, giving us `s`.
-        bytes32 s = bytes32(uint256(vs) & ((1 << 255) - 1));
+        bytes32 s = bytes32(uint256(vs) & 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
 
         // Extract `v` from `vs`.
         // We shift `vs` right by 255 bits to isolate the leftmost bit.
