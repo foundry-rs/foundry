@@ -703,8 +703,8 @@ interface Vm {
     function breakpoint(string calldata char, bool value) external;
 
     /// Returns the Foundry version.
-    /// Format: <cargo_version>+<build_timestamp>
-    /// Sample output: 0.2.0+202407110019
+    /// Format: <cargo_version>+<git_sha>+<build_timestamp>
+    /// Sample output: 0.2.0+faa94c384+202407110019
     #[cheatcode(group = Testing, safety = Safe)]
     function getFoundryVersion() external view returns (string memory version);
 

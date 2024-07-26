@@ -14,6 +14,13 @@ exclude.workspace = true
 [lints]
 workspace = true
 
+[build-dependencies]
+vergen = { workspace = true, default-features = false, features = [
+    "build",
+    "git",
+    "gitcl",
+] }
+
 [dependencies]
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true

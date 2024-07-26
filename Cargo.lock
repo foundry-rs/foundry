@@ -3599,6 +3599,7 @@ dependencies = [
  "thiserror",
  "toml 0.8.15",
  "tracing",
+ "vergen",
  "walkdir",
 ]
 
