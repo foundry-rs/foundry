@@ -1152,9 +1152,12 @@ impl Backend {
         // impls and providers <https://github.com/foundry-rs/foundry/issues/4388>
         env.cfg.disable_block_gas_limit = true;
 
-        if let Some(base) = max_fee_per_gas {
-            env.block.basefee = U256::from(base);
-        }
+        // The basefee should be ignored for calls against state for
+        // - eth_call
+        // - eth_estimateGas
+        // - eth_createAccessList
+        // - tracing
+        env.cfg.disable_base_fee = true;
 
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
             self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)

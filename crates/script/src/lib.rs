@@ -195,7 +195,7 @@ pub struct ScriptArgs {
 }
 
 impl ScriptArgs {
-    async fn preprocess(self) -> Result<PreprocessedState> {
+    pub async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets =
             ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
 
