@@ -13,7 +13,7 @@ use crate::{
     ScriptArgs, ScriptConfig, ScriptResult,
 };
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{utils::format_units, Address, TxKind, U256};
+use alloy_primitives::{utils::format_units, Address, Bytes, TxKind, U256};
 use eyre::{Context, Result};
 use foundry_cheatcodes::{BroadcastableTransactions, ScriptWallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
@@ -99,14 +99,14 @@ impl PreSimulationState {
                 let mut runner = runners.get(&rpc).expect("invalid rpc url").write();
 
                 let mut tx = transaction.transaction;
-                let to = if let Some(TxKind::Call(to)) = tx.to { Some(to) } else { None };
+                let to = if let Some(TxKind::Call(to)) = tx.to() { Some(to) } else { None };
                 let result = runner
                     .simulate(
-                        tx.from
+                        tx.from()
                             .expect("transaction doesn't have a `from` address at execution time"),
                         to,
-                        tx.input.clone().into_input(),
-                        tx.value,
+                        tx.input().map(Bytes::copy_from_slice),
+                        tx.value(),
                     )
                     .wrap_err("Internal EVM error during simulation")?;
 
@@ -121,18 +121,25 @@ impl PreSimulationState {
                     runner.executor.env_mut().block.number += U256::from(1);
                 }
 
-                let is_fixed_gas_limit = tx.gas.is_some();
-                match tx.gas {
-                    // If tx.gas is already set that means it was specified in script
-                    Some(gas) => {
-                        println!("Gas limit was set in script to {gas}");
+                let is_fixed_gas_limit = if let Some(tx) = tx.as_unsigned_mut() {
+                    match tx.gas {
+                        // If tx.gas is already set that means it was specified in script
+                        Some(gas) => {
+                            println!("Gas limit was set in script to {gas}");
+                            true
+                        }
+                        // We inflate the gas used by the user specified percentage
+                        None => {
+                            let gas = result.gas_used * self.args.gas_estimate_multiplier / 100;
+                            tx.gas = Some(gas as u128);
+                            false
+                        }
                     }
-                    // We inflate the gas used by the user specified percentage
-                    None => {
-                        let gas = result.gas_used * self.args.gas_estimate_multiplier / 100;
-                        tx.gas = Some(gas as u128);
-                    }
-                }
+                } else {
+                    // for pre-signed transactions we can't alter gas limit
+                    true
+                };
+
                 let tx = TransactionWithMetadata::new(
                     tx,
                     rpc,
@@ -271,40 +278,48 @@ impl FilledTransactionsState {
             let tx_rpc = tx.rpc.clone();
             let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy).await?;
 
-            // Handles chain specific requirements.
-            tx.transaction.set_chain_id(provider_info.chain);
+            if let Some(tx) = tx.transaction.as_unsigned_mut() {
+                // Handles chain specific requirements for unsigned transactions.
+                tx.set_chain_id(provider_info.chain);
+            }
 
             if !self.args.skip_simulation {
                 let tx = tx.tx_mut();
 
                 if has_different_gas_calc(provider_info.chain) {
-                    trace!("estimating with different gas calculation");
-                    let gas = tx.gas.expect("gas is set by simulation.");
+                    // only estimate gas for unsigned transactions
+                    if let Some(tx) = tx.as_unsigned_mut() {
+                        trace!("estimating with different gas calculation");
+                        let gas = tx.gas.expect("gas is set by simulation.");
 
-                    // We are trying to show the user an estimation of the total gas usage.
-                    //
-                    // However, some transactions might depend on previous ones. For
-                    // example, tx1 might deploy a contract that tx2 uses. That
-                    // will result in the following `estimate_gas` call to fail,
-                    // since tx1 hasn't been broadcasted yet.
-                    //
-                    // Not exiting here will not be a problem when actually broadcasting, because
-                    // for chains where `has_different_gas_calc` returns true,
-                    // we await each transaction before broadcasting the next
-                    // one.
-                    if let Err(err) =
-                        estimate_gas(tx, &provider_info.provider, self.args.gas_estimate_multiplier)
-                            .await
-                    {
-                        trace!("gas estimation failed: {err}");
+                        // We are trying to show the user an estimation of the total gas usage.
+                        //
+                        // However, some transactions might depend on previous ones. For
+                        // example, tx1 might deploy a contract that tx2 uses. That
+                        // will result in the following `estimate_gas` call to fail,
+                        // since tx1 hasn't been broadcasted yet.
+                        //
+                        // Not exiting here will not be a problem when actually broadcasting,
+                        // because for chains where `has_different_gas_calc`
+                        // returns true, we await each transaction before
+                        // broadcasting the next one.
+                        if let Err(err) = estimate_gas(
+                            tx,
+                            &provider_info.provider,
+                            self.args.gas_estimate_multiplier,
+                        )
+                        .await
+                        {
+                            trace!("gas estimation failed: {err}");
 
-                        // Restore gas value, since `estimate_gas` will remove it.
-                        tx.set_gas_limit(gas);
+                            // Restore gas value, since `estimate_gas` will remove it.
+                            tx.set_gas_limit(gas);
+                        }
                     }
                 }
 
                 let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(0);
-                *total_gas += tx.gas.expect("gas is set");
+                *total_gas += tx.gas().expect("gas is set");
             }
 
             new_sequence.push_back(tx);

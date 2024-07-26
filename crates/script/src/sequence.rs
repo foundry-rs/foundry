@@ -4,12 +4,11 @@ use crate::{
     verify::VerifyBundle,
 };
 use alloy_primitives::{hex, Address, TxHash};
-use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
-use alloy_serde::WithOtherFields;
+use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::{eyre, ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::{now, Git};
-use foundry_common::{fs, shell, SELECTOR_LEN};
+use foundry_common::{fs, shell, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -284,10 +283,8 @@ impl ScriptSequence {
                 }
 
                 // Verify contract created directly from the transaction
-                if let (Some(address), Some(data)) =
-                    (receipt.contract_address, tx.tx().input.input())
-                {
-                    match verify.get_verify_args(address, offset, &data.0, &self.libraries) {
+                if let (Some(address), Some(data)) = (receipt.contract_address, tx.tx().input()) {
+                    match verify.get_verify_args(address, offset, data, &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
                         None => unverifiable_contracts.push(address),
                     };
@@ -363,7 +360,7 @@ impl ScriptSequence {
     }
 
     /// Returns the list of the transactions without the metadata.
-    pub fn transactions(&self) -> impl Iterator<Item = &WithOtherFields<TransactionRequest>> {
+    pub fn transactions(&self) -> impl Iterator<Item = &TransactionMaybeSigned> {
         self.transactions.iter().map(|tx| tx.tx())
     }
 

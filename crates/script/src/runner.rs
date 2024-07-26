@@ -81,7 +81,8 @@ impl ScriptRunner {
                         },
                         nonce: Some(sender_nonce + library_transactions.len() as u64),
                         ..Default::default()
-                    },
+                    }
+                    .into(),
                 })
             }),
             ScriptPredeployLibraries::Create2(libraries, salt) => {
@@ -118,7 +119,8 @@ impl ScriptRunner {
                             nonce: Some(sender_nonce + library_transactions.len() as u64),
                             to: Some(TxKind::Call(DEFAULT_CREATE2_DEPLOYER)),
                             ..Default::default()
-                        },
+                        }
+                        .into(),
                     });
                 }
 

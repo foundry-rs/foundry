@@ -24,7 +24,7 @@ use foundry_evm::{
         invariant::{
             check_sequence, replay_error, replay_run, InvariantExecutor, InvariantFuzzError,
         },
-        CallResult, EvmError, ExecutionErr, Executor, RawCallResult,
+        CallResult, EvmError, ExecutionErr, Executor, ITest, RawCallResult,
     },
     fuzz::{
         fixture_name,
@@ -36,6 +36,7 @@ use foundry_evm::{
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{
+    borrow::Cow,
     cmp::min,
     collections::{BTreeMap, HashMap},
     time::Instant,
@@ -270,6 +271,7 @@ impl<'a> ContractRunner<'a> {
                 ));
             }
         }
+
         // There are multiple setUp function, so we return a single test result for `setUp`
         if setup_fns.len() > 1 {
             return SuiteResult::new(
@@ -412,21 +414,26 @@ impl<'a> ContractRunner<'a> {
 
     /// Runs a single unit test.
     ///
-    /// Calls the given functions and returns the `TestResult`.
+    /// Applies before test txes (if any), runs current test and returns the `TestResult`.
     ///
-    /// State modifications are not committed to the evm database but discarded after the call,
-    /// similar to `eth_call`.
+    /// Before test txes are applied in order and state modifications committed to the EVM database
+    /// (therefore the unit test call will be made on modified state).
+    /// State modifications of before test txes and unit test function call are discarded after
+    /// test ends, similar to `eth_call`.
     pub fn run_unit_test(
         &self,
         func: &Function,
         should_fail: bool,
         setup: TestSetup,
     ) -> TestResult {
-        let address = setup.address;
-        let test_result = TestResult::new(setup);
+        // Prepare unit test execution.
+        let (executor, test_result, address) = match self.prepare_test(func, setup) {
+            Ok(res) => res,
+            Err(res) => return res,
+        };
 
-        // Run unit test
-        let (mut raw_call_result, reason) = match self.executor.call(
+        // Run current unit test.
+        let (mut raw_call_result, reason) = match executor.call(
             self.sender,
             address,
             func,
@@ -437,11 +444,10 @@ impl<'a> ContractRunner<'a> {
             Ok(res) => (res.raw, None),
             Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
             Err(EvmError::SkipError) => return test_result.single_skip(),
-            Err(err) => return test_result.single_fail(err),
+            Err(err) => return test_result.single_fail(Some(err.to_string())),
         };
 
-        let success =
-            self.executor.is_raw_call_mut_success(address, &mut raw_call_result, should_fail);
+        let success = executor.is_raw_call_mut_success(address, &mut raw_call_result, should_fail);
         test_result.single_result(success, reason, raw_call_result)
     }
 
@@ -618,6 +624,15 @@ impl<'a> ContractRunner<'a> {
         )
     }
 
+    /// Runs a fuzzed test.
+    ///
+    /// Applies the before test txes (if any), fuzzes the current function and returns the
+    /// `TestResult`.
+    ///
+    /// Before test txes are applied in order and state modifications committed to the EVM database
+    /// (therefore the fuzz test will use the modified state).
+    /// State modifications of before test txes and fuzz test are discarded after test ends,
+    /// similar to `eth_call`.
     pub fn run_fuzz_test(
         &self,
         func: &Function,
@@ -626,14 +641,18 @@ impl<'a> ContractRunner<'a> {
         setup: TestSetup,
         fuzz_config: FuzzConfig,
     ) -> TestResult {
-        let address = setup.address;
-        let fuzz_fixtures = setup.fuzz_fixtures.clone();
-        let test_result = TestResult::new(setup);
-
-        // Run fuzz test
         let progress = start_fuzz_progress(self.progress, self.name, &func.name, fuzz_config.runs);
+
+        // Prepare fuzz test execution.
+        let fuzz_fixtures = setup.fuzz_fixtures.clone();
+        let (executor, test_result, address) = match self.prepare_test(func, setup) {
+            Ok(res) => res,
+            Err(res) => return res,
+        };
+
+        // Run fuzz test.
         let fuzzed_executor =
-            FuzzedExecutor::new(self.executor.clone(), runner, self.sender, fuzz_config);
+            FuzzedExecutor::new(executor.into_owned(), runner, self.sender, fuzz_config);
         let result = fuzzed_executor.fuzz(
             func,
             &fuzz_fixtures,
@@ -649,5 +668,52 @@ impl<'a> ContractRunner<'a> {
             return test_result.single_skip()
         }
         test_result.fuzz_result(result)
+    }
+
+    /// Prepares single unit test and fuzz test execution:
+    /// - set up the test result and executor
+    /// - check if before test txes are configured and apply them in order
+    ///
+    /// Before test txes are arrays of arbitrary calldata obtained by calling the `beforeTest`
+    /// function with test selector as a parameter.
+    ///
+    /// Unit tests within same contract (or even current test) are valid options for before test tx
+    /// configuration. Test execution stops if any of before test txes fails.
+    fn prepare_test(
+        &self,
+        func: &Function,
+        setup: TestSetup,
+    ) -> Result<(Cow<'_, Executor>, TestResult, Address), TestResult> {
+        let address = setup.address;
+        let mut executor = Cow::Borrowed(&self.executor);
+        let mut test_result = TestResult::new(setup);
+
+        // Apply before test configured functions (if any).
+        if self.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).count() ==
+            1
+        {
+            for calldata in executor
+                .call_sol_default(
+                    address,
+                    &ITest::beforeTestSetupCall { testSelector: func.selector() },
+                )
+                .beforeTestCalldata
+            {
+                // Apply before test configured calldata.
+                match executor.to_mut().transact_raw(self.sender, address, calldata, U256::ZERO) {
+                    Ok(call_result) => {
+                        // Merge tx result traces in unit test result.
+                        test_result.merge_call_result(&call_result);
+
+                        // To continue unit test execution the call should not revert.
+                        if call_result.reverted {
+                            return Err(test_result.single_fail(None))
+                        }
+                    }
+                    Err(_) => return Err(test_result.single_fail(None)),
+                }
+            }
+        }
+        Ok((executor, test_result, address))
     }
 }
