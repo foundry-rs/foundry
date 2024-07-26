@@ -210,12 +210,12 @@ fn encode_rvs(sig: alloy_primitives::Signature) -> Vec<u8> {
     // Implement EIP-2098 compact signature.
     if v == 28 {
         // If v is 28, ensure the leftmost bit of s is 1.
-        vs = vs | (B256::from(U256::from(1) << 255));
+        vs |= B256::from(U256::from(1) << 255);
     } else if v == 27 {
         // If v is 27, ensure the leftmost bit of s is 0.
-        vs = vs & !(B256::from(U256::from(1) << 255));
+        vs &= !B256::from(U256::from(1) << 255);
     } else {
-        panic!("Invalid v value: {}", v);
+        panic!("Invalid v value: {v}");
     }
 
     // Return r and modified s as a compact signature.
