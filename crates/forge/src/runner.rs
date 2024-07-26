@@ -651,7 +651,8 @@ impl<'a> ContractRunner<'a> {
         };
 
         // Run fuzz test.
-        let fuzzed_executor = FuzzedExecutor::new(executor, runner, self.sender, fuzz_config);
+        let fuzzed_executor =
+            FuzzedExecutor::new(executor.into_owned(), runner, self.sender, fuzz_config);
         let result = fuzzed_executor.fuzz(
             func,
             &fuzz_fixtures,
@@ -682,7 +683,7 @@ impl<'a> ContractRunner<'a> {
         &self,
         func: &Function,
         setup: TestSetup,
-    ) -> Result<(Executor, TestResult, Address), TestResult> {
+    ) -> Result<(Cow<'_, Executor>, TestResult, Address), TestResult> {
         let address = setup.address;
         let mut executor = Cow::Borrowed(&self.executor);
         let mut test_result = TestResult::new(setup);
@@ -713,6 +714,6 @@ impl<'a> ContractRunner<'a> {
                 }
             }
         }
-        Ok((executor.into_owned(), test_result, address))
+        Ok((executor, test_result, address))
     }
 }
