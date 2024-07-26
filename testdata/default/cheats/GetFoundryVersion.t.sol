@@ -8,15 +8,19 @@ contract GetFoundryVersionTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testGetFoundryVersion() public view {
-        string memory version = vm.getFoundryVersion();
+        string memory fullVersionString = vm.getFoundryVersion();
 
-        string memory cargoVersion = vm.split(version, "+")[0];
-        require(bytes(cargoVersion).length > 0, "Cargo version is empty");
+        string[] memory versionComponents = vm.split(fullVersionString, "+");
+        require(versionComponents.length == 3, "Invalid version format");
 
-        string memory gitSHA = vm.split(version, "+")[1];
-        require(bytes(gitSHA).length > 0, "Git SHA is empty");
+        string memory semanticVersion = versionComponents[0];
+        require(bytes(semanticVersion).length > 0, "Semantic version is empty");
 
-        uint256 buildTimestamp = vm.parseUint(vm.split(version, "+")[2]);
-        require(buildTimestamp >= 202406111234, "too old");
+        string memory commitHash = versionComponents[1];
+        require(bytes(commitHash).length > 0, "Commit hash is empty");
+
+        uint256 buildUnixTimestamp = vm.parseUint(versionComponents[2]);
+        uint256 minimumAcceptableTimestamp = 202406111234;
+        require(buildUnixTimestamp >= minimumAcceptableTimestamp, "Build timestamp is too old");
     }
 }
