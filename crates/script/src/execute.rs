@@ -189,8 +189,8 @@ impl PreExecutionState {
                 self.args.evm_opts.sender.is_none()
             {
                 for tx in txs.iter() {
-                    if tx.transaction.to.is_none() {
-                        let sender = tx.transaction.from.expect("no sender");
+                    if tx.transaction.to().is_none() {
+                        let sender = tx.transaction.from().expect("no sender");
                         if let Some(ns) = new_sender {
                             if sender != ns {
                                 shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
@@ -331,14 +331,6 @@ impl ExecutedState {
             &self.script_config.config,
             self.script_config.evm_opts.get_remote_chain_id().await,
         )?;
-
-        // Decoding traces using etherscan is costly as we run into rate limits,
-        // causing scripts to run for a very long time unnecessarily.
-        // Therefore, we only try and use etherscan if the user has provided an API key.
-        let should_use_etherscan_traces = self.script_config.config.etherscan_api_key.is_some();
-        if !should_use_etherscan_traces {
-            identifier.etherscan = None;
-        }
 
         for (_, trace) in &self.execution_result.traces {
             decoder.identify(trace, &mut identifier);

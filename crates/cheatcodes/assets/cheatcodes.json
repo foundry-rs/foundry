@@ -3053,6 +3053,26 @@
     },
     {
       "func": {
+        "id": "broadcastRawTransaction",
+        "description": "Takes a signed transaction and broadcasts it to the network.",
+        "declaration": "function broadcastRawTransaction(bytes calldata data) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "broadcastRawTransaction(bytes)",
+        "selector": "0x8c0c72e0",
+        "selectorBytes": [
+          140,
+          12,
+          114,
+          224
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "broadcast_0",
         "description": "Has the next call (at this call depth only) create transactions that can later be signed and sent onchain.\nBroadcasting address is determined by checking the following in order:\n1. If `--sender` argument was provided, that address is used.\n2. If exactly one signer (e.g. private key, hw wallet, keystore) is set when `forge broadcast` is invoked, that signer is used.\n3. Otherwise, default foundry sender (1804c8AB1F12E6bbf3894d4083f33e07309d1f38) is used.",
         "declaration": "function broadcast() external;",

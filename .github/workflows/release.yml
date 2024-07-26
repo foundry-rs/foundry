@@ -133,18 +133,16 @@ jobs:
         run: |
           set -eo pipefail
           target="${{ matrix.target }}"
-          flags=()
+          flags=(--release --bins --no-default-features --features rustls,aws-kms)
 
           # `jemalloc` and `keccak-asm` are not supported on MSVC or aarch64 Linux.
           if [[ "$target" != *msvc* && "$target" != "aarch64-unknown-linux-gnu" ]]; then
-            flags+=(--features asm-keccak,jemalloc,cast/aws-kms,forge/aws-kms)
-          else
-            flags+=(--features cast/aws-kms,forge/aws-kms)
+            flags+=(--features asm-keccak,jemalloc)
           fi
 
           [[ "$target" == *windows* ]] && exe=".exe"
 
-          cargo build --release --bins --target "$target" "${flags[@]}"
+          cargo build --target "$target" "${flags[@]}"
 
           bins=(anvil cast chisel forge)
           for name in "${bins[@]}"; do
