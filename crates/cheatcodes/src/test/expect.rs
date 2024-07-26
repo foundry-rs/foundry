@@ -542,6 +542,7 @@ fn expect_revert(
 }
 
 pub(crate) fn handle_expect_revert(
+    is_cheatcode: bool,
     is_create: bool,
     expected_revert: Option<&[u8]>,
     status: InstructionResult,
@@ -578,7 +579,9 @@ pub(crate) fn handle_expect_revert(
         }
     }
 
-    if actual_revert == expected_revert {
+    if actual_revert == expected_revert ||
+        (is_cheatcode && memchr::memmem::find(&actual_revert, expected_revert).is_some())
+    {
         Ok(success_return())
     } else {
         let stringify = |data: &[u8]| {
