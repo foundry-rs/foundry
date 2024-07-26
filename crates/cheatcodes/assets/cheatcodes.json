@@ -3067,7 +3067,7 @@
           224
         ]
       },
-      "group": "evm",
+      "group": "scripting",
       "status": "stable",
       "safety": "safe"
     },
