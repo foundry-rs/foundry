@@ -449,9 +449,9 @@ impl TestResult {
     }
 
     /// Returns the failed result with reason for single test.
-    pub fn single_fail(mut self, err: EvmError) -> Self {
+    pub fn single_fail(mut self, reason: Option<String>) -> Self {
         self.status = TestStatus::Failure;
-        self.reason = Some(err.to_string());
+        self.reason = reason;
         self
     }
 
@@ -577,6 +577,14 @@ impl TestResult {
     /// Formats the test result into a string (for printing).
     pub fn short_result(&self, name: &str) -> String {
         format!("{self} {name} {}", self.kind.report())
+    }
+
+    /// Function to merge logs, addresses, traces and coverage from a call result into test result.
+    pub fn merge_call_result(&mut self, call_result: &RawCallResult) {
+        self.logs.extend(call_result.logs.clone());
+        self.labeled_addresses.extend(call_result.labels.clone());
+        self.traces.extend(call_result.traces.clone().map(|traces| (TraceKind::Execution, traces)));
+        self.merge_coverages(call_result.coverage.clone());
     }
 
     /// Function to merge given coverage in current test result coverage.

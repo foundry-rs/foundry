@@ -10,7 +10,7 @@ contract Issue4640Test is DSTest {
 
     function testArbitrumBlockNumber() public {
         // <https://arbiscan.io/block/75219831>
-        vm.createSelectFork("https://arb-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf", 75219831);
+        vm.createSelectFork("arbitrum", 75219831);
         // L1 block number
         assertEq(block.number, 16939475);
     }

@@ -11,7 +11,7 @@ contract Issue3653Test is DSTest {
     Token token;
 
     constructor() {
-        fork = vm.createSelectFork("rpcAlias", 1000000);
+        fork = vm.createSelectFork("mainnet", 1000000);
         token = new Token();
         vm.makePersistent(address(token));
     }

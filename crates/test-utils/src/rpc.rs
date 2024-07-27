@@ -1,5 +1,6 @@
 //! RPC API keys utilities.
 
+use foundry_config::NamedChain;
 use once_cell::sync::Lazy;
 use rand::seq::SliceRandom;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -18,7 +19,7 @@ static INFURA_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
 });
 
 // List of alchemy keys for mainnet
-static ALCHEMY_MAINNET_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
+static ALCHEMY_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
     let mut keys = vec![
         "ib1f4u1ojm-9lJJypwkeZeG-75TJRB7O",
         "7mTtk6IW4DwroGnKmG_bOWri2hyaGYhX",
@@ -44,6 +45,9 @@ static ALCHEMY_MAINNET_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
         "sDNCLu_e99YZRkbWlVHiuM3BQ5uxYCZU",
         "M6lfpxTBrywHOvKXOS4yb7cTTpa25ZQ9",
         "UK8U_ogrbYB4lQFTGJHHDrbiS4UPnac6",
+        "Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf",
+        "UVatYU2Ax0rX6bDiqddeTRDdcCxzdpoE",
+        "bVjX9v-FpmUhf5R_oHIgwJx2kXvYPRbx",
     ];
 
     keys.shuffle(&mut rand::thread_rng());
@@ -79,61 +83,94 @@ fn next() -> usize {
 }
 
 fn num_keys() -> usize {
-    INFURA_KEYS.len() + ALCHEMY_MAINNET_KEYS.len()
+    INFURA_KEYS.len() + ALCHEMY_KEYS.len()
 }
 
 /// Returns the next _mainnet_ rpc endpoint in inline
 ///
 /// This will rotate all available rpc endpoints
 pub fn next_http_rpc_endpoint() -> String {
-    next_rpc_endpoint("mainnet")
+    next_rpc_endpoint(NamedChain::Mainnet)
 }
 
 /// Returns the next _mainnet_ rpc endpoint in inline
 ///
 /// This will rotate all available rpc endpoints
 pub fn next_ws_rpc_endpoint() -> String {
-    next_ws_endpoint("mainnet")
+    next_ws_endpoint(NamedChain::Mainnet)
 }
 
 /// Returns the next HTTP RPC endpoint.
-pub fn next_rpc_endpoint(network: &str) -> String {
-    let idx = next() % num_keys();
-    if idx < INFURA_KEYS.len() {
-        format!("https://{network}.infura.io/v3/{}", INFURA_KEYS[idx])
-    } else {
-        let idx = idx - INFURA_KEYS.len();
-        format!("https://eth-{network}.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
-    }
+pub fn next_rpc_endpoint(chain: NamedChain) -> String {
+    next_url(false, chain)
 }
 
 /// Returns the next WS RPC endpoint.
-pub fn next_ws_endpoint(network: &str) -> String {
-    let idx = next() % num_keys();
-    if idx < INFURA_KEYS.len() {
-        format!("wss://{network}.infura.io/v3/{}", INFURA_KEYS[idx])
-    } else {
-        let idx = idx - INFURA_KEYS.len();
-        format!("wss://eth-{network}.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
-    }
+pub fn next_ws_endpoint(chain: NamedChain) -> String {
+    next_url(true, chain)
 }
 
 /// Returns endpoint that has access to archive state
 pub fn next_http_archive_rpc_endpoint() -> String {
-    let idx = next() % ALCHEMY_MAINNET_KEYS.len();
-    format!("https://eth-mainnet.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
+    let idx = next() % ALCHEMY_KEYS.len();
+    format!("https://eth-mainnet.g.alchemy.com/v2/{}", ALCHEMY_KEYS[idx])
 }
 
 /// Returns endpoint that has access to archive state
 pub fn next_ws_archive_rpc_endpoint() -> String {
-    let idx = next() % ALCHEMY_MAINNET_KEYS.len();
-    format!("wss://eth-mainnet.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
+    let idx = next() % ALCHEMY_KEYS.len();
+    format!("wss://eth-mainnet.g.alchemy.com/v2/{}", ALCHEMY_KEYS[idx])
 }
 
 /// Returns the next etherscan api key
 pub fn next_etherscan_api_key() -> String {
     let idx = next() % ETHERSCAN_MAINNET_KEYS.len();
     ETHERSCAN_MAINNET_KEYS[idx].to_string()
+}
+
+fn next_url(is_ws: bool, chain: NamedChain) -> String {
+    use NamedChain::*;
+
+    let idx = next() % num_keys();
+    let is_infura = idx < INFURA_KEYS.len();
+
+    let key = if is_infura { INFURA_KEYS[idx] } else { ALCHEMY_KEYS[idx - INFURA_KEYS.len()] };
+
+    // Nowhere near complete.
+    let prefix = if is_infura {
+        match chain {
+            Optimism => "optimism",
+            Arbitrum => "arbitrum",
+            Polygon => "polygon",
+            _ => "",
+        }
+    } else {
+        match chain {
+            Optimism => "opt",
+            Arbitrum => "arb",
+            Polygon => "polygon",
+            _ => "eth",
+        }
+    };
+    let network = if is_infura {
+        match chain {
+            Mainnet | Optimism | Arbitrum | Polygon => "mainnet",
+            _ => chain.as_str(),
+        }
+    } else {
+        match chain {
+            Mainnet | Optimism | Arbitrum | Polygon => "mainnet",
+            _ => chain.as_str(),
+        }
+    };
+    let full = if prefix.is_empty() { network.to_string() } else { format!("{prefix}-{network}") };
+
+    match (is_ws, is_infura) {
+        (false, true) => format!("https://{full}.infura.io/v3/{key}"),
+        (true, true) => format!("wss://{full}.infura.io/v3/{key}"),
+        (false, false) => format!("https://{full}.g.alchemy.com/v2/{key}"),
+        (true, false) => format!("wss://{full}.g.alchemy.com/v2/{key}"),
+    }
 }
 
 #[cfg(test)]

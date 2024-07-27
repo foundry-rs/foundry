@@ -13,7 +13,7 @@ contract Issue4586Test is DSTest {
     InvariantHandler handler;
 
     function setUp() public {
-        vm.createSelectFork("rpcAlias", initialBlock);
+        vm.createSelectFork("mainnet", initialBlock);
         handler = new InvariantHandler();
     }
 

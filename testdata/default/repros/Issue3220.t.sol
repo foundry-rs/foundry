@@ -14,9 +14,9 @@ contract Issue3220Test is DSTest {
     uint256 counter;
 
     function setUp() public {
-        fork1 = vm.createFork("rpcAlias", 7475589);
+        fork1 = vm.createFork("mainnet", 7475589);
         vm.selectFork(fork1);
-        fork2 = vm.createFork("rpcAlias", 12880747);
+        fork2 = vm.createFork("mainnet", 12880747);
     }
 
     function testForkRevert() public {

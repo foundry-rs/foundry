@@ -50,6 +50,9 @@ sol! {
     interface ITest {
         function setUp() external;
         function failed() external view returns (bool failed);
+
+        #[derive(Default)]
+        function beforeTestSetup(bytes4 testSelector) public view returns (bytes[] memory beforeTestCalldata);
     }
 }
 
@@ -601,6 +604,16 @@ impl Executor {
         };
 
         EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.spec_id())
+    }
+
+    pub fn call_sol_default<C: SolCall>(&self, to: Address, args: &C) -> C::Return
+    where
+        C::Return: Default,
+    {
+        self.call_sol(CALLER, to, args, U256::ZERO, None)
+            .map(|c| c.decoded_result)
+            .inspect_err(|e| warn!(target: "forge::test", "failed calling {:?}: {e}", C::SIGNATURE))
+            .unwrap_or_default()
     }
 }
 
