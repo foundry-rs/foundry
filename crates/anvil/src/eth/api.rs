@@ -57,7 +57,7 @@ use alloy_signer::Signature;
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
-        block::BlockInfo,
+        block::{self, BlockInfo},
         transaction::{
             transaction_request_to_typed, MaybeImpersonatedTransaction, PendingTransaction,
             ReceiptResponse, TypedTransaction, TypedTransactionRequest,
@@ -78,10 +78,12 @@ use foundry_evm::{
     },
 };
 use futures::channel::{mpsc::Receiver, oneshot};
+use itertools::Itertools;
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
+    hash::Hash,
     sync::Arc,
     time::Duration,
 };
@@ -1928,30 +1930,78 @@ impl EthApi {
         new_len: u64,
         tx_block_pairs: Option<Vec<(TransactionRequest, u64)>>,
     ) -> Result<()> {
-        // TODO: validation
-        // - tx_block_pairs matches new_len length
-        // - tx's for a given block will not exhaust the block gas limit
-        let txs = if let Some(pairs) = tx_block_pairs {
-            let mut signed_block_txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::new();
-            for pair in pairs {
-                let (tx, block_number) = pair;
-                let nonce = tx.nonce.ok_or_else(|| {
-                    BlockchainError::RpcError(RpcError::invalid_params(
-                        "Nonce must be set for transaction",
-                    ))
-                })?;
-                let from = tx.from.ok_or_else(|| {
-                    BlockchainError::RpcError(RpcError::invalid_params(
-                        "From address must be set for transaction",
-                    ))
-                })?;
-                if tx.gas.is_none() {
+        node_info!("anvil_reorg");
+        // Find common height
+        let current_height = self.backend.best_number();
+        let common_height = if current_height > depth {
+            current_height - depth
+        } else {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "Reorg depth exceeds current chain height",
+            )));
+        };
+        // Get the common ancestor block
+        let common_block = if let Some(block) = self.backend.get_block(common_height) {
+            block
+        } else {
+            return Err(BlockchainError::BlockNotFound);
+        };
+
+        let txs = if let Some(mut pairs) = tx_block_pairs {
+            // Validate that tx block pairs fit into new chain
+            if let Some(max) = pairs.iter().max_by_key(|item| item.1) {
+                if max.1 > new_len {
                     return Err(BlockchainError::RpcError(RpcError::invalid_params(
-                        "Gas limit must be set for transaction",
+                        "Maximum tx block pair exceeds reorg chain length",
                     )));
                 }
+            }
 
-                let request = self.build_typed_tx_request(WithOtherFields::new(tx), nonce)?;
+            // Sort by block number to make it easier to manage new nonces
+            pairs.iter_mut().sorted_by(|a, b| a.1.cmp(&b.1));
+
+            // Manage nonces for each signer
+            // address -> cumulative nonce
+            let mut nonces: HashMap<Address, u64> = HashMap::new();
+
+            // Construct pool transactions for each block
+            let mut signed_block_txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::new();
+            println!("anvil_reorg: pairs len {:#}", pairs.len());
+            for pair in pairs {
+                let (tx, block_number) = pair;
+
+                let from = tx.from.map(Ok).unwrap_or_else(|| {
+                    self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
+                })?;
+
+                // Get the nonce at the common block
+                let curr_nonce = nonces.entry(from).or_insert(
+                    self.get_transaction_count(from, Some(common_block.header.number.into()))
+                        .await?,
+                );
+
+                let mut tx = WithOtherFields::new(tx);
+
+                // If gas is missing
+                if tx.gas.is_none() {
+                    if let Ok(gas) = self.estimate_gas(tx.clone(), None, None).await {
+                        tx.gas = Some(gas.to());
+                    }
+                }
+
+                // Convert the transaction requests to pending transaction
+                let request = self.build_typed_tx_request(tx, *curr_nonce)?;
+
+                println!(
+                    "anvil_reorg: addr {:#?}, real nonce {:#?}",
+                    from,
+                    self.get_transaction_count(from, Some(current_height.into())).await.unwrap()
+                );
+                println!("anvil_reorg: addr {:#?}, nonce {:#?}", from, *curr_nonce);
+                // Increment nonce
+                *curr_nonce += 1;
+
+                // Handle signer
                 let pending = if self.is_impersonated(from) {
                     let bypass_signature = self.impersonated_signature(&request);
                     let transaction = sign::build_typed_transaction(request, bypass_signature)?;
@@ -1962,10 +2012,21 @@ impl EthApi {
                     self.ensure_typed_transaction_supported(&transaction)?;
                     PendingTransaction::new(transaction)?
                 };
-                self.backend.validate_pool_transaction(&pending).await?;
 
+                // Validate transactions against current state
+                if let Err(err) = self.backend.validate_pool_transaction(&pending).await {
+                    match err {
+                        BlockchainError::InvalidTransaction(
+                            InvalidTransactionError::NonceTooLow,
+                        ) => (),
+                        _ => return Err(err),
+                    }
+                }
                 let pool_tx = PoolTransaction::new(pending);
                 signed_block_txs.entry(block_number).or_insert(Vec::new()).push(Arc::new(pool_tx));
+            }
+            for (key, val) in signed_block_txs.iter().enumerate() {
+                println!("anvil_reorg: block tx pairs {:#?}, {:#?}", key, val.1.len());
             }
             signed_block_txs
         } else {

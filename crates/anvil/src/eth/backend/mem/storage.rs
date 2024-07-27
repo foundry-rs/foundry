@@ -181,6 +181,7 @@ impl InMemoryBlockStates {
 
     /// Clears all entries
     pub fn clear(&mut self) {
+        println!("storage: CLEARED");
         self.states.clear();
         self.on_disk_states.clear();
         self.present.clear();
@@ -300,6 +301,13 @@ impl BlockchainStorage {
             block.transactions.clear();
         }
     }
+
+    // TODO
+    // We likely need an API here to:
+    // Revert state to common ancestor.
+    // State will be:
+    // Account state
+    // Contract state
 }
 
 impl BlockchainStorage {

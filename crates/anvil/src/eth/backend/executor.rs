@@ -150,7 +150,8 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
                     continue
                 }
-                TransactionExecutionOutcome::Invalid(tx, _) => {
+                TransactionExecutionOutcome::Invalid(tx, e) => {
+                    println!("execute invalid tx: {:#?}", e);
                     trace!(target: "backend", ?tx,  "skipping invalid transaction");
                     invalid.push(tx);
                     continue

@@ -663,30 +663,43 @@ async fn test_reorg() {
     let provider = handle.ws_provider();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
-    api.anvil_mine(Some(U256::from(10)), None).await.unwrap();
+
+    // Populate chain
+    for i in 0..10 {
+        let tx = TransactionRequest::default()
+            .to(accounts[0].address())
+            .value(U256::from(i))
+            .from(accounts[1].address());
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+
+        let tx = TransactionRequest::default()
+            .to(accounts[1].address())
+            .value(U256::from(i))
+            .from(accounts[2].address());
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    println!("BLOCK NUM{:#?}", provider.get_block_number().await.unwrap());
 
     // Define transactions
     let mut txs = vec![];
     for i in 0..3 {
         let from = accounts[i].address();
-        let nonce = provider.get_transaction_count(from).await.unwrap();
+        // let nonce = provider.get_transaction_count(from).await.unwrap();
         let to = accounts[i + 1].address();
         for j in 0..5 {
-            let nonce = nonce + (j as u64);
-            let tx = TransactionRequest::default()
-                .from(from)
-                .to(to)
-                .value(U256::from(j))
-                .nonce(nonce)
-                .gas_limit(1000000);
+            // let nonce = nonce + (j as u64);
+            let tx = TransactionRequest::default().from(from).to(to).value(U256::from(j));
             txs.push((tx, i as u64));
         }
     }
 
     api.anvil_reorg(7, 3, Some(txs)).await.unwrap();
 
-    assert_eq!(provider.get_block_number().await.unwrap(), 6);
-    for num in 4..7 {
+    assert_eq!(provider.get_block_number().await.unwrap(), 16);
+    for num in 14..17 {
         let block = provider.get_block_by_number(num.into(), true).await.unwrap();
         let block = block.unwrap();
         assert_eq!(block.transactions.len(), 5);

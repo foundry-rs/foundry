@@ -69,7 +69,7 @@ use anvil_rpc::error::RpcError;
 
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
-    backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
+    backend::{DatabaseError, DatabaseResult, Fork, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
@@ -96,6 +96,7 @@ use revm::{
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
+    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -455,6 +456,7 @@ impl Backend {
                 fork.total_difficulty(),
             );
             self.states.write().clear();
+
             self.db.write().await.clear();
 
             self.apply_genesis().await?;
@@ -2408,6 +2410,9 @@ impl Backend {
         new_len: u64,
         txs: HashMap<u64, Vec<Arc<PoolTransaction>>>,
     ) -> Result<(), BlockchainError> {
+        // Clear tx pool
+        // self.s
+        // TODO: refactor as outer function now handles this
         let current_height = self.best_number();
         // Find block to reorg back to
         let common_height = if self.best_number() > depth {
@@ -2421,35 +2426,75 @@ impl Backend {
         // Common block
         let block = self.get_block(BlockId::from(common_height)).unwrap();
         let hash = block.header.hash();
-        {
-            // Revert the state, rewinding the chain to common ancestor
-            let mut storage = self.blockchain.storage.write();
-            for height in ((common_height + 1)..=current_height).rev() {
-                // TODO extract this to common functionality (from revert_snapshot)
-                if let Some(hash) = storage.hashes.remove(&U64::from(height)) {
-                    if let Some(block) = storage.blocks.remove(&hash) {
-                        for tx in block.transactions {
-                            storage.transactions.remove(&tx.hash());
-                        }
-                    }
-                }
-            }
-            storage.best_number = U64::from(block.header.number);
-            storage.best_hash = hash;
 
-            // Mutate env to update cannonical
-            let mut env = self.env.write();
-            env.block = BlockEnv {
-                number: U256::from(block.header.number),
-                timestamp: U256::from(block.header.timestamp),
-                difficulty: block.header.difficulty,
-                prevrandao: Some(block.header.mix_hash),
-                gas_limit: U256::from(block.header.gas_limit),
-                coinbase: env.block.coinbase,
-                basefee: env.block.basefee,
-                ..Default::default()
-            };
-        };
+        // Fork from self
+        self.reset_state_by_block(block).await?;
+        // {
+        //     // Revert the state, rewinding the chain to common ancestor
+        //     let mut storage = self.blockchain.storage.write();
+        //     for height in ((common_height + 1)..=current_height).rev() {
+        //         // TODO extract this to common functionality (from revert_snapshot)
+        //         if let Some(hash) = storage.hashes.remove(&U64::from(height)) {
+        //             if let Some(block) = storage.blocks.remove(&hash) {
+        //                 for tx in block.transactions {
+        //                     storage.transactions.remove(&tx.hash());
+
+        //                     let mut state = self.states.write()
+        //                     state.update_interval_mine_block_time(block_time)
+        //                     // if let Some(mut state) = self.states.write()) {
+        //                     //     state.clear();
+        //                     // };
+        //                     // Need to remove all other storage at this height or hash
+        //                 }
+        //             }
+        //         }
+        //     }
+        //     storage.best_number = U64::from(block.header.number);
+        //     storage.best_hash = hash;
+
+        //     // Mutate env to update cannonical
+        //     let mut env = self.env.write();
+        //     env.block = BlockEnv {
+        //         number: U256::from(block.header.number),
+        //         timestamp: U256::from(block.header.timestamp),
+        //         difficulty: block.header.difficulty,
+        //         prevrandao: Some(block.header.mix_hash),
+        //         gas_limit: U256::from(block.header.gas_limit),
+        //         coinbase: env.block.coinbase,
+        //         basefee: env.block.basefee,
+        //          ..env.block.clone()
+        //     };
+
+        //     self.time.reset(env.block.timestamp.to::<u64>());
+
+        //        // this is the base fee of the current block, but we need the base fee of
+        //         // the next block
+        //         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+        //             block.header.gas_used,
+        //             fork_block.header.gas_limit,
+        //             fork_block.header.base_fee_per_gas.unwrap_or_default(),
+        //         );
+
+        //         self.fees.set_base_fee(next_block_base_fee);
+
+        //         // also reset the total difficulty
+        //         self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
+
+        //     // Likely need to revert account information and storage for each adress
+        // };
+
+        let addr_0 = Address::from_str("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap();
+        let addr_1 = Address::from_str("0x70997970c51812dc3a010c7d01b50e0d17dc79c8").unwrap();
+        let addr_2 = Address::from_str("0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc").unwrap();
+        let nonce_0 =
+            self.get_nonce(addr_0, BlockRequest::Number(self.best_number())).await.unwrap();
+        let nonce_1 =
+            self.get_nonce(addr_1, BlockRequest::Number(self.best_number())).await.unwrap();
+        let nonce_2 =
+            self.get_nonce(addr_2, BlockRequest::Number(self.best_number())).await.unwrap();
+        println!("reorg: addr:  {:#?} , nonce {:#?}", addr_0, nonce_0);
+        println!("reorg: addr:  {:#?} , nonce {:#?}", addr_1, nonce_1);
+        println!("reorg: addr:  {:#?} , nonce {:#?}", addr_2, nonce_2);
 
         // Create the newly reorged
         for i in 0..new_len {
@@ -2457,7 +2502,55 @@ impl Backend {
                 Some(txs) => txs.clone(),
                 None => vec![],
             };
+            println!("reorg: to_be_mined len: {:#?}", to_be_mined.len());
+            // Log the mine outcome here
             self.do_mine_block(to_be_mined).await;
+        }
+
+        Ok(())
+    }
+
+    async fn reset_state_by_block(&self, block: Block) -> Result<(), BlockchainError> {
+        // update all settings related to the forked block
+        {
+            let mut env = self.env.write();
+
+            env.block = BlockEnv {
+                number: U256::from(block.header.number),
+                timestamp: U256::from(block.header.timestamp),
+                gas_limit: U256::from(block.header.gas_limit),
+                difficulty: block.header.difficulty,
+                prevrandao: Some(block.header.mix_hash),
+                // Keep previous `coinbase` and `basefee` value
+                coinbase: env.block.coinbase,
+                basefee: env.block.basefee,
+                ..env.block.clone()
+            };
+
+            self.time.reset(env.block.timestamp.to::<u64>());
+
+            // this is the base fee of the current block, but we need the base fee of
+            // the next block
+            let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+                block.header.gas_used,
+                block.header.gas_limit,
+                block.header.base_fee_per_gas.unwrap_or_default(),
+            );
+
+            self.fees.set_base_fee(next_block_base_fee);
+        }
+        {
+            // reset storage
+            *self.blockchain.storage.write() = BlockchainStorage::forked(
+                block.header.number,
+                block.header.hash(),
+                block.header.difficulty,
+            );
+            self.states.write().clear();
+
+            self.db.write().await.clear();
+
+            self.apply_genesis().await?;
         }
 
         Ok(())
