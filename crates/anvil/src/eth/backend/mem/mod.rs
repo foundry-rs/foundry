@@ -48,7 +48,7 @@ use alloy_rpc_types::{
         },
         parity::{
             Action::{Call, Create, Reward, Selfdestruct},
-            LocalizedTransactionTrace,
+            LocalizedTransactionTrace, TraceOutput,
         },
     },
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
@@ -94,7 +94,7 @@ use revm::{
     },
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     io::{Read, Write},
     str::FromStr,
     sync::Arc,
@@ -102,6 +102,8 @@ use std::{
 };
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
+
+use super::db::{SerializableBlock, SerializableTransaction};
 
 pub mod cache;
 pub mod fork_db;
@@ -675,7 +677,7 @@ impl Backend {
     ///
     /// Returns the id of the snapshot created
     pub async fn create_snapshot(&self) -> U256 {
-        let num = self.best_number();
+        let num: u64 = self.best_number();
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
@@ -2429,6 +2431,57 @@ impl Backend {
 
         // Fork from self
         self.reset_state_by_block(block).await?;
+
+        let traces = self
+            .trace_filter(TraceFilter {
+                from_block: Some(common_height),
+                to_block: Some(current_height),
+                ..Default::default()
+            })
+            .await?;
+
+        let mut dirty_addresses = HashSet::new();
+        for trace in traces {
+            match trace.trace.action {
+                Call(call) => {
+                    dirty_addresses.insert(call.to);
+                    dirty_addresses.insert(call.from);
+                }
+                Create(create) => {
+                    dirty_addresses.insert(create.from);
+                    if let Some(result) = trace.trace.result {
+                        if let TraceOutput::Create(output) = result {
+                            dirty_addresses.insert(output.address);
+                        }
+                    }
+                }
+                Selfdestruct(_) => todo!(),
+                Reward(_) => todo!(),
+                _ => (),
+            }
+        }
+
+        // New API:
+        // Trace all uncle blocks
+        // Get all to and from addresses
+        // pub struct AccountInfo {
+        //     /// Account balance.
+        //     pub balance: U256,
+        //     /// Account nonce.
+        //     pub nonce: u64,
+        //     /// code hash,
+        //     pub code_hash: B256,
+        //     /// code: if None, `code_by_hash` will be used to fetch it if code needs to be loaded
+        // from     /// inside of `revm`.
+        //     pub code: Option<Bytecode>,
+        // }
+
+        // Trace all blocks
+        // get all dirty addresses
+        // get their accounts at the common block
+        // set acouunt
+        // self.get_account_at_block(address, block_request)
+
         // {
         //     // Revert the state, rewinding the chain to common ancestor
         //     let mut storage = self.blockchain.storage.write();
@@ -2539,6 +2592,7 @@ impl Backend {
 
             self.fees.set_base_fee(next_block_base_fee);
         }
+
         {
             // reset storage
             *self.blockchain.storage.write() = BlockchainStorage::forked(
@@ -2548,9 +2602,46 @@ impl Backend {
             );
             self.states.write().clear();
 
+            //
+            // transactions: the transactions currently in blockchain storage (DONT HAVE)
+
+            let txs: Vec<SerializableTransaction> = self
+                .blockchain
+                .storage
+                .read()
+                .transactions
+                .iter()
+                .filter(|(_, tx)| tx.block_number > block.header.number)
+                .map(|(_, tx)| tx.clone().into())
+                .collect();
+            let blocks: Vec<SerializableBlock> = self
+                .blockchain
+                .storage
+                .read()
+                .blocks
+                .iter()
+                .filter(|stored| stored.1.header.number > block.header.number)
+                .map(|(_, block)| block.clone().into())
+                .collect();
+
+            let serialized = self.db.read().await.dump_state(
+                self.env().read().block.clone(),
+                self.blockchain.storage.read().best_number,
+                blocks,
+                txs,
+            )?;
+            // TODO fix error
+            let serialized = serialized.ok_or_else(|| {
+                RpcError::invalid_params(
+                    "Dumping state not supported with the current configuration",
+                )
+            })?;
+
             self.db.write().await.clear();
 
-            self.apply_genesis().await?;
+            // self.load_state(serialized).await.unwrap();
+
+            // self.apply_genesis().await?;
         }
 
         Ok(())

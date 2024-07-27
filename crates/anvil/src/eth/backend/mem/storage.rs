@@ -211,7 +211,7 @@ impl Default for InMemoryBlockStates {
 }
 
 /// Stores the blockchain data (blocks, transactions)
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
     pub blocks: HashMap<B256, Block>,
@@ -261,7 +261,7 @@ impl BlockchainStorage {
     }
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
-        Self {
+        let forked = Self {
             blocks: Default::default(),
             hashes: HashMap::from([(U64::from(block_number), block_hash)]),
             best_hash: block_hash,
@@ -269,7 +269,9 @@ impl BlockchainStorage {
             genesis_hash: Default::default(),
             transactions: Default::default(),
             total_difficulty,
-        }
+        };
+        println!("Blockchain Storage: Forked {:#?}", forked);
+        forked
     }
 
     #[allow(unused)]
