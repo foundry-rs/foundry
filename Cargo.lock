@@ -3576,6 +3576,7 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-types",
  "base64 0.22.1",
+ "chrono",
  "dialoguer",
  "eyre",
  "foundry-cheatcodes-spec",
@@ -3598,6 +3599,7 @@ dependencies = [
  "thiserror",
  "toml 0.8.15",
  "tracing",
+ "vergen",
  "walkdir",
 ]
 

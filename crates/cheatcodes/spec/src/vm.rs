@@ -702,6 +702,15 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function breakpoint(string calldata char, bool value) external;
 
+    /// Returns the Foundry version.
+    /// Format: <cargo_version>+<git_sha>+<build_timestamp>
+    /// Sample output: 0.2.0+faa94c384+202407110019
+    /// Note: Build timestamps may vary slightly across platforms due to separate CI jobs.
+    /// For reliable version comparisons, use YYYYMMDD0000 format (e.g., >= 202407110000)
+    /// to compare timestamps while ignoring minor time differences.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function getFoundryVersion() external view returns (string memory version);
+
     /// Returns the RPC url for the given alias.
     #[cheatcode(group = Testing, safety = Safe)]
     function rpcUrl(string calldata rpcAlias) external view returns (string memory json);
