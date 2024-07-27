@@ -112,7 +112,6 @@ impl ScriptRunner {
                         rpc: self.evm_opts.fork_url.clone(),
                         transaction: TransactionRequest {
                             from: Some(self.evm_opts.sender),
-                            // input: Some(calldata.into()).into(),
                             input: TransactionInput {
                                 input: Some(calldata.clone().into()),
                                 data: Some(calldata.into()),
