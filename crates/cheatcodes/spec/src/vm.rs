@@ -2173,14 +2173,14 @@ interface Vm {
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
 
     /// Signs data with a `Wallet`.
-    ///
-    /// Returns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the
-    /// signature's `s` value, and the recovery id `v` in a single bytes32.
-    /// This format reduces the signature size from 65 to 64 bytes.
     #[cheatcode(group = Utilities)]
     function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
 
     /// Signs data with a `Wallet`.
+    ///
+    /// Returns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the
+    /// signature's `s` value, and the recovery id `v` in a single bytes32.
+    /// This format reduces the signature size from 65 to 64 bytes.
     #[cheatcode(group = Utilities)]
     function signEIP2098(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);
 

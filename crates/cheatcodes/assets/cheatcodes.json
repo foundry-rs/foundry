@@ -7794,7 +7794,7 @@
     {
       "func": {
         "id": "signEIP2098_3",
-        "description": "Signs data with a `Wallet`.",
+        "description": "Signs data with a `Wallet`.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.",
         "declaration": "function signEIP2098(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);",
         "visibility": "external",
         "mutability": "",
@@ -7894,7 +7894,7 @@
     {
       "func": {
         "id": "sign_3",
-        "description": "Signs data with a `Wallet`.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.",
+        "description": "Signs data with a `Wallet`.",
         "declaration": "function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);",
         "visibility": "external",
         "mutability": "",

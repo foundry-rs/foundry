@@ -242,7 +242,7 @@ pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
     let wallet = parse_wallet(private_key)?;
     let sig = wallet.sign_hash_sync(digest)?;
     debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
-    Ok(encode_rvs(sig))
+    Ok(encode_vrs(sig))
 }
 
 pub(super) fn sign_eip2098(private_key: &U256, digest: &B256) -> Result {
@@ -250,7 +250,7 @@ pub(super) fn sign_eip2098(private_key: &U256, digest: &B256) -> Result {
     let wallet = parse_wallet(private_key)?;
     let sig = wallet.sign_hash_sync(digest)?;
     debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
-    Ok(encode_vrs(sig))
+    Ok(encode_rvs(sig))
 }
 
 pub(super) fn sign_with_wallet<DB: DatabaseExt>(
