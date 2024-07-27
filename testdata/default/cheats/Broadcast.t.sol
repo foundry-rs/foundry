@@ -547,6 +547,21 @@ contract ScriptSign is DSTest {
 
     function run() external {
         vm.startBroadcast();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
+
+        vm._expectCheatcodeRevert(
+            bytes(string.concat("signer with address ", vm.toString(address(this)), " is not available"))
+        );
+        vm.sign(address(this), digest);
+
+        SignatureTester tester = new SignatureTester();
+        (, address caller,) = vm.readCallers();
+        assertEq(tester.owner(), caller);
+        tester.verifySignature(digest, v, r, s);
+    }
+
+    function run() external {
+        vm.startBroadcast();
         (bytes32 r, bytes32 vs) = vm.sign(digest);
 
         // Extract `s` from `vs`.
@@ -569,6 +584,16 @@ contract ScriptSign is DSTest {
         (, address caller,) = vm.readCallers();
         assertEq(tester.owner(), caller);
         tester.verifySignature(digest, v, r, s);
+    }
+
+    function run(address sender) external {
+        vm._expectCheatcodeRevert(bytes("could not determine signer"));
+        vm.sign(digest);
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(sender, digest);
+        address actual = ecrecover(digest, v, r, s);
+
+        assertEq(actual, sender);
     }
 
     function run(address sender) external {

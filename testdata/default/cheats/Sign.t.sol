@@ -10,6 +10,15 @@ contract SignTest is DSTest {
     function testSignDigest(uint248 pk, bytes32 digest) public {
         vm.assume(pk != 0);
 
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
+        address expected = vm.addr(pk);
+        address actual = ecrecover(digest, v, r, s);
+        assertEq(actual, expected, "digest signer did not match");
+    }
+
+    function testSignEIP2098Digest(uint248 pk, bytes32 digest) public {
+        vm.assume(pk != 0);
+
         (bytes32 r, bytes32 vs) = vm.sign(pk, digest);
 
         // Extract `s` from `vs`.

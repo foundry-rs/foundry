@@ -59,6 +59,13 @@ impl Cheatcode for sign_3Call {
     }
 }
 
+impl Cheatcode for signEIP2098_3Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
+        let Self { wallet, digest } = self;
+        sign_eip2098(&wallet.privateKey, digest)
+    }
+}
+
 impl Cheatcode for deriveKey_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { mnemonic, index } = self;
@@ -201,6 +208,14 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
         .abi_encode())
 }
 
+fn encode_vrs(sig: alloy_primitives::Signature) -> Vec<u8> {
+    // Retrieve v, r and s from signature.
+    let v = U256::from(sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte()));
+    let r = B256::from(sig.r());
+    let s = B256::from(sig.s());
+    (v, r, s).abi_encode()
+}
+
 fn encode_rvs(sig: alloy_primitives::Signature) -> Vec<u8> {
     // Retrieve v, r and s from signature.
     let v = sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte());
@@ -230,7 +245,47 @@ pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
     Ok(encode_rvs(sig))
 }
 
+pub(super) fn sign_eip2098(private_key: &U256, digest: &B256) -> Result {
+    // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
+    let wallet = parse_wallet(private_key)?;
+    let sig = wallet.sign_hash_sync(digest)?;
+    debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
+    Ok(encode_vrs(sig))
+}
+
 pub(super) fn sign_with_wallet<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    signer: Option<Address>,
+    digest: &B256,
+) -> Result {
+    let Some(script_wallets) = ccx.state.script_wallets() else {
+        bail!("no wallets are available");
+    };
+
+    let mut script_wallets = script_wallets.inner.lock();
+    let maybe_provided_sender = script_wallets.provided_sender;
+    let signers = script_wallets.multi_wallet.signers()?;
+
+    let signer = if let Some(signer) = signer {
+        signer
+    } else if let Some(provided_sender) = maybe_provided_sender {
+        provided_sender
+    } else if signers.len() == 1 {
+        *signers.keys().next().unwrap()
+    } else {
+        bail!("could not determine signer");
+    };
+
+    let wallet = signers
+        .get(&signer)
+        .ok_or_else(|| fmt_err!("signer with address {signer} is not available"))?;
+
+    let sig = foundry_common::block_on(wallet.sign_hash(digest))?;
+    debug_assert_eq!(sig.recover_address_from_prehash(digest)?, signer);
+    Ok(encode_vrs(sig))
+}
+
+pub(super) fn sign_eip2098_with_wallet<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     signer: Option<Address>,
     digest: &B256,

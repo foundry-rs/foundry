@@ -98,6 +98,17 @@ contract WalletTest is DSTest {
 
         Vm.Wallet memory wallet = vm.createWallet(pk);
 
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wallet, digest);
+
+        address recovered = ecrecover(digest, v, r, s);
+        assertEq(recovered, wallet.addr);
+    }
+
+    function testSignEIP2098WithWalletDigest(uint256 pkSeed, bytes32 digest) public {
+        uint256 pk = bound(pkSeed, 1, Q - 1);
+
+        Vm.Wallet memory wallet = vm.createWallet(pk);
+
         (bytes32 r, bytes32 vs) = vm.sign(wallet, digest);
 
         // Extract `s` from `vs`.
