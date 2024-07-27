@@ -130,6 +130,10 @@ contract WalletTest is DSTest {
         testSignWithWalletDigest(pkSeed, keccak256(message));
     }
 
+    function testSignEIP2098WithWalletMessage(uint256 pkSeed, bytes memory message) public {
+        testSignEIP2098WithWalletDigest(pkSeed, keccak256(message));
+    }
+
     function testGetNonceWallet(uint256 pkSeed) public {
         uint256 pk = bound(pkSeed, 1, Q - 1);
 
