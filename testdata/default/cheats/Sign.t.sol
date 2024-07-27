@@ -26,7 +26,7 @@ contract SignTest is DSTest {
         address expected = vm.addr(pk);
         address actual = ecrecover(digest, v, r, s);
         assertEq(actual, expected, "digest signer did not match");
-}
+    }
 
     function testSignMessage(uint248 pk, bytes memory message) public {
         testSignDigest(pk, keccak256(message));
