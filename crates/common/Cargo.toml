@@ -41,6 +41,7 @@ alloy-transport-http = { workspace = true, features = [
 alloy-transport-ipc.workspace = true
 alloy-transport-ws.workspace = true
 alloy-transport.workspace = true
+alloy-consensus = { workspace = true, features = ["k256"] }
 
 tower.workspace = true
 

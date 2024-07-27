@@ -113,6 +113,8 @@ pub struct NodeConfig {
     pub block_time: Option<Duration>,
     /// Disable auto, interval mining mode uns use `MiningMode::None` instead
     pub no_mining: bool,
+    /// Enables auto and interval mining mode
+    pub mixed_mining: bool,
     /// port to use for the server
     pub port: u16,
     /// maximum number of transactions in a block
@@ -397,6 +399,7 @@ impl Default for NodeConfig {
             genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
             block_time: None,
             no_mining: false,
+            mixed_mining: false,
             port: NODE_PORT,
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
@@ -643,6 +646,17 @@ impl NodeConfig {
     #[must_use]
     pub fn with_blocktime<D: Into<Duration>>(mut self, block_time: Option<D>) -> Self {
         self.block_time = block_time.map(Into::into);
+        self
+    }
+
+    #[must_use]
+    pub fn with_mixed_mining<D: Into<Duration>>(
+        mut self,
+        mixed_mining: bool,
+        block_time: Option<D>,
+    ) -> Self {
+        self.block_time = block_time.map(Into::into);
+        self.mixed_mining = mixed_mining;
         self
     }
 

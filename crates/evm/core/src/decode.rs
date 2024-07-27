@@ -171,9 +171,9 @@ impl RevertDecoder {
             return Some(s);
         }
 
-        // UTF-8-encoded string.
-        if let Ok(s) = std::str::from_utf8(err) {
-            return Some(s.to_string());
+        // ASCII string.
+        if err.is_ascii() {
+            return Some(std::str::from_utf8(err).unwrap().to_string());
         }
 
         // Generic custom error.

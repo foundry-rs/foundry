@@ -98,6 +98,9 @@ pub struct NodeArgs {
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
     pub no_mining: bool,
 
+    #[arg(long, visible_alias = "mixed-mining", requires = "block_time")]
+    pub mixed_mining: bool,
+
     /// The hosts the server will listen on.
     #[arg(
         long,
@@ -208,6 +211,7 @@ impl NodeArgs {
             .with_hardfork(self.hardfork)
             .with_blocktime(self.block_time)
             .with_no_mining(self.no_mining)
+            .with_mixed_mining(self.mixed_mining, self.block_time)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
             .with_genesis_timestamp(self.timestamp)
