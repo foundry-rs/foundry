@@ -109,7 +109,7 @@ contract WalletTest is DSTest {
 
         Vm.Wallet memory wallet = vm.createWallet(pk);
 
-        (bytes32 r, bytes32 vs) = vm.sign(wallet, digest);
+        (bytes32 r, bytes32 vs) = vm.signEIP2098(wallet, digest);
 
         // Extract `s` from `vs`.
         // The mask 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff has all bits set to 1 except the leftmost bit, which is 0.

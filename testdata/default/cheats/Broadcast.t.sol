@@ -562,7 +562,7 @@ contract ScriptSign is DSTest {
 
     function run() external {
         vm.startBroadcast();
-        (bytes32 r, bytes32 vs) = vm.sign(digest);
+        (bytes32 r, bytes32 vs) = vm.signEIP2098(digest);
 
         // Extract `s` from `vs`.
         // The mask 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff has all bits set to 1 except the leftmost bit, which is 0.
@@ -600,7 +600,7 @@ contract ScriptSign is DSTest {
         vm._expectCheatcodeRevert(bytes("could not determine signer"));
         vm.sign(digest);
 
-        (bytes32 r, bytes32 vs) = vm.sign(sender, digest);
+        (bytes32 r, bytes32 vs) = vm.signEIP2098(sender, digest);
 
         // Extract `s` from `vs`.
         // The mask 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff has all bits set to 1 except the leftmost bit, which is 0.

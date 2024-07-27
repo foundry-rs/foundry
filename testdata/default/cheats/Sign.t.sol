@@ -19,7 +19,7 @@ contract SignTest is DSTest {
     function testSignEIP2098Digest(uint248 pk, bytes32 digest) public {
         vm.assume(pk != 0);
 
-        (bytes32 r, bytes32 vs) = vm.sign(pk, digest);
+        (bytes32 r, bytes32 vs) = vm.signEIP2098(pk, digest);
 
         // Extract `s` from `vs`.
         // The mask 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff has all bits set to 1 except the leftmost bit, which is 0.
