@@ -116,7 +116,6 @@ impl ScriptRunner {
                                 input: Some(calldata.clone().into()),
                                 data: Some(calldata.into()),
                             },
-                            // nonce: Some(sender_nonce + library_transactions.len() as u64),
                             nonce: Some(sender_nonce + library_transactions.len() as u64),
                             to: Some(TxKind::Call(DEFAULT_CREATE2_DEPLOYER)),
                             ..Default::default()
