@@ -13,8 +13,8 @@ pub enum FormatSpec {
     Integer,
     /// %o format spec
     Object,
-    /// %e format spec
-    Exponential,
+    /// %e format spec with an optional precision
+    Exponential(Option<usize>),
     /// %x format spec
     Hexadecimal,
 }
@@ -26,7 +26,7 @@ impl FormatSpec {
             'd' => Some(Self::Number),
             'i' => Some(Self::Integer),
             'o' => Some(Self::Object),
-            'e' => Some(Self::Exponential),
+            'e' => Some(Self::Exponential(None)),
             'x' => Some(Self::Hexadecimal),
             _ => None,
         }
@@ -46,7 +46,7 @@ impl ConsoleFmt for String {
             FormatSpec::Object => format!("'{}'", self.clone()),
             FormatSpec::Number |
             FormatSpec::Integer |
-            FormatSpec::Exponential |
+            FormatSpec::Exponential(_) |
             FormatSpec::Hexadecimal => Self::from("NaN"),
         }
     }
@@ -58,7 +58,7 @@ impl ConsoleFmt for bool {
             FormatSpec::String => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
             FormatSpec::Number => (*self as i32).to_string(),
-            FormatSpec::Integer | FormatSpec::Exponential | FormatSpec::Hexadecimal => {
+            FormatSpec::Integer | FormatSpec::Exponential(_) | FormatSpec::Hexadecimal => {
                 String::from("NaN")
             }
         }
@@ -75,7 +75,7 @@ impl ConsoleFmt for U256 {
                 let hex = format!("{self:x}");
                 format!("0x{}", hex.trim_start_matches('0'))
             }
-            FormatSpec::Exponential => {
+            FormatSpec::Exponential(None) => {
                 let log = self.pretty().len() - 1;
                 let exp10 = Self::from(10).pow(Self::from(log));
                 let amount = *self;
@@ -86,6 +86,18 @@ impl ConsoleFmt for U256 {
                     format!("{integer}.{decimal}e{log}")
                 } else {
                     format!("{integer}e{log}")
+                }
+            }
+            FormatSpec::Exponential(Some(precision)) => {
+                let exp10 = Self::from(10).pow(Self::from(precision));
+                let amount = *self;
+                let integer = amount / exp10;
+                let decimal = (amount % exp10).to_string();
+                let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
+                if !decimal.is_empty() {
+                    format!("{integer}.{decimal}")
+                } else {
+                    format!("{integer}")
                 }
             }
         }
@@ -102,7 +114,7 @@ impl ConsoleFmt for I256 {
                 let hex = format!("{self:x}");
                 format!("0x{}", hex.trim_start_matches('0'))
             }
-            FormatSpec::Exponential => {
+            FormatSpec::Exponential(None) => {
                 let amount = *self;
                 let sign = if amount.is_negative() { "-" } else { "" };
                 let log = if amount.is_negative() {
@@ -120,6 +132,19 @@ impl ConsoleFmt for I256 {
                     format!("{integer}e{log}")
                 }
             }
+            FormatSpec::Exponential(Some(precision)) => {
+                let amount = *self;
+                let sign = if amount.is_negative() { "-" } else { "" };
+                let exp10 = Self::exp10(precision);
+                let integer = (amount / exp10).twos_complement();
+                let decimal = (amount % exp10).twos_complement().to_string();
+                let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
+                if !decimal.is_empty() {
+                    format!("{sign}{integer}.{decimal}")
+                } else {
+                    format!("{integer}")
+                }
+            }
         }
     }
 }
@@ -129,7 +154,7 @@ impl ConsoleFmt for Address {
         match spec {
             FormatSpec::String | FormatSpec::Hexadecimal => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential => {
+            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential(_) => {
                 String::from("NaN")
             }
         }
@@ -165,7 +190,7 @@ impl ConsoleFmt for [u8] {
         match spec {
             FormatSpec::String | FormatSpec::Hexadecimal => self.pretty(),
             FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential => {
+            FormatSpec::Number | FormatSpec::Integer | FormatSpec::Exponential(_) => {
                 String::from("NaN")
             }
         }
