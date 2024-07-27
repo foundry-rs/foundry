@@ -41,7 +41,7 @@ contract SignTest is DSTest {
         testSignDigest(pk, keccak256(message));
     }
 
-    function testSignEIP2098(uint248 pk, bytes memory message) public {
+    function testSignEIP2098Message(uint248 pk, bytes memory message) public {
         testSignEIP2098Digest(pk, keccak256(message));
     }
 }
