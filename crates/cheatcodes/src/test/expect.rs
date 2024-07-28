@@ -555,7 +555,7 @@ pub(crate) fn handle_expect_revert(
         }
     };
 
-    ensure!(!matches!(status, return_ok!()), "call did not revert as expected");
+    ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
 
     // If None, accept any revert
     let Some(expected_revert) = expected_revert else {
