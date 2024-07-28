@@ -2455,7 +2455,8 @@ impl Backend {
         }
 
         // Reset state
-        self.reset_state_by_block(common_block).await?;
+        let depth = current_height - common_block.header.number;
+        self.reset_state_by_block(common_block, current_height, depth).await?;
 
         // Set account state to common height
         for (addr, account) in accounts {
@@ -2479,10 +2480,22 @@ impl Backend {
             self.do_mine_block(to_be_mined).await;
         }
 
+        // let curr_height = self.get_block(BlockId::latest()).unwrap();
+        // for i in (0..=curr_height.header.number - 1).rev() {
+        //     let height = self
+        //         .get_block(BlockId::number(i))
+        //         .expect(format!("could not find block for {:#?}", i).as_str());
+        // }
+
         Ok(())
     }
 
-    async fn reset_state_by_block(&self, block: Block) -> Result<(), BlockchainError> {
+    async fn reset_state_by_block(
+        &self,
+        block: Block,
+        current_height: u64,
+        depth: u64,
+    ) -> Result<(), BlockchainError> {
         // update all settings related to the forked block
         {
             let mut env = self.env.write();
@@ -2513,12 +2526,12 @@ impl Backend {
         }
         {
             // reset storage
-            *self.blockchain.storage.write() = BlockchainStorage::forked(
+            self.blockchain.storage.write().rewind(
+                current_height,
                 block.header.number,
                 block.header.hash(),
-                block.header.difficulty,
             );
-            self.states.write().clear();
+            // self.states.write().clear();
         }
 
         Ok(())

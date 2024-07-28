@@ -15,6 +15,7 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::eth::EthRequest;
+use foundry_common::shell::println;
 use foundry_evm::revm::primitives::SpecId;
 use std::{
     str::FromStr,
@@ -662,6 +663,13 @@ async fn test_reorg() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
 
+    let reset_chain = async {
+        let curr_height = provider.get_block_number().await.unwrap();
+        println!("{:#?}", curr_height);
+        api.anvil_reorg(curr_height, 0, None).await.unwrap();
+        assert_eq!(provider.get_block_number().await.unwrap(), 0);
+    };
+
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
 
     // Populate chain
@@ -705,13 +713,5 @@ async fn test_reorg() {
         assert_eq!(block.transactions.len(), 5);
     }
 
-    // TODO:
-    // Assert
-    // balances
-    // code at address
-    // storage at address
-
-    // Error cases
-    // invalid reorg depth
-    // tx lengths
+    reset_chain.await;
 }

@@ -1933,7 +1933,7 @@ impl EthApi {
 
         // Find common height
         let current_height = self.backend.best_number();
-        let common_height = if current_height > depth {
+        let common_height = if current_height >= depth {
             current_height - depth
         } else {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(

@@ -7,6 +7,7 @@ use crate::eth::{
     error::BlockchainError,
     pool::transactions::PoolTransaction,
 };
+use alloy_consensus::Sealable;
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
 use alloy_rpc_types::{
     trace::{
@@ -272,6 +273,28 @@ impl BlockchainStorage {
         forked
     }
 
+    // /// all stored blocks (block hash -> block)
+    // pub blocks: HashMap<B256, Block>,
+    // /// mapping from block number -> block hash
+    // pub hashes: HashMap<U64, B256>,
+    // /// The current best hash
+    // pub best_hash: B256,
+    // /// The current best block number
+    // pub best_number: U64,
+    // /// genesis hash of the chain
+    // pub genesis_hash: B256,
+    // /// Mapping from the transaction hash to a tuple containing the transaction as well as the
+    // /// transaction receipt
+    // pub transactions: HashMap<TxHash, MinedTransaction>,
+
+    pub fn rewind(&mut self, current_height: u64, block_number: u64, block_hash: B256) {
+        for num in (block_number + 1..=current_height).rev() {
+            self.remove_block_by_number(num);
+        }
+        self.best_hash = block_hash;
+        self.best_number = U64::from(block_number);
+    }
+
     #[allow(unused)]
     pub fn empty() -> Self {
         Self {
@@ -302,12 +325,22 @@ impl BlockchainStorage {
         }
     }
 
-    // TODO
-    // We likely need an API here to:
-    // Revert state to common ancestor.
-    // State will be:
-    // Account state
-    // Contract state
+    pub fn remove_block_by_number(&mut self, num: u64) {
+        if let Some(hash) = self.hashes.get(&(U64::from(num))).copied() {
+            self.remove_block(hash);
+        }
+    }
+
+    pub fn remove_block(&mut self, block_hash: B256) {
+        if let Some(block) = self.blocks.get(&block_hash) {
+            let block_hash = block.header.hash();
+            let block_number = block.header.number;
+            println!("remove_block: remove {:#?}", block_number);
+            self.remove_block_transactions(block_hash);
+            self.blocks.remove(&block_hash);
+            self.hashes.remove(&U64::from(block_number));
+        }
+    }
 }
 
 impl BlockchainStorage {
