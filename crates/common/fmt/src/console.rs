@@ -1,5 +1,6 @@
 use super::UIfmt;
 use alloy_primitives::{Address, Bytes, FixedBytes, I256, U256};
+use std::iter::Peekable;
 
 /// A format specifier.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -20,14 +21,33 @@ pub enum FormatSpec {
 }
 
 impl FormatSpec {
-    fn from_char(ch: char) -> Option<Self> {
-        match ch {
+    fn from_chars<I>(iter: &mut Peekable<I>) -> Option<Self>
+    where
+        I: Iterator<Item = char>,
+    {
+        match iter.next()? {
             's' => Some(Self::String),
             'd' => Some(Self::Number),
             'i' => Some(Self::Integer),
             'o' => Some(Self::Object),
             'e' => Some(Self::Exponential(None)),
             'x' => Some(Self::Hexadecimal),
+            ch if ch.is_ascii_digit() => {
+                let mut num = ch.to_string();
+                while let Some(&ch) = iter.peek() {
+                    if ch.is_ascii_digit() {
+                        num.push(ch);
+                        iter.next();
+                    } else {
+                        break;
+                    }
+                }
+                if iter.next() == Some('e') {
+                    Some(Self::Exponential(Some(num.parse().ok()?)))
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -258,31 +278,37 @@ fn format_spec<'a>(
 ) -> Option<&'a dyn ConsoleFmt> {
     let mut expect_fmt = false;
     let mut current_value = values.next();
+    let mut chars = s.chars().peekable();
 
-    for (i, ch) in s.char_indices() {
-        // no more values
-        if current_value.is_none() {
-            result.push_str(&s[i..].replace("%%", "%"));
-            break
-        }
-
+    while let Some(ch) = chars.next() {
         if expect_fmt {
             expect_fmt = false;
-            if let Some(spec) = FormatSpec::from_char(ch) {
+            let mut iter = std::iter::once(ch).chain(chars.by_ref()).peekable();
+            if let Some(spec) = FormatSpec::from_chars(&mut iter) {
                 // format and write the value
-                let string = current_value.unwrap().fmt(spec);
-                result.push_str(&string);
-                current_value = values.next();
+                if let Some(value) = current_value {
+                    let string = value.fmt(spec);
+                    result.push_str(&string);
+                    current_value = values.next();
+                }
             } else {
                 // invalid specifier or a second `%`, in both cases we ignore
+                result.push('%');
+                result.push(ch);
+            }
+        } else if ch == '%' {
+            if let Some(&next_ch) = chars.peek() {
+                if next_ch == '%' {
+                    result.push('%');
+                    chars.next();
+                } else {
+                    expect_fmt = true;
+                }
+            } else {
                 result.push(ch);
             }
         } else {
-            expect_fmt = ch == '%';
-            // push when not a `%` or it's the last char
-            if !expect_fmt || i == s.len() - 1 {
-                result.push(ch);
-            }
+            result.push(ch);
         }
     }
 
@@ -417,6 +443,9 @@ mod tests {
         assert_eq!("-1.23e5", fmt_1("%e", &I256::try_from(-123000).unwrap()));
         assert_eq!("1.0023e6", fmt_1("%e", &I256::try_from(1002300).unwrap()));
         assert_eq!("1.23e5", fmt_1("%e", &I256::try_from(123000).unwrap()));
+        assert_eq!("123000", fmt_1("%0e", &I256::try_from(123000).unwrap()));
+        assert_eq!("12300", fmt_1("%1e", &I256::try_from(123000).unwrap()));
+        assert_eq!("0.0123", fmt_1("%7e", &I256::try_from(123000).unwrap()));
         assert_eq!("0x64", fmt_1("%x", &I256::try_from(100).unwrap()));
         assert_eq!(
             "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c",
@@ -455,6 +484,17 @@ mod tests {
             "foo 0xdEADBEeF00000000000000000000000000000000 %s true and 21 foo %",
             logf3!(log3)
         );
+
+        // %ne
+        let log4 = Log1 { p_0: String::from("%5e"), p_1: U256::from(123456789) };
+        assert_eq!("1234.56789", logf1!(log4));
+
+        let log5 = Log1 { p_0: String::from("foo %3e bar"), p_1: U256::from(123456789) };
+        assert_eq!("foo 123456.789 bar", logf1!(log5));
+
+        let log6 =
+            Log2 { p_0: String::from("%e and %12e"), p_1: false, p_2: U256::from(123456789) };
+        assert_eq!("NaN and 0.000123456789", logf2!(log6));
     }
 
     #[test]
