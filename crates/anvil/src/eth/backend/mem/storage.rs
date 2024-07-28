@@ -181,7 +181,6 @@ impl InMemoryBlockStates {
 
     /// Clears all entries
     pub fn clear(&mut self) {
-        println!("storage: CLEARED");
         self.states.clear();
         self.on_disk_states.clear();
         self.present.clear();
@@ -270,7 +269,6 @@ impl BlockchainStorage {
             transactions: Default::default(),
             total_difficulty,
         };
-        println!("Blockchain Storage: Forked {:#?}", forked);
         forked
     }
 

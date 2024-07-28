@@ -704,4 +704,14 @@ async fn test_reorg() {
         let block = block.unwrap();
         assert_eq!(block.transactions.len(), 5);
     }
+
+    // TODO:
+    // Assert
+    // balances
+    // code at address
+    // storage at address
+
+    // Error cases
+    // invalid reorg depth
+    // tx lengths
 }

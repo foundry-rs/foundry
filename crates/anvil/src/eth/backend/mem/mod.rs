@@ -69,7 +69,7 @@ use anvil_rpc::error::RpcError;
 
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
-    backend::{DatabaseError, DatabaseResult, Fork, RevertSnapshotAction},
+    backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
@@ -96,14 +96,11 @@ use revm::{
 use std::{
     collections::{BTreeMap, HashSet},
     io::{Read, Write},
-    str::FromStr,
     sync::Arc,
     time::Duration,
 };
 use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
-
-use super::db::{SerializableBlock, SerializableTransaction};
 
 pub mod cache;
 pub mod fork_db;
@@ -2408,38 +2405,21 @@ impl Backend {
     // TODO
     pub async fn reorg(
         &self,
-        depth: u64,
+        common_block: Block,
+        current_height: u64,
         new_len: u64,
         txs: HashMap<u64, Vec<Arc<PoolTransaction>>>,
     ) -> Result<(), BlockchainError> {
-        // Clear tx pool
-        // self.s
-        // TODO: refactor as outer function now handles this
-        let current_height = self.best_number();
-        // Find block to reorg back to
-        let common_height = if self.best_number() > depth {
-            self.best_number() - depth
-        } else {
-            return Err(BlockchainError::RpcError(RpcError::invalid_params(
-                "reorg depth exceeds chain height",
-            )));
-        };
-
-        // Common block
-        let block = self.get_block(BlockId::from(common_height)).unwrap();
-        let hash = block.header.hash();
-
-        // Fork from self
-        self.reset_state_by_block(block).await?;
-
+        // Trace all blocks to be reorged
         let traces = self
             .trace_filter(TraceFilter {
-                from_block: Some(common_height),
+                from_block: Some(common_block.header.number),
                 to_block: Some(current_height),
                 ..Default::default()
             })
             .await?;
 
+        // Collect all dirty addresses which had their account mutated
         let mut dirty_addresses = HashSet::new();
         for trace in traces {
             match trace.trace.action {
@@ -2455,108 +2435,47 @@ impl Backend {
                         }
                     }
                 }
-                Selfdestruct(_) => todo!(),
-                Reward(_) => todo!(),
-                _ => (),
+                Selfdestruct(destruct) => {
+                    dirty_addresses.insert(destruct.address);
+                    dirty_addresses.insert(destruct.refund_address);
+                }
+                Reward(reward) => {
+                    dirty_addresses.insert(reward.author);
+                }
             }
         }
 
-        // New API:
-        // Trace all uncle blocks
-        // Get all to and from addresses
-        // pub struct AccountInfo {
-        //     /// Account balance.
-        //     pub balance: U256,
-        //     /// Account nonce.
-        //     pub nonce: u64,
-        //     /// code hash,
-        //     pub code_hash: B256,
-        //     /// code: if None, `code_by_hash` will be used to fetch it if code needs to be loaded
-        // from     /// inside of `revm`.
-        //     pub code: Option<Bytecode>,
-        // }
+        // Retrieve account state at common height for dirty addresses
+        let mut accounts = HashMap::new();
+        for addr in dirty_addresses.into_iter() {
+            let account = self
+                .get_account_at_block(addr, Some(BlockRequest::Number(common_block.header.number)))
+                .await?;
+            accounts.insert(addr, account);
+        }
 
-        // Trace all blocks
-        // get all dirty addresses
-        // get their accounts at the common block
-        // set acouunt
-        // self.get_account_at_block(address, block_request)
+        // Reset state
+        self.reset_state_by_block(common_block).await?;
 
-        // {
-        //     // Revert the state, rewinding the chain to common ancestor
-        //     let mut storage = self.blockchain.storage.write();
-        //     for height in ((common_height + 1)..=current_height).rev() {
-        //         // TODO extract this to common functionality (from revert_snapshot)
-        //         if let Some(hash) = storage.hashes.remove(&U64::from(height)) {
-        //             if let Some(block) = storage.blocks.remove(&hash) {
-        //                 for tx in block.transactions {
-        //                     storage.transactions.remove(&tx.hash());
+        // Set account state to common height
+        for (addr, account) in accounts {
+            self.db.write().await.insert_account(
+                addr,
+                AccountInfo {
+                    balance: account.balance,
+                    nonce: account.nonce,
+                    code_hash: account.code_hash,
+                    code: None,
+                },
+            );
+        }
 
-        //                     let mut state = self.states.write()
-        //                     state.update_interval_mine_block_time(block_time)
-        //                     // if let Some(mut state) = self.states.write()) {
-        //                     //     state.clear();
-        //                     // };
-        //                     // Need to remove all other storage at this height or hash
-        //                 }
-        //             }
-        //         }
-        //     }
-        //     storage.best_number = U64::from(block.header.number);
-        //     storage.best_hash = hash;
-
-        //     // Mutate env to update cannonical
-        //     let mut env = self.env.write();
-        //     env.block = BlockEnv {
-        //         number: U256::from(block.header.number),
-        //         timestamp: U256::from(block.header.timestamp),
-        //         difficulty: block.header.difficulty,
-        //         prevrandao: Some(block.header.mix_hash),
-        //         gas_limit: U256::from(block.header.gas_limit),
-        //         coinbase: env.block.coinbase,
-        //         basefee: env.block.basefee,
-        //          ..env.block.clone()
-        //     };
-
-        //     self.time.reset(env.block.timestamp.to::<u64>());
-
-        //        // this is the base fee of the current block, but we need the base fee of
-        //         // the next block
-        //         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-        //             block.header.gas_used,
-        //             fork_block.header.gas_limit,
-        //             fork_block.header.base_fee_per_gas.unwrap_or_default(),
-        //         );
-
-        //         self.fees.set_base_fee(next_block_base_fee);
-
-        //         // also reset the total difficulty
-        //         self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
-
-        //     // Likely need to revert account information and storage for each adress
-        // };
-
-        let addr_0 = Address::from_str("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap();
-        let addr_1 = Address::from_str("0x70997970c51812dc3a010c7d01b50e0d17dc79c8").unwrap();
-        let addr_2 = Address::from_str("0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc").unwrap();
-        let nonce_0 =
-            self.get_nonce(addr_0, BlockRequest::Number(self.best_number())).await.unwrap();
-        let nonce_1 =
-            self.get_nonce(addr_1, BlockRequest::Number(self.best_number())).await.unwrap();
-        let nonce_2 =
-            self.get_nonce(addr_2, BlockRequest::Number(self.best_number())).await.unwrap();
-        println!("reorg: addr:  {:#?} , nonce {:#?}", addr_0, nonce_0);
-        println!("reorg: addr:  {:#?} , nonce {:#?}", addr_1, nonce_1);
-        println!("reorg: addr:  {:#?} , nonce {:#?}", addr_2, nonce_2);
-
-        // Create the newly reorged
+        // Create the new reorged chain
         for i in 0..new_len {
             let to_be_mined = match txs.get(&i) {
                 Some(txs) => txs.clone(),
                 None => vec![],
             };
-            println!("reorg: to_be_mined len: {:#?}", to_be_mined.len());
-            // Log the mine outcome here
             self.do_mine_block(to_be_mined).await;
         }
 
@@ -2592,7 +2511,6 @@ impl Backend {
 
             self.fees.set_base_fee(next_block_base_fee);
         }
-
         {
             // reset storage
             *self.blockchain.storage.write() = BlockchainStorage::forked(
@@ -2601,47 +2519,6 @@ impl Backend {
                 block.header.difficulty,
             );
             self.states.write().clear();
-
-            //
-            // transactions: the transactions currently in blockchain storage (DONT HAVE)
-
-            let txs: Vec<SerializableTransaction> = self
-                .blockchain
-                .storage
-                .read()
-                .transactions
-                .iter()
-                .filter(|(_, tx)| tx.block_number > block.header.number)
-                .map(|(_, tx)| tx.clone().into())
-                .collect();
-            let blocks: Vec<SerializableBlock> = self
-                .blockchain
-                .storage
-                .read()
-                .blocks
-                .iter()
-                .filter(|stored| stored.1.header.number > block.header.number)
-                .map(|(_, block)| block.clone().into())
-                .collect();
-
-            let serialized = self.db.read().await.dump_state(
-                self.env().read().block.clone(),
-                self.blockchain.storage.read().best_number,
-                blocks,
-                txs,
-            )?;
-            // TODO fix error
-            let serialized = serialized.ok_or_else(|| {
-                RpcError::invalid_params(
-                    "Dumping state not supported with the current configuration",
-                )
-            })?;
-
-            self.db.write().await.clear();
-
-            // self.load_state(serialized).await.unwrap();
-
-            // self.apply_genesis().await?;
         }
 
         Ok(())

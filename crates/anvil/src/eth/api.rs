@@ -57,10 +57,10 @@ use alloy_signer::Signature;
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
-        block::{self, BlockInfo},
+        block::BlockInfo,
         transaction::{
-            transaction_request_to_typed, MaybeImpersonatedTransaction, PendingTransaction,
-            ReceiptResponse, TypedTransaction, TypedTransactionRequest,
+            transaction_request_to_typed, PendingTransaction, ReceiptResponse, TypedTransaction,
+            TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -83,7 +83,6 @@ use parking_lot::RwLock;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
-    hash::Hash,
     sync::Arc,
     time::Duration,
 };
@@ -1931,6 +1930,7 @@ impl EthApi {
         tx_block_pairs: Option<Vec<(TransactionRequest, u64)>>,
     ) -> Result<()> {
         node_info!("anvil_reorg");
+
         // Find common height
         let current_height = self.backend.best_number();
         let common_height = if current_height > depth {
@@ -1940,13 +1940,12 @@ impl EthApi {
                 "Reorg depth exceeds current chain height",
             )));
         };
-        // Get the common ancestor block
-        let common_block = if let Some(block) = self.backend.get_block(common_height) {
-            block
-        } else {
-            return Err(BlockchainError::BlockNotFound);
-        };
 
+        // Get the common ancestor block
+        let common_block =
+            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
+
+        // Construct the signed tx pairs for each new block
         let txs = if let Some(mut pairs) = tx_block_pairs {
             // Validate that tx block pairs fit into new chain
             if let Some(max) = pairs.iter().max_by_key(|item| item.1) {
@@ -1982,7 +1981,7 @@ impl EthApi {
 
                 let mut tx = WithOtherFields::new(tx);
 
-                // If gas is missing
+                // Estimate gas
                 if tx.gas.is_none() {
                     if let Ok(gas) = self.estimate_gas(tx.clone(), None, None).await {
                         tx.gas = Some(gas.to());
@@ -1991,13 +1990,6 @@ impl EthApi {
 
                 // Convert the transaction requests to pending transaction
                 let request = self.build_typed_tx_request(tx, *curr_nonce)?;
-
-                println!(
-                    "anvil_reorg: addr {:#?}, real nonce {:#?}",
-                    from,
-                    self.get_transaction_count(from, Some(current_height.into())).await.unwrap()
-                );
-                println!("anvil_reorg: addr {:#?}, nonce {:#?}", from, *curr_nonce);
                 // Increment nonce
                 *curr_nonce += 1;
 
@@ -2016,24 +2008,24 @@ impl EthApi {
                 // Validate transactions against current state
                 if let Err(err) = self.backend.validate_pool_transaction(&pending).await {
                     match err {
+                        // Ignore nonce validation
                         BlockchainError::InvalidTransaction(
                             InvalidTransactionError::NonceTooLow,
                         ) => (),
                         _ => return Err(err),
                     }
                 }
+
                 let pool_tx = PoolTransaction::new(pending);
                 signed_block_txs.entry(block_number).or_insert(Vec::new()).push(Arc::new(pool_tx));
             }
-            for (key, val) in signed_block_txs.iter().enumerate() {
-                println!("anvil_reorg: block tx pairs {:#?}, {:#?}", key, val.1.len());
-            }
+
             signed_block_txs
         } else {
             HashMap::new()
         };
 
-        self.backend.reorg(depth, new_len, txs).await?;
+        self.backend.reorg(common_block, current_height, new_len, txs).await?;
         Ok(())
     }
 
