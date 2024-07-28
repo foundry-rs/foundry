@@ -149,7 +149,7 @@ impl ConsoleFmt for I256 {
                 if !decimal.is_empty() {
                     format!("{sign}{integer}.{decimal}e{log}")
                 } else {
-                    format!("{integer}e{log}")
+                    format!("{sign}{integer}e{log}")
                 }
             }
             FormatSpec::Exponential(Some(precision)) => {
@@ -162,7 +162,7 @@ impl ConsoleFmt for I256 {
                 if !decimal.is_empty() {
                     format!("{sign}{integer}.{decimal}")
                 } else {
-                    format!("{integer}")
+                    format!("{sign}{integer}")
                 }
             }
         }
@@ -439,13 +439,20 @@ mod tests {
         assert_eq!("100", fmt_1("%d", &I256::try_from(100).unwrap()));
         assert_eq!("100", fmt_1("%i", &I256::try_from(100).unwrap()));
         assert_eq!("1e2", fmt_1("%e", &I256::try_from(100).unwrap()));
+        assert_eq!("-1e2", fmt_1("%e", &I256::try_from(-100).unwrap()));
         assert_eq!("-1.0023e6", fmt_1("%e", &I256::try_from(-1002300).unwrap()));
         assert_eq!("-1.23e5", fmt_1("%e", &I256::try_from(-123000).unwrap()));
         assert_eq!("1.0023e6", fmt_1("%e", &I256::try_from(1002300).unwrap()));
         assert_eq!("1.23e5", fmt_1("%e", &I256::try_from(123000).unwrap()));
+
+        // %ne
+        assert_eq!("10", fmt_1("%1e", &I256::try_from(100).unwrap()));
+        assert_eq!("-1", fmt_1("%2e", &I256::try_from(-100).unwrap()));
         assert_eq!("123000", fmt_1("%0e", &I256::try_from(123000).unwrap()));
         assert_eq!("12300", fmt_1("%1e", &I256::try_from(123000).unwrap()));
         assert_eq!("0.0123", fmt_1("%7e", &I256::try_from(123000).unwrap()));
+        assert_eq!("-0.0123", fmt_1("%7e", &I256::try_from(-123000).unwrap()));
+
         assert_eq!("0x64", fmt_1("%x", &I256::try_from(100).unwrap()));
         assert_eq!(
             "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c",
