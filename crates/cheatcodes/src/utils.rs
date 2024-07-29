@@ -56,7 +56,7 @@ impl Cheatcode for sign_3Call {
     fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
         let sig = sign(&wallet.privateKey, digest);
-        Ok(encode_full_signature(sig))
+        Ok(encode_full_sig(sig))
     }
 }
 
@@ -64,7 +64,7 @@ impl Cheatcode for signCompact_3Call {
     fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
         let sig = sign(&wallet.privateKey, digest);
-        Ok(encode_compact_signature(sig))
+        Ok(encode_compact_sig(sig))
     }
 }
 
@@ -210,7 +210,7 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
         .abi_encode())
 }
 
-pub(super) fn encode_full_signature(sig: alloy_primitives::Signature) -> Vec<u8> {
+pub(super) fn encode_full_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
     // Retrieve v, r and s from signature.
     let v = U256::from(sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte()));
     let r = B256::from(sig.r());
@@ -218,7 +218,7 @@ pub(super) fn encode_full_signature(sig: alloy_primitives::Signature) -> Vec<u8>
     (v, r, s).abi_encode()
 }
 
-pub(super) fn encode_compact_signature(sig: alloy_primitives::Signature) -> Vec<u8> {
+pub(super) fn encode_compact_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
     // Implement EIP-2098 compact signature.
     let r = B256::from(sig.r());
     let mut vs = sig.s();
