@@ -112,9 +112,9 @@ contract WalletTest is DSTest {
         (bytes32 r, bytes32 vs) = vm.signCompact(wallet, digest);
 
         // Extract `s` from `vs`.
-        // The mask 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff has all bits set to 1 except the leftmost bit, which is 0.
-        // Performing a bitwise AND operation with this mask clears the leftmost bit of `vs`, giving us `s`.
-        bytes32 s = bytes32(uint256(vs) & 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+        // Shift left by 1 bit to clear the leftmost bit, then shift right by 1 bit to restore the original position.
+        // This effectively clears the leftmost bit of `vs`, giving us `s`.
+        bytes32 s = bytes32((uint256(vs) << 1) >> 1);
 
         // Extract `v` from `vs`.
         // We shift `vs` right by 255 bits to isolate the leftmost bit.
