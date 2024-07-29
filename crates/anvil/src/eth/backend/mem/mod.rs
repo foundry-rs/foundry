@@ -1895,6 +1895,7 @@ impl Backend {
         .await?
     }
 
+    /// Returns the storage map of an address by block
     pub async fn get_storage_at_block(
         &self,
         address: Address,
@@ -2523,7 +2524,6 @@ impl Backend {
         // Reset the environment
         {
             let mut env = self.env.write();
-
             env.block = BlockEnv {
                 number: U256::from(block.header.number),
                 timestamp: U256::from(block.header.timestamp),
@@ -2535,9 +2535,9 @@ impl Backend {
                 basefee: env.block.basefee,
                 ..env.block.clone()
             };
-
             self.time.reset(env.block.timestamp.to::<u64>());
         }
+
         // Update base fee
         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
             block.header.gas_used,

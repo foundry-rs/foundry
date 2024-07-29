@@ -446,6 +446,9 @@ impl EthApi {
             EthRequest::RemovePoolTransactions(address) => {
                 self.anvil_remove_pool_transactions(address).await.to_rpc_result()
             }
+            EthRequest::AnvilReorg(depth, new_len, tx_block_pairs) => {
+                self.anvil_reorg(depth, new_len, Some(tx_block_pairs)).await.to_rpc_result()
+            }
         }
     }
 
@@ -1923,6 +1926,9 @@ impl EthApi {
         Ok(())
     }
 
+    /// Reorg the chain by rewinding the state to a specific depth and mine new blocks ontop.
+    ///
+    /// Optionally supply a list of transactions that will populate the newly mined blocks
     pub async fn anvil_reorg(
         &self,
         depth: u64,
@@ -1934,9 +1940,8 @@ impl EthApi {
         // Find common height
         let current_height = self.backend.best_number();
         let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
-            RpcError::invalid_params("Reorg depth exceeds or equals current chain height"),
+            RpcError::invalid_params("Reorg depth exceeds current chain height"),
         ))?;
-        println!("Common height vs current height {:#?} {:#?}", common_height, current_height);
 
         // Get the common ancestor block
         let common_block =
@@ -1962,7 +1967,6 @@ impl EthApi {
 
             // Construct pool transactions for each block
             let mut signed_block_txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::new();
-            println!("anvil_reorg: pairs len {:#}", pairs.len());
             for pair in pairs {
                 let (tx_req, block_number) = pair;
 

@@ -706,6 +706,17 @@ async fn test_reorg() {
         let block = block.unwrap();
         assert_eq!(block.transactions.len(), 5);
     }
+
+    // Send a few more transaction to verify the chain can still progress
+    for i in 0..3 {
+        let tx = TransactionRequest::default()
+            .to(accounts[0].address())
+            .value(U256::from(i))
+            .from(accounts[1].address());
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
     // Reset chain
     let curr_height = provider.get_block_number().await.unwrap();
     api.anvil_reorg(curr_height, 0, None).await.unwrap();
@@ -736,4 +747,12 @@ async fn test_reorg() {
     api.anvil_reorg(5, 0, None).await.unwrap();
     let value = storage.getValue().call().await.unwrap()._0;
     assert_eq!("initial value".to_string(), value);
+
+    // Test reorg depth exceeding current height
+    let res = api.anvil_reorg(100, 0, None).await;
+    assert!(res.is_err());
+
+    // Test reorg tx pairs exceeds chain length
+    let res = api.anvil_reorg(1, 1, Some(vec![(TransactionRequest::default(), 10)])).await;
+    assert!(res.is_err());
 }

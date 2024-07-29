@@ -768,6 +768,14 @@ pub enum EthRequest {
         serde(rename = "anvil_removePoolTransactions", with = "sequence")
     )]
     RemovePoolTransactions(Address),
+
+    // Reorg the chain
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_reorg",))]
+    AnvilReorg(
+        u64,
+        u64,
+        #[cfg_attr(feature = "serde", serde(default))] Vec<(TransactionRequest, u64)>,
+    ),
 }
 
 /// Represents ethereum JSON-RPC API
