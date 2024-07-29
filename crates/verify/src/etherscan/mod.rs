@@ -40,8 +40,8 @@ use yansi::Paint;
 
 mod flatten;
 
-mod prepare;
-use prepare::{BytecodeType, JsonResult};
+mod helpers;
+use helpers::{BytecodeType, JsonResult};
 
 mod standard_json;
 
@@ -164,38 +164,38 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let (etherscan, config) = self.prepare_verify_bytecode_request(&args).await?;
         let provider = get_provider(&config)?;
 
-        // Get the constructor args using `source_code` endpoint
+        // Get the constructor args using `source_code` endpoint.
         let source_code = etherscan.contract_source_code(args.address).await?;
 
-        // Check if the contract name matches
+        // Check if the contract name matches.
         let name = source_code.items.first().map(|item| item.contract_name.to_owned());
         if name.as_ref() != Some(&args.contract.name) {
             eyre::bail!("Contract name mismatch");
         }
 
-        // Obtain Etherscan compilation metadata
+        // Obtain Etherscan compilation metadata.
         let etherscan_metadata = source_code.items.first().unwrap();
 
-        // Obtain local artifact
+        // Obtain local artifact.
         let artifact = if let Ok(local_bytecode) =
-            prepare::build_using_cache(&args, etherscan_metadata, &config)
+            helpers::build_using_cache(&args, etherscan_metadata, &config)
         {
             trace!("using cache");
             local_bytecode
         } else {
-            prepare::build_project(&args, &config)?
+            helpers::build_project(&args, &config)?
         };
 
-        // Get the constructor args from etherscan
+        // Get the constructor args from Etherscan.
         let mut constructor_args = if let Some(args) = source_code.items.first() {
             args.constructor_arguments.clone()
         } else {
             eyre::bail!("No constructor arguments found for contract at address {}", args.address);
         };
 
-        // Get and encode user provided constructor args
+        // Get and encode user provided constructor args.
         let provided_constructor_args = if let Some(path) = args.constructor_args_path.to_owned() {
-            // Read from file
+            // Read from file.
             Some(read_constructor_args_file(path)?)
         } else {
             args.constructor_args.to_owned()
@@ -230,7 +230,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             constructor_args = provided.into();
         }
 
-        // Get creation tx hash
+        // Get creation tx hash.
         let creation_data = etherscan.contract_creation_data(args.address).await?;
 
         trace!(target: "forge::verify", creation_tx_hash = ?creation_data.transaction_hash);
@@ -256,7 +256,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             );
         };
 
-        // Extract creation code
+        // Extract creation code.
         let maybe_creation_code =
             if receipt.to.is_none() && receipt.contract_address == Some(args.address) {
                 &transaction.input
@@ -269,7 +269,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 );
             };
 
-        // If bytecode_hash is disabled then its always partial verification
+        // If bytecode_hash is disabled then its always partial verification.
         let has_metadata = config.bytecode_hash == BytecodeHash::None;
 
         let local_bytecode = artifact
@@ -277,14 +277,14 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .and_then(|b| b.into_bytes())
             .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
 
-        // Append constructor args to the local_bytecode
+        // Append constructor args to the local_bytecode.
         trace!(target: "forge::verify", %constructor_args);
 
         let mut local_bytecode_vec = local_bytecode.to_vec();
         local_bytecode_vec.extend_from_slice(&constructor_args);
 
         // Compare creation code with locally built bytecode and `maybe_creation_code`.
-        let match_type = prepare::match_bytecodes(
+        let match_type = helpers::match_bytecodes(
             local_bytecode_vec.as_slice(),
             maybe_creation_code,
             &constructor_args,
@@ -293,7 +293,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         );
 
         let mut json_results: Vec<JsonResult> = vec![];
-        prepare::print_result(
+        helpers::print_result(
             &args,
             match_type,
             BytecodeType::Creation,
@@ -304,7 +304,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
         // If the creation code does not match, the runtime also won't match. Hence return.
         if match_type.is_none() {
-            prepare::print_result(
+            helpers::print_result(
                 &args,
                 None,
                 BytecodeType::Runtime,
@@ -422,7 +422,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             provider.get_code_at(args.address).block_id(BlockId::number(simulation_block)).await?;
 
         // Compare the onchain runtime bytecode with the runtime code from the fork.
-        let match_type = prepare::match_bytecodes(
+        let match_type = helpers::match_bytecodes(
             &fork_runtime_code.original_bytes(),
             &onchain_runtime_code,
             &constructor_args,
@@ -430,7 +430,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             has_metadata,
         );
 
-        prepare::print_result(
+        helpers::print_result(
             &args,
             match_type,
             BytecodeType::Runtime,
