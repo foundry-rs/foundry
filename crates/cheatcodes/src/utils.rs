@@ -55,14 +55,16 @@ impl Cheatcode for getNonce_1Call {
 impl Cheatcode for sign_3Call {
     fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
-        sign(&wallet.privateKey, digest)
+        let sig = sign(&wallet.privateKey, digest);
+        Ok(encode_full_signature(sig))
     }
 }
 
 impl Cheatcode for signCompact_3Call {
     fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
-        sign_compact(&wallet.privateKey, digest)
+        let sig = sign(&wallet.privateKey, digest);
+        Ok(encode_compact_signature(sig))
     }
 }
 
@@ -208,7 +210,7 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
         .abi_encode())
 }
 
-fn encode_full_signature(sig: alloy_primitives::Signature) -> Vec<u8> {
+pub(super) fn encode_full_signature(sig: alloy_primitives::Signature) -> Vec<u8> {
     // Retrieve v, r and s from signature.
     let v = U256::from(sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte()));
     let r = B256::from(sig.r());
@@ -216,37 +218,30 @@ fn encode_full_signature(sig: alloy_primitives::Signature) -> Vec<u8> {
     (v, r, s).abi_encode()
 }
 
-fn encode_compact_signature(sig: alloy_primitives::Signature) -> Vec<u8> {
+pub(super) fn encode_compact_signature(sig: alloy_primitives::Signature) -> Vec<u8> {
     // Implement EIP-2098 compact signature.
     let r = B256::from(sig.r());
     let mut vs = sig.s();
     vs.set_bit(255, sig.v().y_parity());
-
-    // Return r and modified s as a compact signature.
     (r, vs).abi_encode()
 }
 
-pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
+pub(super) fn sign(private_key: &U256, digest: &B256) -> alloy_primitives::Signature {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
-    let wallet = parse_wallet(private_key)?;
-    let sig = wallet.sign_hash_sync(digest)?;
-    debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
-    Ok(encode_full_signature(sig))
-}
-
-pub(super) fn sign_compact(private_key: &U256, digest: &B256) -> Result {
-    // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
-    let wallet = parse_wallet(private_key)?;
-    let sig = wallet.sign_hash_sync(digest)?;
-    debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
-    Ok(encode_compact_signature(sig))
+    let wallet = parse_wallet(private_key).expect("failed to parse wallet");
+    let sig = wallet.sign_hash_sync(digest).expect("failed to sign hash");
+    debug_assert_eq!(
+        sig.recover_address_from_prehash(digest).expect("failed to recover address"),
+        wallet.address()
+    );
+    sig
 }
 
 pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     signer: Option<Address>,
     digest: &B256,
-) -> Result {
+) -> alloy_primitives::Signature {
     let Some(script_wallets) = ccx.state.script_wallets() else {
         bail!("no wallets are available");
     };
@@ -271,39 +266,7 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
 
     let sig = foundry_common::block_on(wallet.sign_hash(digest))?;
     debug_assert_eq!(sig.recover_address_from_prehash(digest)?, signer);
-    Ok(encode_full_signature(sig))
-}
-
-pub(super) fn sign_compact_with_wallet<DB: DatabaseExt>(
-    ccx: &mut CheatsCtxt<DB>,
-    signer: Option<Address>,
-    digest: &B256,
-) -> Result {
-    let Some(script_wallets) = ccx.state.script_wallets() else {
-        bail!("no wallets are available");
-    };
-
-    let mut script_wallets = script_wallets.inner.lock();
-    let maybe_provided_sender = script_wallets.provided_sender;
-    let signers = script_wallets.multi_wallet.signers()?;
-
-    let signer = if let Some(signer) = signer {
-        signer
-    } else if let Some(provided_sender) = maybe_provided_sender {
-        provided_sender
-    } else if signers.len() == 1 {
-        *signers.keys().next().unwrap()
-    } else {
-        bail!("could not determine signer");
-    };
-
-    let wallet = signers
-        .get(&signer)
-        .ok_or_else(|| fmt_err!("signer with address {signer} is not available"))?;
-
-    let sig = foundry_common::block_on(wallet.sign_hash(digest))?;
-    debug_assert_eq!(sig.recover_address_from_prehash(digest)?, signer);
-    Ok(encode_compact_signature(sig))
+    sig
 }
 
 pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcodes) -> Result {
