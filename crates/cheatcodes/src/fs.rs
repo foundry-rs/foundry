@@ -388,7 +388,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                 .collect::<Vec<_>>();
 
             let artifact = match &filtered[..] {
-                [] => Err(fmt_err!("No matching artifact found")),
+                [] => Err(fmt_err!("no matching artifact found")),
                 [artifact] => Ok(artifact),
                 filtered => {
                     // If we know the current script/test contract solc version, try to filter by it
