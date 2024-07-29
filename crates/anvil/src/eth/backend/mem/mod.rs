@@ -67,6 +67,7 @@ use anvil_core::eth::{
 };
 use anvil_rpc::error::RpcError;
 
+use alloy_chains::NamedChain;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
@@ -1645,7 +1646,7 @@ impl Backend {
         Some(block.into_full_block(transactions.into_iter().map(|t| t.inner).collect()))
     }
 
-    /// Takes a block as it's stored internally and returns the eth api conform block format
+    /// Takes a block as it's stored internally and returns the eth api conform block format.
     pub fn convert_block(&self, block: Block) -> AlloyBlock {
         let size = U256::from(alloy_rlp::encode(&block).len() as u32);
 
@@ -1676,7 +1677,7 @@ impl Backend {
             parent_beacon_block_root,
         } = header;
 
-        AlloyBlock {
+        let mut block = AlloyBlock {
             header: AlloyHeader {
                 hash: Some(hash),
                 parent_hash,
@@ -1709,7 +1710,23 @@ impl Backend {
             uncles: vec![],
             withdrawals: None,
             other: Default::default(),
+        };
+
+        // If Arbitrum, apply chain specifics to converted block.
+        if let Ok(
+            NamedChain::Arbitrum |
+            NamedChain::ArbitrumGoerli |
+            NamedChain::ArbitrumNova |
+            NamedChain::ArbitrumTestnet,
+        ) = NamedChain::try_from(self.env.read().env.cfg.chain_id)
+        {
+            // Block number is the best number.
+            block.header.number = Some(self.best_number());
+            // Set `l1BlockNumber` field.
+            block.other.insert("l1BlockNumber".to_string(), number.into());
         }
+
+        block
     }
 
     /// Converts the `BlockNumber` into a numeric value
