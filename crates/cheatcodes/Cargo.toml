@@ -45,23 +45,24 @@ parking_lot.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-rlp.workspace = true
 
+base64.workspace = true
+chrono.workspace = true
+dialoguer = "0.11.0"
 eyre.workspace = true
 itertools.workspace = true
 jsonpath_lib.workspace = true
+k256.workspace = true
+memchr = "2.7"
+p256 = "0.13.2"
+rand = "0.8"
 revm.workspace = true
+rustc-hash.workspace = true
+semver.workspace = true
 serde_json.workspace = true
-base64.workspace = true
+thiserror.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }
 tracing.workspace = true
-k256.workspace = true
 walkdir.workspace = true
-p256 = "0.13.2"
-thiserror.workspace = true
-semver.workspace = true
-rustc-hash.workspace = true
-dialoguer = "0.11.0"
-rand = "0.8"
-chrono.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

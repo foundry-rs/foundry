@@ -3577,6 +3577,7 @@ dependencies = [
  "itertools 0.13.0",
  "jsonpath_lib",
  "k256",
+ "memchr",
  "p256",
  "parking_lot",
  "proptest",

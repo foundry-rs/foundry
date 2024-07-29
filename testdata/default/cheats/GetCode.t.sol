@@ -79,7 +79,7 @@ contract GetCodeTest is DSTest {
         bytes memory code = vm.getCode("cheats/GetCode.t.sol:TestContract:0.8.18");
         assertEq(type(TestContract).creationCode, code);
 
-        vm._expectCheatcodeRevert("No matching artifact found");
+        vm._expectCheatcodeRevert("no matching artifact found");
         vm.getCode("cheats/GetCode.t.sol:TestContract:0.8.19");
     }
 
