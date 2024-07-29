@@ -42,8 +42,13 @@ impl FormatSpec {
                         break;
                     }
                 }
-                if iter.next() == Some('e') {
-                    Some(Self::Exponential(Some(num.parse().ok()?)))
+                if let Some(&ch) = iter.peek() {
+                    if ch == 'e' {
+                        iter.next();
+                        Some(Self::Exponential(Some(num.parse().ok()?)))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
