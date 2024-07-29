@@ -1,5 +1,6 @@
 //! Test helpers for Forge integration tests.
 
+use alloy_chains::NamedChain;
 use alloy_primitives::U256;
 use forge::{
     revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
@@ -18,7 +19,7 @@ use foundry_evm::{
     constants::CALLER,
     opts::{Env, EvmOpts},
 };
-use foundry_test_utils::{fd_lock, init_tracing};
+use foundry_test_utils::{fd_lock, init_tracing, rpc::next_rpc_endpoint};
 use once_cell::sync::Lazy;
 use std::{
     env, fmt,
@@ -357,18 +358,13 @@ pub fn manifest_root() -> &'static Path {
 /// the RPC endpoints used during tests
 pub fn rpc_endpoints() -> RpcEndpoints {
     RpcEndpoints::new([
-        (
-            "rpcAlias",
-            RpcEndpoint::Url(
-                "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf".to_string(),
-            ),
-        ),
-        (
-            "rpcAliasSepolia",
-            RpcEndpoint::Url(
-                "https://eth-sepolia.g.alchemy.com/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf".to_string(),
-            ),
-        ),
-        ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".to_string())),
+        ("mainnet", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Mainnet))),
+        ("mainnet2", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Mainnet))),
+        ("sepolia", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Sepolia))),
+        ("optimism", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Optimism))),
+        ("arbitrum", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
+        ("polygon", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Polygon))),
+        ("avaxTestnet", RpcEndpoint::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
+        ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".into())),
     ])
 }

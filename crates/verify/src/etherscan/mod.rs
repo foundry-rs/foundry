@@ -16,7 +16,7 @@ use foundry_block_explorers::{
     verify::{CodeFormat, VerifyContract},
     Client,
 };
-use foundry_cli::utils::{get_provider, read_constructor_args_file, LoadConfig};
+use foundry_cli::utils::{self, get_provider, read_constructor_args_file, LoadConfig};
 use foundry_common::{
     abi::{encode_args, encode_function_args},
     retry::{Retry, RetryError},
@@ -36,7 +36,6 @@ use regex::Regex;
 use revm_primitives::{db::Database, Address, Bytes, EnvWithHandlerCfg, HandlerCfg, SpecId, U256};
 use semver::{BuildMetadata, Version};
 use std::fmt::Debug;
-use yansi::Paint;
 
 mod flatten;
 
@@ -89,7 +88,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             return Ok(())
         }
 
-        trace!(target: "forge::verify", ?verify_args, "submitting verification request");
+        trace!(?verify_args, "submitting verification request");
 
         let retry: Retry = args.retry.into();
         let resp = retry
@@ -104,11 +103,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
-                        error!(target: "forge::verify", ?args, "Failed to submit verification");
+                        error!(?args, "Failed to submit verification");
                         format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
 
-                trace!(target: "forge::verify", ?resp, "Received verification response");
+                trace!(?resp, "Received verification response");
 
                 if resp.status == "0" {
                     if resp.result == "Contract source code already verified"
@@ -164,6 +163,43 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let (etherscan, config) = self.prepare_verify_bytecode_request(&args).await?;
         let provider = get_provider(&config)?;
 
+        // Get creation tx hash.
+        let creation_data = etherscan.contract_creation_data(args.address).await?;
+
+        trace!(creation_tx_hash = ?creation_data.transaction_hash);
+        let mut transaction = provider
+            .get_transaction_by_hash(creation_data.transaction_hash)
+            .await
+            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
+            .ok_or_else(|| {
+                eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
+            })?;
+        let receipt = provider
+            .get_transaction_receipt(creation_data.transaction_hash)
+            .await
+            .or_else(|e| eyre::bail!("Couldn't fetch transaction receipt from RPC: {:?}", e))?;
+        let receipt = if let Some(receipt) = receipt {
+            receipt
+        } else {
+            eyre::bail!(
+                "Receipt not found for transaction hash {}",
+                creation_data.transaction_hash
+            );
+        };
+
+        // Extract creation code.
+        let maybe_creation_code =
+            if receipt.to.is_none() && receipt.contract_address == Some(args.address) {
+                &transaction.input
+            } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
+                &transaction.input[32..]
+            } else {
+                eyre::bail!(
+                    "Could not extract the creation code for contract at address {}",
+                    args.address
+                );
+            };
+
         // Get the constructor args using `source_code` endpoint.
         let source_code = etherscan.contract_source_code(args.address).await?;
 
@@ -176,7 +212,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         // Obtain Etherscan compilation metadata.
         let etherscan_metadata = source_code.items.first().unwrap();
 
-        // Obtain local artifact.
+        // Obtain local artifact
         let artifact = if let Ok(local_bytecode) =
             helpers::build_using_cache(&args, etherscan_metadata, &config)
         {
@@ -186,16 +222,21 @@ impl VerificationProvider for EtherscanVerificationProvider {
             helpers::build_project(&args, &config)?
         };
 
-        // Get the constructor args from Etherscan.
+        let local_bytecode = artifact
+            .bytecode
+            .and_then(|b| b.into_bytes())
+            .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
+
+        // Get the constructor args from etherscan
         let mut constructor_args = if let Some(args) = source_code.items.first() {
             args.constructor_arguments.clone()
         } else {
             eyre::bail!("No constructor arguments found for contract at address {}", args.address);
         };
 
-        // Get and encode user provided constructor args.
+        // Get and encode user provided constructor args
         let provided_constructor_args = if let Some(path) = args.constructor_args_path.to_owned() {
-            // Read from file.
+            // Read from file
             Some(read_constructor_args_file(path)?)
         } else {
             args.constructor_args.to_owned()
@@ -219,67 +260,30 @@ impl VerificationProvider for EtherscanVerificationProvider {
         .or(args.encoded_constructor_args.to_owned().map(hex::decode).transpose()?);
 
         if let Some(provided) = provided_constructor_args {
-            if provided != constructor_args && !args.json {
-                println!(
-                    "{}",
-                    format!("The provided constructor args do not match the constructor args from etherscan ({constructor_args}).")
-                        .yellow()
-                        .bold(),
-                );
-            }
             constructor_args = provided.into();
+        } else {
+            // In some cases, Etherscan will return incorrect constructor arguments. If this
+            // happens, try extracting arguments ourselves.
+            if !maybe_creation_code.ends_with(&constructor_args) {
+                trace!("mismatch of constructor args with etherscan");
+                // If local bytecode is longer than on-chain one, this is probably not a match.
+                if maybe_creation_code.len() >= local_bytecode.len() {
+                    constructor_args =
+                        Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
+                    trace!(
+                        target: "forge::verify",
+                        "setting constructor args to latest {} bytes of bytecode",
+                        constructor_args.len()
+                    );
+                }
+            }
         }
 
-        // Get creation tx hash.
-        let creation_data = etherscan.contract_creation_data(args.address).await?;
-
-        trace!(target: "forge::verify", creation_tx_hash = ?creation_data.transaction_hash);
-
-        let mut transaction = provider
-            .get_transaction_by_hash(creation_data.transaction_hash)
-            .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
-            .ok_or_else(|| {
-                eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
-            })?;
-        let receipt = provider
-            .get_transaction_receipt(creation_data.transaction_hash)
-            .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction receipt from RPC: {:?}", e))?;
-
-        let receipt = if let Some(receipt) = receipt {
-            receipt
-        } else {
-            eyre::bail!(
-                "Receipt not found for transaction hash {}",
-                creation_data.transaction_hash
-            );
-        };
-
-        // Extract creation code.
-        let maybe_creation_code =
-            if receipt.to.is_none() && receipt.contract_address == Some(args.address) {
-                &transaction.input
-            } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
-                &transaction.input[32..]
-            } else {
-                eyre::bail!(
-                    "Could not extract the creation code for contract at address {}",
-                    args.address
-                );
-            };
-
-        // If bytecode_hash is disabled then its always partial verification.
+        // If bytecode_hash is disabled then its always partial verification
         let has_metadata = config.bytecode_hash == BytecodeHash::None;
 
-        let local_bytecode = artifact
-            .bytecode
-            .and_then(|b| b.into_bytes())
-            .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
-
         // Append constructor args to the local_bytecode.
-        trace!(target: "forge::verify", %constructor_args);
-
+        trace!(%constructor_args);
         let mut local_bytecode_vec = local_bytecode.to_vec();
         local_bytecode_vec.extend_from_slice(&constructor_args);
 
@@ -323,6 +327,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
             Some(_) => eyre::bail!("Invalid block number"),
             None => {
+                let provider = utils::get_provider(&config)?;
                 provider
                     .get_transaction_by_hash(creation_data.transaction_hash)
                     .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
@@ -464,7 +469,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         .wrap_err("Failed to request verification status")
                         .map_err(RetryError::Retry)?;
 
-                    trace!(target: "forge::verify", ?resp, "Received verification response");
+                    trace!(?resp, "Received verification response");
 
                     eprintln!(
                         "Contract verification status:\nResponse: `{}`\nDetails: `{}`",

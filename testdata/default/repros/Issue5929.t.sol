@@ -9,7 +9,7 @@ contract Issue5929Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function test_transact_not_working() public {
-        vm.createSelectFork("rpcAlias", 15625301);
+        vm.createSelectFork("mainnet", 15625301);
         // https://etherscan.io/tx/0x96a129768ec66fd7d65114bf182f4e173bf0b73a44219adaf71f01381a3d0143
         vm.transact(hex"96a129768ec66fd7d65114bf182f4e173bf0b73a44219adaf71f01381a3d0143");
     }

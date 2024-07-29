@@ -112,7 +112,7 @@ pub trait VerificationProvider {
     /// Sends the actual verify request for the targeted contract.
     async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()>;
 
-    /// Send the actual verify request for the targeted bytecode.
+    /// Verify the bytecode of the targeted contract against the locally compiled bytecode.
     async fn verify_bytecode(&mut self, args: VerifyBytecodeArgs) -> Result<()>;
 
     /// Checks whether the contract is verified.

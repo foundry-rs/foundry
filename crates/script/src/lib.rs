@@ -169,7 +169,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub json: bool,
 
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
+    /// specified in wei, or as a string with a unit type.
+    ///
+    /// Examples: 1ether, 10gwei, 0.01ether
     #[arg(
         long,
         env = "ETH_GAS_PRICE",
@@ -195,7 +198,7 @@ pub struct ScriptArgs {
 }
 
 impl ScriptArgs {
-    async fn preprocess(self) -> Result<PreprocessedState> {
+    pub async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets =
             ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
 
@@ -386,11 +389,9 @@ impl ScriptArgs {
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
                 tx.transaction
-                    .input
-                    .clone()
-                    .into_input()
+                    .input()
                     .filter(|data| data.len() > max_size)
-                    .map(|data| (data, tx.transaction.to))
+                    .map(|data| (data, tx.transaction.to()))
             })
         }) {
             let mut offset = 0;

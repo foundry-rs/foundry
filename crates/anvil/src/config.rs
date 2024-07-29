@@ -167,6 +167,8 @@ pub struct NodeConfig {
     ///
     /// If set to `Some(num)` keep latest num state in memory only.
     pub prune_history: PruneStateHistoryConfig,
+    /// Max number of states cached on disk.
+    pub max_persisted_states: Option<usize>,
     /// The file where to load the state from
     pub init_state: Option<SerializableState>,
     /// max number of blocks with transactions in memory
@@ -427,6 +429,7 @@ impl Default for NodeConfig {
             ipc_path: None,
             code_size_limit: None,
             prune_history: Default::default(),
+            max_persisted_states: None,
             init_state: None,
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
@@ -549,6 +552,16 @@ impl NodeConfig {
     #[must_use]
     pub fn set_pruned_history(mut self, prune_history: Option<Option<usize>>) -> Self {
         self.prune_history = PruneStateHistoryConfig::from_args(prune_history);
+        self
+    }
+
+    /// Sets max number of states to cache on disk.
+    #[must_use]
+    pub fn with_max_persisted_states<U: Into<usize>>(
+        mut self,
+        max_persisted_states: Option<U>,
+    ) -> Self {
+        self.max_persisted_states = max_persisted_states.map(Into::into);
         self
     }
 
@@ -974,6 +987,7 @@ impl NodeConfig {
             self.enable_steps_tracing,
             self.print_logs,
             self.prune_history,
+            self.max_persisted_states,
             self.transaction_block_keeper,
             self.block_time,
             Arc::new(tokio::sync::RwLock::new(self.clone())),

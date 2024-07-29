@@ -17,7 +17,7 @@ abstract contract ZeroState is DSTest {
         vm.label(deployer, "Deployer");
 
         vm.startPrank(deployer);
-        mainnetFork = vm.createFork("rpcAlias");
+        mainnetFork = vm.createFork("mainnet");
         vm.selectFork(mainnetFork);
 
         vm.rollFork(block.number - 20);

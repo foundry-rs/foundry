@@ -12,7 +12,7 @@ contract Issue3119Test is DSTest {
     address public alice = vm.addr(2);
 
     function testRollFork() public {
-        uint256 fork = vm.createFork("rpcAlias");
+        uint256 fork = vm.createFork("mainnet");
         vm.selectFork(fork);
 
         FortressSwap fortressSwap = new FortressSwap(address(owner));
