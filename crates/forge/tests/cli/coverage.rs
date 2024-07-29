@@ -464,6 +464,27 @@ contract Foo {
         }
         return true;
     }
+
+    function checkEmptyStatements(uint256 number, uint256[] memory arr) external pure returns (bool) {
+        // Check that empty statements are covered.
+        if (number >= arr[0]) {
+            // Do nothing
+        } else {
+            // Do nothing.
+        }
+        if (number >= arr[0]) {}
+
+        return true;
+    }
+
+    function singlePathCoverage(uint256 number) external pure {
+        if (number < 10) {
+            if (number < 5) {
+                number++;
+            }
+            number++;
+        }
+    }
 }
     "#,
     )
@@ -562,23 +583,70 @@ contract FooTest is DSTest {
         bool result = foo.checkLt(number, arr);
         assertTrue(result);
     }
+
+    function test_issue_4314() external {
+        uint256[] memory arr = new uint256[](1);
+        arr[0] = 1;
+        foo.checkEmptyStatements(0, arr);
+    }
+
+    function test_single_path_child_branch() external {
+        foo.singlePathCoverage(1);
+    }
+
+    function test_single_path_parent_branch() external {
+        foo.singlePathCoverage(9);
+    }
+
+    function test_single_path_branch() external {
+        foo.singlePathCoverage(15);
+    }
 }
     "#,
     )
     .unwrap();
 
-    // TODO: fix following issues for 100% coverage
-    // https://github.com/foundry-rs/foundry/issues/4309
-    // https://github.com/foundry-rs/foundry/issues/4310
-    // https://github.com/foundry-rs/foundry/issues/4315
-    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+    // Assert no coverage for single path branch. 2 branches (parent and child) not covered.
+    cmd.arg("coverage")
+        .args([
+            "--nmt".to_string(),
+            "test_single_path_child_branch|test_single_path_parent_branch".to_string(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
-| File        | % Lines         | % Statements    | % Branches     | % Funcs       |
-|-------------|-----------------|-----------------|----------------|---------------|
-| src/Foo.sol | 100.00% (20/20) | 100.00% (23/23) | 83.33% (15/18) | 100.00% (7/7) |
-| Total       | 100.00% (20/20) | 100.00% (23/23) | 83.33% (15/18) | 100.00% (7/7) |
+| File        | % Lines        | % Statements   | % Branches     | % Funcs       |
+|-------------|----------------|----------------|----------------|---------------|
+| src/Foo.sol | 88.89% (24/27) | 90.00% (27/30) | 87.50% (14/16) | 100.00% (9/9) |
+| Total       | 88.89% (24/27) | 90.00% (27/30) | 87.50% (14/16) | 100.00% (9/9) |
 
 "#]]);
+
+    // Assert no coverage for single path child branch. 1 branch (child) not covered.
+    cmd.forge_fuse()
+        .arg("coverage")
+        .args(["--nmt".to_string(), "test_single_path_child_branch".to_string()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+| File        | % Lines        | % Statements   | % Branches     | % Funcs       |
+|-------------|----------------|----------------|----------------|---------------|
+| src/Foo.sol | 96.30% (26/27) | 96.67% (29/30) | 93.75% (15/16) | 100.00% (9/9) |
+| Total       | 96.30% (26/27) | 96.67% (29/30) | 93.75% (15/16) | 100.00% (9/9) |
+
+"#]]);
+
+    // Assert 100% coverage.
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File        | % Lines         | % Statements    | % Branches      | % Funcs       |
+|-------------|-----------------|-----------------|-----------------|---------------|
+| src/Foo.sol | 100.00% (27/27) | 100.00% (30/30) | 100.00% (16/16) | 100.00% (9/9) |
+| Total       | 100.00% (27/27) | 100.00% (30/30) | 100.00% (16/16) | 100.00% (9/9) |
+
+"#]],
+    );
 });
 
 forgetest!(test_function_call_coverage, |prj, cmd| {
