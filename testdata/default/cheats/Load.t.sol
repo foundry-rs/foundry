@@ -27,12 +27,8 @@ contract LoadTest is DSTest {
     }
 
     function testLoadNotAvailableOnPrecompiles() public {
-        vm.expectRevert(bytes("cannot call `load` on precompile 0x0000000000000000000000000000000000000001"));
-        uint256 val = this.load(address(1), bytes32(0));
-    }
-
-    function load(address target, bytes32 slot) public returns (uint256) {
-        return uint256(vm.load(target, slot));
+        vm._expectCheatcodeRevert("cannot use precompile 0x0000000000000000000000000000000000000001 as an argument");
+        vm.load(address(1), bytes32(0));
     }
 
     function testLoadOtherStorage() public {

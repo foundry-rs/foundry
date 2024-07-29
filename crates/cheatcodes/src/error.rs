@@ -68,17 +68,14 @@ macro_rules! ensure {
 macro_rules! ensure_not_precompile {
     ($address:expr, $ctxt:expr) => {
         if $ctxt.is_precompile($address) {
-            return Err($crate::error::precompile_error(
-                <Self as $crate::CheatcodeDef>::CHEATCODE.func.id,
-                $address,
-            ))
+            return Err($crate::error::precompile_error($address));
         }
     };
 }
 
 #[cold]
-pub(crate) fn precompile_error(id: &'static str, address: &Address) -> Error {
-    fmt_err!("cannot call `{id}` on precompile {address}")
+pub(crate) fn precompile_error(address: &Address) -> Error {
+    fmt_err!("cannot use precompile {address} as an argument")
 }
 
 /// Error thrown by cheatcodes.
