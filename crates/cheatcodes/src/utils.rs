@@ -55,7 +55,16 @@ impl Cheatcode for getNonce_1Call {
 impl Cheatcode for sign_3Call {
     fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
-        sign(&wallet.privateKey, digest)
+        let sig = sign(&wallet.privateKey, digest)?;
+        Ok(encode_full_sig(sig))
+    }
+}
+
+impl Cheatcode for signCompact_3Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
+        let Self { wallet, digest } = self;
+        let sig = sign(&wallet.privateKey, digest)?;
+        Ok(encode_compact_sig(sig))
     }
 }
 
@@ -201,25 +210,35 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
         .abi_encode())
 }
 
-fn encode_vrs(sig: alloy_primitives::Signature) -> Vec<u8> {
-    let v = sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte());
-
-    (U256::from(v), B256::from(sig.r()), B256::from(sig.s())).abi_encode()
+pub(super) fn encode_full_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
+    // Retrieve v, r and s from signature.
+    let v = U256::from(sig.v().y_parity_byte_non_eip155().unwrap_or(sig.v().y_parity_byte()));
+    let r = B256::from(sig.r());
+    let s = B256::from(sig.s());
+    (v, r, s).abi_encode()
 }
 
-pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
+pub(super) fn encode_compact_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
+    // Implement EIP-2098 compact signature.
+    let r = B256::from(sig.r());
+    let mut vs = sig.s();
+    vs.set_bit(255, sig.v().y_parity());
+    (r, vs).abi_encode()
+}
+
+pub(super) fn sign(private_key: &U256, digest: &B256) -> Result<alloy_primitives::Signature> {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
     let wallet = parse_wallet(private_key)?;
     let sig = wallet.sign_hash_sync(digest)?;
     debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
-    Ok(encode_vrs(sig))
+    Ok(sig)
 }
 
 pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     signer: Option<Address>,
     digest: &B256,
-) -> Result {
+) -> Result<alloy_primitives::Signature> {
     let Some(script_wallets) = ccx.state.script_wallets() else {
         bail!("no wallets are available");
     };
@@ -244,7 +263,7 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
 
     let sig = foundry_common::block_on(wallet.sign_hash(digest))?;
     debug_assert_eq!(sig.recover_address_from_prehash(digest)?, signer);
-    Ok(encode_vrs(sig))
+    Ok(sig)
 }
 
 pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcodes) -> Result {

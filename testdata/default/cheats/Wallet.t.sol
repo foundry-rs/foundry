@@ -104,8 +104,34 @@ contract WalletTest is DSTest {
         assertEq(recovered, wallet.addr);
     }
 
+    function testSignCompactWithWalletDigest(uint256 pkSeed, bytes32 digest) public {
+        uint256 pk = bound(pkSeed, 1, Q - 1);
+
+        Vm.Wallet memory wallet = vm.createWallet(pk);
+
+        (bytes32 r, bytes32 vs) = vm.signCompact(wallet, digest);
+
+        // Extract `s` from `vs`.
+        // Shift left by 1 bit to clear the leftmost bit, then shift right by 1 bit to restore the original position.
+        // This effectively clears the leftmost bit of `vs`, giving us `s`.
+        bytes32 s = bytes32((uint256(vs) << 1) >> 1);
+
+        // Extract `v` from `vs`.
+        // We shift `vs` right by 255 bits to isolate the leftmost bit.
+        // Converting this to uint8 gives us the parity bit (0 or 1).
+        // Adding 27 converts this parity bit to the correct `v` value (27 or 28).
+        uint8 v = uint8(uint256(vs) >> 255) + 27;
+
+        address recovered = ecrecover(digest, v, r, s);
+        assertEq(recovered, wallet.addr);
+    }
+
     function testSignWithWalletMessage(uint256 pkSeed, bytes memory message) public {
         testSignWithWalletDigest(pkSeed, keccak256(message));
+    }
+
+    function testSignCompactWithWalletMessage(uint256 pkSeed, bytes memory message) public {
+        testSignCompactWithWalletDigest(pkSeed, keccak256(message));
     }
 
     function testGetNonceWallet(uint256 pkSeed) public {

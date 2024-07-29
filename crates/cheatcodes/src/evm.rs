@@ -162,21 +162,48 @@ impl Cheatcode for dumpStateCall {
 impl Cheatcode for sign_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey, digest } = self;
-        super::utils::sign(privateKey, digest)
+        let sig = super::utils::sign(privateKey, digest)?;
+        Ok(super::utils::encode_full_sig(sig))
+    }
+}
+
+impl Cheatcode for signCompact_0Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
+        let Self { privateKey, digest } = self;
+        let sig = super::utils::sign(privateKey, digest)?;
+        Ok(super::utils::encode_compact_sig(sig))
     }
 }
 
 impl Cheatcode for sign_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { digest } = self;
-        super::utils::sign_with_wallet(ccx, None, digest)
+        let sig = super::utils::sign_with_wallet(ccx, None, digest)?;
+        Ok(super::utils::encode_full_sig(sig))
+    }
+}
+
+impl Cheatcode for signCompact_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { digest } = self;
+        let sig = super::utils::sign_with_wallet(ccx, None, digest)?;
+        Ok(super::utils::encode_compact_sig(sig))
     }
 }
 
 impl Cheatcode for sign_2Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { signer, digest } = self;
-        super::utils::sign_with_wallet(ccx, Some(*signer), digest)
+        let sig = super::utils::sign_with_wallet(ccx, Some(*signer), digest)?;
+        Ok(super::utils::encode_full_sig(sig))
+    }
+}
+
+impl Cheatcode for signCompact_2Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { signer, digest } = self;
+        let sig = super::utils::sign_with_wallet(ccx, Some(*signer), digest)?;
+        Ok(super::utils::encode_compact_sig(sig))
     }
 }
 
