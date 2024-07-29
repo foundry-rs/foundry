@@ -285,23 +285,27 @@ async fn test_invariant_shrink() {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg_attr(windows, ignore = "for some reason there's different rng")]
 async fn test_invariant_assert_shrink() {
-    // ensure assert and require shrinks to same sequence of 3 or less
-    test_shrink("invariant_with_assert").await;
-    test_shrink("invariant_with_require").await;
+    // ensure assert shrinks to same sequence of 2 as require
+    check_shrink_sequence("invariant_with_assert", 2).await;
 }
 
-async fn test_shrink(test_pattern: &str) {
-    let mut opts = TEST_DATA_DEFAULT.test_opts.clone();
-    opts.fuzz.seed = Some(U256::from(100u32));
+#[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(windows, ignore = "for some reason there's different rng")]
+async fn test_invariant_require_shrink() {
+    // ensure require shrinks to same sequence of 2 as assert
+    check_shrink_sequence("invariant_with_require", 2).await;
+}
+
+async fn check_shrink_sequence(test_pattern: &str, expected_len: usize) {
     let filter =
         Filter::new(test_pattern, ".*", ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
-    runner.test_options = opts;
+    runner.test_options.fuzz.seed = Some(U256::from(100u32));
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
         CounterExample::Sequence(sequence) => {
-            assert!(sequence.len() <= 3);
+            assert_eq!(sequence.len(), expected_len);
         }
     };
 }
