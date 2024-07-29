@@ -16,10 +16,10 @@ contract SignTest is DSTest {
         assertEq(actual, expected, "digest signer did not match");
     }
 
-    function testSignEIP2098Digest(uint248 pk, bytes32 digest) public {
+    function testSignCompactDigest(uint248 pk, bytes32 digest) public {
         vm.assume(pk != 0);
 
-        (bytes32 r, bytes32 vs) = vm.signEIP2098(pk, digest);
+        (bytes32 r, bytes32 vs) = vm.signCompact(pk, digest);
 
         // Extract `s` from `vs`.
         // The mask 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff has all bits set to 1 except the leftmost bit, which is 0.
@@ -41,7 +41,7 @@ contract SignTest is DSTest {
         testSignDigest(pk, keccak256(message));
     }
 
-    function testSignEIP2098Message(uint248 pk, bytes memory message) public {
-        testSignEIP2098Digest(pk, keccak256(message));
+    function testSignCompactMessage(uint248 pk, bytes memory message) public {
+        testSignCompactDigest(pk, keccak256(message));
     }
 }

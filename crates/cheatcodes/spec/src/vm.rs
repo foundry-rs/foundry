@@ -292,7 +292,7 @@ interface Vm {
     /// signature's `s` value, and the recovery id `v` in a single bytes32.
     /// This format reduces the signature size from 65 to 64 bytes.
     #[cheatcode(group = Evm, safety = Safe)]
-    function signEIP2098(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
+    function signCompact(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
 
     /// Signs `digest` with signer provided to script using the secp256k1 curve.
     ///
@@ -316,7 +316,7 @@ interface Vm {
     /// Raises error if signer passed through `--sender` does not match any unlocked signers or
     /// if `--sender` is not provided and not exactly one signer is passed to the script.
     #[cheatcode(group = Evm, safety = Safe)]
-    function signEIP2098(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
+    function signCompact(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
 
     /// Signs `digest` with signer provided to script using the secp256k1 curve.
     ///
@@ -332,7 +332,7 @@ interface Vm {
     ///
     /// Raises error if none of the signers passed into the script have provided address.
     #[cheatcode(group = Evm, safety = Safe)]
-    function signEIP2098(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
+    function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
 
     /// Signs `digest` with `privateKey` using the secp256r1 curve.
     #[cheatcode(group = Evm, safety = Safe)]
@@ -2182,7 +2182,7 @@ interface Vm {
     /// signature's `s` value, and the recovery id `v` in a single bytes32.
     /// This format reduces the signature size from 65 to 64 bytes.
     #[cheatcode(group = Utilities)]
-    function signEIP2098(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);
+    function signCompact(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);
 
     /// Derive a private key from a provided mnenomic string (or mnenomic file path)
     /// at the derivation path `m/44'/60'/0'/0/{index}`.

@@ -59,10 +59,10 @@ impl Cheatcode for sign_3Call {
     }
 }
 
-impl Cheatcode for signEIP2098_3Call {
+impl Cheatcode for signCompact_3Call {
     fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
-        sign_eip2098(&wallet.privateKey, digest)
+        sign_compact(&wallet.privateKey, digest)
     }
 }
 
@@ -245,7 +245,7 @@ pub(super) fn sign(private_key: &U256, digest: &B256) -> Result {
     Ok(encode_vrs(sig))
 }
 
-pub(super) fn sign_eip2098(private_key: &U256, digest: &B256) -> Result {
+pub(super) fn sign_compact(private_key: &U256, digest: &B256) -> Result {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
     let wallet = parse_wallet(private_key)?;
     let sig = wallet.sign_hash_sync(digest)?;
@@ -285,7 +285,7 @@ pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     Ok(encode_vrs(sig))
 }
 
-pub(super) fn sign_eip2098_with_wallet<DB: DatabaseExt>(
+pub(super) fn sign_compact_with_wallet<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     signer: Option<Address>,
     digest: &B256,

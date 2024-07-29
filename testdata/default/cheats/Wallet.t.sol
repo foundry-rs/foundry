@@ -104,12 +104,12 @@ contract WalletTest is DSTest {
         assertEq(recovered, wallet.addr);
     }
 
-    function testSignEIP2098WithWalletDigest(uint256 pkSeed, bytes32 digest) public {
+    function testSignCompactWithWalletDigest(uint256 pkSeed, bytes32 digest) public {
         uint256 pk = bound(pkSeed, 1, Q - 1);
 
         Vm.Wallet memory wallet = vm.createWallet(pk);
 
-        (bytes32 r, bytes32 vs) = vm.signEIP2098(wallet, digest);
+        (bytes32 r, bytes32 vs) = vm.signCompact(wallet, digest);
 
         // Extract `s` from `vs`.
         // The mask 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff has all bits set to 1 except the leftmost bit, which is 0.
@@ -130,8 +130,8 @@ contract WalletTest is DSTest {
         testSignWithWalletDigest(pkSeed, keccak256(message));
     }
 
-    function testSignEIP2098WithWalletMessage(uint256 pkSeed, bytes memory message) public {
-        testSignEIP2098WithWalletDigest(pkSeed, keccak256(message));
+    function testSignCompactWithWalletMessage(uint256 pkSeed, bytes memory message) public {
+        testSignCompactWithWalletDigest(pkSeed, keccak256(message));
     }
 
     function testGetNonceWallet(uint256 pkSeed) public {

@@ -382,10 +382,10 @@ interface Vm {
     function setEnv(string calldata name, string calldata value) external;
     function setNonce(address account, uint64 newNonce) external;
     function setNonceUnsafe(address account, uint64 newNonce) external;
-    function signEIP2098(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
-    function signEIP2098(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
-    function signEIP2098(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
-    function signEIP2098(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);
+    function signCompact(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
+    function signCompact(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
+    function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
+    function signCompact(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);

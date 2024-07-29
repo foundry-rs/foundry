@@ -166,10 +166,10 @@ impl Cheatcode for sign_0Call {
     }
 }
 
-impl Cheatcode for signEIP2098_0Call {
+impl Cheatcode for signCompact_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey, digest } = self;
-        super::utils::sign_eip2098(privateKey, digest)
+        super::utils::sign_compact(privateKey, digest)
     }
 }
 
@@ -180,10 +180,10 @@ impl Cheatcode for sign_1Call {
     }
 }
 
-impl Cheatcode for signEIP2098_1Call {
+impl Cheatcode for signCompact_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { digest } = self;
-        super::utils::sign_eip2098_with_wallet(ccx, None, digest)
+        super::utils::sign_compact_with_wallet(ccx, None, digest)
     }
 }
 
@@ -194,10 +194,10 @@ impl Cheatcode for sign_2Call {
     }
 }
 
-impl Cheatcode for signEIP2098_2Call {
+impl Cheatcode for signCompact_2Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { signer, digest } = self;
-        super::utils::sign_eip2098_with_wallet(ccx, Some(*signer), digest)
+        super::utils::sign_compact_with_wallet(ccx, Some(*signer), digest)
     }
 }
 
