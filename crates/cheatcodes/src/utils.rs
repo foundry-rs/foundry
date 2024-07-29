@@ -55,16 +55,16 @@ impl Cheatcode for getNonce_1Call {
 impl Cheatcode for sign_3Call {
     fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
-        let unencoded_sig = gen_unencoded_sig(&wallet.privateKey, digest)?;
-        Ok(encode_full_sig(unencoded_sig))
+        let sig = sign(&wallet.privateKey, digest)?;
+        Ok(encode_full_sig(sig))
     }
 }
 
 impl Cheatcode for signCompact_3Call {
     fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
-        let unencoded_sig = gen_unencoded_sig(&wallet.privateKey, digest)?;
-        Ok(encode_compact_sig(unencoded_sig))
+        let sig = sign(&wallet.privateKey, digest)?;
+        Ok(encode_compact_sig(sig))
     }
 }
 
@@ -226,10 +226,7 @@ pub(super) fn encode_compact_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
     (r, vs).abi_encode()
 }
 
-pub(super) fn gen_unencoded_sig(
-    private_key: &U256,
-    digest: &B256,
-) -> Result<alloy_primitives::Signature> {
+pub(super) fn sign(private_key: &U256, digest: &B256) -> Result<alloy_primitives::Signature> {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
     let wallet = parse_wallet(private_key)?;
     let sig = wallet.sign_hash_sync(digest)?;
@@ -237,7 +234,7 @@ pub(super) fn gen_unencoded_sig(
     Ok(sig)
 }
 
-pub(super) fn gen_unencoded_sig_with_wallet<DB: DatabaseExt>(
+pub(super) fn sign_with_wallet<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     signer: Option<Address>,
     digest: &B256,
