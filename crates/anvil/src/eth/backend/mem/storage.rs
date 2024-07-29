@@ -261,7 +261,7 @@ impl BlockchainStorage {
     }
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
-        let forked = Self {
+        Self {
             blocks: Default::default(),
             hashes: HashMap::from([(U64::from(block_number), block_hash)]),
             best_hash: block_hash,
@@ -269,8 +269,7 @@ impl BlockchainStorage {
             genesis_hash: Default::default(),
             transactions: Default::default(),
             total_difficulty,
-        };
-        forked
+        }
     }
 
     /// Rewind the chain state back to state defined at given block

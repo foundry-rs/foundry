@@ -2021,7 +2021,7 @@ impl EthApi {
                 }
 
                 let pool_tx = PoolTransaction::new(pending);
-                signed_block_txs.entry(block_number).or_insert(Vec::new()).push(Arc::new(pool_tx));
+                signed_block_txs.entry(block_number).or_default().push(Arc::new(pool_tx));
             }
 
             signed_block_txs
