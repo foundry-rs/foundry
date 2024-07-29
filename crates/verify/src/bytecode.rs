@@ -147,71 +147,6 @@ impl VerifyBytecodeArgs {
         };
         let etherscan = Client::new(chain, key)?;
 
-        // Get the constructor args using `source_code` endpoint
-        let source_code = etherscan.contract_source_code(self.address).await?;
-
-        // Check if the contract name matches
-        let name = source_code.items.first().map(|item| item.contract_name.to_owned());
-        if name.as_ref() != Some(&self.contract.name) {
-            eyre::bail!("Contract name mismatch");
-        }
-
-        // Obtain Etherscan compilation metadata
-        let etherscan_metadata = source_code.items.first().unwrap();
-
-        // Obtain local artifact
-        let artifact =
-            if let Ok(local_bytecode) = self.build_using_cache(etherscan_metadata, &config) {
-                trace!("using cache");
-                local_bytecode
-            } else {
-                self.build_project(&config)?
-            };
-
-        // Get the constructor args from etherscan
-        let mut constructor_args = if let Some(args) = source_code.items.first() {
-            args.constructor_arguments.clone()
-        } else {
-            eyre::bail!("No constructor arguments found for contract at address {}", self.address);
-        };
-
-        // Get and encode user provided constructor args
-        let provided_constructor_args = if let Some(path) = self.constructor_args_path.to_owned() {
-            // Read from file
-            Some(read_constructor_args_file(path)?)
-        } else {
-            self.constructor_args.to_owned()
-        }
-        .map(|args| {
-            if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-                if constructor.inputs.len() != args.len() {
-                    eyre::bail!(
-                        "Mismatch of constructor arguments length. Expected {}, got {}",
-                        constructor.inputs.len(),
-                        args.len()
-                    );
-                }
-                encode_args(&constructor.inputs, &args)
-                    .map(|args| DynSolValue::Tuple(args).abi_encode())
-            } else {
-                Ok(Vec::new())
-            }
-        })
-        .transpose()?
-        .or(self.encoded_constructor_args.to_owned().map(hex::decode).transpose()?);
-
-        if let Some(provided) = provided_constructor_args {
-            if provided != constructor_args && !self.json {
-                println!(
-                    "{}",
-                    format!("The provided constructor args do not match the constructor args from etherscan ({constructor_args}).")
-                        .yellow()
-                        .bold(),
-                );
-            }
-            constructor_args = provided.into();
-        }
-
         // Get creation tx hash
         let creation_data = etherscan.contract_creation_data(self.address).await?;
 
@@ -250,13 +185,85 @@ impl VerifyBytecodeArgs {
                 );
             };
 
-        // If bytecode_hash is disabled then its always partial verification
-        let has_metadata = config.bytecode_hash == BytecodeHash::None;
+        // Get the constructor args using `source_code` endpoint
+        let source_code = etherscan.contract_source_code(self.address).await?;
+
+        // Check if the contract name matches
+        let name = source_code.items.first().map(|item| item.contract_name.to_owned());
+        if name.as_ref() != Some(&self.contract.name) {
+            eyre::bail!("Contract name mismatch");
+        }
+
+        // Obtain Etherscan compilation metadata
+        let etherscan_metadata = source_code.items.first().unwrap();
+
+        // Obtain local artifact
+        let artifact =
+            if let Ok(local_bytecode) = self.build_using_cache(etherscan_metadata, &config) {
+                trace!("using cache");
+                local_bytecode
+            } else {
+                self.build_project(&config)?
+            };
 
         let local_bytecode = artifact
             .bytecode
             .and_then(|b| b.into_bytes())
             .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
+
+        // Get the constructor args from etherscan
+        let mut constructor_args = if let Some(args) = source_code.items.first() {
+            args.constructor_arguments.clone()
+        } else {
+            eyre::bail!("No constructor arguments found for contract at address {}", self.address);
+        };
+
+        // Get and encode user provided constructor args
+        let provided_constructor_args = if let Some(path) = self.constructor_args_path.to_owned() {
+            // Read from file
+            Some(read_constructor_args_file(path)?)
+        } else {
+            self.constructor_args.to_owned()
+        }
+        .map(|args| {
+            if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
+                if constructor.inputs.len() != args.len() {
+                    eyre::bail!(
+                        "Mismatch of constructor arguments length. Expected {}, got {}",
+                        constructor.inputs.len(),
+                        args.len()
+                    );
+                }
+                encode_args(&constructor.inputs, &args)
+                    .map(|args| DynSolValue::Tuple(args).abi_encode())
+            } else {
+                Ok(Vec::new())
+            }
+        })
+        .transpose()?
+        .or(self.encoded_constructor_args.to_owned().map(hex::decode).transpose()?);
+
+        if let Some(provided) = provided_constructor_args {
+            constructor_args = provided.into();
+        } else {
+            // In some cases, Etherscan will return incorrect constructor arguments. If this
+            // happens, try extracting arguments ourselves.
+            if !maybe_creation_code.ends_with(&constructor_args) {
+                trace!("mismatch of constructor args with etherscan");
+                // If local bytecode is longer than on-chain one, this is probably not a match.
+                if maybe_creation_code.len() >= local_bytecode.len() {
+                    constructor_args =
+                        Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
+                    trace!(
+                        "setting constructor args to latest {} bytes of bytecode",
+                        constructor_args.len()
+                    );
+                }
+            }
+        }
+
+        // If bytecode_hash is disabled then its always partial verification
+        let has_metadata = config.bytecode_hash == BytecodeHash::None;
 
         // Append constructor args to the local_bytecode
         trace!(%constructor_args);

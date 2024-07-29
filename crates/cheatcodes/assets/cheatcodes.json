@@ -7753,6 +7753,86 @@
     },
     {
       "func": {
+        "id": "signCompact_0",
+        "description": "Signs `digest` with `privateKey` using the secp256k1 curve.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.",
+        "declaration": "function signCompact(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signCompact(uint256,bytes32)",
+        "selector": "0xcc2a781f",
+        "selectorBytes": [
+          204,
+          42,
+          120,
+          31
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signCompact_1",
+        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.\nIf `--sender` is provided, the signer with provided address is used, otherwise,\nif exactly one signer is provided to the script, that signer is used.\nRaises error if signer passed through `--sender` does not match any unlocked signers or\nif `--sender` is not provided and not exactly one signer is passed to the script.",
+        "declaration": "function signCompact(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signCompact(bytes32)",
+        "selector": "0xa282dc4b",
+        "selectorBytes": [
+          162,
+          130,
+          220,
+          75
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signCompact_2",
+        "description": "Signs `digest` with signer provided to script using the secp256k1 curve.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.\nRaises error if none of the signers passed into the script have provided address.",
+        "declaration": "function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signCompact(address,bytes32)",
+        "selector": "0x8e2f97bf",
+        "selectorBytes": [
+          142,
+          47,
+          151,
+          191
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signCompact_3",
+        "description": "Signs data with a `Wallet`.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.",
+        "declaration": "function signCompact(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signCompact((address,uint256,uint256,uint256),bytes32)",
+        "selector": "0x3d0e292f",
+        "selectorBytes": [
+          61,
+          14,
+          41,
+          47
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "signP256",
         "description": "Signs `digest` with `privateKey` using the secp256r1 curve.",
         "declaration": "function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);",
