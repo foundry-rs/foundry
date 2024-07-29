@@ -34,7 +34,7 @@ use crate::{
 };
 use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom, Sealable};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
-use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U256, U64};
+use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, Uint, B256, U256, U64};
 use alloy_rpc_types::{
     anvil::Forking,
     request::TransactionRequest,
@@ -1895,6 +1895,19 @@ impl Backend {
         .await?
     }
 
+    pub async fn get_storage_at_block(
+        &self,
+        address: Address,
+        block_request: Option<BlockRequest>,
+    ) -> Result<HashMap<Uint<256, 4>, Uint<256, 4>>, BlockchainError> {
+        self.with_database_at(block_request, |block_db, _| {
+            let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+            let account = db.get(&address).cloned().unwrap_or_default();
+            Ok(account.storage)
+        })
+        .await?
+    }
+
     pub fn get_balance_with_state<D>(
         &self,
         state: D,
@@ -2402,7 +2415,7 @@ impl Backend {
             .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
     }
 
-    // TODO
+    // Rewind the chain to a common height and execute blocks to build new chain
     pub async fn reorg(
         &self,
         common_block: Block,
@@ -2410,7 +2423,8 @@ impl Backend {
         new_len: u64,
         txs: HashMap<u64, Vec<Arc<PoolTransaction>>>,
     ) -> Result<(), BlockchainError> {
-        // Trace all blocks to be reorged
+        // Trace all blocks to be reorged. Note that the reorg will be limited
+        // by the trace bounds
         let traces = self
             .trace_filter(TraceFilter {
                 from_block: Some(common_block.header.number),
@@ -2429,10 +2443,8 @@ impl Backend {
                 }
                 Create(create) => {
                     dirty_addresses.insert(create.from);
-                    if let Some(result) = trace.trace.result {
-                        if let TraceOutput::Create(output) = result {
-                            dirty_addresses.insert(output.address);
-                        }
+                    if let Some(TraceOutput::Create(output)) = trace.trace.result {
+                        dirty_addresses.insert(output.address);
                     }
                 }
                 Selfdestruct(destruct) => {
@@ -2445,58 +2457,70 @@ impl Backend {
             }
         }
 
-        // Retrieve account state at common height for dirty addresses
+        // Retrieve account state and storage at common height for dirty addresses
         let mut accounts = HashMap::new();
         for addr in dirty_addresses.into_iter() {
             let account = self
                 .get_account_at_block(addr, Some(BlockRequest::Number(common_block.header.number)))
                 .await?;
-            accounts.insert(addr, account);
+
+            // Only accumulate if storage is non empty
+            let storage = if account.storage_root.is_empty() {
+                None
+            } else {
+                let storage = self
+                    .get_storage_at_block(
+                        addr,
+                        Some(BlockRequest::Number(common_block.header.number)),
+                    )
+                    .await?;
+                Some(storage)
+            };
+
+            accounts.insert(addr, (account, storage));
         }
 
         // Reset state
-        let depth = current_height - common_block.header.number;
-        self.reset_state_by_block(common_block, current_height, depth).await?;
+        self.reset_state_by_block(common_block, current_height).await?;
 
-        // Set account state to common height
+        // Set account state and storage to common height
         for (addr, account) in accounts {
+            let (acc_info, storage) = account;
+            // Set storage
+            if let Some(storage) = storage {
+                for (k, v) in storage {
+                    self.db.write().await.set_storage_at(addr, k, v)?;
+                }
+            }
+
+            // Set account
             self.db.write().await.insert_account(
                 addr,
                 AccountInfo {
-                    balance: account.balance,
-                    nonce: account.nonce,
-                    code_hash: account.code_hash,
+                    balance: acc_info.balance,
+                    nonce: acc_info.nonce,
+                    code_hash: acc_info.code_hash,
                     code: None,
                 },
             );
         }
 
-        // Create the new reorged chain
+        // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..new_len {
-            let to_be_mined = match txs.get(&i) {
-                Some(txs) => txs.clone(),
-                None => vec![],
-            };
+            let to_be_mined = txs.get(&i).cloned().unwrap_or_else(Vec::new);
             self.do_mine_block(to_be_mined).await;
         }
-
-        // let curr_height = self.get_block(BlockId::latest()).unwrap();
-        // for i in (0..=curr_height.header.number - 1).rev() {
-        //     let height = self
-        //         .get_block(BlockId::number(i))
-        //         .expect(format!("could not find block for {:#?}", i).as_str());
-        // }
 
         Ok(())
     }
 
+    // Reset the state to a given block
     async fn reset_state_by_block(
         &self,
         block: Block,
         current_height: u64,
-        depth: u64,
     ) -> Result<(), BlockchainError> {
-        // update all settings related to the forked block
+        // Reset the environment
         {
             let mut env = self.env.write();
 
@@ -2513,25 +2537,22 @@ impl Backend {
             };
 
             self.time.reset(env.block.timestamp.to::<u64>());
-
-            // this is the base fee of the current block, but we need the base fee of
-            // the next block
-            let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                block.header.gas_used,
-                block.header.gas_limit,
-                block.header.base_fee_per_gas.unwrap_or_default(),
-            );
-
-            self.fees.set_base_fee(next_block_base_fee);
         }
+        // Update base fee
+        let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+            block.header.gas_used,
+            block.header.gas_limit,
+            block.header.base_fee_per_gas.unwrap_or_default(),
+        );
+        self.fees.set_base_fee(next_block_base_fee);
+
+        // Rewind storage back to common height
         {
-            // reset storage
             self.blockchain.storage.write().rewind(
                 current_height,
                 block.header.number,
                 block.header.hash(),
             );
-            // self.states.write().clear();
         }
 
         Ok(())

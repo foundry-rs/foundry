@@ -1933,13 +1933,10 @@ impl EthApi {
 
         // Find common height
         let current_height = self.backend.best_number();
-        let common_height = if current_height >= depth {
-            current_height - depth
-        } else {
-            return Err(BlockchainError::RpcError(RpcError::invalid_params(
-                "Reorg depth exceeds current chain height",
-            )));
-        };
+        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
+            RpcError::invalid_params("Reorg depth exceeds or equals current chain height"),
+        ))?;
+        println!("Common height vs current height {:#?} {:#?}", common_height, current_height);
 
         // Get the common ancestor block
         let common_block =
@@ -1967,9 +1964,9 @@ impl EthApi {
             let mut signed_block_txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::new();
             println!("anvil_reorg: pairs len {:#}", pairs.len());
             for pair in pairs {
-                let (tx, block_number) = pair;
+                let (tx_req, block_number) = pair;
 
-                let from = tx.from.map(Ok).unwrap_or_else(|| {
+                let from = tx_req.from.map(Ok).unwrap_or_else(|| {
                     self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
                 })?;
 
@@ -1979,7 +1976,7 @@ impl EthApi {
                         .await?,
                 );
 
-                let mut tx = WithOtherFields::new(tx);
+                let mut tx = WithOtherFields::new(tx_req);
 
                 // Estimate gas
                 if tx.gas.is_none() {
@@ -1989,28 +1986,31 @@ impl EthApi {
                 }
 
                 // Convert the transaction requests to pending transaction
-                let request = self.build_typed_tx_request(tx, *curr_nonce)?;
+                let typed = self.build_typed_tx_request(tx, *curr_nonce)?;
                 // Increment nonce
                 *curr_nonce += 1;
 
                 // Handle signer
                 let pending = if self.is_impersonated(from) {
-                    let bypass_signature = self.impersonated_signature(&request);
-                    let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+                    let bypass_signature = self.impersonated_signature(&typed);
+                    let transaction = sign::build_typed_transaction(typed, bypass_signature)?;
                     self.ensure_typed_transaction_supported(&transaction)?;
                     PendingTransaction::with_impersonated(transaction, from)
                 } else {
-                    let transaction = self.sign_request(&from, request)?;
+                    let transaction = self.sign_request(&from, typed)?;
                     self.ensure_typed_transaction_supported(&transaction)?;
                     PendingTransaction::new(transaction)?
                 };
 
-                // Validate transactions against current state
+                // Validate transactions
                 if let Err(err) = self.backend.validate_pool_transaction(&pending).await {
                     match err {
-                        // Ignore nonce validation
+                        // Ignore nonce and balance checks as this state may be reorged. This will
+                        // be caught on the executor.
                         BlockchainError::InvalidTransaction(
-                            InvalidTransactionError::NonceTooLow,
+                            InvalidTransactionError::NonceTooLow |
+                            InvalidTransactionError::InsufficientFunds |
+                            InvalidTransactionError::InsufficientFundsForTransfer,
                         ) => (),
                         _ => return Err(err),
                     }

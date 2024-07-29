@@ -1,21 +1,22 @@
 //! tests for custom anvil endpoints
 
 use crate::{
-    abi::{Greeter, MulticallContract, BUSD},
+    abi::{self, Greeter, MulticallContract, BUSD},
     fork::fork_config,
     utils::http_provider_with_signer,
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{address, fixed_bytes, Address, U256};
+use alloy_primitives::{address, fixed_bytes, Address, Bytes, U256};
 use alloy_provider::{ext::TxPoolApi, Provider};
 use alloy_rpc_types::{
-    anvil::{ForkedNetwork, Forking, Metadata, NodeEnvironment, NodeForkConfig, NodeInfo},
+    anvil::{
+        ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
+    },
     BlockId, BlockNumberOrTag, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
 use anvil_core::eth::EthRequest;
-use foundry_common::shell::println;
 use foundry_evm::revm::primitives::SpecId;
 use std::{
     str::FromStr,
@@ -663,15 +664,9 @@ async fn test_reorg() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
 
-    let reset_chain = async {
-        let curr_height = provider.get_block_number().await.unwrap();
-        println!("{:#?}", curr_height);
-        api.anvil_reorg(curr_height, 0, None).await.unwrap();
-        assert_eq!(provider.get_block_number().await.unwrap(), 0);
-    };
-
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
 
+    // Test calls
     // Populate chain
     for i in 0..10 {
         let tx = TransactionRequest::default()
@@ -689,29 +684,56 @@ async fn test_reorg() {
         api.send_transaction(tx).await.unwrap();
     }
 
-    println!("BLOCK NUM{:#?}", provider.get_block_number().await.unwrap());
-
     // Define transactions
     let mut txs = vec![];
     for i in 0..3 {
         let from = accounts[i].address();
-        // let nonce = provider.get_transaction_count(from).await.unwrap();
         let to = accounts[i + 1].address();
         for j in 0..5 {
-            // let nonce = nonce + (j as u64);
             let tx = TransactionRequest::default().from(from).to(to).value(U256::from(j));
             txs.push((tx, i as u64));
         }
     }
 
-    api.anvil_reorg(7, 3, Some(txs)).await.unwrap();
+    let current_height = provider.get_block_number().await.unwrap();
+    let depth = 7;
+    let new_len = 3;
+    api.anvil_reorg(depth, new_len, Some(txs)).await.unwrap();
 
-    assert_eq!(provider.get_block_number().await.unwrap(), 16);
+    assert_eq!(provider.get_block_number().await.unwrap(), (current_height - depth) + new_len);
     for num in 14..17 {
         let block = provider.get_block_by_number(num.into(), true).await.unwrap();
         let block = block.unwrap();
         assert_eq!(block.transactions.len(), 5);
     }
+    // Reset chain
+    let curr_height = provider.get_block_number().await.unwrap();
+    api.anvil_reorg(curr_height, 0, None).await.unwrap();
 
-    reset_chain.await;
+    // Test reverting code
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(5) })).await.unwrap();
+    let greeter = abi::Greeter::deploy(provider.clone(), "Reorg".to_string()).await.unwrap();
+    api.anvil_reorg(4, 0, None).await.unwrap();
+    let code = api.get_code(*greeter.address(), Some(BlockId::latest())).await.unwrap();
+    assert_eq!(code, Bytes::default());
+    // Reset chain
+    let curr_height = provider.get_block_number().await.unwrap();
+    api.anvil_reorg(curr_height, 0, None).await.unwrap();
+
+    // Test reverting contract storage
+    let storage =
+        abi::SimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(5) })).await.unwrap();
+    let _ = storage
+        .setValue("ReorgMe".to_string())
+        .from(accounts[0].address())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    api.anvil_reorg(5, 0, None).await.unwrap();
+    let value = storage.getValue().call().await.unwrap()._0;
+    assert_eq!("initial value".to_string(), value);
 }
