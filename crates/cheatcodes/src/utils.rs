@@ -55,7 +55,7 @@ impl Cheatcode for getNonce_1Call {
 impl Cheatcode for sign_3Call {
     fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
-        let unencoded_sig = gen_unencoded_sig(&wallet.privateKey, digest);
+        let unencoded_sig = gen_unencoded_sig(&wallet.privateKey, digest)?;
         Ok(encode_full_sig(unencoded_sig))
     }
 }
@@ -63,7 +63,7 @@ impl Cheatcode for sign_3Call {
 impl Cheatcode for signCompact_3Call {
     fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
         let Self { wallet, digest } = self;
-        let unencoded_sig = gen_unencoded_sig(&wallet.privateKey, digest);
+        let unencoded_sig = gen_unencoded_sig(&wallet.privateKey, digest)?;
         Ok(encode_compact_sig(unencoded_sig))
     }
 }
@@ -226,22 +226,22 @@ pub(super) fn encode_compact_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
     (r, vs).abi_encode()
 }
 
-pub(super) fn gen_unencoded_sig(private_key: &U256, digest: &B256) -> alloy_primitives::Signature {
+pub(super) fn gen_unencoded_sig(
+    private_key: &U256,
+    digest: &B256,
+) -> Result<alloy_primitives::Signature> {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
-    let wallet = parse_wallet(private_key).expect("failed to parse wallet");
-    let sig = wallet.sign_hash_sync(digest).expect("failed to sign hash");
-    debug_assert_eq!(
-        sig.recover_address_from_prehash(digest).expect("failed to recover address"),
-        wallet.address()
-    );
-    sig
+    let wallet = parse_wallet(private_key)?;
+    let sig = wallet.sign_hash_sync(digest)?;
+    debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
+    Ok(sig)
 }
 
 pub(super) fn gen_unencoded_sig_with_wallet<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     signer: Option<Address>,
     digest: &B256,
-) -> alloy_primitives::Signature {
+) -> Result<alloy_primitives::Signature> {
     let Some(script_wallets) = ccx.state.script_wallets() else {
         bail!("no wallets are available");
     };
@@ -266,7 +266,7 @@ pub(super) fn gen_unencoded_sig_with_wallet<DB: DatabaseExt>(
 
     let sig = foundry_common::block_on(wallet.sign_hash(digest))?;
     debug_assert_eq!(sig.recover_address_from_prehash(digest)?, signer);
-    sig
+    Ok(sig)
 }
 
 pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcodes) -> Result {
