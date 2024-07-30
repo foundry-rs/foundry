@@ -3,7 +3,8 @@
 use alloy_consensus::{AnyReceiptEnvelope, Eip658Value, Receipt, ReceiptWithBloom, TxType};
 use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, B256, I256, U256, U64};
 use alloy_rpc_types::{
-    AnyTransactionReceipt, Block, BlockTransactions, Log, Transaction, TransactionReceipt,
+    AccessListItem, AnyTransactionReceipt, Block, BlockTransactions, Log, Transaction,
+    TransactionReceipt,
 };
 use alloy_serde::OtherFields;
 use serde::Deserialize;
@@ -306,10 +307,188 @@ impl UIfmt for OtherFields {
     }
 }
 
+impl UIfmt for AccessListItem {
+    fn pretty(&self) -> String {
+        let mut s = String::with_capacity(42 + self.storage_keys.len() * 66);
+        s.push_str(self.address.pretty().as_str());
+        s.push_str(" => ");
+        s.push_str(self.storage_keys.pretty().as_str());
+        s
+    }
+}
+
 impl UIfmt for Transaction {
     fn pretty(&self) -> String {
-        format!(
-            "
+        match self.transaction_type {
+            Some(1) => format!(
+                "
+accessList           {}
+blockHash            {}
+blockNumber          {}
+chainId              {}
+from                 {}
+gasLimit             {}
+gasPrice             {}
+hash                 {}
+input                {}
+nonce                {}
+r                    {}
+s                    {}
+to                   {}
+transactionIndex     {}
+type                 {}
+value                {}
+yParity              {}{}",
+                self.access_list.as_deref().unwrap().pretty(),
+                self.block_hash.pretty(),
+                self.block_number.pretty(),
+                self.chain_id.pretty(),
+                self.from.pretty(),
+                self.gas.pretty(),
+                self.gas_price.pretty(),
+                self.hash.pretty(),
+                self.input.pretty(),
+                self.nonce.pretty(),
+                self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
+                self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
+                self.to.pretty(),
+                self.transaction_index.pretty(),
+                self.transaction_type.unwrap(),
+                self.value.pretty(),
+                self.signature.map(|s| s.v).pretty(),
+                self.other.pretty()
+            ),
+            Some(2) => format!(
+                "
+accessList           {}
+blockHash            {}
+blockNumber          {}
+chainId              {}
+from                 {}
+gasLimit             {}
+hash                 {}
+input                {}
+maxFeePerGas         {}
+maxPriorityFeePerGas {}
+nonce                {}
+r                    {}
+s                    {}
+to                   {}
+transactionIndex     {}
+type                 {}
+value                {}
+yParity              {}{}",
+                self.access_list.as_deref().unwrap().pretty(),
+                self.block_hash.pretty(),
+                self.block_number.pretty(),
+                self.chain_id.pretty(),
+                self.from.pretty(),
+                self.gas.pretty(),
+                self.hash.pretty(),
+                self.input.pretty(),
+                self.max_fee_per_gas.pretty(),
+                self.max_priority_fee_per_gas.pretty(),
+                self.nonce.pretty(),
+                self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
+                self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
+                self.to.pretty(),
+                self.transaction_index.pretty(),
+                self.transaction_type.unwrap(),
+                self.value.pretty(),
+                self.signature.map(|s| s.v).pretty(),
+                self.other.pretty()
+            ),
+            Some(3) => format!(
+                "
+accessList           {}
+blobVersionedHashes  {}
+blockHash            {}
+blockNumber          {}
+chainId              {}
+from                 {}
+gasLimit             {}
+hash                 {}
+input                {}
+maxFeePerBlobGas     {}
+maxFeePerGas         {}
+maxPriorityFeePerGas {}
+nonce                {}
+r                    {}
+s                    {}
+to                   {}
+transactionIndex     {}
+type                 {}
+value                {}
+yParity              {}{}",
+                self.access_list.as_deref().unwrap().pretty(),
+                self.blob_versioned_hashes.as_deref().unwrap().pretty(),
+                self.block_hash.pretty(),
+                self.block_number.pretty(),
+                self.chain_id.pretty(),
+                self.from.pretty(),
+                self.gas.pretty(),
+                self.hash.pretty(),
+                self.input.pretty(),
+                self.max_fee_per_blob_gas.pretty(),
+                self.max_fee_per_gas.pretty(),
+                self.max_priority_fee_per_gas.pretty(),
+                self.nonce.pretty(),
+                self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
+                self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
+                self.to.pretty(),
+                self.transaction_index.pretty(),
+                self.transaction_type.unwrap(),
+                self.value.pretty(),
+                self.signature.map(|s| s.v).pretty(),
+                self.other.pretty()
+            ),
+            Some(4) => format!(
+                "
+accessList           {}
+authorizationList    {}
+blockHash            {}
+blockNumber          {}
+chainId              {}
+from                 {}
+gasLimit             {}
+hash                 {}
+input                {}
+maxFeePerGas         {}
+maxPriorityFeePerGas {}
+nonce                {}
+r                    {}
+s                    {}
+to                   {}
+transactionIndex     {}
+type                 {}
+value                {}
+yParity              {}{}",
+                self.access_list.as_deref().unwrap().pretty(),
+                self.authorization_list
+                    .as_ref()
+                    .map(|l| serde_json::to_string(&l).unwrap())
+                    .unwrap_or_default(),
+                self.block_hash.pretty(),
+                self.block_number.pretty(),
+                self.chain_id.pretty(),
+                self.from.pretty(),
+                self.gas.pretty(),
+                self.hash.pretty(),
+                self.input.pretty(),
+                self.max_fee_per_gas.pretty(),
+                self.max_priority_fee_per_gas.pretty(),
+                self.nonce.pretty(),
+                self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
+                self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
+                self.to.pretty(),
+                self.transaction_index.pretty(),
+                self.transaction_type.unwrap(),
+                self.value.pretty(),
+                self.signature.map(|s| s.v).pretty(),
+                self.other.pretty()
+            ),
+            _ => format!(
+                "
 blockHash            {}
 blockNumber          {}
 from                 {}
@@ -324,22 +503,23 @@ to                   {}
 transactionIndex     {}
 v                    {}
 value                {}{}",
-            self.block_hash.pretty(),
-            self.block_number.pretty(),
-            self.from.pretty(),
-            self.gas.pretty(),
-            self.gas_price.pretty(),
-            self.hash.pretty(),
-            self.input.pretty(),
-            self.nonce,
-            self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
-            self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
-            self.to.pretty(),
-            self.transaction_index.pretty(),
-            self.signature.map(|s| s.v).pretty(),
-            self.value.pretty(),
-            self.other.pretty()
-        )
+                self.block_hash.pretty(),
+                self.block_number.pretty(),
+                self.from.pretty(),
+                self.gas.pretty(),
+                self.gas_price.pretty(),
+                self.hash.pretty(),
+                self.input.pretty(),
+                self.nonce,
+                self.signature.map(|s| s.r.to_be_bytes_vec()).pretty(),
+                self.signature.map(|s| s.s.to_be_bytes_vec()).pretty(),
+                self.to.pretty(),
+                self.transaction_index.pretty(),
+                self.signature.map(|s| s.v).pretty(),
+                self.value.pretty(),
+                self.other.pretty()
+            ),
+        }
     }
 }
 
@@ -557,6 +737,185 @@ queueOrigin          sequencer
 rawTransaction       0xf86681a28084011cbbdc944a16a42407aa491564643e1dfc1fd50af29794ef8084d294f09338a06fca94073a0cf3381978662d46cf890602d3e9ccf6a31e4b69e8ecbd995e2beea00e804161a2b56a37ca1f6f4c4b8bce926587afa0d9b1acc5165e6556c959d583
 txType               0
 ".trim()
+        );
+    }
+
+    #[test]
+    fn can_pretty_print_eip2930() {
+        let s = r#"{
+        "type": "0x1",
+        "blockHash": "0x2b27fe2bbc8ce01ac7ae8bf74f793a197cf7edbe82727588811fa9a2c4776f81",
+        "blockNumber": "0x12b1d",
+        "from": "0x2b371c0262ceab27face32fbb5270ddc6aa01ba4",
+        "gas": "0x6bdf",
+        "gasPrice": "0x3b9aca00",
+        "hash": "0xbddbb685774d8a3df036ed9fb920b48f876090a57e9e90ee60921e0510ef7090",
+        "input": "0x9c0e3f7a0000000000000000000000000000000000000000000000000000000000000078000000000000000000000000000000000000000000000000000000000000002a",
+        "nonce": "0x1c",
+        "to": "0x8e730df7c70d33118d9e5f79ab81aed0be6f6635",
+        "transactionIndex": "0x2",
+        "value": "0x0",
+        "v": "0x1",
+        "r": "0x2a98c51c2782f664d3ce571fef0491b48f5ebbc5845fa513192e6e6b24ecdaa1",
+        "s": "0x29b8e0c67aa9c11327e16556c591dc84a7aac2f6fc57c7f93901be8ee867aebc",
+		"chainId": "0x66a",
+		"accessList": [
+			{ "address": "0x2b371c0262ceab27face32fbb5270ddc6aa01ba4", "storageKeys": ["0x1122334455667788990011223344556677889900112233445566778899001122", "0x0000000000000000000000000000000000000000000000000000000000000000"] },
+			{ "address": "0x8e730df7c70d33118d9e5f79ab81aed0be6f6635", "storageKeys": [] }
+		]
+      }
+        "#;
+
+        let tx: Transaction = serde_json::from_str(s).unwrap();
+        assert_eq!(tx.pretty().trim(),
+                   r"
+accessList           [
+	0x2b371c0262CEAb27fAcE32FBB5270dDc6Aa01ba4 => [
+		0x1122334455667788990011223344556677889900112233445566778899001122
+		0x0000000000000000000000000000000000000000000000000000000000000000
+	]
+	0x8E730Df7C70D33118D9e5F79ab81aEd0bE6F6635 => []
+]
+blockHash            0x2b27fe2bbc8ce01ac7ae8bf74f793a197cf7edbe82727588811fa9a2c4776f81
+blockNumber          76573
+chainId              1642
+from                 0x2b371c0262CEAb27fAcE32FBB5270dDc6Aa01ba4
+gasLimit             27615
+gasPrice             1000000000
+hash                 0xbddbb685774d8a3df036ed9fb920b48f876090a57e9e90ee60921e0510ef7090
+input                0x9c0e3f7a0000000000000000000000000000000000000000000000000000000000000078000000000000000000000000000000000000000000000000000000000000002a
+nonce                28
+r                    0x2a98c51c2782f664d3ce571fef0491b48f5ebbc5845fa513192e6e6b24ecdaa1
+s                    0x29b8e0c67aa9c11327e16556c591dc84a7aac2f6fc57c7f93901be8ee867aebc
+to                   0x8E730Df7C70D33118D9e5F79ab81aEd0bE6F6635
+transactionIndex     2
+type                 1
+value                0
+yParity              1
+".trim()
+        );
+    }
+
+    #[test]
+    fn can_pretty_print_eip1559() {
+        let s = r#"{
+        "type": "0x2",
+        "blockHash": "0x61abbe5e22738de0462046f5a5d6c4cd6bc1f3a6398e4457d5e293590e721125",
+        "blockNumber": "0x7647",
+        "from": "0xbaadf00d42264eeb3fafe6799d0b56cf55df0f00",
+        "gas": "0x186a0",
+        "hash": "0xa7231d4da0576fade5d3b9481f4cd52459ec59b9bbdbf4f60d6cd726b2a3a244",
+        "input": "0x48600055323160015500",
+        "nonce": "0x12c",
+        "to": null,
+        "transactionIndex": "0x41",
+        "value": "0x0",
+        "v": "0x1",
+        "yParity": "0x1",
+        "r": "0x396864e5f9132327defdb1449504252e1fa6bce73feb8cd6f348a342b198af34",
+        "s": "0x44dbba72e6d3304104848277143252ee43627c82f02d1ef8e404e1bf97c70158",
+        "gasPrice": "0x4a817c800",
+        "maxFeePerGas": "0x4a817c800",
+        "maxPriorityFeePerGas": "0x4a817c800",
+        "chainId": "0x66a",
+        "accessList": [
+          {
+            "address": "0xc141a9a7463e6c4716d9fc0c056c054f46bb2993",
+            "storageKeys": [
+              "0x0000000000000000000000000000000000000000000000000000000000000000"
+            ]
+          }
+        ]
+      }
+"#;
+        let tx: Transaction = serde_json::from_str(s).unwrap();
+        assert_eq!(
+            tx.pretty().trim(),
+            r"
+accessList           [
+	0xC141a9A7463e6C4716d9FC0C056C054F46Bb2993 => [
+		0x0000000000000000000000000000000000000000000000000000000000000000
+	]
+]
+blockHash            0x61abbe5e22738de0462046f5a5d6c4cd6bc1f3a6398e4457d5e293590e721125
+blockNumber          30279
+chainId              1642
+from                 0xBaaDF00d42264eEb3FAFe6799d0b56cf55DF0F00
+gasLimit             100000
+hash                 0xa7231d4da0576fade5d3b9481f4cd52459ec59b9bbdbf4f60d6cd726b2a3a244
+input                0x48600055323160015500
+maxFeePerGas         20000000000
+maxPriorityFeePerGas 20000000000
+nonce                300
+r                    0x396864e5f9132327defdb1449504252e1fa6bce73feb8cd6f348a342b198af34
+s                    0x44dbba72e6d3304104848277143252ee43627c82f02d1ef8e404e1bf97c70158
+to                   
+transactionIndex     65
+type                 2
+value                0
+yParity              1
+"
+            .trim()
+        );
+    }
+
+    #[test]
+    fn can_pretty_print_eip4884() {
+        let s = r#"{
+		"blockHash": "0xfc2715ff196e23ae613ed6f837abd9035329a720a1f4e8dce3b0694c867ba052",
+		"blockNumber": "0x2a1cb",
+		"from": "0xad01b55d7c3448b8899862eb335fbb17075d8de2",
+		"gas": "0x5208",
+		"gasPrice": "0x1d1a94a201c",
+		"maxFeePerGas": "0x1d1a94a201c",
+		"maxPriorityFeePerGas": "0x1d1a94a201c",
+		"maxFeePerBlobGas": "0x3e8",
+		"hash": "0x5ceec39b631763ae0b45a8fb55c373f38b8fab308336ca1dc90ecd2b3cf06d00",
+		"input": "0x",
+		"nonce": "0x1b483",
+		"to": "0x000000000000000000000000000000000000f1c1",
+		"transactionIndex": "0x0",
+		"value": "0x0",
+		"type": "0x3",
+		"accessList": [],
+		"chainId": "0x1a1f0ff42",
+		"blobVersionedHashes": [
+		  "0x01a128c46fc61395706686d6284f83c6c86dfc15769b9363171ea9d8566e6e76"
+		],
+		"v": "0x0",
+		"r": "0x343c6239323a81ef61293cb4a4d37b6df47fbf68114adb5dd41581151a077da1",
+		"s": "0x48c21f6872feaf181d37cc4f9bbb356d3f10b352ceb38d1c3b190d749f95a11b",
+		"yParity": "0x0"
+	  }
+"#;
+        let tx: Transaction = serde_json::from_str(s).unwrap();
+        assert_eq!(
+            tx.pretty().trim(),
+            r"
+accessList           []
+blobVersionedHashes  [
+	0x01a128c46fc61395706686d6284f83c6c86dfc15769b9363171ea9d8566e6e76
+]
+blockHash            0xfc2715ff196e23ae613ed6f837abd9035329a720a1f4e8dce3b0694c867ba052
+blockNumber          172491
+chainId              7011893058
+from                 0xAD01b55d7c3448B8899862eb335FBb17075d8DE2
+gasLimit             21000
+hash                 0x5ceec39b631763ae0b45a8fb55c373f38b8fab308336ca1dc90ecd2b3cf06d00
+input                0x
+maxFeePerBlobGas     1000
+maxFeePerGas         2000000000028
+maxPriorityFeePerGas 2000000000028
+nonce                111747
+r                    0x343c6239323a81ef61293cb4a4d37b6df47fbf68114adb5dd41581151a077da1
+s                    0x48c21f6872feaf181d37cc4f9bbb356d3f10b352ceb38d1c3b190d749f95a11b
+to                   0x000000000000000000000000000000000000f1C1
+transactionIndex     0
+type                 3
+value                0
+yParity              0
+"
+            .trim()
         );
     }
 
