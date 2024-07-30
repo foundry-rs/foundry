@@ -640,7 +640,9 @@ fn extract_metadata_hash(bytecode: &[u8]) -> &[u8] {
     if metadata_len as usize <= bytecode.len() {
         if ciborium::from_reader::<BTreeMap<String, Vec<u8>>, _>(
             &bytecode[bytecode.len() - 2 - metadata_len as usize..bytecode.len() - 2],
-        ).is_ok() {
+        )
+        .is_ok()
+        {
             &bytecode[..bytecode.len() - 2 - metadata_len as usize]
         } else {
             bytecode
@@ -688,7 +690,6 @@ mod tests {
     use foundry_test_utils::{
         forgetest_async,
         rpc::{next_etherscan_api_key, next_http_archive_rpc_endpoint},
-        str,
         util::OutputExt,
         TestCommand, TestProject,
     };
