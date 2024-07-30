@@ -171,7 +171,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             args.etherscan.key().as_deref(),
             config,
         )?;
-        let provider = get_provider(&config)?;
+        let provider = get_provider(config)?;
 
         // Get creation tx hash.
         let creation_data = etherscan.contract_creation_data(args.address).await?;
@@ -224,12 +224,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
         // Obtain local artifact
         let artifact = if let Ok(local_bytecode) =
-            helpers::build_using_cache(&args, etherscan_metadata, &config)
+            helpers::build_using_cache(&args, etherscan_metadata, config)
         {
             trace!("using cache");
             local_bytecode
         } else {
-            helpers::build_project(&args, &config)?
+            helpers::build_project(&args, config)?
         };
 
         let local_bytecode = artifact
@@ -309,7 +309,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             BytecodeType::Creation,
             &mut json_results,
             etherscan_metadata,
-            &config,
+            config,
         );
 
         // If the creation code does not match, the runtime also won't match. Hence return.
@@ -320,7 +320,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 BytecodeType::Runtime,
                 &mut json_results,
                 etherscan_metadata,
-                &config,
+                config,
             );
             if args.json {
                 println!("{}", serde_json::to_string(&json_results)?);
@@ -446,7 +446,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             BytecodeType::Runtime,
             &mut json_results,
             etherscan_metadata,
-            &config,
+            config,
         );
 
         if args.json {
