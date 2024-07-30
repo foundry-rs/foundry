@@ -240,7 +240,7 @@ impl RpcEndpointConfig {
 
 impl fmt::Display for RpcEndpointConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { endpoint, retries, retry_backoff, compute_units_per_second , auth} = self;
+        let Self { endpoint, retries, retry_backoff, compute_units_per_second, auth } = self;
 
         write!(f, "{endpoint}")?;
 
@@ -269,9 +269,9 @@ impl Serialize for RpcEndpointConfig {
     where
         S: Serializer,
     {
-        if self.retries.is_none() &&
-            self.retry_backoff.is_none() &&
-            self.compute_units_per_second.is_none()
+        if self.retries.is_none()
+            && self.retry_backoff.is_none()
+            && self.compute_units_per_second.is_none()
         {
             // serialize as endpoint if there's no additional config
             self.endpoint.serialize(serializer)
@@ -307,11 +307,16 @@ impl<'de> Deserialize<'de> for RpcEndpointConfig {
             retries: Option<u32>,
             retry_backoff: Option<u64>,
             compute_units_per_second: Option<u64>,
-            auth: Option<String>
+            auth: Option<String>,
         }
 
-        let RpcEndpointConfigInner { endpoint, retries, retry_backoff, compute_units_per_second, auth } =
-            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        let RpcEndpointConfigInner {
+            endpoint,
+            retries,
+            retry_backoff,
+            compute_units_per_second,
+            auth,
+        } = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
 
         Ok(Self { endpoint, retries, retry_backoff, compute_units_per_second, auth })
     }
