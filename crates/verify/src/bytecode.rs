@@ -11,7 +11,7 @@ use foundry_cli::{
 };
 use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::ProviderBuilder};
 use foundry_compilers::{
-    artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion},
+    artifacts::{CompactContractBytecode, EvmVersion},
     info::ContractInfo,
 };
 use foundry_config::{figment, filter::SkipBuildFilter, impl_figment_convert, Chain, Config};
@@ -21,7 +21,7 @@ use foundry_evm::{
 use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::{fmt, path::PathBuf, str::FromStr};
+use std::{collections::BTreeMap, fmt, path::PathBuf, str::FromStr};
 use yansi::Paint;
 
 impl_figment_convert!(VerifyBytecodeArgs);
@@ -250,9 +250,6 @@ impl VerifyBytecodeArgs {
                 );
             };
 
-        // If bytecode_hash is disabled then its always partial verification
-        let has_metadata = config.bytecode_hash == BytecodeHash::None;
-
         let local_bytecode = artifact
             .bytecode
             .and_then(|b| b.into_bytes())
@@ -269,7 +266,6 @@ impl VerifyBytecodeArgs {
             maybe_creation_code,
             &constructor_args,
             false,
-            has_metadata,
         );
 
         let mut json_results: Vec<JsonResult> = vec![];
@@ -361,8 +357,10 @@ impl VerifyBytecodeArgs {
 
         configure_tx_env(&mut env, &transaction);
 
-        let env_with_handler =
-            EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(SpecId::LATEST));
+        let env_with_handler = EnvWithHandlerCfg::new(
+            Box::new(env.clone()),
+            HandlerCfg::new(config.evm_spec_id()),
+        );
 
         let contract_address = if let Some(to) = transaction.to {
             if to != DEFAULT_CREATE2_DEPLOYER {
@@ -407,7 +405,6 @@ impl VerifyBytecodeArgs {
             &onchain_runtime_code,
             &constructor_args,
             true,
-            has_metadata,
         );
 
         self.print_result(
@@ -592,13 +589,12 @@ fn match_bytecodes(
     bytecode: &[u8],
     constructor_args: &[u8],
     is_runtime: bool,
-    has_metadata: bool,
 ) -> Option<VerificationType> {
     // 1. Try full match
     if local_bytecode == bytecode {
         Some(VerificationType::Full)
     } else {
-        is_partial_match(local_bytecode, bytecode, constructor_args, is_runtime, has_metadata)
+        is_partial_match(local_bytecode, bytecode, constructor_args, is_runtime)
             .then_some(VerificationType::Partial)
     }
 }
@@ -608,30 +604,23 @@ fn is_partial_match(
     mut bytecode: &[u8],
     constructor_args: &[u8],
     is_runtime: bool,
-    has_metadata: bool,
 ) -> bool {
     // 1. Check length of constructor args
     if constructor_args.is_empty() || is_runtime {
         // Assume metadata is at the end of the bytecode
-        return try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
+        return try_extract_and_compare_bytecode(local_bytecode, bytecode)
     }
 
     // If not runtime, extract constructor args from the end of the bytecode
     bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
     local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
 
-    try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
+    try_extract_and_compare_bytecode(local_bytecode, bytecode)
 }
 
-fn try_extract_and_compare_bytecode(
-    mut local_bytecode: &[u8],
-    mut bytecode: &[u8],
-    has_metadata: bool,
-) -> bool {
-    if has_metadata {
-        local_bytecode = extract_metadata_hash(local_bytecode);
-        bytecode = extract_metadata_hash(bytecode);
-    }
+fn try_extract_and_compare_bytecode(mut local_bytecode: &[u8], mut bytecode: &[u8]) -> bool {
+    local_bytecode = extract_metadata_hash(local_bytecode);
+    bytecode = extract_metadata_hash(bytecode);
 
     // Now compare the local code and bytecode
     local_bytecode == bytecode
@@ -643,8 +632,17 @@ fn extract_metadata_hash(bytecode: &[u8]) -> &[u8] {
     let metadata_len = &bytecode[bytecode.len() - 2..];
     let metadata_len = u16::from_be_bytes([metadata_len[0], metadata_len[1]]);
 
-    // Now discard the metadata from the bytecode
-    &bytecode[..bytecode.len() - 2 - metadata_len as usize]
+    if metadata_len as usize <= bytecode.len() {
+        if let Ok(_) = ciborium::from_reader::<BTreeMap<String, Vec<u8>>, _>(
+            &bytecode[bytecode.len() - 2 - metadata_len as usize..bytecode.len() - 2],
+        ) {
+            &bytecode[..bytecode.len() - 2 - metadata_len as usize]
+        } else {
+            bytecode
+        }
+    } else {
+        bytecode
+    }
 }
 
 fn find_mismatch_in_settings(
@@ -676,4 +674,95 @@ fn find_mismatch_in_settings(
     }
 
     mismatches
+}
+
+#[cfg(test)]
+mod tests {
+    use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
+    use foundry_config::Config;
+    use foundry_test_utils::{
+        forgetest_async,
+        rpc::{next_etherscan_api_key, next_http_archive_rpc_endpoint},
+        str,
+        util::OutputExt,
+        TestCommand, TestProject,
+    };
+
+    fn test_verify_bytecode(
+        prj: TestProject,
+        mut cmd: TestCommand,
+        addr: &str,
+        contract_name: &str,
+        config: Config,
+        expected_matches: (&str, &str),
+    ) {
+        let etherscan_key = next_etherscan_api_key();
+        let rpc_url = next_http_archive_rpc_endpoint();
+
+        // fetch and flatten source code
+        let source_code = cmd
+            .cast_fuse()
+            .args(["etherscan-source", addr, "--flatten", "--etherscan-api-key", &etherscan_key])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+
+        prj.add_source(contract_name, &source_code).unwrap();
+        prj.write_config(config);
+
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "verify-bytecode",
+                addr,
+                contract_name,
+                "--etherscan-api-key",
+                &etherscan_key,
+                "--rpc-url",
+                &rpc_url,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+
+        assert!(output.contains(
+            format!("Creation code matched with status {}", expected_matches.0).as_str()
+        ));
+        assert!(output
+            .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
+    }
+
+    forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {
+        test_verify_bytecode(
+            prj,
+            cmd,
+            "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
+            "SystemConfig",
+            Config {
+                evm_version: EvmVersion::London,
+                optimizer_runs: 999999,
+                optimizer: true,
+                cbor_metadata: false,
+                bytecode_hash: BytecodeHash::None,
+                ..Default::default()
+            },
+            ("full", "full"),
+        );
+    });
+
+    forgetest_async!(can_verify_bytecode_with_metadata, |prj, cmd| {
+        test_verify_bytecode(
+            prj,
+            cmd,
+            "0xb8901acb165ed027e32754e0ffe830802919727f",
+            "L1_ETH_Bridge",
+            Config {
+                evm_version: EvmVersion::Paris,
+                optimizer_runs: 50000,
+                optimizer: true,
+                ..Default::default()
+            },
+            ("partial", "partial"),
+        );
+    });
 }
