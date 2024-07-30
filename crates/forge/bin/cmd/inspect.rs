@@ -168,9 +168,11 @@ impl InspectArgs {
                     // Print the topic of all events including anonymous.
                     for ev in abi.events.iter().flat_map(|(_, events)| events) {
                         let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
-                        let sig = &ev.signature();
-                        let topic = hex::encode(&keccak256(sig.strip_prefix("0x").unwrap_or(sig)));
-                        out.insert(format!("{}({})", ev.name, types.join(",")), topic.into());
+                        let topic = hex::encode(keccak256(ev.signature()));
+                        out.insert(
+                            format!("{}({})", ev.name, types.join(",")),
+                            format!("0x{topic}").into(),
+                        );
                     }
                 }
                 print_json(&out)?;
