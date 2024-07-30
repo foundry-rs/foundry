@@ -206,6 +206,11 @@ impl VerifyBytecodeArgs {
                 self.build_project(&config)?
             };
 
+        let local_bytecode = artifact
+            .bytecode
+            .and_then(|b| b.into_bytes())
+            .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
+
         // Get the constructor args from etherscan
         let mut constructor_args = if let Some(args) = source_code.items.first() {
             args.constructor_arguments.clone()
@@ -256,11 +261,6 @@ impl VerifyBytecodeArgs {
                 }
             }
         }
-
-        let local_bytecode = artifact
-            .bytecode
-            .and_then(|b| b.into_bytes())
-            .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
 
         // Append constructor args to the local_bytecode
         trace!(%constructor_args);
@@ -364,10 +364,8 @@ impl VerifyBytecodeArgs {
 
         configure_tx_env(&mut env, &transaction);
 
-        let env_with_handler = EnvWithHandlerCfg::new(
-            Box::new(env.clone()),
-            HandlerCfg::new(config.evm_spec_id()),
-        );
+        let env_with_handler =
+            EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(config.evm_spec_id()));
 
         let contract_address = if let Some(to) = transaction.to {
             if to != DEFAULT_CREATE2_DEPLOYER {
