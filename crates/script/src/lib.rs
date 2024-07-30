@@ -492,9 +492,15 @@ impl ScriptResult {
 
 #[derive(Serialize, Deserialize)]
 struct JsonResult {
+    success: bool,
+    labeled_addresses: HashMap<Address, String>,
     logs: Vec<String>,
+    traces: Traces,
     gas_used: u64,
+    address: Option<Address>,
     returns: HashMap<String, NestedValue>,
+    breakpoints: Breakpoints,
+    returned: Bytes,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

@@ -384,9 +384,15 @@ impl PreSimulationState {
 
         let console_logs = decode_console_logs(&result.logs);
         let output = JsonResult {
+            success: result.success,
             logs: console_logs,
+            traces: result.traces.clone(),
             gas_used: result.gas_used,
             returns: self.execution_artifacts.returns.clone(),
+            labeled_addresses: result.labeled_addresses.clone(),
+            address: result.address,
+            breakpoints: result.breakpoints.clone(),
+            returned: result.returned.clone(),
         };
         let j = serde_json::to_string(&output)?;
         shell::println(j)?;
