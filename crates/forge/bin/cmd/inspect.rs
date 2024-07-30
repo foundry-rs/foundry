@@ -171,10 +171,7 @@ impl InspectArgs {
                         let sig = &ev.signature();
                         let topic =
                             hex::encode(&keccak256(sig.strip_prefix("0x").unwrap_or(sig))[..4]);
-                        out.insert(
-                            format!("{}({})", ev.name, types.join(",")),
-                            format!("{:?}", topic).into(),
-                        );
+                        out.insert(format!("{}({})", ev.name, types.join(",")), topic.into());
                     }
                 }
                 print_json(&out)?;
