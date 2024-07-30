@@ -1,6 +1,6 @@
 //! The `forge verify-bytecode` command.
 
-use crate::{utils::is_host_only, verify::VerifierArgs};
+use crate::{provider::VerificationBytecodeContext, utils::is_host_only, verify::VerifierArgs};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -133,11 +133,14 @@ impl VerifyBytecodeArgs {
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
+        // Configure the context for bytecode verification.
+        let context = VerificationBytecodeContext { config };
+
         let verifier_url = self.verifier.verifier_url.clone();
         self.verifier
             .verifier
             .client(&self.etherscan.key())?
-            .verify_bytecode(self)
+            .verify_bytecode(self, context)
             .await
             .map_err(|err| {
                 if let Some(verifier_url) = verifier_url {

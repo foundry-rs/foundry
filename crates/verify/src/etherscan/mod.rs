@@ -1,6 +1,6 @@
 use crate::{
     bytecode::VerifyBytecodeArgs,
-    provider::{VerificationContext, VerificationProvider},
+    provider::{VerificationBytecodeContext, VerificationContext, VerificationProvider},
     retry::RETRY_CHECK_ON_VERIFY,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
@@ -159,8 +159,18 @@ impl VerificationProvider for EtherscanVerificationProvider {
         Ok(())
     }
 
-    async fn verify_bytecode(&mut self, args: VerifyBytecodeArgs) -> Result<()> {
-        let (etherscan, config) = self.prepare_verify_bytecode_request(&args).await?;
+    async fn verify_bytecode(
+        &mut self,
+        args: VerifyBytecodeArgs,
+        context: VerificationBytecodeContext,
+    ) -> Result<()> {
+        let config = &context.config;
+        let etherscan = self.client(
+            args.etherscan.chain.unwrap_or_default(),
+            args.verifier.verifier_url.as_deref(),
+            args.etherscan.key().as_deref(),
+            config,
+        )?;
         let provider = get_provider(&config)?;
 
         // Get creation tx hash.
@@ -527,22 +537,6 @@ impl EtherscanVerificationProvider {
         let verify_args = self.create_verify_request(args, context).await?;
 
         Ok((etherscan, verify_args))
-    }
-
-    /// Configures the API request to the Etherscan API using the given [`VerifyBytecodeArgs`].
-    async fn prepare_verify_bytecode_request(
-        &mut self,
-        args: &VerifyBytecodeArgs,
-    ) -> Result<(Client, Config)> {
-        let config = args.try_load_config_emit_warnings()?;
-        let etherscan = self.client(
-            args.etherscan.chain.unwrap_or_default(),
-            args.verifier.verifier_url.as_deref(),
-            args.etherscan.key().as_deref(),
-            &config,
-        )?;
-
-        Ok((etherscan, config))
     }
 
     /// Queries the Etherscan API to verify if the contract is already verified.

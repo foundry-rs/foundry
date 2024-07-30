@@ -93,6 +93,12 @@ impl VerificationContext {
     }
 }
 
+/// Container with data required for bytecode contract verification.
+#[derive(Debug, Clone)]
+pub struct VerificationBytecodeContext {
+    pub config: Config,
+}
+
 /// An abstraction for various verification providers such as etherscan, sourcify, blockscout
 #[async_trait]
 pub trait VerificationProvider {
@@ -113,7 +119,11 @@ pub trait VerificationProvider {
     async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()>;
 
     /// Verify the bytecode of the targeted contract against the locally compiled bytecode.
-    async fn verify_bytecode(&mut self, args: VerifyBytecodeArgs) -> Result<()>;
+    async fn verify_bytecode(
+        &mut self,
+        args: VerifyBytecodeArgs,
+        context: VerificationBytecodeContext,
+    ) -> Result<()>;
 
     /// Checks whether the contract is verified.
     async fn check(&self, args: VerifyCheckArgs) -> Result<()>;

@@ -1,6 +1,6 @@
 use crate::{
     bytecode::VerifyBytecodeArgs,
-    provider::{VerificationContext, VerificationProvider},
+    provider::{VerificationBytecodeContext, VerificationContext, VerificationProvider},
     verify::{VerifyArgs, VerifyCheckArgs},
 };
 use async_trait::async_trait;
@@ -71,7 +71,11 @@ impl VerificationProvider for SourcifyVerificationProvider {
         self.process_sourcify_response(resp.map(|r| r.result))
     }
 
-    async fn verify_bytecode(&mut self, __args: VerifyBytecodeArgs) -> Result<()> {
+    async fn verify_bytecode(
+        &mut self,
+        _args: VerifyBytecodeArgs,
+        _context: VerificationBytecodeContext,
+    ) -> Result<()> {
         unimplemented!("Sourcify support has not yet been implemented for bytecode verification")
     }
 
