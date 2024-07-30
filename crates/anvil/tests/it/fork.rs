@@ -1165,6 +1165,11 @@ async fn test_arbitrum_fork_block_number() {
     let block_number = api.block_number().unwrap().to::<u64>();
     assert_eq!(block_number, initial_block_number + 1);
 
+    // test block by number API call returns proper block number and `l1BlockNumber` is set
+    let block_by_number = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block_by_number.header.number.unwrap(), initial_block_number + 1);
+    assert!(block_by_number.other.get("l1BlockNumber").is_some());
+
     // revert to recorded snapshot and check block number
     assert!(api.evm_revert(snapshot).await.unwrap());
     let block_number = api.block_number().unwrap().to::<u64>();

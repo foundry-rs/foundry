@@ -233,16 +233,6 @@ contract FsTest is DSTest {
         vm.fsMetadata("/etc/hosts");
     }
 
-    // not testing file cheatcodes per se
-    function testCheatCodeErrorPrefix() public {
-        try vm.readFile("/etc/hosts") {
-            emit log("Error: reading /etc/hosts should revert");
-            fail();
-        } catch (bytes memory err) {
-            assertEq(err, abi.encodeWithSignature("CheatcodeError(string)", FOUNDRY_READ_ERR));
-        }
-    }
-
     function testExists() public {
         string memory validFilePath = "fixtures/File/read.txt";
         assertTrue(vm.exists(validFilePath));

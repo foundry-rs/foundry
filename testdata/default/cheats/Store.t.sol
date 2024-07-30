@@ -30,12 +30,8 @@ contract StoreTest is DSTest {
         assertEq(store.slot0(), 10, "initial value for slot 0 is incorrect");
         assertEq(store.slot1(), 20, "initial value for slot 1 is incorrect");
 
-        vm.expectRevert(bytes("cannot call `store` on precompile 0x0000000000000000000000000000000000000001"));
-        this._store(address(1), bytes32(0), bytes32(uint256(1)));
-    }
-
-    function _store(address target, bytes32 slot, bytes32 value) public {
-        vm.store(target, slot, value);
+        vm._expectCheatcodeRevert("cannot use precompile 0x0000000000000000000000000000000000000001 as an argument");
+        vm.store(address(1), bytes32(0), bytes32(uint256(1)));
     }
 
     function testStoreFuzzed(uint256 slot0, uint256 slot1) public {
