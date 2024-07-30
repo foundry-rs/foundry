@@ -155,6 +155,7 @@ async fn test_deposit_transaction_hash_matches_sepolia() {
     let signer: EthereumWallet = accounts[0].clone().into();
     let sender_addr = accounts[0].address();
 
+    // https://sepolia-optimism.etherscan.io/tx/0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7
     let tx_hash: TxHash = "0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7"
         .parse::<TxHash>()
         .unwrap();
@@ -185,7 +186,6 @@ async fn test_deposit_transaction_hash_matches_sepolia() {
         .with_max_fee_per_gas(20_000_000_000)
         .with_max_priority_fee_per_gas(1_000_000_000);
 
-    // let fund_account_tx = fund_account_tx.build(&signer).await.unwrap();
     provider
         .send_transaction(WithOtherFields::new(fund_account_tx))
         .await

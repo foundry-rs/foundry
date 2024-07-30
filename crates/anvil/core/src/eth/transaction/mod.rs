@@ -1698,6 +1698,7 @@ mod tests {
 
     #[test]
     fn test_decode_encode_deposit_tx() {
+        // https://sepolia-optimism.etherscan.io/tx/0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7
         let tx_hash: TxHash = "0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7"
             .parse::<TxHash>()
             .unwrap();
