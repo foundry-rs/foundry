@@ -203,7 +203,7 @@ alloy-sol-macro-input = "0.7.7"
 alloy-sol-types = "0.7.7"
 syn-solidity = "0.7.7"
 
-alloy-chains = "0.1"
+alloy-chains = { git = "https://github.com/alloy-rs/chains.git" }
 alloy-rlp = "0.3.3"
 alloy-trie = "0.4.1"
 
@@ -264,3 +264,6 @@ soldeer = "0.2.19"
 
 proptest = "1"
 comfy-table = "7"
+
+[patch.crates-io]
+alloy-chains = { git = "https://github.com/alloy-rs/chains.git" }

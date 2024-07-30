@@ -167,8 +167,6 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                 NamedChain::ArbitrumGoerli |
                 NamedChain::ArbitrumSepolia |
                 NamedChain::ArbitrumTestnet |
-                NamedChain::Mantle |
-                NamedChain::MantleTestnet |
                 NamedChain::Moonbase |
                 NamedChain::Moonbeam |
                 NamedChain::MoonbeamDev |
