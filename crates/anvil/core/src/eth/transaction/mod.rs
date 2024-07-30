@@ -1697,7 +1697,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rlp_roundtrip() {
+    fn test_decode_encode_deposit_tx() {
         let tx_hash: TxHash = "0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7"
             .parse::<TxHash>()
             .unwrap();
