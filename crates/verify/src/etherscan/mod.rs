@@ -23,7 +23,7 @@ use foundry_common::{
     shell,
 };
 use foundry_compilers::{
-    artifacts::{BytecodeHash, BytecodeObject, EvmVersion},
+    artifacts::{BytecodeObject, EvmVersion},
     Artifact,
 };
 use foundry_config::{Chain, Config};
@@ -33,7 +33,7 @@ use foundry_evm::{
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use revm_primitives::{db::Database, Address, Bytes, EnvWithHandlerCfg, HandlerCfg, SpecId, U256};
+use revm_primitives::{db::Database, Address, Bytes, EnvWithHandlerCfg, HandlerCfg, U256};
 use semver::{BuildMetadata, Version};
 use std::fmt::Debug;
 
@@ -279,9 +279,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
             }
         }
 
-        // If bytecode_hash is disabled then its always partial verification
-        let has_metadata = config.bytecode_hash == BytecodeHash::None;
-
         // Append constructor args to the local_bytecode.
         trace!(%constructor_args);
         let mut local_bytecode_vec = local_bytecode.to_vec();
@@ -293,7 +290,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
             maybe_creation_code,
             &constructor_args,
             false,
-            has_metadata,
         );
 
         let mut json_results: Vec<JsonResult> = vec![];
@@ -387,7 +383,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         configure_tx_env(&mut env, &transaction);
 
         let env_with_handler =
-            EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(SpecId::LATEST));
+            EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(config.evm_spec_id()));
 
         let contract_address = if let Some(to) = transaction.to {
             if to != DEFAULT_CREATE2_DEPLOYER {
@@ -432,7 +428,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
             &onchain_runtime_code,
             &constructor_args,
             true,
-            has_metadata,
         );
 
         helpers::print_result(

@@ -275,13 +275,10 @@ impl Cheatcode for resumeGasMeteringCall {
 impl Cheatcode for lastCallGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        ensure!(state.last_call_gas.is_some(), "`lastCallGas` is only available after a call");
-        Ok(state
-            .last_call_gas
-            .as_ref()
-            // This should never happen, as we ensure `last_call_gas` is `Some` above.
-            .expect("`lastCallGas` is only available after a call")
-            .abi_encode())
+        let Some(last_call_gas) = &state.last_call_gas else {
+            bail!("no external call was made yet");
+        };
+        Ok(last_call_gas.abi_encode())
     }
 }
 
@@ -354,7 +351,7 @@ impl Cheatcode for blobhashesCall {
         let Self { hashes } = self;
         ensure!(
             ccx.ecx.spec_id() >= SpecId::CANCUN,
-            "`blobhash` is not supported before the Cancun hard fork; \
+            "`blobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
         ccx.ecx.env.tx.blob_hashes.clone_from(hashes);
@@ -367,7 +364,7 @@ impl Cheatcode for getBlobhashesCall {
         let Self {} = self;
         ensure!(
             ccx.ecx.spec_id() >= SpecId::CANCUN,
-            "`blobhash` is not supported before the Cancun hard fork; \
+            "`getBlobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
         Ok(ccx.ecx.env.tx.blob_hashes.clone().abi_encode())
@@ -605,9 +602,8 @@ impl Cheatcode for broadcastRawTransactionCall {
         executor: &mut E,
     ) -> Result {
         let mut data = self.data.as_ref();
-        let tx = TxEnvelope::decode(&mut data).map_err(|err| {
-            fmt_err!("broadcastRawTransaction: error decoding transaction ({err})")
-        })?;
+        let tx = TxEnvelope::decode(&mut data)
+            .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
         ccx.ecx.db.transact_from_tx(
             tx.clone().into(),

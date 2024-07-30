@@ -85,11 +85,15 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
 }
 
 pub(crate) trait DynCheatcode {
+    fn name(&self) -> &'static str;
     fn id(&self) -> &'static str;
     fn as_debug(&self) -> &dyn std::fmt::Debug;
 }
 
 impl<T: Cheatcode> DynCheatcode for T {
+    fn name(&self) -> &'static str {
+        T::CHEATCODE.func.signature.split('(').next().unwrap()
+    }
     fn id(&self) -> &'static str {
         T::CHEATCODE.func.id
     }

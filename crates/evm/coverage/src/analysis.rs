@@ -211,59 +211,64 @@ impl<'a> ContractVisitor<'a> {
                 // branch ID as we do.
                 self.branch_id += 1;
 
-                // The relevant source range for the true branch is the `if(...)` statement itself
-                // and the true body of the if statement. The false body of the
-                // statement (if any) is processed as its own thing. If this source
-                // range is not processed like this, it is virtually impossible to
-                // correctly map instructions back to branches that include more
-                // complex logic like conditional logic.
-                let true_branch_loc = &ast::LowFidelitySourceLocation {
-                    start: node.src.start,
-                    length: true_body
-                        .src
-                        .length
-                        .map(|length| true_body.src.start - node.src.start + length),
-                    index: node.src.index,
-                };
-
-                // Add the coverage item for branch 0 (true body).
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
-                    loc: self.source_location_for(true_branch_loc),
-                    hits: 0,
-                });
-
                 match node.attribute::<Node>("falseBody") {
                     // Both if/else statements.
                     Some(false_body) => {
-                        // Add the coverage item for branch 1 (false body).
-                        // The relevant source range for the false branch is the `else` statement
-                        // itself and the false body of the else statement.
-                        self.push_item(CoverageItem {
-                            kind: CoverageItemKind::Branch { branch_id, path_id: 1 },
-                            loc: self.source_location_for(&ast::LowFidelitySourceLocation {
-                                start: node.src.start,
-                                length: false_body.src.length.map(|length| {
-                                    false_body.src.start - true_body.src.start + length
+                        // Add branch coverage items only if one of true/branch bodies contains
+                        // statements.
+                        if has_statements(&true_body) || has_statements(&false_body) {
+                            // Add the coverage item for branch 0 (true body).
+                            // The relevant source range for the true branch is the `if(...)`
+                            // statement itself and the true body of the if statement.
+                            //
+                            // The false body of the statement is processed as its own thing.
+                            // If this source range is not processed like this, it is virtually
+                            // impossible to correctly map instructions back to branches that
+                            // include more complex logic like conditional logic.
+                            self.push_item(CoverageItem {
+                                kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
+                                loc: self.source_location_for(&ast::LowFidelitySourceLocation {
+                                    start: node.src.start,
+                                    length: true_body.src.length.map(|length| {
+                                        true_body.src.start - node.src.start + length
+                                    }),
+                                    index: node.src.index,
                                 }),
-                                index: node.src.index,
-                            }),
-                            hits: 0,
-                        });
-                        // Process the true body.
-                        self.visit_block_or_statement(&true_body)?;
-                        // Process the false body.
-                        self.visit_block_or_statement(&false_body)?;
+                                hits: 0,
+                            });
+                            // Add the coverage item for branch 1 (false body).
+                            // The relevant source range for the false branch is the `else`
+                            // statement itself and the false body of the else statement.
+                            self.push_item(CoverageItem {
+                                kind: CoverageItemKind::Branch { branch_id, path_id: 1 },
+                                loc: self.source_location_for(&ast::LowFidelitySourceLocation {
+                                    start: node.src.start,
+                                    length: false_body.src.length.map(|length| {
+                                        false_body.src.start - true_body.src.start + length
+                                    }),
+                                    index: node.src.index,
+                                }),
+                                hits: 0,
+                            });
+
+                            // Process the true body.
+                            self.visit_block_or_statement(&true_body)?;
+                            // Process the false body.
+                            self.visit_block_or_statement(&false_body)?;
+                        }
                     }
                     None => {
-                        // Add the coverage item for branch 1 (same true body).
-                        self.push_item(CoverageItem {
-                            kind: CoverageItemKind::Branch { branch_id, path_id: 1 },
-                            loc: self.source_location_for(true_branch_loc),
-                            hits: 0,
-                        });
-                        // Process the true body.
-                        self.visit_block_or_statement(&true_body)?;
+                        // Add single branch coverage only if it contains statements.
+                        if has_statements(&true_body) {
+                            // Add the coverage item for branch 0 (true body).
+                            self.push_item(CoverageItem {
+                                kind: CoverageItemKind::SinglePathBranch { branch_id },
+                                loc: self.source_location_for(&true_body.src),
+                                hits: 0,
+                            });
+                            // Process the true body.
+                            self.visit_block_or_statement(&true_body)?;
+                        }
                     }
                 }
 
@@ -321,9 +326,7 @@ impl<'a> ContractVisitor<'a> {
 
                     // Add coverage for clause body only if it is not empty.
                     if let Some(block) = clause.attribute::<Node>("block") {
-                        let statements: Vec<Node> =
-                            block.attribute("statements").unwrap_or_default();
-                        if !statements.is_empty() {
+                        if has_statements(&block) {
                             self.push_item(CoverageItem {
                                 kind: CoverageItemKind::Statement,
                                 loc: self.source_location_for(&block.src),
@@ -502,8 +505,12 @@ impl<'a> ContractVisitor<'a> {
         let source_location = &item.loc;
 
         // Push a line item if we haven't already
-        if matches!(item.kind, CoverageItemKind::Statement | CoverageItemKind::Branch { .. }) &&
-            self.last_line < source_location.line
+        if matches!(
+            item.kind,
+            CoverageItemKind::Statement |
+                CoverageItemKind::Branch { .. } |
+                CoverageItemKind::SinglePathBranch { .. }
+        ) && self.last_line < source_location.line
         {
             self.items.push(CoverageItem {
                 kind: CoverageItemKind::Line,
@@ -525,6 +532,12 @@ impl<'a> ContractVisitor<'a> {
             line: self.source[..loc.start].lines().count(),
         }
     }
+}
+
+/// Helper function to check if a given node contains any statement.
+fn has_statements(node: &Node) -> bool {
+    let statements: Vec<Node> = node.attribute("statements").unwrap_or_default();
+    !statements.is_empty()
 }
 
 /// [`SourceAnalyzer`] result type.

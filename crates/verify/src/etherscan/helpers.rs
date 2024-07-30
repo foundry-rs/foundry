@@ -30,13 +30,12 @@ pub fn match_bytecodes(
     bytecode: &[u8],
     constructor_args: &[u8],
     is_runtime: bool,
-    has_metadata: bool,
 ) -> Option<VerificationType> {
     // 1. Try full match
     if local_bytecode == bytecode {
         Some(VerificationType::Full)
     } else {
-        is_partial_match(local_bytecode, bytecode, constructor_args, is_runtime, has_metadata)
+        is_partial_match(local_bytecode, bytecode, constructor_args, is_runtime)
             .then_some(VerificationType::Partial)
     }
 }
@@ -152,30 +151,23 @@ fn is_partial_match(
     mut bytecode: &[u8],
     constructor_args: &[u8],
     is_runtime: bool,
-    has_metadata: bool,
 ) -> bool {
     // 1. Check length of constructor args
     if constructor_args.is_empty() || is_runtime {
         // Assume metadata is at the end of the bytecode
-        return try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
+        return try_extract_and_compare_bytecode(local_bytecode, bytecode)
     }
 
     // If not runtime, extract constructor args from the end of the bytecode
     bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
     local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
 
-    try_extract_and_compare_bytecode(local_bytecode, bytecode, has_metadata)
+    try_extract_and_compare_bytecode(local_bytecode, bytecode)
 }
 
-fn try_extract_and_compare_bytecode(
-    mut local_bytecode: &[u8],
-    mut bytecode: &[u8],
-    has_metadata: bool,
-) -> bool {
-    if has_metadata {
-        local_bytecode = extract_metadata_hash(local_bytecode);
-        bytecode = extract_metadata_hash(bytecode);
-    }
+fn try_extract_and_compare_bytecode(mut local_bytecode: &[u8], mut bytecode: &[u8]) -> bool {
+    local_bytecode = extract_metadata_hash(local_bytecode);
+    bytecode = extract_metadata_hash(bytecode);
 
     // Now compare the local code and bytecode
     local_bytecode == bytecode
@@ -187,8 +179,19 @@ fn extract_metadata_hash(bytecode: &[u8]) -> &[u8] {
     let metadata_len = &bytecode[bytecode.len() - 2..];
     let metadata_len = u16::from_be_bytes([metadata_len[0], metadata_len[1]]);
 
-    // Now discard the metadata from the bytecode
-    &bytecode[..bytecode.len() - 2 - metadata_len as usize]
+    if metadata_len as usize <= bytecode.len() {
+        if ciborium::from_reader::<ciborium::Value, _>(
+            &bytecode[bytecode.len() - 2 - metadata_len as usize..bytecode.len() - 2],
+        )
+        .is_ok()
+        {
+            &bytecode[..bytecode.len() - 2 - metadata_len as usize]
+        } else {
+            bytecode
+        }
+    } else {
+        bytecode
+    }
 }
 
 fn find_mismatch_in_settings(
