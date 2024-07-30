@@ -227,6 +227,7 @@ pub struct RpcEndpointConfig {
     /// See also <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     pub compute_units_per_second: Option<u64>,
 
+    /// Token to be used as authentication
     pub auth: Option<String>,
 }
 
