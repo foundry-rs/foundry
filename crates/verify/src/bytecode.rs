@@ -18,7 +18,7 @@ use foundry_config::{figment, filter::SkipBuildFilter, impl_figment_convert, Cha
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
-use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg, SpecId};
+use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, path::PathBuf, str::FromStr};
@@ -638,9 +638,9 @@ fn extract_metadata_hash(bytecode: &[u8]) -> &[u8] {
     let metadata_len = u16::from_be_bytes([metadata_len[0], metadata_len[1]]);
 
     if metadata_len as usize <= bytecode.len() {
-        if let Ok(_) = ciborium::from_reader::<BTreeMap<String, Vec<u8>>, _>(
+        if ciborium::from_reader::<BTreeMap<String, Vec<u8>>, _>(
             &bytecode[bytecode.len() - 2 - metadata_len as usize..bytecode.len() - 2],
-        ) {
+        ).is_ok() {
             &bytecode[..bytecode.len() - 2 - metadata_len as usize]
         } else {
             bytecode
