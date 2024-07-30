@@ -206,11 +206,6 @@ impl VerifyBytecodeArgs {
                 self.build_project(&config)?
             };
 
-        let local_bytecode = artifact
-            .bytecode
-            .and_then(|b| b.into_bytes())
-            .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
-
         // Get the constructor args from etherscan
         let mut constructor_args = if let Some(args) = source_code.items.first() {
             args.constructor_arguments.clone()
