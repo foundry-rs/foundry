@@ -1537,7 +1537,17 @@ impl<'a, W: Write> Formatter<'a, W> {
                 let returns_start_loc = func.returns.first().unwrap().0;
                 let returns_loc = returns_start_loc.with_end_from(&func.returns.last().unwrap().0);
                 if fmt.inline_config.is_disabled(returns_loc) {
-                    fmt.indented(1, |fmt| fmt.visit_source(returns_loc))?;
+                    fmt.indented(1, |fmt| {
+                        fmt.surrounded(
+                            SurroundingChunk::new("returns (", Some(returns_loc.start()), None),
+                            SurroundingChunk::new(")", None, returns_end),
+                            |fmt, _| {
+                                fmt.visit_source(returns_loc)?;
+                                Ok(())
+                            },
+                        )?;
+                        Ok(())
+                    })?;
                 } else {
                     let mut returns = fmt.items_to_chunks(
                         returns_end,
