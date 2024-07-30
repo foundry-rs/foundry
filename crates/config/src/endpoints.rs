@@ -226,6 +226,8 @@ pub struct RpcEndpointConfig {
     ///
     /// See also <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     pub compute_units_per_second: Option<u64>,
+
+    pub auth: Option<String>,
 }
 
 impl RpcEndpointConfig {
@@ -237,7 +239,7 @@ impl RpcEndpointConfig {
 
 impl fmt::Display for RpcEndpointConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { endpoint, retries, retry_backoff, compute_units_per_second } = self;
+        let Self { endpoint, retries, retry_backoff, compute_units_per_second , auth} = self;
 
         write!(f, "{endpoint}")?;
 
@@ -251,6 +253,10 @@ impl fmt::Display for RpcEndpointConfig {
 
         if let Some(compute_units_per_second) = compute_units_per_second {
             write!(f, ", compute_units_per_second={compute_units_per_second}")?;
+        }
+
+        if let Some(auth) = auth {
+            write!(f, ", auth={auth}")?;
         }
 
         Ok(())
@@ -274,6 +280,7 @@ impl Serialize for RpcEndpointConfig {
             map.serialize_entry("retries", &self.retries)?;
             map.serialize_entry("retry_backoff", &self.retry_backoff)?;
             map.serialize_entry("compute_units_per_second", &self.compute_units_per_second)?;
+            map.serialize_entry("auth", &self.auth)?;
             map.end()
         }
     }
@@ -299,12 +306,13 @@ impl<'de> Deserialize<'de> for RpcEndpointConfig {
             retries: Option<u32>,
             retry_backoff: Option<u64>,
             compute_units_per_second: Option<u64>,
+            auth: Option<String>
         }
 
-        let RpcEndpointConfigInner { endpoint, retries, retry_backoff, compute_units_per_second } =
+        let RpcEndpointConfigInner { endpoint, retries, retry_backoff, compute_units_per_second, auth } =
             serde_json::from_value(value).map_err(serde::de::Error::custom)?;
 
-        Ok(Self { endpoint, retries, retry_backoff, compute_units_per_second })
+        Ok(Self { endpoint, retries, retry_backoff, compute_units_per_second, auth })
     }
 }
 
@@ -321,6 +329,7 @@ impl Default for RpcEndpointConfig {
             retries: None,
             retry_backoff: None,
             compute_units_per_second: None,
+            auth: None,
         }
     }
 }
@@ -364,7 +373,8 @@ mod tests {
             "endpoint": "http://localhost:8545",
             "retries": 5,
             "retry_backoff": 250,
-            "compute_units_per_second": 100
+            "compute_units_per_second": 100,
+            "auth": "Bearer 123"
         }"#;
         let config: RpcEndpointConfig = serde_json::from_str(s).unwrap();
         assert_eq!(
@@ -374,6 +384,7 @@ mod tests {
                 retries: Some(5),
                 retry_backoff: Some(250),
                 compute_units_per_second: Some(100),
+                auth: Some(String::from("Bearer 123"))
             }
         );
 
@@ -386,6 +397,7 @@ mod tests {
                 retries: None,
                 retry_backoff: None,
                 compute_units_per_second: None,
+                auth: Some(String::from("Bearer 123"))
             }
         );
     }
