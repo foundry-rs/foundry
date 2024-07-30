@@ -1,4 +1,4 @@
-use alloy_primitives::Address;
+use alloy_primitives::{hex, keccak256, Address};
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use eyre::{Context, Result};
@@ -133,7 +133,7 @@ impl InspectArgs {
                 let mut out = serde_json::Map::new();
                 if let Some(abi) = &artifact.abi {
                     let abi = &abi;
-                    // Print the signature of all errors
+                    // Print the signature of all errors.
                     for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
                         let types = er.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
                         let sig = format!("{:x}", er.selector());
@@ -150,13 +150,30 @@ impl InspectArgs {
                 let mut out = serde_json::Map::new();
                 if let Some(abi) = &artifact.abi {
                     let abi = &abi;
-
-                    // print the signature of all events including anonymous
+                    // Print the signature of all events including anonymous.
                     for ev in abi.events.iter().flat_map(|(_, events)| events) {
                         let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
                         out.insert(
                             format!("{}({})", ev.name, types.join(",")),
                             format!("{:?}", ev.signature()).into(),
+                        );
+                    }
+                }
+                print_json(&out)?;
+            }
+            ContractArtifactField::EventIdentifiers => {
+                let mut out = serde_json::Map::new();
+                if let Some(abi) = &artifact.abi {
+                    let abi = &abi;
+                    // Print the topic of all events including anonymous.
+                    for ev in abi.events.iter().flat_map(|(_, events)| events) {
+                        let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
+                        let sig = &ev.signature();
+                        let topic =
+                            hex::encode(&keccak256(sig.strip_prefix("0x").unwrap_or(sig))[..4]);
+                        out.insert(
+                            format!("{}({})", ev.name, types.join(",")),
+                            format!("{:?}", topic).into(),
                         );
                     }
                 }
@@ -222,6 +239,7 @@ pub enum ContractArtifactField {
     Ewasm,
     Errors,
     Events,
+    EventIdentifiers,
     Eof,
     EofInit,
 }
@@ -310,6 +328,8 @@ impl_value_enum! {
         Ewasm             => "ewasm" | "e-wasm",
         Errors            => "errors" | "er",
         Events            => "events" | "ev",
+        EventIdentifiers  => "eventIdentifiers" | "eventidentifiers" | "event_identifiers"
+                             | "event-identifiers" | "ei",
         Eof               => "eof" | "eof-container" | "eof-deployed",
         EofInit           => "eof-init" | "eof-initcode" | "eof-initcontainer",
     }
@@ -336,6 +356,7 @@ impl From<ContractArtifactField> for ContractOutputSelection {
             Caf::Ewasm => Self::Ewasm(EwasmOutputSelection::All),
             Caf::Errors => Self::Abi,
             Caf::Events => Self::Abi,
+            Caf::EventIdentifiers => Self::Abi,
             Caf::Eof => Self::Evm(EvmOutputSelection::DeployedByteCode(
                 DeployedBytecodeOutputSelection::All,
             )),
