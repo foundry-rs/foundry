@@ -23,7 +23,7 @@ pub struct DepositTransactionRequest {
 
 impl DepositTransactionRequest {
     pub fn hash(&self) -> B256 {
-        let mut encoded = Vec::<u8>::new();
+        let mut encoded = Vec::new();
         encoded.put_u8(DEPOSIT_TX_TYPE_ID);
         self.encode(&mut encoded);
 
@@ -254,7 +254,7 @@ impl DepositTransaction {
     }
 
     pub fn hash(&self) -> B256 {
-        let mut encoded = Vec::<u8>::new();
+        let mut encoded = Vec::new();
         self.encode_2718(&mut encoded);
         B256::from_slice(alloy_primitives::keccak256(encoded).as_slice())
     }
@@ -301,6 +301,13 @@ impl DepositTransaction {
 
     pub fn decode_2718(buf: &mut &[u8]) -> Result<Self, DecodeError> {
         use bytes::Buf;
+
+        let tx_type = *buf.first().ok_or(alloy_rlp::Error::Custom("empty slice"))?;
+
+        if tx_type != DEPOSIT_TX_TYPE_ID {
+            return Err(alloy_rlp::Error::Custom("invalid tx type: expected deposit tx type"));
+        }
+
         // Skip the tx type byte
         buf.advance(1);
         Self::decode(buf)

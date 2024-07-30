@@ -925,7 +925,7 @@ impl TypedTransaction {
     /// This appends the `address` before hashing it
     #[cfg(feature = "impersonated-tx")]
     pub fn impersonated_hash(&self, sender: Address) -> B256 {
-        let mut buffer = Vec::<u8>::new();
+        let mut buffer = Vec::new();
         Encodable::encode(self, &mut buffer);
         buffer.extend_from_slice(sender.as_ref());
         B256::from_slice(alloy_primitives::utils::keccak256(&buffer).as_slice())
@@ -1710,7 +1710,7 @@ mod tests {
         .unwrap();
         let dep_tx = TypedTransaction::decode(&mut raw_tx.as_slice()).unwrap();
 
-        let mut encoded = Vec::<u8>::new();
+        let mut encoded = Vec::new();
         dep_tx.encode_2718(&mut encoded);
 
         assert_eq!(raw_tx, encoded);
