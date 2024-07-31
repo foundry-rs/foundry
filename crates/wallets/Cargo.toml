@@ -45,6 +45,7 @@ rpassword = "7"
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+eth-keystore = "0.5.0"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }
