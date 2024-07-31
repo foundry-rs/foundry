@@ -41,7 +41,7 @@ pub enum AnvilSubcommand {
         depth: u64,
         // The lebngth of the newly reorged chain
         new_len: u64,
-        /// Path to JSON file containing transaction requests and block number pairs
+        /// Path to JSON file containing transaction request and block number pairs
         #[arg(long, short)]
         transactions_path: Option<String>,
         /// The provider URL of the local anvil node. Defaults to localhost:8545

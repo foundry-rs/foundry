@@ -2035,6 +2035,7 @@ impl EthApi {
             HashMap::new()
         };
 
+        node_info!("    Reoring chain to block number {:?}", common_block.header.number);
         self.backend.reorg(common_block, current_height, new_len, txs).await?;
         Ok(())
     }
