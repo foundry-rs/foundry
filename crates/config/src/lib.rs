@@ -2258,7 +2258,7 @@ impl TomlFileProvider {
                     "Config file `{}` set in env var `{}` does not exist",
                     file,
                     self.env_var.unwrap()
-                )));
+                )))
             }
             Toml::file(file)
         } else {
