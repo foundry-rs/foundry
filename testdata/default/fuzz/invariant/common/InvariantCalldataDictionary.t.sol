@@ -62,11 +62,14 @@ contract InvariantCalldataDictionary is DSTest {
     address owner;
     Owned owned;
     Handler handler;
+    address[] actors;
 
     function setUp() public {
         owner = address(this);
         owned = new Owned();
         handler = new Handler(owned);
+        actors.push(owner);
+        actors.push(address(777));
     }
 
     function targetSelectors() public returns (FuzzSelector[] memory) {
@@ -76,6 +79,14 @@ contract InvariantCalldataDictionary is DSTest {
         selectors[1] = handler.acceptOwnership.selector;
         targets[0] = FuzzSelector(address(handler), selectors);
         return targets;
+    }
+
+    function fixtureSender() external returns (address[] memory) {
+        return actors;
+    }
+
+    function fixtureCandidate() external returns (address[] memory) {
+        return actors;
     }
 
     function invariant_owner_never_changes() public {

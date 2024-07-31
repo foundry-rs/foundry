@@ -75,7 +75,7 @@ impl ParseItem {
     }
 
     /// Set children on the [ParseItem].
-    pub fn with_children(mut self, children: Vec<ParseItem>) -> Self {
+    pub fn with_children(mut self, children: Vec<Self>) -> Self {
         self.children = children;
         self
     }
@@ -147,7 +147,7 @@ impl ParseItem {
 }
 
 /// A wrapper type around pt token.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParseSource {
     /// Source contract definition.
     Contract(Box<ContractDefinition>),
@@ -171,16 +171,16 @@ impl ParseSource {
     /// Get the identity of the source
     pub fn ident(&self) -> String {
         match self {
-            ParseSource::Contract(contract) => contract.name.safe_unwrap().name.to_owned(),
-            ParseSource::Variable(var) => var.name.safe_unwrap().name.to_owned(),
-            ParseSource::Event(event) => event.name.safe_unwrap().name.to_owned(),
-            ParseSource::Error(error) => error.name.safe_unwrap().name.to_owned(),
-            ParseSource::Struct(structure) => structure.name.safe_unwrap().name.to_owned(),
-            ParseSource::Enum(enumerable) => enumerable.name.safe_unwrap().name.to_owned(),
-            ParseSource::Function(func) => {
+            Self::Contract(contract) => contract.name.safe_unwrap().name.to_owned(),
+            Self::Variable(var) => var.name.safe_unwrap().name.to_owned(),
+            Self::Event(event) => event.name.safe_unwrap().name.to_owned(),
+            Self::Error(error) => error.name.safe_unwrap().name.to_owned(),
+            Self::Struct(structure) => structure.name.safe_unwrap().name.to_owned(),
+            Self::Enum(enumerable) => enumerable.name.safe_unwrap().name.to_owned(),
+            Self::Function(func) => {
                 func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned())
             }
-            ParseSource::Type(ty) => ty.name.name.to_owned(),
+            Self::Type(ty) => ty.name.name.to_owned(),
         }
     }
 }

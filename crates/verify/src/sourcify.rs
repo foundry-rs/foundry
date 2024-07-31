@@ -1,13 +1,12 @@
 use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
+use crate::provider::VerificationContext;
 use async_trait::async_trait;
 use eyre::Result;
-use foundry_cli::utils::{get_cached_entry_by_name, LoadConfig};
 use foundry_common::{fs, retry::Retry};
-use foundry_compilers::ConfigurableContractArtifact;
 use futures::FutureExt;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, str::FromStr};
 
 pub static SOURCIFY_URL: &str = "https://sourcify.dev/server/";
 
@@ -18,13 +17,17 @@ pub struct SourcifyVerificationProvider;
 
 #[async_trait]
 impl VerificationProvider for SourcifyVerificationProvider {
-    async fn preflight_check(&mut self, args: VerifyArgs) -> Result<()> {
-        let _ = self.prepare_request(&args)?;
+    async fn preflight_check(
+        &mut self,
+        args: VerifyArgs,
+        context: VerificationContext,
+    ) -> Result<()> {
+        let _ = self.prepare_request(&args, &context)?;
         Ok(())
     }
 
-    async fn verify(&mut self, args: VerifyArgs) -> Result<()> {
-        let body = self.prepare_request(&args)?;
+    async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()> {
+        let body = self.prepare_request(&args, &context)?;
 
         trace!("submitting verification request {:?}", body);
 
@@ -36,7 +39,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 async {
                     println!(
                         "\nSubmitting verification for [{}] {:?}.",
-                        args.contract.name,
+                        context.target_name,
                         args.address.to_string()
                     );
                     let response = client
@@ -99,54 +102,24 @@ impl VerificationProvider for SourcifyVerificationProvider {
 
 impl SourcifyVerificationProvider {
     /// Configures the API request to the sourcify API using the given [`VerifyArgs`].
-    fn prepare_request(&self, args: &VerifyArgs) -> Result<SourcifyVerifyRequest> {
-        let mut config = args.try_load_config_emit_warnings()?;
-        config.libraries.extend(args.libraries.clone());
+    fn prepare_request(
+        &self,
+        args: &VerifyArgs,
+        context: &VerificationContext,
+    ) -> Result<SourcifyVerifyRequest> {
+        let metadata = context.get_target_metadata()?;
+        let imports = context.get_target_imports()?;
 
-        let project = config.project()?;
+        let mut files = HashMap::with_capacity(2 + imports.len());
 
-        if !config.cache {
-            eyre::bail!("Cache is required for sourcify verification.")
-        }
+        let metadata = serde_json::to_string_pretty(&metadata)?;
+        files.insert("metadata.json".to_string(), metadata);
 
-        let cache = project.read_cache_file()?;
-        let (path, entry) = get_cached_entry_by_name(&cache, &args.contract.name)?;
-
-        if entry.solc_config.settings.metadata.is_none() {
-            eyre::bail!(
-                r#"Contract {} was compiled without the solc `metadata` setting.
-Sourcify requires contract metadata for verification.
-metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.toml`"#,
-                args.contract.name
-            )
-        }
-
-        let mut files = HashMap::with_capacity(2 + entry.imports.len());
-
-        // the metadata is included in the contract's artifact file
-        let artifact_path = entry
-            .find_artifact_path(&args.contract.name)
-            .ok_or_else(|| eyre::eyre!("No artifact found for contract {}", args.contract.name))?;
-
-        let artifact: ConfigurableContractArtifact = fs::read_json_file(artifact_path)?;
-        if let Some(metadata) = artifact.metadata {
-            let metadata = serde_json::to_string_pretty(&metadata)?;
-            files.insert("metadata.json".to_string(), metadata);
-        } else {
-            eyre::bail!(
-                r#"No metadata found in artifact `{}` for contract {}.
-Sourcify requires contract metadata for verification.
-metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.toml`"#,
-                artifact_path.display(),
-                args.contract.name
-            )
-        }
-
-        let contract_path = args.contract.path.clone().map_or(path, PathBuf::from);
+        let contract_path = context.target_path.clone();
         let filename = contract_path.file_name().unwrap().to_string_lossy().to_string();
         files.insert(filename, fs::read_to_string(&contract_path)?);
 
-        for import in entry.imports {
+        for import in imports {
             let import_entry = format!("{}", import.display());
             files.insert(import_entry, fs::read_to_string(&import)?);
         }

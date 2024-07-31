@@ -1,17 +1,16 @@
 use super::{AddressIdentity, TraceIdentifier};
+use crate::debug::ContractSources;
 use alloy_primitives::Address;
 use foundry_block_explorers::{
     contract::{ContractMetadata, Metadata},
     errors::EtherscanError,
 };
-use foundry_common::compile::{self, ContractSources};
+use foundry_common::compile::etherscan_project;
 use foundry_config::{Chain, Config};
-use foundry_evm_core::utils::RuntimeOrHandle;
 use futures::{
     future::{join_all, Future},
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
-    TryFutureExt,
 };
 use std::{
     borrow::Cow,
@@ -60,32 +59,35 @@ impl EtherscanIdentifier {
     /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
         // TODO: Add caching so we dont double-fetch contracts.
-        let contracts_iter = self
+        let outputs_fut = self
             .contracts
             .iter()
             // filter out vyper files
-            .filter(|(_, metadata)| !metadata.is_vyper());
-
-        let outputs_fut = contracts_iter
-            .clone()
-            .map(|(address, metadata)| {
+            .filter(|(_, metadata)| !metadata.is_vyper())
+            .map(|(address, metadata)| async move {
                 println!("Compiling: {} {address}", metadata.contract_name);
-                let err_msg =
-                    format!("Failed to compile contract {} from {address}", metadata.contract_name);
-                compile::compile_from_source(metadata).map_err(move |err| err.wrap_err(err_msg))
+                let root = tempfile::tempdir()?;
+                let root_path = root.path();
+                let project = etherscan_project(metadata, root_path)?;
+                let output = project.compile()?;
+
+                if output.has_compiler_errors() {
+                    eyre::bail!("{output}")
+                }
+
+                Ok((project, output, root))
             })
             .collect::<Vec<_>>();
 
         // poll all the futures concurrently
-        let artifacts = join_all(outputs_fut).await;
+        let outputs = join_all(outputs_fut).await;
 
         let mut sources: ContractSources = Default::default();
 
         // construct the map
-        for (results, (_, metadata)) in artifacts.into_iter().zip(contracts_iter) {
-            // get the inner type
-            let (artifact_id, file_id, bytecode) = results?;
-            sources.insert(&artifact_id, file_id, metadata.source_code(), bytecode);
+        for res in outputs {
+            let (project, output, _root) = res?;
+            sources.insert(&output, project.root(), None)?;
         }
 
         Ok(sources)
@@ -104,6 +106,7 @@ impl TraceIdentifier for EtherscanIdentifier {
             return Vec::new()
         }
 
+        let mut identities = Vec::new();
         let mut fetcher = EtherscanFetcher::new(
             self.client.clone(),
             Duration::from_secs(1),
@@ -112,28 +115,42 @@ impl TraceIdentifier for EtherscanIdentifier {
         );
 
         for (addr, _) in addresses {
-            if !self.contracts.contains_key(addr) {
-                fetcher.push(*addr);
-            }
-        }
-
-        let fut = fetcher
-            .map(|(address, metadata)| {
+            if let Some(metadata) = self.contracts.get(addr) {
                 let label = metadata.contract_name.clone();
                 let abi = metadata.abi().ok().map(Cow::Owned);
-                self.contracts.insert(address, metadata);
 
-                AddressIdentity {
-                    address,
+                identities.push(AddressIdentity {
+                    address: *addr,
                     label: Some(label.clone()),
                     contract: Some(label),
                     abi,
                     artifact_id: None,
-                }
-            })
-            .collect();
+                });
+            } else {
+                fetcher.push(*addr);
+            }
+        }
 
-        RuntimeOrHandle::new().block_on(fut)
+        let fetched_identities = foundry_common::block_on(
+            fetcher
+                .map(|(address, metadata)| {
+                    let label = metadata.contract_name.clone();
+                    let abi = metadata.abi().ok().map(Cow::Owned);
+                    self.contracts.insert(address, metadata);
+
+                    AddressIdentity {
+                        address,
+                        label: Some(label.clone()),
+                        contract: Some(label),
+                        abi,
+                        artifact_id: None,
+                    }
+                })
+                .collect::<Vec<AddressIdentity<'_>>>(),
+        );
+
+        identities.extend(fetched_identities);
+        identities
     }
 }
 

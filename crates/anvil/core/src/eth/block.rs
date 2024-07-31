@@ -3,7 +3,8 @@ use super::{
     trie,
 };
 use alloy_consensus::Header;
-use alloy_primitives::{Address, Bloom, Bytes, B256, U256};
+use alloy_eips::eip2718::Encodable2718;
+use alloy_primitives::{Address, Bloom, Bytes, B256, B64, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 
 // Type alias to optionally support impersonated transactions
@@ -29,10 +30,10 @@ pub struct Block {
 }
 
 impl Block {
-    /// Creates a new block
+    /// Creates a new block.
     ///
-    /// Note: if the `impersonate-tx` feature is enabled this  will also accept
-    /// [MaybeImpersonatedTransaction]
+    /// Note: if the `impersonate-tx` feature is enabled this will also accept
+    /// `MaybeImpersonatedTransaction`.
     pub fn new<T>(
         partial_header: PartialHeader,
         transactions: impl IntoIterator<Item = T>,
@@ -47,7 +48,7 @@ impl Block {
         let ommers_hash =
             B256::from_slice(alloy_primitives::utils::keccak256(encoded_ommers).as_slice());
         let transactions_root =
-            trie::ordered_trie_root(transactions.iter().map(|r| Bytes::from(alloy_rlp::encode(r))));
+            trie::ordered_trie_root(transactions.iter().map(|r| r.encoded_2718()));
 
         Self {
             header: Header {
@@ -65,12 +66,13 @@ impl Block {
                 timestamp: partial_header.timestamp,
                 extra_data: partial_header.extra_data,
                 mix_hash: partial_header.mix_hash,
-                withdrawals_root: Some(partial_header.mix_hash),
-                blob_gas_used: None,
-                excess_blob_gas: None,
-                parent_beacon_block_root: None,
+                withdrawals_root: None,
+                blob_gas_used: partial_header.blob_gas_used,
+                excess_blob_gas: partial_header.excess_blob_gas,
+                parent_beacon_block_root: partial_header.parent_beacon_block_root,
                 nonce: partial_header.nonce,
                 base_fee_per_gas: partial_header.base_fee,
+                requests_root: None,
             },
             transactions,
             ommers,
@@ -88,13 +90,16 @@ pub struct PartialHeader {
     pub logs_bloom: Bloom,
     pub difficulty: U256,
     pub number: u64,
-    pub gas_limit: u64,
-    pub gas_used: u64,
+    pub gas_limit: u128,
+    pub gas_used: u128,
     pub timestamp: u64,
     pub extra_data: Bytes,
     pub mix_hash: B256,
-    pub nonce: u64,
-    pub base_fee: Option<u64>,
+    pub blob_gas_used: Option<u128>,
+    pub excess_blob_gas: Option<u128>,
+    pub parent_beacon_block_root: Option<B256>,
+    pub nonce: B64,
+    pub base_fee: Option<u128>,
 }
 
 impl From<Header> for PartialHeader {
@@ -114,13 +119,15 @@ impl From<Header> for PartialHeader {
             mix_hash: value.mix_hash,
             nonce: value.nonce,
             base_fee: value.base_fee_per_gas,
+            blob_gas_used: value.blob_gas_used,
+            excess_blob_gas: value.excess_blob_gas,
+            parent_beacon_block_root: value.parent_beacon_block_root,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_network::Sealable;
     use alloy_primitives::{
         b256,
         hex::{self, FromHex},
@@ -143,23 +150,24 @@ mod tests {
             difficulty: Default::default(),
             number: 124u64,
             gas_limit: Default::default(),
-            gas_used: 1337u64,
+            gas_used: 1337u128,
             timestamp: 0,
             extra_data: Default::default(),
             mix_hash: Default::default(),
-            nonce: 99u64,
+            nonce: B64::with_last_byte(99),
             withdrawals_root: Default::default(),
             blob_gas_used: Default::default(),
             excess_blob_gas: Default::default(),
             parent_beacon_block_root: Default::default(),
             base_fee_per_gas: None,
+            requests_root: None,
         };
 
         let encoded = alloy_rlp::encode(&header);
         let decoded: Header = Header::decode(&mut encoded.as_ref()).unwrap();
         assert_eq!(header, decoded);
 
-        header.base_fee_per_gas = Some(12345u64);
+        header.base_fee_per_gas = Some(12345u128);
 
         let encoded = alloy_rlp::encode(&header);
         let decoded: Header = Header::decode(&mut encoded.as_ref()).unwrap();
@@ -182,8 +190,8 @@ mod tests {
             logs_bloom: Bloom::from_hex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap(),
             difficulty: U256::from(2222),
             number: 0xd05u64,
-            gas_limit: 0x115cu64,
-            gas_used: 0x15b3u64,
+            gas_limit: 0x115cu128,
+            gas_used: 0x15b3u128,
             timestamp: 0x1a0au64,
             extra_data: hex::decode("7788").unwrap().into(),
             mix_hash: B256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
@@ -191,8 +199,9 @@ mod tests {
             blob_gas_used: None,
             excess_blob_gas: None,
             parent_beacon_block_root: None,
-            nonce: 0,
+            nonce: B64::ZERO,
             base_fee_per_gas: None,
+            requests_root: None,
         };
 
         header.encode(&mut data);
@@ -214,17 +223,18 @@ mod tests {
             logs_bloom: <[u8; 256]>::from_hex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into(),
             difficulty: U256::from(2222),
             number: 0xd05u64,
-            gas_limit: 0x115cu64,
-            gas_used: 0x15b3u64,
+            gas_limit: 0x115cu128,
+            gas_used: 0x15b3u128,
             timestamp: 0x1a0au64,
             extra_data: hex::decode("7788").unwrap().into(),
             mix_hash: B256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
-            nonce: 0,
+            nonce: B64::ZERO,
             withdrawals_root: None,
             blob_gas_used: None,
             excess_blob_gas: None,
             parent_beacon_block_root: None,
             base_fee_per_gas: None,
+            requests_root: None,
         };
         let header = Header::decode(&mut data.as_slice()).unwrap();
         assert_eq!(header, expected);
@@ -245,19 +255,20 @@ mod tests {
             logs_bloom: Bloom::from_hex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap(),
             difficulty: U256::from(0x020000),
             number: 1u64,
-            gas_limit: U256::from(0x016345785d8a0000u128).to::<u64>(),
-            gas_used: U256::from(0x015534).to::<u64>(),
+            gas_limit: U256::from(0x016345785d8a0000u128).to::<u128>(),
+            gas_used: U256::from(0x015534).to::<u128>(),
             timestamp: 0x079e,
             extra_data: hex::decode("42").unwrap().into(),
             mix_hash: B256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
-            nonce: 0,
+            nonce: B64::ZERO,
             base_fee_per_gas: Some(875),
             withdrawals_root: None,
             blob_gas_used: None,
             excess_blob_gas: None,
             parent_beacon_block_root: None,
+            requests_root: None,
         };
-        assert_eq!(header.hash(), expected_hash);
+        assert_eq!(header.hash_slow(), expected_hash);
     }
 
     #[test]

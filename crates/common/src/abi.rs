@@ -1,12 +1,22 @@
 //! ABI related helper functions.
 
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Event, Function};
+use alloy_json_abi::{Event, Function, Param};
 use alloy_primitives::{hex, Address, LogData};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
 use foundry_config::Chain;
 use std::{future::Future, pin::Pin};
+
+pub fn encode_args<I, S>(inputs: &[Param], args: I) -> Result<Vec<DynSolValue>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    std::iter::zip(inputs, args)
+        .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
+        .collect()
+}
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
 /// [DynSolValue]s and then ABI encode them.
@@ -15,10 +25,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let params = std::iter::zip(&func.inputs, args)
-        .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
-        .collect::<Result<Vec<_>>>()?;
-    func.abi_encode_input(params.as_slice()).map_err(Into::into)
+    Ok(func.abi_encode_input(&encode_args(&func.inputs, args)?)?)
 }
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
@@ -159,7 +166,7 @@ pub fn find_source(
 }
 
 /// Helper function to coerce a value to a [DynSolValue] given a type string
-fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
+pub fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
     let ty = DynSolType::parse(ty)?;
     Ok(DynSolType::coerce_str(&ty, arg)?)
 }
@@ -198,8 +205,7 @@ mod tests {
         let param0 = B256::random();
         let param1 = vec![3; 32];
         let param2 = B256::random();
-        let log =
-            LogData::new_unchecked(vec![event.selector(), param0, param2], param1.clone().into());
+        let log = LogData::new_unchecked(vec![event.selector(), param0, param2], param1.into());
         let event = get_indexed_event(event, &log);
 
         assert_eq!(event.inputs.len(), 3);

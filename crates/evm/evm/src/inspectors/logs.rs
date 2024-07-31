@@ -1,12 +1,15 @@
-use alloy_primitives::{Address, Bytes, Log};
+use alloy_primitives::{Bytes, Log};
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use foundry_common::{fmt::ConsoleFmt, ErrorExt};
 use foundry_evm_core::{
     abi::{patch_hh_console_selector, Console, HardhatConsole},
     constants::HARDHAT_CONSOLE_ADDRESS,
+    InspectorExt,
 };
 use revm::{
-    interpreter::{CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult},
+    interpreter::{
+        CallInputs, CallOutcome, Gas, InstructionResult, Interpreter, InterpreterResult,
+    },
     Database, EvmContext, Inspector,
 };
 
@@ -38,17 +41,16 @@ impl LogCollector {
 }
 
 impl<DB: Database> Inspector<DB> for LogCollector {
-    fn log(&mut self, _context: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>, log: &Log) {
         self.logs.push(log.clone());
     }
 
-    #[inline]
     fn call(
         &mut self,
         _context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        if inputs.contract == HARDHAT_CONSOLE_ADDRESS {
+        if inputs.target_address == HARDHAT_CONSOLE_ADDRESS {
             let (res, out) = self.hardhat_log(inputs.input.to_vec());
             if res != InstructionResult::Continue {
                 return Some(CallOutcome {
@@ -66,10 +68,23 @@ impl<DB: Database> Inspector<DB> for LogCollector {
     }
 }
 
+impl<DB: Database> InspectorExt<DB> for LogCollector {
+    fn console_log(&mut self, input: String) {
+        self.logs.push(Log::new_unchecked(
+            HARDHAT_CONSOLE_ADDRESS,
+            vec![Console::log::SIGNATURE_HASH],
+            input.abi_encode().into(),
+        ));
+    }
+}
+
 /// Converts a call to Hardhat's `console.log` to a DSTest `log(string)` event.
 fn convert_hh_log_to_event(call: HardhatConsole::HardhatConsoleCalls) -> Log {
     // Convert the parameters of the call to their string representation using `ConsoleFmt`.
     let fmt = call.fmt(Default::default());
-    Log::new(Address::default(), vec![Console::log::SIGNATURE_HASH], fmt.abi_encode().into())
-        .unwrap_or_else(|| Log { ..Default::default() })
+    Log::new_unchecked(
+        HARDHAT_CONSOLE_ADDRESS,
+        vec![Console::log::SIGNATURE_HASH],
+        fmt.abi_encode().into(),
+    )
 }

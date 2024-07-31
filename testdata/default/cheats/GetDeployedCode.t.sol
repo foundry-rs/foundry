@@ -4,6 +4,8 @@ pragma solidity 0.8.18;
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
+contract TestContract {}
+
 contract GetDeployedCodeTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
@@ -35,6 +37,16 @@ contract GetDeployedCodeTest is DSTest {
         vm.expectEmit(true, false, false, true);
         emit Payload(address(this), address(0), "hello");
         over.emitPayload(address(0), "hello");
+    }
+
+    function testWithVersion() public {
+        TestContract test = new TestContract();
+        bytes memory code = vm.getDeployedCode("cheats/GetDeployedCode.t.sol:TestContract:0.8.18");
+
+        assertEq(address(test).code, code);
+
+        vm._expectCheatcodeRevert("no matching artifact found");
+        vm.getDeployedCode("cheats/GetDeployedCode.t.sol:TestContract:0.8.19");
     }
 }
 

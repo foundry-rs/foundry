@@ -1,10 +1,9 @@
 //! TUI debugger builder.
 
-use crate::Debugger;
+use crate::{node::flatten_call_trace, DebugNode, Debugger};
 use alloy_primitives::Address;
-use foundry_common::{compile::ContractSources, evm::Breakpoints, get_contract_name};
-use foundry_evm_core::debug::{DebugArena, DebugNodeFlat};
-use foundry_evm_traces::CallTraceDecoder;
+use foundry_common::{evm::Breakpoints, get_contract_name};
+use foundry_evm_traces::{debug::ContractSources, CallTraceArena, CallTraceDecoder, Traces};
 use std::collections::HashMap;
 
 /// Debugger builder.
@@ -12,7 +11,7 @@ use std::collections::HashMap;
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct DebuggerBuilder {
     /// Debug traces returned from the EVM execution.
-    debug_arena: Vec<DebugNodeFlat>,
+    debug_arena: Vec<DebugNode>,
     /// Identified contracts.
     identified_contracts: HashMap<Address, String>,
     /// Map of source files.
@@ -30,17 +29,17 @@ impl DebuggerBuilder {
 
     /// Extends the debug arena.
     #[inline]
-    pub fn debug_arenas(mut self, arena: &[DebugArena]) -> Self {
-        for arena in arena {
-            self = self.debug_arena(arena);
+    pub fn traces(mut self, traces: Traces) -> Self {
+        for (_, arena) in traces {
+            self = self.trace_arena(arena);
         }
         self
     }
 
     /// Extends the debug arena.
     #[inline]
-    pub fn debug_arena(mut self, arena: &DebugArena) -> Self {
-        arena.flatten_to(0, &mut self.debug_arena);
+    pub fn trace_arena(mut self, arena: CallTraceArena) -> Self {
+        flatten_call_trace(arena, &mut self.debug_arena);
         self
     }
 

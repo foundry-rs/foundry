@@ -3,7 +3,10 @@ use crate::{opts::CompilerArgs, utils::LoadConfig};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::{
-    artifacts::RevertStrings, remappings::Remapping, utils::canonicalized, Project,
+    artifacts::{remappings::Remapping, RevertStrings},
+    compilers::multi::MultiCompiler,
+    utils::canonicalized,
+    Project,
 };
 use foundry_config::{
     figment,
@@ -12,6 +15,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Figment, Metadata, Profile, Provider,
     },
+    filter::SkipBuildFilter,
     providers::remappings::Remappings,
     Config,
 };
@@ -70,6 +74,13 @@ pub struct CoreBuildArgs {
     #[serde(skip)]
     pub via_ir: bool,
 
+    /// Do not append any metadata to the bytecode.
+    ///
+    /// This is equivalent to setting `bytecode_hash` to `none` and `cbor_metadata` to `false`.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub no_metadata: bool,
+
     /// The path to the contract artifacts folder.
     #[arg(
         long = "out",
@@ -110,6 +121,13 @@ pub struct CoreBuildArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
 
+    /// Skip building files whose names contain the given filter.
+    ///
+    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
+    #[arg(long, num_args(1..))]
+    #[serde(skip)]
+    pub skip: Option<Vec<SkipBuildFilter>>,
+
     #[command(flatten)]
     #[serde(flatten)]
     pub compiler: CompilerArgs,
@@ -123,9 +141,9 @@ impl CoreBuildArgs {
     /// Returns the `Project` for the current workspace
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
-    /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
-    /// [`foundry_config::Config::project()`]
-    pub fn project(&self) -> Result<Project> {
+    /// `find_project_root_path` and merges the cli `BuildArgs` into it before returning
+    /// [`foundry_config::Config::project()`]).
+    pub fn project(&self) -> Result<Project<MultiCompiler>> {
         let config = self.try_load_config_emit_warnings()?;
         Ok(config.project()?)
     }
@@ -140,7 +158,7 @@ impl CoreBuildArgs {
 // Loads project's figment and merges the build cli arguments into it
 impl<'a> From<&'a CoreBuildArgs> for Figment {
     fn from(args: &'a CoreBuildArgs) -> Self {
-        let figment = if let Some(ref config_path) = args.project_paths.config_path {
+        let mut figment = if let Some(ref config_path) = args.project_paths.config_path {
             if !config_path.exists() {
                 panic!("error: config-path `{}` does not exist", config_path.display())
             }
@@ -157,18 +175,26 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
         let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings());
         remappings
             .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
-        figment.merge(("remappings", remappings.into_inner())).merge(args)
+        figment = figment.merge(("remappings", remappings.into_inner())).merge(args);
+
+        if let Some(skip) = &args.skip {
+            let mut skip = skip.iter().map(|s| s.file_pattern().to_string()).collect::<Vec<_>>();
+            skip.extend(figment.extract_inner::<Vec<String>>("skip").unwrap_or_default());
+            figment = figment.merge(("skip", skip));
+        };
+
+        figment
     }
 }
 
 impl<'a> From<&'a CoreBuildArgs> for Config {
     fn from(args: &'a CoreBuildArgs) -> Self {
         let figment: Figment = args.into();
-        let mut config = Config::from_provider(figment).sanitized();
+        let mut config = Self::from_provider(figment).sanitized();
         // if `--config-path` is set we need to adjust the config's root path to the actual root
         // path for the project, otherwise it will the parent dir of the `--config-path`
         if args.project_paths.config_path.is_some() {
-            config.__root = args.project_paths.project_root().into();
+            config.root = args.project_paths.project_root().into();
         }
         config
     }
@@ -204,9 +230,15 @@ impl Provider for CoreBuildArgs {
             dict.insert("via_ir".to_string(), true.into());
         }
 
+        if self.no_metadata {
+            dict.insert("bytecode_hash".to_string(), "none".into());
+            dict.insert("cbor_metadata".to_string(), false.into());
+        }
+
         if self.force {
             dict.insert("force".to_string(), self.force.into());
         }
+
         // we need to ensure no_cache set accordingly
         if self.no_cache {
             dict.insert("cache".to_string(), false.into());

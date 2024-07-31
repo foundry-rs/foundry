@@ -14,100 +14,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  matrices:
-    name: build matrices
-    runs-on: ubuntu-latest
-    outputs:
-      test-matrix: ${{ steps.gen.outputs.test-matrix }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
-        with:
-          python-version: "3.11"
-      - name: Generate matrices
-        id: gen
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          output=$(python3 .github/scripts/matrices.py)
-          echo "::debug::test-matrix=$output"
-          echo "test-matrix=$output" >> $GITHUB_OUTPUT
-
-  test:
-    name: test ${{ matrix.name }}
-    runs-on: ${{ matrix.runner_label }}
-    timeout-minutes: 60
-    needs: matrices
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
-    env:
-      ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
-      CARGO_PROFILE_DEV_DEBUG: 0
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          target: ${{ matrix.target }}
-      - uses: taiki-e/install-action@nextest
-
-      # External tests dependencies
-      - name: Setup Node.js
-        if: contains(matrix.name, 'external')
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Install Bun
-        if: contains(matrix.name, 'external') && !contains(matrix.runner_label, 'windows')
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: latest
-      - name: Setup Python
-        if: contains(matrix.name, 'external')
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.11
-      - name: Install Vyper
-        if: contains(matrix.name, 'external')
-        run: pip install vyper
-
-      - name: Forge RPC cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.foundry/cache
-            ~/.config/.foundry/cache
-          key: rpc-cache-${{ hashFiles('crates/forge/tests/rpc-cache-keyfile') }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - name: Setup Git config
-        run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "<>"
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-      - name: Test
-        env:
-          SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
-        run: cargo nextest run ${{ matrix.flags }}
+  nextest:
+    uses: ./.github/workflows/nextest.yml
+    with:
+      profile: default
 
   docs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions:
-      contents: write
-      pages: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo doc --workspace --all-features --no-deps --document-private-items
+      - name: Build documentation
+        run: cargo doc --workspace --all-features --no-deps --document-private-items
         env:
-          RUSTDOCFLAGS:
-            --cfg docsrs --show-type-layout --generate-link-to-definition --enable-index-page
-            -Zunstable-options
+          RUSTDOCFLAGS: --cfg docsrs -D warnings --show-type-layout --generate-link-to-definition --enable-index-page -Zunstable-options
       - name: Deploy documentation
         uses: peaceiris/actions-gh-pages@v3
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
@@ -162,11 +86,7 @@ jobs:
           cache-on-failure: true
       - name: forge fmt
         shell: bash
-        # We have to ignore at shell level because testdata/ is not a valid Foundry project,
-        # so running `forge fmt` with `--root testdata` won't actually check anything
-        run: |
-          shopt -s extglob
-          cargo run --bin forge -- fmt --check $(find testdata -name '*.sol' ! -name Vm.sol)
+        run: ./.github/scripts/format.sh --check
 
   crate-checks:
     runs-on: ubuntu-latest
@@ -179,3 +99,21 @@ jobs:
         with:
           cache-on-failure: true
       - run: cargo hack check
+
+  ci-success:
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - nextest
+      - docs
+      - doctest
+      - clippy
+      - rustfmt
+      - forge-fmt
+      - crate-checks
+    timeout-minutes: 30
+    steps:
+      - name: Decide whether the needed jobs succeeded or failed
+        uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}

@@ -75,11 +75,11 @@ impl fmt::Display for FoundryConfigError {
         };
 
         match self {
-            FoundryConfigError::Toml(err) => {
+            Self::Toml(err) => {
                 f.write_str("foundry.toml error: ")?;
                 fmt_err(err, f)
             }
-            FoundryConfigError::Other(err) => {
+            Self::Other(err) => {
                 f.write_str("foundry config error: ")?;
                 fmt_err(err, f)
             }
@@ -90,9 +90,7 @@ impl fmt::Display for FoundryConfigError {
 impl Error for FoundryConfigError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            FoundryConfigError::Other(error) | FoundryConfigError::Toml(error) => {
-                Error::source(error)
-            }
+            Self::Other(error) | Self::Toml(error) => Error::source(error),
         }
     }
 }
@@ -110,7 +108,7 @@ pub enum SolidityErrorCode {
     ContractExceeds24576Bytes,
     /// Warning after shanghai if init code size exceeds 49152 bytes
     ContractInitCodeSizeExceeds49152Bytes,
-    /// Warning that Function state mutability can be restricted to [view,pure]
+    /// Warning that Function state mutability can be restricted to view/pure.
     FunctionStateMutabilityCanBeRestricted,
     /// Warning: Unused local variable
     UnusedLocalVariable,
@@ -136,11 +134,11 @@ pub enum SolidityErrorCode {
     PragmaSolidity,
     /// Uses transient opcodes
     TransientStorageUsed,
+    /// There are more than 256 warnings. Ignoring the rest.
+    TooManyWarnings,
     /// All other error codes
     Other(u64),
 }
-
-// === impl SolidityErrorCode ===
 
 impl SolidityErrorCode {
     /// The textual identifier for this error
@@ -148,33 +146,36 @@ impl SolidityErrorCode {
     /// Returns `Err(code)` if unknown error
     pub fn as_str(&self) -> Result<&'static str, u64> {
         let s = match self {
-            SolidityErrorCode::SpdxLicenseNotProvided => "license",
-            SolidityErrorCode::ContractExceeds24576Bytes => "code-size",
-            SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes => "init-code-size",
-            SolidityErrorCode::FunctionStateMutabilityCanBeRestricted => "func-mutability",
-            SolidityErrorCode::UnusedLocalVariable => "unused-var",
-            SolidityErrorCode::UnusedFunctionParameter => "unused-param",
-            SolidityErrorCode::ReturnValueOfCallsNotUsed => "unused-return",
-            SolidityErrorCode::InterfacesExplicitlyVirtual => "virtual-interfaces",
-            SolidityErrorCode::PayableNoReceiveEther => "missing-receive-ether",
-            SolidityErrorCode::ShadowsExistingDeclaration => "shadowing",
-            SolidityErrorCode::DeclarationSameNameAsAnother => "same-varname",
-            SolidityErrorCode::UnnamedReturnVariable => "unnamed-return",
-            SolidityErrorCode::Unreachable => "unreachable",
-            SolidityErrorCode::PragmaSolidity => "pragma-solidity",
-            SolidityErrorCode::Other(code) => return Err(*code),
-            SolidityErrorCode::VisibilityForConstructorIsIgnored => "constructor-visibility",
-            SolidityErrorCode::TransientStorageUsed => "transient-storage",
+            Self::SpdxLicenseNotProvided => "license",
+            Self::VisibilityForConstructorIsIgnored => "constructor-visibility",
+            Self::ContractExceeds24576Bytes => "code-size",
+            Self::ContractInitCodeSizeExceeds49152Bytes => "init-code-size",
+            Self::FunctionStateMutabilityCanBeRestricted => "func-mutability",
+            Self::UnusedLocalVariable => "unused-var",
+            Self::UnusedFunctionParameter => "unused-param",
+            Self::ReturnValueOfCallsNotUsed => "unused-return",
+            Self::InterfacesExplicitlyVirtual => "virtual-interfaces",
+            Self::PayableNoReceiveEther => "missing-receive-ether",
+            Self::ShadowsExistingDeclaration => "shadowing",
+            Self::DeclarationSameNameAsAnother => "same-varname",
+            Self::UnnamedReturnVariable => "unnamed-return",
+            Self::Unreachable => "unreachable",
+            Self::PragmaSolidity => "pragma-solidity",
+            Self::TransientStorageUsed => "transient-storage",
+            Self::TooManyWarnings => "too-many-warnings",
+            Self::Other(code) => return Err(*code),
         };
         Ok(s)
     }
 }
 
 impl From<SolidityErrorCode> for u64 {
-    fn from(code: SolidityErrorCode) -> u64 {
+    fn from(code: SolidityErrorCode) -> Self {
         match code {
             SolidityErrorCode::SpdxLicenseNotProvided => 1878,
+            SolidityErrorCode::VisibilityForConstructorIsIgnored => 2462,
             SolidityErrorCode::ContractExceeds24576Bytes => 5574,
+            SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes => 3860,
             SolidityErrorCode::FunctionStateMutabilityCanBeRestricted => 2018,
             SolidityErrorCode::UnusedLocalVariable => 2072,
             SolidityErrorCode::UnusedFunctionParameter => 5667,
@@ -186,9 +187,8 @@ impl From<SolidityErrorCode> for u64 {
             SolidityErrorCode::UnnamedReturnVariable => 6321,
             SolidityErrorCode::Unreachable => 5740,
             SolidityErrorCode::PragmaSolidity => 3420,
-            SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes => 3860,
-            SolidityErrorCode::VisibilityForConstructorIsIgnored => 2462,
             SolidityErrorCode::TransientStorageUsed => 2394,
+            SolidityErrorCode::TooManyWarnings => 4591,
             SolidityErrorCode::Other(code) => code,
         }
     }
@@ -208,21 +208,23 @@ impl FromStr for SolidityErrorCode {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let code = match s {
-            "unreachable" => SolidityErrorCode::Unreachable,
-            "unused-return" => SolidityErrorCode::UnnamedReturnVariable,
-            "unused-param" => SolidityErrorCode::UnusedFunctionParameter,
-            "unused-var" => SolidityErrorCode::UnusedLocalVariable,
-            "code-size" => SolidityErrorCode::ContractExceeds24576Bytes,
-            "init-code-size" => SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes,
-            "shadowing" => SolidityErrorCode::ShadowsExistingDeclaration,
-            "func-mutability" => SolidityErrorCode::FunctionStateMutabilityCanBeRestricted,
-            "license" => SolidityErrorCode::SpdxLicenseNotProvided,
-            "pragma-solidity" => SolidityErrorCode::PragmaSolidity,
-            "virtual-interfaces" => SolidityErrorCode::InterfacesExplicitlyVirtual,
-            "missing-receive-ether" => SolidityErrorCode::PayableNoReceiveEther,
-            "same-varname" => SolidityErrorCode::DeclarationSameNameAsAnother,
-            "constructor-visibility" => SolidityErrorCode::VisibilityForConstructorIsIgnored,
-            "transient-storage" => SolidityErrorCode::TransientStorageUsed,
+            "license" => Self::SpdxLicenseNotProvided,
+            "constructor-visibility" => Self::VisibilityForConstructorIsIgnored,
+            "code-size" => Self::ContractExceeds24576Bytes,
+            "init-code-size" => Self::ContractInitCodeSizeExceeds49152Bytes,
+            "func-mutability" => Self::FunctionStateMutabilityCanBeRestricted,
+            "unused-var" => Self::UnusedLocalVariable,
+            "unused-param" => Self::UnusedFunctionParameter,
+            "unused-return" => Self::ReturnValueOfCallsNotUsed,
+            "virtual-interfaces" => Self::InterfacesExplicitlyVirtual,
+            "missing-receive-ether" => Self::PayableNoReceiveEther,
+            "shadowing" => Self::ShadowsExistingDeclaration,
+            "same-varname" => Self::DeclarationSameNameAsAnother,
+            "unnamed-return" => Self::UnnamedReturnVariable,
+            "unreachable" => Self::Unreachable,
+            "pragma-solidity" => Self::PragmaSolidity,
+            "transient-storage" => Self::TransientStorageUsed,
+            "too-many-warnings" => Self::TooManyWarnings,
             _ => return Err(format!("Unknown variant {s}")),
         };
 
@@ -233,23 +235,23 @@ impl FromStr for SolidityErrorCode {
 impl From<u64> for SolidityErrorCode {
     fn from(code: u64) -> Self {
         match code {
-            1878 => SolidityErrorCode::SpdxLicenseNotProvided,
-            5574 => SolidityErrorCode::ContractExceeds24576Bytes,
-            3860 => SolidityErrorCode::ContractInitCodeSizeExceeds49152Bytes,
-            2018 => SolidityErrorCode::FunctionStateMutabilityCanBeRestricted,
-            2072 => SolidityErrorCode::UnusedLocalVariable,
-            5667 => SolidityErrorCode::UnusedFunctionParameter,
-            9302 => SolidityErrorCode::ReturnValueOfCallsNotUsed,
-            5815 => SolidityErrorCode::InterfacesExplicitlyVirtual,
-            3628 => SolidityErrorCode::PayableNoReceiveEther,
-            2519 => SolidityErrorCode::ShadowsExistingDeclaration,
-            8760 => SolidityErrorCode::DeclarationSameNameAsAnother,
-            6321 => SolidityErrorCode::UnnamedReturnVariable,
-            3420 => SolidityErrorCode::PragmaSolidity,
-            5740 => SolidityErrorCode::Unreachable,
-            2462 => SolidityErrorCode::VisibilityForConstructorIsIgnored,
-            2394 => SolidityErrorCode::TransientStorageUsed,
-            other => SolidityErrorCode::Other(other),
+            1878 => Self::SpdxLicenseNotProvided,
+            2462 => Self::VisibilityForConstructorIsIgnored,
+            5574 => Self::ContractExceeds24576Bytes,
+            3860 => Self::ContractInitCodeSizeExceeds49152Bytes,
+            2018 => Self::FunctionStateMutabilityCanBeRestricted,
+            2072 => Self::UnusedLocalVariable,
+            5667 => Self::UnusedFunctionParameter,
+            9302 => Self::ReturnValueOfCallsNotUsed,
+            5815 => Self::InterfacesExplicitlyVirtual,
+            3628 => Self::PayableNoReceiveEther,
+            2519 => Self::ShadowsExistingDeclaration,
+            8760 => Self::DeclarationSameNameAsAnother,
+            6321 => Self::UnnamedReturnVariable,
+            5740 => Self::Unreachable,
+            3420 => Self::PragmaSolidity,
+            2394 => Self::TransientStorageUsed,
+            other => Self::Other(other),
         }
     }
 }

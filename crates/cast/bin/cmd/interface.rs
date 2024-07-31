@@ -1,6 +1,9 @@
-use cast::{AbiPath, SimpleCast};
+use alloy_chains::Chain;
+use alloy_json_abi::ContractObject;
+use alloy_primitives::Address;
 use clap::Parser;
 use eyre::{Context, Result};
+use foundry_block_explorers::Client;
 use foundry_cli::opts::EtherscanOpts;
 use foundry_common::fs;
 use foundry_config::Config;
@@ -68,14 +71,7 @@ pub struct InterfaceArgs {
 
 impl InterfaceArgs {
     pub async fn run(self) -> Result<()> {
-        let InterfaceArgs {
-            path_or_address,
-            name,
-            pragma,
-            output: output_location,
-            etherscan,
-            json,
-        } = self;
+        let Self { path_or_address, name, pragma, output: output_location, etherscan, json } = self;
         let source = if Path::new(&path_or_address).exists() {
             AbiPath::Local { path: path_or_address, name }
         } else {
@@ -91,7 +87,42 @@ impl InterfaceArgs {
             }
         };
 
-        let interfaces = SimpleCast::generate_interface(source).await?;
+        let items = match source {
+            AbiPath::Local { path, name } => {
+                let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
+                let obj: ContractObject = serde_json::from_str(&file)?;
+                let abi =
+                    obj.abi.ok_or_else(|| eyre::eyre!("could not find ABI in file {path}"))?;
+                let name = name.unwrap_or_else(|| "Interface".to_owned());
+                vec![(abi, name)]
+            }
+            AbiPath::Etherscan { address, chain, api_key } => {
+                let client = Client::new(chain, api_key)?;
+                let source = client.contract_source_code(address).await?;
+                source
+                    .items
+                    .into_iter()
+                    .map(|item| Ok((item.abi()?, item.contract_name)))
+                    .collect::<Result<Vec<_>>>()?
+            }
+        };
+
+        let interfaces = items
+            .into_iter()
+            .map(|(contract_abi, name)| {
+                let source = match foundry_cli::utils::abi_to_solidity(&contract_abi, &name) {
+                    Ok(generated_source) => generated_source,
+                    Err(e) => {
+                        warn!("Failed to format interface for {name}: {e}");
+                        contract_abi.to_sol(&name, None)
+                    }
+                };
+                Ok(InterfaceSource {
+                    json_abi: serde_json::to_string_pretty(&contract_abi)?,
+                    source,
+                })
+            })
+            .collect::<Result<Vec<InterfaceSource>>>()?;
 
         // put it all together
         let res = if json {
@@ -117,4 +148,16 @@ impl InterfaceArgs {
         }
         Ok(())
     }
+}
+
+struct InterfaceSource {
+    json_abi: String,
+    source: String,
+}
+
+// Local is a path to the directory containing the ABI files
+// In case of etherscan, ABI is fetched from the address on the chain
+enum AbiPath {
+    Local { path: String, name: Option<String> },
+    Etherscan { address: Address, chain: Chain, api_key: String },
 }

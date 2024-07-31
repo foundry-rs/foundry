@@ -1,8 +1,9 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use alloy_primitives::{Bytes, SignatureError as AlloySignatureError, U256};
-use alloy_signer::Error as AlloySignerError;
+use alloy_primitives::{Bytes, SignatureError};
+use alloy_rpc_types::BlockNumberOrTag;
+use alloy_signer::Error as SignerError;
 use alloy_transport::TransportError;
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
@@ -12,7 +13,6 @@ use foundry_evm::{
     backend::DatabaseError,
     decode::RevertDecoder,
     revm::{
-        self,
         interpreter::InstructionResult,
         primitives::{EVMError, InvalidHeader},
     },
@@ -37,14 +37,16 @@ pub enum BlockchainError {
     FailedToDecodeSignedTransaction,
     #[error("Failed to decode transaction")]
     FailedToDecodeTransaction,
+    #[error("Failed to decode receipt")]
+    FailedToDecodeReceipt,
     #[error("Failed to decode state")]
     FailedToDecodeStateDump,
     #[error("Prevrandao not in th EVM's environment after merge")]
     PrevrandaoNotSet,
     #[error(transparent)]
-    AlloySignatureError(#[from] AlloySignatureError),
+    SignatureError(#[from] SignatureError),
     #[error(transparent)]
-    AlloySignerError(#[from] AlloySignerError),
+    SignerError(#[from] SignerError),
     #[error("Rpc Endpoint not implemented")]
     RpcUnimplemented,
     #[error("Rpc error {0:?}")]
@@ -83,6 +85,8 @@ pub enum BlockchainError {
     EIP2930TransactionUnsupportedAtHardfork,
     #[error("EIP-4844 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork cancun' or later.")]
     EIP4844TransactionUnsupportedAtHardfork,
+    #[error("EIP-7702 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork prague' or later.")]
+    EIP7702TransactionUnsupportedAtHardfork,
     #[error("op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'.")]
     DepositTransactionUnsupported,
     #[error("Excess blob gas not set.")]
@@ -93,23 +97,24 @@ pub enum BlockchainError {
 
 impl From<RpcError> for BlockchainError {
     fn from(err: RpcError) -> Self {
-        BlockchainError::RpcError(err)
+        Self::RpcError(err)
     }
 }
 
 impl<T> From<EVMError<T>> for BlockchainError
 where
-    T: Into<BlockchainError>,
+    T: Into<Self>,
 {
     fn from(err: EVMError<T>) -> Self {
         match err {
             EVMError::Transaction(err) => InvalidTransactionError::from(err).into(),
             EVMError::Header(err) => match err {
-                InvalidHeader::ExcessBlobGasNotSet => BlockchainError::ExcessBlobGasNotSet,
-                InvalidHeader::PrevrandaoNotSet => BlockchainError::PrevrandaoNotSet,
+                InvalidHeader::ExcessBlobGasNotSet => Self::ExcessBlobGasNotSet,
+                InvalidHeader::PrevrandaoNotSet => Self::PrevrandaoNotSet,
             },
             EVMError::Database(err) => err.into(),
-            EVMError::Custom(err) => BlockchainError::Message(err),
+            EVMError::Precompile(err) => Self::Message(err),
+            EVMError::Custom(err) => Self::Message(err),
         }
     }
 }
@@ -129,8 +134,10 @@ pub enum PoolError {
 /// Errors that can occur with `eth_feeHistory`
 #[derive(Debug, thiserror::Error)]
 pub enum FeeHistoryError {
-    #[error("Requested block range is out of bounds")]
+    #[error("requested block range is out of bounds")]
     InvalidBlockRange,
+    #[error("could not find newest block number requested: {0}")]
+    BlockNotFound(BlockNumberOrTag),
 }
 
 #[derive(Debug)]
@@ -180,7 +187,7 @@ pub enum InvalidTransactionError {
     FeeCapTooLow,
     /// Thrown during estimate if caller has insufficient funds to cover the tx.
     #[error("Out of gas: gas required exceeds allowance: {0:?}")]
-    BasicOutOfGas(U256),
+    BasicOutOfGas(u128),
     /// Thrown if executing a transaction failed during estimate/call
     #[error("execution reverted: {0:?}")]
     Revert(Option<Bytes>),
@@ -199,7 +206,7 @@ pub enum InvalidTransactionError {
     /// Thrown when the block's `blob_gas_price` is greater than tx-specified
     /// `max_fee_per_blob_gas` after Cancun.
     #[error("Block `blob_gas_price` is greater than tx-specified `max_fee_per_blob_gas`")]
-    BlobGasPriceGreaterThanMax,
+    BlobFeeCapTooLow,
     /// Thrown when we receive a tx with `blob_versioned_hashes` and we're not on the Cancun hard
     /// fork.
     #[error("Block `blob_versioned_hashes` is not supported before the Cancun hardfork")]
@@ -207,56 +214,55 @@ pub enum InvalidTransactionError {
     /// Thrown when `max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.
     #[error("`max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.")]
     MaxFeePerBlobGasNotSupported,
+    /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
+    #[error("`blob_hashes` are required for EIP-4844 transactions")]
+    NoBlobHashes,
+    #[error("too many blobs in one transaction, max: {0}, have: {1}")]
+    TooManyBlobs(usize, usize),
+    /// Thrown when there's a blob validation error
+    #[error(transparent)]
+    BlobTransactionValidationError(#[from] alloy_consensus::BlobTransactionValidationError),
+    /// Thrown when Blob transaction is a create transaction. `to` must be present.
+    #[error("Blob transaction can't be a create transaction. `to` must be present.")]
+    BlobCreateTransaction,
+    /// Thrown when Blob transaction contains a versioned hash with an incorrect version.
+    #[error("Blob transaction contains a versioned hash with an incorrect version")]
+    BlobVersionNotSupported,
+    /// Thrown when there are no `blob_hashes` in the transaction.
+    #[error("There should be at least one blob in a Blob transaction.")]
+    EmptyBlobs,
 }
 
 impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
     fn from(err: revm::primitives::InvalidTransaction) -> Self {
         use revm::primitives::InvalidTransaction;
         match err {
-            InvalidTransaction::InvalidChainId => InvalidTransactionError::InvalidChainId,
-            InvalidTransaction::PriorityFeeGreaterThanMaxFee => {
-                InvalidTransactionError::TipAboveFeeCap
-            }
-            InvalidTransaction::GasPriceLessThanBasefee => InvalidTransactionError::FeeCapTooLow,
+            InvalidTransaction::InvalidChainId => Self::InvalidChainId,
+            InvalidTransaction::PriorityFeeGreaterThanMaxFee => Self::TipAboveFeeCap,
+            InvalidTransaction::GasPriceLessThanBasefee => Self::FeeCapTooLow,
             InvalidTransaction::CallerGasLimitMoreThanBlock => {
-                InvalidTransactionError::GasTooHigh(ErrDetail {
-                    detail: String::from("CallerGasLimitMoreThanBlock"),
-                })
+                Self::GasTooHigh(ErrDetail { detail: String::from("CallerGasLimitMoreThanBlock") })
             }
             InvalidTransaction::CallGasCostMoreThanGasLimit => {
-                InvalidTransactionError::GasTooHigh(ErrDetail {
-                    detail: String::from("CallGasCostMoreThanGasLimit"),
-                })
+                Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
-            InvalidTransaction::RejectCallerWithCode => InvalidTransactionError::SenderNoEOA,
-            InvalidTransaction::LackOfFundForMaxFee { .. } => {
-                InvalidTransactionError::InsufficientFunds
-            }
-            InvalidTransaction::OverflowPaymentInTransaction => {
-                InvalidTransactionError::GasUintOverflow
-            }
-            InvalidTransaction::NonceOverflowInTransaction => {
-                InvalidTransactionError::NonceMaxValue
-            }
-            InvalidTransaction::CreateInitCodeSizeLimit => {
-                InvalidTransactionError::MaxInitCodeSizeExceeded
-            }
-            InvalidTransaction::NonceTooHigh { .. } => InvalidTransactionError::NonceTooHigh,
-            InvalidTransaction::NonceTooLow { .. } => InvalidTransactionError::NonceTooLow,
-            InvalidTransaction::AccessListNotSupported => {
-                InvalidTransactionError::AccessListNotSupported
-            }
-            InvalidTransaction::BlobGasPriceGreaterThanMax => {
-                InvalidTransactionError::BlobGasPriceGreaterThanMax
-            }
+            InvalidTransaction::RejectCallerWithCode => Self::SenderNoEOA,
+            InvalidTransaction::LackOfFundForMaxFee { .. } => Self::InsufficientFunds,
+            InvalidTransaction::OverflowPaymentInTransaction => Self::GasUintOverflow,
+            InvalidTransaction::NonceOverflowInTransaction => Self::NonceMaxValue,
+            InvalidTransaction::CreateInitCodeSizeLimit => Self::MaxInitCodeSizeExceeded,
+            InvalidTransaction::NonceTooHigh { .. } => Self::NonceTooHigh,
+            InvalidTransaction::NonceTooLow { .. } => Self::NonceTooLow,
+            InvalidTransaction::AccessListNotSupported => Self::AccessListNotSupported,
+            InvalidTransaction::BlobGasPriceGreaterThanMax => Self::BlobFeeCapTooLow,
             InvalidTransaction::BlobVersionedHashesNotSupported => {
-                InvalidTransactionError::BlobVersionedHashesNotSupported
+                Self::BlobVersionedHashesNotSupported
             }
-            InvalidTransaction::MaxFeePerBlobGasNotSupported => {
-                InvalidTransactionError::MaxFeePerBlobGasNotSupported
-            }
-            // TODO: Blob-related errors should be handled once the Reth migration is done and code
-            // is moved over.
+            InvalidTransaction::MaxFeePerBlobGasNotSupported => Self::MaxFeePerBlobGasNotSupported,
+            InvalidTransaction::BlobCreateTransaction => Self::BlobCreateTransaction,
+            InvalidTransaction::BlobVersionNotSupported => Self::BlobVersionNotSupported,
+            InvalidTransaction::EmptyBlobs => Self::EmptyBlobs,
+            InvalidTransaction::TooManyBlobs { max, have } => Self::TooManyBlobs(max, have),
             _ => todo!(),
         }
     }
@@ -348,13 +354,14 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::FailedToDecodeTransaction => {
                     RpcError::invalid_params("Failed to decode transaction")
                 }
+                BlockchainError::FailedToDecodeReceipt => {
+                    RpcError::invalid_params("Failed to decode receipt")
+                }
                 BlockchainError::FailedToDecodeStateDump => {
                     RpcError::invalid_params("Failed to decode state dump")
                 }
-                BlockchainError::AlloySignerError(err) => RpcError::invalid_params(err.to_string()),
-                BlockchainError::AlloySignatureError(err) => {
-                    RpcError::invalid_params(err.to_string())
-                }
+                BlockchainError::SignerError(err) => RpcError::invalid_params(err.to_string()),
+                BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::RpcUnimplemented => {
                     RpcError::internal_error_with("Not implemented")
                 }
@@ -411,6 +418,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::EIP4844TransactionUnsupportedAtHardfork => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::EIP7702TransactionUnsupportedAtHardfork => {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::DepositTransactionUnsupported => {

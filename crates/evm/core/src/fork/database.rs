@@ -1,12 +1,12 @@
 //! A revm database that forks off a remote client
 
 use crate::{
-    backend::{DatabaseError, RevertSnapshotAction, StateSnapshot},
-    fork::{BlockchainDb, SharedBackend},
+    backend::{RevertSnapshotAction, StateSnapshot},
     snapshot::Snapshots,
 };
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
+use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
 use parking_lot::Mutex;
 use revm::{
     db::{CacheDB, DatabaseRef},
@@ -167,7 +167,7 @@ impl Database for ForkedDatabase {
         Database::storage(&mut self.cache_db, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
         Database::block_hash(&mut self.cache_db, number)
     }
 }
@@ -187,7 +187,7 @@ impl DatabaseRef for ForkedDatabase {
         DatabaseRef::storage_ref(&self.cache_db, address, index)
     }
 
-    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         self.cache_db.block_hash_ref(number)
     }
 }
@@ -206,8 +206,6 @@ pub struct ForkDbSnapshot {
     pub local: CacheDB<SharedBackend>,
     pub snapshot: StateSnapshot,
 }
-
-// === impl DbSnapshot ===
 
 impl ForkDbSnapshot {
     fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
@@ -255,8 +253,8 @@ impl DatabaseRef for ForkDbSnapshot {
         }
     }
 
-    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
-        match self.snapshot.block_hashes.get(&number).copied() {
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        match self.snapshot.block_hashes.get(&U256::from(number)).copied() {
             None => self.local.block_hash_ref(number),
             Some(block_hash) => Ok(block_hash),
         }
@@ -266,15 +264,15 @@ impl DatabaseRef for ForkDbSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fork::BlockchainDbMeta;
-    use foundry_common::provider::alloy::get_http_provider;
+    use crate::backend::BlockchainDbMeta;
+    use foundry_common::provider::get_http_provider;
     use std::collections::BTreeSet;
 
     /// Demonstrates that `Database::basic` for `ForkedDatabase` will always return the
     /// `AccountInfo`
     #[tokio::test(flavor = "multi_thread")]
     async fn fork_db_insert_basic_default() {
-        let rpc = foundry_common::rpc::next_http_rpc_endpoint();
+        let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
         let provider = get_http_provider(rpc.clone());
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),

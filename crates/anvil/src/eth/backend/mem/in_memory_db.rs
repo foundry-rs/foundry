@@ -2,17 +2,17 @@
 
 use crate::{
     eth::backend::db::{
-        AsHashDB, Db, MaybeForkedDatabase, MaybeHashDatabase, SerializableAccountRecord,
-        SerializableState, StateDb,
+        Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
+        SerializableState, SerializableTransaction, StateDb,
     },
-    mem::state::{state_merkle_trie_root, storage_trie_db, trie_hash_db},
-    revm::primitives::AccountInfo,
+    mem::state::state_root,
+    revm::{db::DbAccount, primitives::AccountInfo},
 };
 use alloy_primitives::{Address, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
-    backend::{DatabaseResult, StateSnapshot},
-    fork::BlockchainDb,
+    backend::{BlockchainDb, DatabaseResult, StateSnapshot},
+    hashbrown::HashMap,
 };
 
 // reexport for convenience
@@ -36,6 +36,8 @@ impl Db for MemDb {
         &self,
         at: BlockEnv,
         best_number: U64,
+        blocks: Vec<SerializableBlock>,
+        transactions: Vec<SerializableTransaction>,
     ) -> DatabaseResult<Option<SerializableState>> {
         let accounts = self
             .inner
@@ -47,8 +49,7 @@ impl Db for MemDb {
                     code
                 } else {
                     self.inner.code_by_hash_ref(v.info.code_hash)?
-                }
-                .to_checked();
+                };
                 Ok((
                     k,
                     SerializableAccountRecord {
@@ -65,6 +66,8 @@ impl Db for MemDb {
             block: Some(at),
             accounts,
             best_block_number: Some(best_number),
+            blocks,
+            transactions,
         }))
     }
 
@@ -90,25 +93,17 @@ impl Db for MemDb {
     }
 
     fn maybe_state_root(&self) -> Option<B256> {
-        Some(state_merkle_trie_root(&self.inner.accounts))
+        Some(state_root(&self.inner.accounts))
     }
 
     fn current_state(&self) -> StateDb {
-        StateDb::new(MemDb { inner: self.inner.clone(), ..Default::default() })
+        StateDb::new(Self { inner: self.inner.clone(), ..Default::default() })
     }
 }
 
-impl MaybeHashDatabase for MemDb {
-    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, B256)> {
-        Some(trie_hash_db(&self.inner.accounts))
-    }
-
-    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, B256)> {
-        if let Some(acc) = self.inner.accounts.get(&addr) {
-            Some(storage_trie_db(&acc.storage))
-        } else {
-            Some(storage_trie_db(&Default::default()))
-        }
+impl MaybeFullDatabase for MemDb {
+    fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
+        Some(&self.inner.accounts)
     }
 
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
@@ -145,7 +140,7 @@ mod tests {
     use foundry_evm::revm::primitives::{Bytecode, KECCAK_EMPTY};
     use std::{collections::BTreeMap, str::FromStr};
 
-    // verifies that all substantial aspects of a loaded account remain the state after an account
+    // verifies that all substantial aspects of a loaded account remain the same after an account
     // is dumped and reloaded
     #[test]
     fn test_dump_reload_cycle() {
@@ -154,8 +149,7 @@ mod tests {
 
         let mut dump_db = MemDb::default();
 
-        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
-
+        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code"));
         dump_db.insert_account(
             test_addr,
             AccountInfo {
@@ -165,10 +159,13 @@ mod tests {
                 nonce: 1234,
             },
         );
-
         dump_db.set_storage_at(test_addr, U256::from(1234567), U256::from(1)).unwrap();
 
-        let state = dump_db.dump_state(Default::default(), U64::ZERO).unwrap().unwrap();
+        // blocks dumping/loading tested in storage.rs
+        let state = dump_db
+            .dump_state(Default::default(), U64::ZERO, Vec::new(), Vec::new())
+            .unwrap()
+            .unwrap();
 
         let mut load_db = MemDb::default();
 
@@ -191,7 +188,7 @@ mod tests {
         let test_addr2: Address =
             Address::from_str("0x70997970c51812dc3a010c7d01b50e0d17dc79c8").unwrap();
 
-        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
+        let contract_code = Bytecode::new_raw(Bytes::from("fake contract code"));
 
         let mut db = MemDb::default();
 

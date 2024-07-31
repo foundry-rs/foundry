@@ -75,8 +75,8 @@ impl Pool {
     /// Returns the number of tx that are ready and queued for further execution
     pub fn txpool_status(&self) -> TxpoolStatus {
         // Note: naming differs here compared to geth's `TxpoolStatus`
-        let pending = U64::from(self.ready_transactions().count());
-        let queued = U64::from(self.inner.read().pending_transactions.len());
+        let pending: u64 = self.ready_transactions().count().try_into().unwrap_or(0);
+        let queued: u64 = self.inner.read().pending_transactions.len().try_into().unwrap_or(0);
         TxpoolStatus { pending, queued }
     }
 
@@ -166,6 +166,12 @@ impl Pool {
         dropped
     }
 
+    /// Removes all transactions from the pool
+    pub fn clear(&self) {
+        let mut pool = self.inner.write();
+        pool.clear();
+    }
+
     /// notifies all listeners about the transaction
     fn notify_listener(&self, hash: TxHash) {
         let mut listener = self.transaction_listener.lock();
@@ -209,6 +215,12 @@ impl PoolInner {
     /// Returns an iterator over transactions that are ready.
     fn ready_transactions(&self) -> TransactionsIterator {
         self.ready_transactions.get_transactions()
+    }
+
+    /// Clears
+    fn clear(&mut self) {
+        self.ready_transactions.clear();
+        self.pending_transactions.clear();
     }
 
     /// checks both pools for the matching transaction
@@ -452,8 +464,8 @@ pub enum AddedTransaction {
 impl AddedTransaction {
     pub fn hash(&self) -> &TxHash {
         match self {
-            AddedTransaction::Ready(tx) => &tx.hash,
-            AddedTransaction::Pending { hash } => hash,
+            Self::Ready(tx) => &tx.hash,
+            Self::Pending { hash } => hash,
         }
     }
 }

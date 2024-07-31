@@ -1,15 +1,17 @@
-use crate::{
-    eth::subscription::SubscriptionId,
-    types::{EvmMineOptions, Forking, Index},
-};
+use crate::eth::subscription::SubscriptionId;
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
-use alloy_rpc_trace_types::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
 use alloy_rpc_types::{
+    anvil::{Forking, MineOptions},
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
     state::StateOverride,
-    BlockId, BlockNumberOrTag as BlockNumber, Filter,
+    trace::{
+        filter::TraceFilter,
+        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
+    },
+    BlockId, BlockNumberOrTag as BlockNumber, Filter, Index,
 };
+use alloy_serde::WithOtherFields;
 
 pub mod block;
 pub mod proof;
@@ -69,6 +71,9 @@ pub enum EthRequest {
     )]
     EthMaxPriorityFeePerGas(()),
 
+    #[cfg_attr(feature = "serde", serde(rename = "eth_blobBaseFee", with = "empty_params"))]
+    EthBlobBaseFee(()),
+
     #[cfg_attr(
         feature = "serde",
         serde(rename = "eth_accounts", alias = "eth_requestAccounts", with = "empty_params")
@@ -80,6 +85,9 @@ pub enum EthRequest {
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getBalance"))]
     EthGetBalance(Address, Option<BlockId>),
+
+    #[cfg_attr(feature = "serde", serde(rename = "eth_getAccount"))]
+    EthGetAccount(Address, Option<BlockId>),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getStorageAt"))]
     EthGetStorageAt(Address, U256, Option<BlockId>),
@@ -142,8 +150,13 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_sign"))]
     EthSign(Address, Bytes),
 
-    #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction"))]
-    EthSignTransaction(Box<TransactionRequest>),
+    /// The sign method calculates an Ethereum specific signature, equivalent to eth_sign:
+    /// <https://docs.metamask.io/wallet/reference/personal_sign/>
+    #[cfg_attr(feature = "serde", serde(rename = "personal_sign"))]
+    PersonalSign(Bytes, Address),
+
+    #[cfg_attr(feature = "serde", serde(rename = "eth_signTransaction", with = "sequence"))]
+    EthSignTransaction(Box<WithOtherFields<TransactionRequest>>),
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
     #[cfg_attr(feature = "serde", serde(rename = "eth_signTypedData"))]
@@ -158,27 +171,27 @@ pub enum EthRequest {
     EthSignTypedDataV4(Address, alloy_dyn_abi::TypedData),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendTransaction", with = "sequence"))]
-    EthSendTransaction(Box<TransactionRequest>),
+    EthSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_sendRawTransaction", with = "sequence"))]
     EthSendRawTransaction(Bytes),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_call"))]
     EthCall(
-        TransactionRequest,
+        WithOtherFields<TransactionRequest>,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
         #[cfg_attr(feature = "serde", serde(default))] Option<StateOverride>,
     ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_createAccessList"))]
     EthCreateAccessList(
-        TransactionRequest,
+        WithOtherFields<TransactionRequest>,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
     ),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_estimateGas"))]
     EthEstimateGas(
-        TransactionRequest,
+        WithOtherFields<TransactionRequest>,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
         #[cfg_attr(feature = "serde", serde(default))] Option<StateOverride>,
     ),
@@ -191,6 +204,18 @@ pub enum EthRequest {
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionByBlockNumberAndIndex"))]
     EthGetTransactionByBlockNumberAndIndex(BlockNumber, Index),
+
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "eth_getRawTransactionByHash", with = "sequence")
+    )]
+    EthGetRawTransactionByHash(TxHash),
+
+    #[cfg_attr(feature = "serde", serde(rename = "eth_getRawTransactionByBlockHashAndIndex"))]
+    EthGetRawTransactionByBlockHashAndIndex(TxHash, Index),
+
+    #[cfg_attr(feature = "serde", serde(rename = "eth_getRawTransactionByBlockNumberAndIndex"))]
+    EthGetRawTransactionByBlockNumberAndIndex(BlockNumber, Index),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getTransactionReceipt", with = "sequence"))]
     EthGetTransactionReceipt(B256),
@@ -262,6 +287,10 @@ pub enum EthRequest {
     #[cfg_attr(feature = "serde", serde(rename = "eth_syncing", with = "empty_params"))]
     EthSyncing(()),
 
+    /// geth's `debug_getRawTransaction`  endpoint
+    #[cfg_attr(feature = "serde", serde(rename = "debug_getRawTransaction", with = "sequence"))]
+    DebugGetRawTransaction(TxHash),
+
     /// geth's `debug_traceTransaction`  endpoint
     #[cfg_attr(feature = "serde", serde(rename = "debug_traceTransaction"))]
     DebugTraceTransaction(
@@ -272,9 +301,9 @@ pub enum EthRequest {
     /// geth's `debug_traceCall`  endpoint
     #[cfg_attr(feature = "serde", serde(rename = "debug_traceCall"))]
     DebugTraceCall(
-        TransactionRequest,
+        WithOtherFields<TransactionRequest>,
         #[cfg_attr(feature = "serde", serde(default))] Option<BlockId>,
-        #[cfg_attr(feature = "serde", serde(default))] GethDefaultTracingOptions,
+        #[cfg_attr(feature = "serde", serde(default))] GethDebugTracingCallOptions,
     ),
 
     /// Trace transaction endpoint for parity's `trace_transaction`
@@ -290,6 +319,10 @@ pub enum EthRequest {
         )
     )]
     TraceBlock(BlockNumber),
+
+    // Return filtered traces over blocks
+    #[cfg_attr(feature = "serde", serde(rename = "trace_filter",))]
+    TraceFilter(TraceFilter),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.
@@ -370,6 +403,17 @@ pub enum EthRequest {
         )
     )]
     DropTransaction(B256),
+
+    /// Removes transactions from the pool
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "anvil_dropAllTransactions",
+            alias = "hardhat_dropAllTransactions",
+            with = "empty_params"
+        )
+    )]
+    DropAllTransactions(),
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     #[cfg_attr(feature = "serde", serde(rename = "anvil_reset", alias = "hardhat_reset"))]
@@ -578,7 +622,7 @@ pub enum EthRequest {
 
     /// Mine a single block
     #[cfg_attr(feature = "serde", serde(rename = "evm_mine"))]
-    EvmMine(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<EvmMineOptions>>>),
+    EvmMine(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<MineOptions>>>),
 
     /// Mine a single block and return detailed data
     ///
@@ -589,7 +633,7 @@ pub enum EthRequest {
         serde(rename = "anvil_mine_detailed", alias = "evm_mine_detailed",)
     )]
     EvmMineDetailed(
-        #[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<EvmMineOptions>>>,
+        #[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<MineOptions>>>,
     ),
 
     /// Execute a transaction regardless of signature status
@@ -597,7 +641,7 @@ pub enum EthRequest {
         feature = "serde",
         serde(rename = "eth_sendUnsignedTransaction", with = "sequence")
     )]
-    EthSendUnsignedTransaction(Box<TransactionRequest>),
+    EthSendUnsignedTransaction(Box<WithOtherFields<TransactionRequest>>),
 
     /// Turn on call traces for transactions that are returned to the user when they execute a
     /// transaction (instead of just txhash/receipt)
@@ -606,26 +650,26 @@ pub enum EthRequest {
 
     /// Returns the number of transactions currently pending for inclusion in the next block(s), as
     /// well as the ones that are being scheduled for future execution only.
-    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status)
+    /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status>
     #[cfg_attr(feature = "serde", serde(rename = "txpool_status", with = "empty_params"))]
     TxPoolStatus(()),
 
     /// Returns a summary of all the transactions currently pending for inclusion in the next
     /// block(s), as well as the ones that are being scheduled for future execution only.
-    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_inspect)
+    /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_inspect>
     #[cfg_attr(feature = "serde", serde(rename = "txpool_inspect", with = "empty_params"))]
     TxPoolInspect(()),
 
     /// Returns the details of all transactions currently pending for inclusion in the next
     /// block(s), as well as the ones that are being scheduled for future execution only.
-    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content)
+    /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content>
     #[cfg_attr(feature = "serde", serde(rename = "txpool_content", with = "empty_params"))]
     TxPoolContent(()),
 
     /// Otterscan's `ots_getApiLevel` endpoint
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
-    /// https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71
-    /// Related upstream issue: https://github.com/otterscan/otterscan/issues/1081
+    /// <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
+    /// Related upstream issue: <https://github.com/otterscan/otterscan/issues/1081>
     #[cfg_attr(feature = "serde", serde(rename = "erigon_getHeaderByNumber"))]
     ErigonGetHeaderByNumber(
         #[cfg_attr(
@@ -1261,7 +1305,7 @@ mod tests {
             EthRequest::EvmMine(params) => {
                 assert_eq!(
                     params.unwrap().params.unwrap_or_default(),
-                    EvmMineOptions::Options { timestamp: Some(100), blocks: Some(100) }
+                    MineOptions::Options { timestamp: Some(100), blocks: Some(100) }
                 )
             }
             _ => unreachable!(),
@@ -1298,7 +1342,7 @@ mod tests {
             EthRequest::EvmMineDetailed(params) => {
                 assert_eq!(
                     params.unwrap().params.unwrap_or_default(),
-                    EvmMineOptions::Options { timestamp: Some(100), blocks: Some(100) }
+                    MineOptions::Options { timestamp: Some(100), blocks: Some(100) }
                 )
             }
             _ => unreachable!(),
@@ -1329,7 +1373,7 @@ mod tests {
             EthRequest::EvmMine(params) => {
                 assert_eq!(
                     params.unwrap().params.unwrap_or_default(),
-                    EvmMineOptions::Timestamp(Some(1672937224))
+                    MineOptions::Timestamp(Some(1672937224))
                 )
             }
             _ => unreachable!(),
@@ -1342,7 +1386,7 @@ mod tests {
             EthRequest::EvmMine(params) => {
                 assert_eq!(
                     params.unwrap().params.unwrap_or_default(),
-                    EvmMineOptions::Options { timestamp: Some(1672937224), blocks: None }
+                    MineOptions::Options { timestamp: Some(1672937224), blocks: None }
                 )
             }
             _ => unreachable!(),
@@ -1404,6 +1448,25 @@ mod tests {
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["syncing"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_raw_transaction() {
+        let s = r#"{"jsonrpc":"2.0","method":"debug_getRawTransaction","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getRawTransactionByHash","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getRawTransactionByBlockHashAndIndex","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c",1],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getRawTransactionByBlockNumberAndIndex","params":["0x3ed3a89b",0],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
@@ -1503,6 +1566,18 @@ true}]}"#;
 
         // this case deviates from the spec, but we're supporting this for legacy reasons: <https://github.com/foundry-rs/foundry/issues/1868>
         let s = r#"{"method": "eth_getBlockByNumber", "params": [0, true]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_sign() {
+        let s = r#"{"method": "eth_sign", "params":
+["0xd84de507f3fada7df80908082d3239466db55a71", "0x00"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "personal_sign", "params":
+["0x00", "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

@@ -20,7 +20,7 @@ contract TransactOnForkTest is DSTest {
 
     function testTransact() public {
         // A random block https://etherscan.io/block/17134913
-        uint256 fork = vm.createFork("rpcAlias", 17134913);
+        uint256 fork = vm.createFork("mainnet", 17134913);
         vm.selectFork(fork);
         // a random transfer transaction in the next block: https://etherscan.io/tx/0xaf6201d435b216a858c580e20512a16136916d894aa33260650e164e3238c771
         bytes32 tx = 0xaf6201d435b216a858c580e20512a16136916d894aa33260650e164e3238c771;
@@ -48,7 +48,7 @@ contract TransactOnForkTest is DSTest {
 
     function testTransactCooperatesWithCheatcodes() public {
         // A random block https://etherscan.io/block/16260609
-        uint256 fork = vm.createFork("rpcAlias", 16260609);
+        uint256 fork = vm.createFork("mainnet", 16260609);
         vm.selectFork(fork);
 
         // a random ERC20 USDT transfer transaction in the next block: https://etherscan.io/tx/0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c

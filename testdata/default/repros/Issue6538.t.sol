@@ -10,7 +10,7 @@ contract Issue6538Test is DSTest {
 
     function test_transact() public {
         bytes32 lastHash = 0xdbdce1d5c14a6ca17f0e527ab762589d6a73f68697606ae0bb90df7ac9ec5087;
-        vm.createSelectFork("rpcAlias", lastHash);
+        vm.createSelectFork("mainnet", lastHash);
         bytes32 txhash = 0xadbe5cf9269a001d50990d0c29075b402bcc3a0b0f3258821881621b787b35c6;
         vm.transact(txhash);
     }

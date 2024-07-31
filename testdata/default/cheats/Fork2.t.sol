@@ -35,8 +35,8 @@ contract ForkTest is DSTest {
 
     // this will create two _different_ forks during setup
     function setUp() public {
-        mainnetFork = vm.createFork("rpcAlias");
-        optimismFork = vm.createFork("https://opt-mainnet.g.alchemy.com/v2/UVatYU2Ax0rX6bDiqddeTRDdcCxzdpoE");
+        mainnetFork = vm.createFork("mainnet");
+        optimismFork = vm.createFork("optimism");
     }
 
     // ensures forks use different ids
@@ -57,7 +57,7 @@ contract ForkTest is DSTest {
     }
 
     function testCanCreateSelect() public {
-        uint256 anotherFork = vm.createSelectFork("rpcAlias");
+        uint256 anotherFork = vm.createSelectFork("mainnet");
         assertEq(anotherFork, vm.activeFork());
     }
 
@@ -75,12 +75,12 @@ contract ForkTest is DSTest {
     // test that we can switch between forks, and "roll" blocks
     function testCanRollFork() public {
         vm.selectFork(mainnetFork);
-        uint256 otherMain = vm.createFork("rpcAlias", block.number - 1);
+        uint256 otherMain = vm.createFork("mainnet", block.number - 1);
         vm.selectFork(otherMain);
         uint256 mainBlock = block.number;
 
         uint256 forkedBlock = 14608400;
-        uint256 otherFork = vm.createFork("rpcAlias", forkedBlock);
+        uint256 otherFork = vm.createFork("mainnet", forkedBlock);
         vm.selectFork(otherFork);
         assertEq(block.number, forkedBlock);
 
@@ -101,7 +101,7 @@ contract ForkTest is DSTest {
         uint256 block = 16261704;
 
         // fork until previous block
-        uint256 fork = vm.createSelectFork("rpcAlias", block - 1);
+        uint256 fork = vm.createSelectFork("mainnet", block - 1);
 
         // block transactions in order: https://beaconcha.in/block/16261704#transactions
         // run transactions from current block until tx
@@ -227,6 +227,12 @@ contract ForkTest is DSTest {
         string memory file = vm.readFile(path);
         bytes memory result = vm.rpc("eth_getBalance", file);
         assertEq(hex"10b7c11bcb51e6", result);
+    }
+
+    function testRpcWithUrl() public {
+        bytes memory result = vm.rpc("mainnet", "eth_blockNumber", "[]");
+        uint256 decodedResult = vm.parseUint(vm.toString(result));
+        assertGt(decodedResult, 20_000_000);
     }
 }
 

@@ -1,24 +1,27 @@
 //! A wrapper around `Backend` that is clone-on-write used for fuzzing.
 
+use super::BackendError;
 use crate::{
     backend::{
-        diagnostic::RevertDiagnostic, error::DatabaseError, Backend, DatabaseExt, LocalForkId,
-        RevertSnapshotAction,
+        diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId, RevertSnapshotAction,
     },
     fork::{CreateFork, ForkId},
+    InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
+use foundry_fork_db::DatabaseError;
 use revm::{
     db::DatabaseRef,
     primitives::{
         Account, AccountInfo, Bytecode, Env, EnvWithHandlerCfg, HashMap as Map, ResultAndState,
         SpecId,
     },
-    Database, DatabaseCommit, Inspector, JournaledState,
+    Database, DatabaseCommit, JournaledState,
 };
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::BTreeMap};
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
@@ -50,7 +53,7 @@ pub struct CowBackend<'a> {
 
 impl<'a> CowBackend<'a> {
     /// Creates a new `CowBackend` with the given `Backend`.
-    pub fn new(backend: &'a Backend) -> Self {
+    pub fn new_borrowed(backend: &'a Backend) -> Self {
         Self { backend: Cow::Borrowed(backend), is_initialized: false, spec_id: SpecId::LATEST }
     }
 
@@ -58,7 +61,8 @@ impl<'a> CowBackend<'a> {
     ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
-    pub fn inspect<'b, I: Inspector<&'b mut Self>>(
+    #[instrument(name = "inspect", level = "debug", skip_all)]
+    pub fn inspect<'b, I: InspectorExt<&'b mut Self>>(
         &'b mut self,
         env: &mut EnvWithHandlerCfg,
         inspector: I,
@@ -159,7 +163,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
-        block_number: U256,
+        block_number: u64,
         env: &mut Env,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
@@ -176,15 +180,25 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         self.backend_mut(env).roll_fork_to_transaction(id, transaction, env, journaled_state)
     }
 
-    fn transact<I: Inspector<Backend>>(
+    fn transact(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut I,
+        inspector: &mut dyn InspectorExt<Backend>,
     ) -> eyre::Result<()> {
         self.backend_mut(env).transact(id, transaction, env, journaled_state, inspector)
+    }
+
+    fn transact_from_tx(
+        &mut self,
+        transaction: TransactionRequest,
+        env: &Env,
+        journaled_state: &mut JournaledState,
+        inspector: &mut dyn InspectorExt<Backend>,
+    ) -> eyre::Result<()> {
+        self.backend_mut(env).transact_from_tx(transaction, env, journaled_state, inspector)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
@@ -213,9 +227,9 @@ impl<'a> DatabaseExt for CowBackend<'a> {
 
     fn load_allocs(
         &mut self,
-        allocs: &HashMap<Address, GenesisAccount>,
+        allocs: &BTreeMap<Address, GenesisAccount>,
         journaled_state: &mut JournaledState,
-    ) -> Result<(), DatabaseError> {
+    ) -> Result<(), BackendError> {
         self.backend_mut(&Env::default()).load_allocs(allocs, journaled_state)
     }
 
@@ -242,6 +256,10 @@ impl<'a> DatabaseExt for CowBackend<'a> {
     fn has_cheatcode_access(&self, account: &Address) -> bool {
         self.backend.has_cheatcode_access(account)
     }
+
+    fn set_blockhash(&mut self, block_number: U256, block_hash: B256) {
+        self.backend.to_mut().set_blockhash(block_number, block_hash);
+    }
 }
 
 impl<'a> DatabaseRef for CowBackend<'a> {
@@ -259,7 +277,7 @@ impl<'a> DatabaseRef for CowBackend<'a> {
         DatabaseRef::storage_ref(self.backend.as_ref(), address, index)
     }
 
-    fn block_hash_ref(&self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash_ref(self.backend.as_ref(), number)
     }
 }
@@ -279,7 +297,7 @@ impl<'a> Database for CowBackend<'a> {
         DatabaseRef::storage_ref(self, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
         DatabaseRef::block_hash_ref(self, number)
     }
 }

@@ -1,8 +1,7 @@
 //! terminal utils
 use foundry_compilers::{
-    remappings::Remapping,
-    report::{self, BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
-    CompilerInput, CompilerOutput, Solc,
+    artifacts::remappings::Remapping,
+    report::{self, BasicStdoutReporter, Reporter},
 };
 use once_cell::sync::Lazy;
 use semver::Version;
@@ -35,8 +34,8 @@ pub struct TermSettings {
 
 impl TermSettings {
     /// Returns a new [`TermSettings`], configured from the current environment.
-    pub fn from_env() -> TermSettings {
-        TermSettings { indicate_progress: std::io::stdout().is_terminal() }
+    pub fn from_env() -> Self {
+        Self { indicate_progress: std::io::stdout().is_terminal() }
     }
 }
 
@@ -56,7 +55,7 @@ impl Spinner {
     }
 
     pub fn with_indicator(indicator: &'static [&'static str], msg: impl Into<String>) -> Self {
-        Spinner {
+        Self {
             indicator,
             no_progress: !TERM_SETTINGS.indicate_progress,
             message: msg.into(),
@@ -69,7 +68,7 @@ impl Spinner {
             return
         }
 
-        let indicator = Paint::green(self.indicator[self.idx % self.indicator.len()]);
+        let indicator = self.indicator[self.idx % self.indicator.len()].green();
         let indicator = Paint::new(format!("[{indicator}]")).bold();
         print!("\r\x33[2K\r{indicator} {}", self.message);
         io::stdout().flush().unwrap();
@@ -90,9 +89,6 @@ impl Spinner {
 pub struct SpinnerReporter {
     /// The sender to the spinner thread.
     sender: mpsc::Sender<SpinnerMsg>,
-    /// Reporter that logs Solc compiler input and output to separate files if configured via env
-    /// var.
-    solc_io_report: SolcCompilerIoReporter,
 }
 
 impl SpinnerReporter {
@@ -129,7 +125,7 @@ impl SpinnerReporter {
             })
             .expect("failed to spawn thread");
 
-        SpinnerReporter { sender, solc_io_report: SolcCompilerIoReporter::from_default_env() }
+        Self { sender }
     }
 
     fn send_msg(&self, msg: impl Into<String>) {
@@ -152,49 +148,34 @@ impl Drop for SpinnerReporter {
 }
 
 impl Reporter for SpinnerReporter {
-    fn on_solc_spawn(
-        &self,
-        _solc: &Solc,
-        version: &Version,
-        input: &CompilerInput,
-        dirty_files: &[PathBuf],
-    ) {
+    fn on_compiler_spawn(&self, compiler_name: &str, version: &Version, dirty_files: &[PathBuf]) {
         self.send_msg(format!(
-            "Compiling {} files with {}.{}.{}",
+            "Compiling {} files with {} {}.{}.{}",
             dirty_files.len(),
+            compiler_name,
             version.major,
             version.minor,
             version.patch
         ));
-        self.solc_io_report.log_compiler_input(input, version);
     }
 
-    fn on_solc_success(
-        &self,
-        _solc: &Solc,
-        version: &Version,
-        output: &CompilerOutput,
-        duration: &Duration,
-    ) {
-        self.solc_io_report.log_compiler_output(output, version);
+    fn on_compiler_success(&self, compiler_name: &str, version: &Version, duration: &Duration) {
         self.send_msg(format!(
-            "Solc {}.{}.{} finished in {duration:.2?}",
-            version.major, version.minor, version.patch
+            "{} {}.{}.{} finished in {duration:.2?}",
+            compiler_name, version.major, version.minor, version.patch
         ));
     }
 
-    /// Invoked before a new [`Solc`] bin is installed
     fn on_solc_installation_start(&self, version: &Version) {
         self.send_msg(format!("Installing Solc version {version}"));
     }
 
-    /// Invoked before a new [`Solc`] bin was successfully installed
     fn on_solc_installation_success(&self, version: &Version) {
         self.send_msg(format!("Successfully installed Solc {version}"));
     }
 
     fn on_solc_installation_error(&self, version: &Version, error: &str) {
-        self.send_msg(Paint::red(format!("Failed to install Solc {version}: {error}")).to_string());
+        self.send_msg(format!("Failed to install Solc {version}: {error}").red().to_string());
     }
 
     fn on_unresolved_imports(&self, imports: &[(&Path, &Path)], remappings: &[Remapping]) {
@@ -221,8 +202,8 @@ macro_rules! cli_warn {
     ($($arg:tt)*) => {
         eprintln!(
             "{}{} {}",
-            yansi::Paint::yellow("warning").bold(),
-            yansi::Paint::new(":").bold(),
+            yansi::Painted::new("warning").yellow().bold(),
+            yansi::Painted::new(":").bold(),
             format_args!($($arg)*)
         )
     }

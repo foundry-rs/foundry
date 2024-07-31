@@ -16,7 +16,7 @@ impl EyreHandler for Handler {
             return core::fmt::Debug::fmt(error, f)
         }
         writeln!(f)?;
-        write!(f, "{}", Paint::red(error))?;
+        write!(f, "{}", error.red())?;
 
         if let Some(cause) = error.source() {
             write!(f, "\n\nContext:")?;
@@ -48,13 +48,11 @@ impl EyreHandler for Handler {
 ///
 /// Panics are always caught by the more debug-centric handler.
 pub fn install() {
-    // If the user has not explicitly overridden "RUST_BACKTRACE", then produce full backtraces.
     if std::env::var_os("RUST_BACKTRACE").is_none() {
-        std::env::set_var("RUST_BACKTRACE", "full");
+        std::env::set_var("RUST_BACKTRACE", "1");
     }
 
-    let debug_enabled = std::env::var("FOUNDRY_DEBUG").is_ok();
-    if debug_enabled {
+    if std::env::var_os("FOUNDRY_DEBUG").is_some() {
         if let Err(e) = color_eyre::install() {
             debug!("failed to install color eyre error hook: {e}");
         }

@@ -1,0 +1,33 @@
+[package]
+name = "foundry-common-fmt"
+description = "Common formatting utilities for Foundry"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives.workspace = true
+alloy-dyn-abi = { workspace = true, features = ["eip712"] }
+yansi.workspace = true
+
+# ui
+alloy-consensus.workspace = true
+alloy-rpc-types = { workspace = true, features = ["eth"] }
+alloy-serde.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+revm-primitives.workspace = true
+comfy-table.workspace = true
+
+[dev-dependencies]
+foundry-macros.workspace = true
+similar-asserts.workspace = true

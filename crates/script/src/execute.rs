@@ -7,25 +7,24 @@ use crate::{
 use super::{runner::ScriptRunner, JsonResult, NestedValue, ScriptResult};
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_primitives::{Address, Bytes, U64};
-use alloy_rpc_types::request::TransactionRequest;
+use alloy_primitives::{Address, Bytes};
+use alloy_provider::Provider;
 use async_recursion::async_recursion;
-use ethers_providers::Middleware;
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
-    provider::ethers::{get_http_provider, RpcUrl},
+    provider::get_http_provider,
     shell, ContractsByArtifact,
 };
-use foundry_compilers::artifacts::ContractBytecodeSome;
 use foundry_config::{Config, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
-    decode::{decode_console_logs, RevertDecoder},
-    inspectors::cheatcodes::{BroadcastableTransaction, BroadcastableTransactions},
+    decode::decode_console_logs,
+    inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
+        decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
@@ -45,6 +44,7 @@ pub struct LinkedState {
 }
 
 /// Container for data we need for execution which can only be obtained after linking stage.
+#[derive(Debug)]
 pub struct ExecutionData {
     /// Function to call.
     pub func: Function,
@@ -62,27 +62,31 @@ impl LinkedState {
     pub async fn prepare_execution(self) -> Result<PreExecutionState> {
         let Self { args, script_config, script_wallets, build_data } = self;
 
-        let ContractBytecodeSome { abi, bytecode, .. } = build_data.get_target_contract()?;
+        let target_contract = build_data.get_target_contract()?;
 
-        let bytecode = bytecode.into_bytes().ok_or_else(|| {
-            eyre::eyre!("expected fully linked bytecode, found unlinked bytecode")
-        })?;
+        let bytecode = target_contract.bytecode().ok_or_eyre("target contract has no bytecode")?;
 
-        let (func, calldata) = args.get_method_and_calldata(&abi)?;
+        let (func, calldata) = args.get_method_and_calldata(&target_contract.abi)?;
 
-        ensure_clean_constructor(&abi)?;
+        ensure_clean_constructor(&target_contract.abi)?;
 
         Ok(PreExecutionState {
             args,
             script_config,
             script_wallets,
+            execution_data: ExecutionData {
+                func,
+                calldata,
+                bytecode: bytecode.clone(),
+                abi: target_contract.abi.clone(),
+            },
             build_data,
-            execution_data: ExecutionData { func, calldata, bytecode, abi },
         })
     }
 }
 
 /// Same as [LinkedState], but also contains [ExecutionData].
+#[derive(Debug)]
 pub struct PreExecutionState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
@@ -98,9 +102,14 @@ impl PreExecutionState {
     pub async fn execute(mut self) -> Result<ExecutedState> {
         let mut runner = self
             .script_config
-            .get_runner_with_cheatcodes(self.script_wallets.clone(), self.args.debug)
+            .get_runner_with_cheatcodes(
+                self.build_data.known_contracts.clone(),
+                self.script_wallets.clone(),
+                self.args.debug,
+                self.build_data.build_data.target.clone(),
+            )
             .await?;
-        let mut result = self.execute_with_runner(&mut runner).await?;
+        let result = self.execute_with_runner(&mut runner).await?;
 
         // If we have a new sender from execution, we need to use it to deploy libraries and relink
         // contracts.
@@ -115,28 +124,7 @@ impl PreExecutionState {
                 build_data: self.build_data.build_data,
             };
 
-            return state.link()?.prepare_execution().await?.execute().await;
-        }
-
-        // Add library deployment transactions to broadcastable transactions list.
-        if let Some(txs) = result.transactions.take() {
-            result.transactions = Some(
-                self.build_data
-                    .predeploy_libraries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, bytes)| BroadcastableTransaction {
-                        rpc: self.script_config.evm_opts.fork_url.clone(),
-                        transaction: TransactionRequest {
-                            from: Some(self.script_config.evm_opts.sender),
-                            input: Some(bytes.clone()).into(),
-                            nonce: Some(U64::from(self.script_config.sender_nonce + i as u64)),
-                            ..Default::default()
-                        },
-                    })
-                    .chain(txs)
-                    .collect(),
-            );
+            return state.link().await?.prepare_execution().await?.execute().await;
         }
 
         Ok(ExecutedState {
@@ -167,7 +155,6 @@ impl PreExecutionState {
             setup_result.gas_used = script_result.gas_used;
             setup_result.logs.extend(script_result.logs);
             setup_result.traces.extend(script_result.traces);
-            setup_result.debug = script_result.debug;
             setup_result.labeled_addresses.extend(script_result.labeled_addresses);
             setup_result.returned = script_result.returned;
             setup_result.breakpoints = script_result.breakpoints;
@@ -198,12 +185,12 @@ impl PreExecutionState {
 
         if let Some(txs) = transactions {
             // If the user passed a `--sender` don't check anything.
-            if !self.build_data.predeploy_libraries.is_empty() &&
+            if self.build_data.predeploy_libraries.libraries_count() > 0 &&
                 self.args.evm_opts.sender.is_none()
             {
                 for tx in txs.iter() {
-                    if tx.transaction.to.is_none() {
-                        let sender = tx.transaction.from.expect("no sender");
+                    if tx.transaction.to().is_none() {
+                        let sender = tx.transaction.from().expect("no sender");
                         if let Some(ns) = new_sender {
                             if sender != ns {
                                 shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
@@ -223,7 +210,7 @@ impl PreExecutionState {
 /// Container for information about RPC-endpoints used during script execution.
 pub struct RpcData {
     /// Unique list of rpc urls present.
-    pub total_rpcs: HashSet<RpcUrl>,
+    pub total_rpcs: HashSet<String>,
     /// If true, one of the transactions did not have a rpc.
     pub missing_rpc: bool,
 }
@@ -248,9 +235,8 @@ impl RpcData {
     async fn check_shanghai_support(&self) -> Result<()> {
         let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
             let provider = get_http_provider(rpc);
-            let id = provider.get_chainid().await.ok()?;
-            let id_u64: u64 = id.try_into().ok()?;
-            NamedChain::try_from(id_u64).ok()
+            let id = provider.get_chain_id().await.ok()?;
+            NamedChain::try_from(id).ok()
         });
 
         let chains = join_all(chain_ids).await;
@@ -266,7 +252,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
                     .map(|(_, chain)| *chain as u64)
                     .format(", ")
             );
-            shell::println(Paint::yellow(msg))?;
+            shell::println(msg.yellow())?;
         }
         Ok(())
     }
@@ -297,8 +283,7 @@ impl ExecutedState {
     pub async fn prepare_simulation(self) -> Result<PreSimulationState> {
         let returns = self.get_returns()?;
 
-        let known_contracts = self.build_data.get_flattened_contracts(true);
-        let decoder = self.build_trace_decoder(&known_contracts)?;
+        let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
 
         let txs = self.execution_result.transactions.clone().unwrap_or_default();
         let rpc_data = RpcData::from_transactions(&txs);
@@ -306,9 +291,7 @@ impl ExecutedState {
         if rpc_data.is_multi_chain() {
             shell::eprintln(format!(
                 "{}",
-                Paint::yellow(
-                    "Multi chain deployment is still under development. Use with caution."
-                )
+                "Multi chain deployment is still under development. Use with caution.".yellow()
             ))?;
             if !self.build_data.libraries.is_empty() {
                 eyre::bail!(
@@ -330,7 +313,7 @@ impl ExecutedState {
     }
 
     /// Builds [CallTraceDecoder] from the execution result and known contracts.
-    fn build_trace_decoder(
+    async fn build_trace_decoder(
         &self,
         known_contracts: &ContractsByArtifact,
     ) -> Result<CallTraceDecoder> {
@@ -346,16 +329,8 @@ impl ExecutedState {
 
         let mut identifier = TraceIdentifiers::new().with_local(known_contracts).with_etherscan(
             &self.script_config.config,
-            self.script_config.evm_opts.get_remote_chain_id(),
+            self.script_config.evm_opts.get_remote_chain_id().await,
         )?;
-
-        // Decoding traces using etherscan is costly as we run into rate limits,
-        // causing scripts to run for a very long time unnecessarily.
-        // Therefore, we only try and use etherscan if the user has provided an API key.
-        let should_use_etherscan_traces = self.script_config.config.etherscan_api_key.is_some();
-        if !should_use_etherscan_traces {
-            identifier.etherscan = None;
-        }
 
         for (_, trace) in &self.execution_result.traces {
             decoder.identify(trace, &mut identifier);
@@ -419,7 +394,7 @@ impl PreSimulationState {
         if !self.execution_result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                RevertDecoder::new().decode(&self.execution_result.returned[..], None)
+                &self.execution_artifacts.decoder.revert_decoder.decode(&result.returned[..], None)
             ));
         }
 
@@ -446,14 +421,16 @@ impl PreSimulationState {
                 } || !result.success;
 
                 if should_include {
-                    shell::println(render_trace_arena(trace, decoder).await?)?;
+                    let mut trace = trace.clone();
+                    decode_trace_arena(&mut trace, decoder).await?;
+                    shell::println(render_trace_arena(&trace))?;
                 }
             }
             shell::println(String::new())?;
         }
 
         if result.success {
-            shell::println(format!("{}", Paint::green("Script ran successfully.")))?;
+            shell::println(format!("{}", "Script ran successfully.".green()))?;
         }
 
         if self.script_config.evm_opts.fork_url.is_none() {
@@ -500,19 +477,25 @@ impl PreSimulationState {
         if !result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                RevertDecoder::new().decode(&result.returned[..], None)
+                &self.execution_artifacts.decoder.revert_decoder.decode(&result.returned[..], None)
             ));
         }
 
         Ok(())
     }
 
-    pub fn run_debugger(&self) -> Result<()> {
+    pub fn run_debugger(self) -> Result<()> {
         let mut debugger = Debugger::builder()
-            .debug_arenas(self.execution_result.debug.as_deref().unwrap_or_default())
+            .traces(
+                self.execution_result
+                    .traces
+                    .into_iter()
+                    .filter(|(t, _)| t.is_execution())
+                    .collect(),
+            )
             .decoder(&self.execution_artifacts.decoder)
-            .sources(self.build_data.build_data.sources.clone())
-            .breakpoints(self.execution_result.breakpoints.clone())
+            .sources(self.build_data.sources)
+            .breakpoints(self.execution_result.breakpoints)
             .build();
         debugger.try_run()?;
         Ok(())

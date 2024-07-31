@@ -1,5 +1,5 @@
 use crate::utils::parse_ether_value;
-use alloy_primitives::U256;
+use alloy_primitives::{U256, U64};
 use clap::Parser;
 use serde::Serialize;
 
@@ -10,7 +10,10 @@ pub struct TransactionOpts {
     #[arg(long, env = "ETH_GAS_LIMIT")]
     pub gas_limit: Option<U256>,
 
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
+    /// specified in wei, or as a string with a unit type.
+    ///
+    /// Examples: 1ether, 10gwei, 0.01ether
     #[arg(
         long,
         env = "ETH_GAS_PRICE",
@@ -38,13 +41,21 @@ pub struct TransactionOpts {
 
     /// Nonce for the transaction.
     #[arg(long)]
-    pub nonce: Option<U256>,
+    pub nonce: Option<U64>,
 
     /// Send a legacy transaction instead of an EIP1559 transaction.
     ///
     /// This is automatically enabled for common networks without EIP1559.
     #[arg(long)]
     pub legacy: bool,
+
+    /// Send a EIP-4844 blob transaction.
+    #[arg(long, conflicts_with = "legacy")]
+    pub blob: bool,
+
+    /// Gas price for EIP-4844 blob transaction.
+    #[arg(long, conflicts_with = "legacy", value_parser = parse_ether_value, env = "ETH_BLOB_GAS_PRICE", value_name = "BLOB_PRICE")]
+    pub blob_gas_price: Option<U256>,
 }
 
 #[cfg(test)]

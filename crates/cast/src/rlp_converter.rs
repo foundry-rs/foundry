@@ -1,10 +1,13 @@
+use alloy_primitives::{hex, U256};
 use alloy_rlp::{Buf, Decodable, Encodable, Header};
+use eyre::Context;
 use serde_json::Value;
 use std::fmt;
 
-/// Arbitrary nested data
-/// Item::Array(vec![]); is equivalent to []
-/// Item::Array(vec![Item::Data(vec![])]); is equivalent to [""] or [null]
+/// Arbitrary nested data.
+///
+/// - `Item::Array(vec![])` is equivalent to `[]`.
+/// - `Item::Array(vec![Item::Data(vec![])])` is equivalent to `[""]` or `[null]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Item {
     Data(Vec<u8>),
@@ -14,8 +17,8 @@ pub enum Item {
 impl Encodable for Item {
     fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
         match self {
-            Item::Array(arr) => arr.encode(out),
-            Item::Data(data) => <[u8]>::encode(data, out),
+            Self::Array(arr) => arr.encode(out),
+            Self::Data(data) => <[u8]>::encode(data, out),
         }
     }
 }
@@ -31,11 +34,11 @@ impl Decodable for Item {
             let view = &mut d;
             let mut v = Vec::new();
             while !view.is_empty() {
-                v.push(Item::decode(view)?);
+                v.push(Self::decode(view)?);
             }
-            Ok(Item::Array(v))
+            Ok(Self::Array(v))
         } else {
-            Ok(Item::Data(d.to_vec()))
+            Ok(Self::Data(d.to_vec()))
         };
         buf.advance(h.payload_length);
         r
@@ -43,16 +46,17 @@ impl Decodable for Item {
 }
 
 impl Item {
-    pub(crate) fn value_to_item(value: &Value) -> eyre::Result<Item> {
+    pub(crate) fn value_to_item(value: &Value) -> eyre::Result<Self> {
         return match value {
-            Value::Null => Ok(Item::Data(vec![])),
+            Value::Null => Ok(Self::Data(vec![])),
             Value::Bool(_) => {
-                eyre::bail!("RLP input should not contain booleans")
+                eyre::bail!("RLP input can not contain booleans")
             }
-            // If a value is passed without quotes we cast it to string
-            Value::Number(n) => Ok(Item::value_to_item(&Value::String(n.to_string()))?),
-            Value::String(s) => Ok(Item::Data(hex::decode(s).expect("Could not decode hex"))),
-            Value::Array(values) => values.iter().map(Item::value_to_item).collect(),
+            Value::Number(n) => {
+                Ok(Self::Data(n.to_string().parse::<U256>()?.to_be_bytes_trimmed_vec()))
+            }
+            Value::String(s) => Ok(Self::Data(hex::decode(s).wrap_err("Could not decode hex")?)),
+            Value::Array(values) => values.iter().map(Self::value_to_item).collect(),
             Value::Object(_) => {
                 eyre::bail!("RLP input can not contain objects")
             }
@@ -60,9 +64,9 @@ impl Item {
     }
 }
 
-impl FromIterator<Item> for Item {
-    fn from_iter<T: IntoIterator<Item = Item>>(iter: T) -> Self {
-        Item::Array(Vec::from_iter(iter))
+impl FromIterator<Self> for Item {
+    fn from_iter<T: IntoIterator<Item = Self>>(iter: T) -> Self {
+        Self::Array(Vec::from_iter(iter))
     }
 }
 
@@ -70,10 +74,10 @@ impl FromIterator<Item> for Item {
 impl fmt::Display for Item {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Item::Data(dat) => {
+            Self::Data(dat) => {
                 write!(f, "\"0x{}\"", hex::encode(dat))?;
             }
-            Item::Array(items) => {
+            Self::Array(items) => {
                 f.write_str("[")?;
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {

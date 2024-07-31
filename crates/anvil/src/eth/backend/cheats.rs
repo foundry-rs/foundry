@@ -1,7 +1,6 @@
 //! Support for "cheat codes" / bypass functions
 
-use alloy_primitives::{Address, Signature};
-use anvil_core::eth::transaction::impersonated_signature;
+use alloy_primitives::Address;
 use parking_lot::RwLock;
 use std::{collections::HashSet, sync::Arc};
 
@@ -13,8 +12,6 @@ pub struct CheatsManager {
     /// shareable state
     state: Arc<RwLock<CheatsState>>,
 }
-
-// === impl CheatsManager ===
 
 impl CheatsManager {
     /// Sets the account to impersonate
@@ -50,11 +47,6 @@ impl CheatsManager {
         }
     }
 
-    /// Returns the signature to use to bypass transaction signing
-    pub fn bypass_signature(&self) -> Signature {
-        self.state.read().bypass_signature
-    }
-
     /// Sets the auto impersonation flag which if set to true will make the `is_impersonated`
     /// function always return true
     pub fn set_auto_impersonate_account(&self, enabled: bool) {
@@ -69,22 +61,10 @@ impl CheatsManager {
 }
 
 /// Container type for all the state variables
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CheatsState {
     /// All accounts that are currently impersonated
     pub impersonated_accounts: HashSet<Address>,
-    /// The signature used for the `eth_sendUnsignedTransaction` cheat code
-    pub bypass_signature: Signature,
     /// If set to true will make the `is_impersonated` function always return true
     pub auto_impersonate_accounts: bool,
-}
-
-impl Default for CheatsState {
-    fn default() -> Self {
-        Self {
-            impersonated_accounts: Default::default(),
-            bypass_signature: impersonated_signature(),
-            auto_impersonate_accounts: false,
-        }
-    }
 }

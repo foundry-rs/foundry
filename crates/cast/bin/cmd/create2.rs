@@ -1,4 +1,4 @@
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{hex, keccak256, Address, B256, U256};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -81,7 +81,7 @@ pub struct Create2Output {
 
 impl Create2Args {
     pub fn run(self) -> Result<Create2Output> {
-        let Create2Args {
+        let Self {
             starts_with,
             ends_with,
             matching,
