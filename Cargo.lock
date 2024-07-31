@@ -4103,6 +4103,7 @@ dependencies = [
  "aws-sdk-kms",
  "clap",
  "derive_builder",
+ "eth-keystore",
  "eyre",
  "foundry-config",
  "gcloud-sdk",
