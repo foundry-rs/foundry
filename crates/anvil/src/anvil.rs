@@ -83,12 +83,8 @@ async fn main() -> eyre::Result<()> {
                     Vec::new()
                 };
 
-                provider
-                    .raw_request(
-                        "anvil_reorg".into(),
-                        serde_json::json!([depth, new_len, tx_block_pairs,]),
-                    )
-                    .await?;
+                let params = serde_json::json!([*depth, *new_len, tx_block_pairs]);
+                provider.raw_request("anvil_reorg".into(), params).await?;
             }
         }
         return Ok(())
