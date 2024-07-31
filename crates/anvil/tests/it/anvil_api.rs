@@ -698,7 +698,7 @@ async fn test_reorg() {
     let current_height = provider.get_block_number().await.unwrap();
     let depth = 7;
     let new_len = 3;
-    api.anvil_reorg(depth, new_len, Some(txs)).await.unwrap();
+    api.anvil_reorg(depth, new_len, txs).await.unwrap();
 
     assert_eq!(provider.get_block_number().await.unwrap(), (current_height - depth) + new_len);
     for num in 14..17 {
@@ -719,17 +719,17 @@ async fn test_reorg() {
 
     // Reset chain
     let curr_height = provider.get_block_number().await.unwrap();
-    api.anvil_reorg(curr_height, 0, None).await.unwrap();
+    api.anvil_reorg(curr_height, 0, vec![]).await.unwrap();
 
     // Test reverting code
     api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(5) })).await.unwrap();
     let greeter = abi::Greeter::deploy(provider.clone(), "Reorg".to_string()).await.unwrap();
-    api.anvil_reorg(4, 0, None).await.unwrap();
+    api.anvil_reorg(4, 0, vec![]).await.unwrap();
     let code = api.get_code(*greeter.address(), Some(BlockId::latest())).await.unwrap();
     assert_eq!(code, Bytes::default());
     // Reset chain
     let curr_height = provider.get_block_number().await.unwrap();
-    api.anvil_reorg(curr_height, 0, None).await.unwrap();
+    api.anvil_reorg(curr_height, 0, vec![]).await.unwrap();
 
     // Test reverting contract storage
     let storage =
@@ -744,15 +744,15 @@ async fn test_reorg() {
         .get_receipt()
         .await
         .unwrap();
-    api.anvil_reorg(5, 0, None).await.unwrap();
+    api.anvil_reorg(5, 0, vec![]).await.unwrap();
     let value = storage.getValue().call().await.unwrap()._0;
     assert_eq!("initial value".to_string(), value);
 
     // Test reorg depth exceeding current height
-    let res = api.anvil_reorg(100, 0, None).await;
+    let res = api.anvil_reorg(100, 0, vec![]).await;
     assert!(res.is_err());
 
     // Test reorg tx pairs exceeds chain length
-    let res = api.anvil_reorg(1, 1, Some(vec![(TransactionRequest::default(), 10)])).await;
+    let res = api.anvil_reorg(1, 1, vec![(TransactionRequest::default(), 10)]).await;
     assert!(res.is_err());
 }

@@ -446,8 +446,8 @@ impl EthApi {
             EthRequest::RemovePoolTransactions(address) => {
                 self.anvil_remove_pool_transactions(address).await.to_rpc_result()
             }
-            EthRequest::AnvilReorg(depth, new_len, tx_block_pairs) => {
-                self.anvil_reorg(depth, new_len, Some(tx_block_pairs)).await.to_rpc_result()
+            EthRequest::Reorg(depth, new_len, tx_block_pairs) => {
+                self.anvil_reorg(depth, new_len, tx_block_pairs).await.to_rpc_result()
             }
         }
     }
@@ -1929,14 +1929,19 @@ impl EthApi {
     /// Reorg the chain by rewinding the state to a specific depth and mine new blocks ontop.
     ///
     /// Optionally supply a list of transactions that will populate the newly mined blocks
+    ///
+    /// Handler for RPC call: `anvil_reorg`
     pub async fn anvil_reorg(
         &self,
         depth: u64,
         new_len: u64,
-        tx_block_pairs: Option<Vec<(TransactionRequest, u64)>>,
+        tx_block_pairs: Vec<(TransactionRequest, u64)>,
     ) -> Result<()> {
+        // TODO:
+        // - Encapsulate reorgs in a struct
+        // - Use read_json_file to read in a json of tx block pairs
+        // - Enhance logging
         node_info!("anvil_reorg");
-
         // Find common height
         let current_height = self.backend.best_number();
         let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
@@ -1948,7 +1953,8 @@ impl EthApi {
             self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
 
         // Construct the signed tx pairs for each new block
-        let txs = if let Some(mut pairs) = tx_block_pairs {
+        let txs = if tx_block_pairs.len() > 0 {
+            let mut pairs = tx_block_pairs;
             // Validate that tx block pairs fit into new chain
             if let Some(max) = pairs.iter().max_by_key(|item| item.1) {
                 if max.1 > new_len {
