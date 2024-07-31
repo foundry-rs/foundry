@@ -403,7 +403,7 @@ mod tests {
                 retries: None,
                 retry_backoff: None,
                 compute_units_per_second: None,
-                auth: Some(String::from("Bearer 123"))
+                auth: None,
             }
         );
     }
