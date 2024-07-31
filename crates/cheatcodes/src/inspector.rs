@@ -498,6 +498,7 @@ impl Cheatcodes {
             accesses: Default::default(),
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
+            recorded_debug_steps: Default::default(),
             mocked_calls: Default::default(),
             mocked_functions: Default::default(),
             expected_calls: Default::default(),
@@ -1168,8 +1169,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // `starRecordtDebugTrace`: record the debug trace data
-        if let Some(recorded_debug_steps) = &mut self.recorded_debug_steps {
-            self.record_debug_trace(interpreter, recorded_debug_steps);
+        if self.recorded_debug_steps.is_some() {
+            self.record_debug_trace(interpreter, ecx);
         }
 
         // `expectSafeMemory`: check if the current opcode is allowed to interact with memory.
@@ -1829,11 +1830,13 @@ impl Cheatcodes {
 
     /// Records debug trace data
     #[cold]
-    fn record_debug_trace(&mut self, interpreter: &mut Interpreter, recorded_debug_steps: &mut Vec<DebugStep>) {
+    fn record_debug_trace<DB: DatabaseExt>(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        let Some(recorded_debug_steps) = &mut self.recorded_debug_steps  else { return };
+
         // Record opcodes if `startDebugTraceRecording` has been called
         let current_opcode = interpreter.current_opcode();
         let instruction_result = interpreter.instruction_result as u8;
-        let stack_inputs = try_or_continue!(
+        let stack_inputs = try_or_return!(
             get_stack_inputs_for_opcode(
                 current_opcode, interpreter.stack(),
             )
@@ -1845,9 +1848,9 @@ impl Cheatcodes {
             opcode: current_opcode,
             stack: stack_inputs,
             memoryData: mem_inputs,
-            depth: data.journaled_state.depth(),
+            depth: ecx.journaled_state.depth(),
             instructionResult: instruction_result, // note: will set again in step_end,
-            contractAddr: interpreter.contract().address
+            contractAddr: interpreter.contract().target_address
         };
         recorded_debug_steps.push(DebugStep{step});
     }
