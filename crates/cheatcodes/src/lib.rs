@@ -30,6 +30,8 @@ mod base64;
 
 mod config;
 
+mod crypto;
+
 mod env;
 pub use env::set_execution_context;
 
