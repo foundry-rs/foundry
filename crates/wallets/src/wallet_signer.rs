@@ -267,10 +267,10 @@ impl PendingSigner {
                     Ok(signer) => Ok(WalletSigner::Local(signer)),
                     Err(e) => match e {
                         // Catch the `MacMismatch` error, which indicates an incorrect password and
-                        // return a more user-friendly `KeystoreDecryptionError`.
+                        // return a more user-friendly `IncorrectKeystorePassword`.
                         alloy_signer_local::LocalSignerError::EthKeystoreError(
                             eth_keystore::KeystoreError::MacMismatch,
-                        ) => Err(WalletSignerError::KeystoreDecryptionError),
+                        ) => Err(WalletSignerError::IncorrectKeystorePassword),
                         _ => Err(WalletSignerError::Local(e)),
                     },
                 }
