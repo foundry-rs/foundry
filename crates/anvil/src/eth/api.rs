@@ -1953,7 +1953,7 @@ impl EthApi {
             self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
 
         // Construct the signed tx pairs for each new block
-        let txs = if tx_block_pairs.len() > 0 {
+        let txs = if !tx_block_pairs.is_empty() {
             let mut pairs = tx_block_pairs;
             // Validate that tx block pairs fit into new chain
             if let Some(max) = pairs.iter().max_by_key(|item| item.1) {
