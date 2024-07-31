@@ -499,7 +499,6 @@ struct JsonResult {
     gas_used: u64,
     address: Option<Address>,
     returns: HashMap<String, NestedValue>,
-    breakpoints: Breakpoints,
     returned: Bytes,
 }
 
