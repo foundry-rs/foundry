@@ -3449,7 +3449,7 @@ mod tests {
                             retries: Some(3),
                             retry_backoff: Some(1000),
                             compute_units_per_second: Some(1000),
-                            auth: Some("Bearer test".to_string())
+                            auth: None,
                         })
                     ),
                 ]),
