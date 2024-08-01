@@ -150,21 +150,6 @@ impl InspectArgs {
                 let mut out = serde_json::Map::new();
                 if let Some(abi) = &artifact.abi {
                     let abi = &abi;
-                    // Print the signature of all events including anonymous.
-                    for ev in abi.events.iter().flat_map(|(_, events)| events) {
-                        let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
-                        out.insert(
-                            format!("{}({})", ev.name, types.join(",")),
-                            format!("{:?}", ev.signature()).into(),
-                        );
-                    }
-                }
-                print_json(&out)?;
-            }
-            ContractArtifactField::EventIdentifiers => {
-                let mut out = serde_json::Map::new();
-                if let Some(abi) = &artifact.abi {
-                    let abi = &abi;
                     // Print the topic of all events including anonymous.
                     for ev in abi.events.iter().flat_map(|(_, events)| events) {
                         let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
@@ -237,7 +222,6 @@ pub enum ContractArtifactField {
     Ewasm,
     Errors,
     Events,
-    EventIdentifiers,
     Eof,
     EofInit,
 }
@@ -326,8 +310,6 @@ impl_value_enum! {
         Ewasm             => "ewasm" | "e-wasm",
         Errors            => "errors" | "er",
         Events            => "events" | "ev",
-        EventIdentifiers  => "eventIdentifiers" | "eventidentifiers" | "event_identifiers"
-                             | "event-identifiers" | "ei",
         Eof               => "eof" | "eof-container" | "eof-deployed",
         EofInit           => "eof-init" | "eof-initcode" | "eof-initcontainer",
     }
@@ -354,7 +336,6 @@ impl From<ContractArtifactField> for ContractOutputSelection {
             Caf::Ewasm => Self::Ewasm(EwasmOutputSelection::All),
             Caf::Errors => Self::Abi,
             Caf::Events => Self::Abi,
-            Caf::EventIdentifiers => Self::Abi,
             Caf::Eof => Self::Evm(EvmOutputSelection::DeployedByteCode(
                 DeployedBytecodeOutputSelection::All,
             )),
@@ -369,7 +350,7 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
         type Eos = EvmOutputSelection;
         matches!(
             (self, other),
-            (Self::Abi | Self::Events | Self::EventIdentifiers, Cos::Abi) |
+            (Self::Abi | Self::Events, Cos::Abi) |
                 (Self::Errors, Cos::Abi) |
                 (Self::Bytecode, Cos::Evm(Eos::ByteCode(_))) |
                 (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_))) |
