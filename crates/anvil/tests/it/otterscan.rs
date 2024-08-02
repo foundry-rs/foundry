@@ -385,7 +385,7 @@ async fn ots_get_block_transactions() {
         result.receipts.iter().enumerate().for_each(|(i, receipt)| {
             let expected = hashes.pop_front();
             assert_eq!(expected, Some(receipt.receipt.transaction_hash));
-            assert_eq!(expected, result.fullblock.block.transactions.hashes().nth(i).copied());
+            assert_eq!(expected, result.fullblock.block.transactions.hashes().nth(i));
         });
     }
 

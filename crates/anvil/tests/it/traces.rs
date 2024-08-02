@@ -806,7 +806,7 @@ async fn test_trace_filter() {
     }
 
     let traces = api.trace_filter(tracer).await.unwrap();
-    assert_eq!(traces.len(), 3);
+    assert_eq!(traces.len(), 8);
 
     // Test Range Error
     let latest = provider.get_block_number().await.unwrap();
