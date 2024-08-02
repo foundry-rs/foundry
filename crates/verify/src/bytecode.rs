@@ -1,6 +1,9 @@
 //! The `forge verify-bytecode` command.
 
-use crate::{provider::VerificationBytecodeContext, utils::is_host_only, verify::VerifierArgs};
+use crate::{
+    etherscan::BytecodeType, provider::VerificationBytecodeContext, utils::is_host_only,
+    verify::VerifierArgs,
+};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -78,6 +81,10 @@ pub struct VerifyBytecodeArgs {
     /// or the current working directory.
     #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
+
+    /// Ignore verification for creation or runtime bytecode.
+    #[clap(long, value_name = "BYTECODE_TYPE")]
+    pub ignore: Option<BytecodeType>,
 }
 
 impl figment::Provider for VerifyBytecodeArgs {

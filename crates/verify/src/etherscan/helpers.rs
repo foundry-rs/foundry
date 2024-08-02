@@ -1,4 +1,5 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
+use clap::ValueEnum;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_common::compile::ProjectCompiler;
@@ -9,12 +10,24 @@ use serde::{Deserialize, Serialize};
 use yansi::Paint;
 
 /// Enum to represent the type of bytecode being verified
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, ValueEnum)]
 pub enum BytecodeType {
     #[serde(rename = "creation")]
     Creation,
     #[serde(rename = "runtime")]
     Runtime,
+}
+
+impl BytecodeType {
+    /// Check if the bytecode type is creation
+    pub fn is_creation(&self) -> bool {
+        matches!(self, BytecodeType::Creation)
+    }
+
+    /// Check if the bytecode type is runtime
+    pub fn is_runtime(&self) -> bool {
+        matches!(self, BytecodeType::Runtime)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

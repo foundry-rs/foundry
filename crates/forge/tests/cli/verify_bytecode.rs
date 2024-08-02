@@ -56,6 +56,70 @@ fn test_verify_bytecode(
         .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
 }
 
+fn test_verify_bytecode_with_ignore(
+    prj: TestProject,
+    mut cmd: TestCommand,
+    addr: &str,
+    contract_name: &str,
+    config: Config,
+    verifier: &str,
+    verifier_url: &str,
+    expected_matches: (&str, &str),
+    ignore: &str,
+) {
+    let etherscan_key = next_etherscan_api_key();
+    let rpc_url = next_http_archive_rpc_endpoint();
+
+    // fetch and flatten source code
+    let source_code = cmd
+        .cast_fuse()
+        .args(["etherscan-source", addr, "--flatten", "--etherscan-api-key", &etherscan_key])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    prj.add_source(contract_name, &source_code).unwrap();
+    prj.write_config(config);
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "verify-bytecode",
+            addr,
+            contract_name,
+            "--etherscan-api-key",
+            &etherscan_key,
+            "--verifier",
+            verifier,
+            "--verifier-url",
+            verifier_url,
+            "--rpc-url",
+            &rpc_url,
+            "--ignore",
+            ignore,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    if ignore == "creation" {
+        assert!(!output.contains(
+            format!("Creation code matched with status {}", expected_matches.0).as_str()
+        ));
+    } else {
+        assert!(output.contains(
+            format!("Creation code matched with status {}", expected_matches.0).as_str()
+        ));
+    }
+
+    if ignore == "runtime" {
+        assert!(!output
+            .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
+    } else {
+        assert!(output
+            .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
+    }
+}
 forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {
     test_verify_bytecode(
         prj,
@@ -110,5 +174,48 @@ forgetest_async!(can_verify_bytecode_with_blockscout, |prj, cmd| {
         "blockscout",
         "https://eth.blockscout.com/api",
         ("partial", "partial"),
+    );
+});
+
+// `--ignore` tests
+forgetest_async!(can_ignore_creation, |prj, cmd| {
+    test_verify_bytecode_with_ignore(
+        prj,
+        cmd,
+        "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
+        "SystemConfig",
+        Config {
+            evm_version: EvmVersion::London,
+            optimizer_runs: 999999,
+            optimizer: true,
+            cbor_metadata: false,
+            bytecode_hash: BytecodeHash::None,
+            ..Default::default()
+        },
+        "etherscan",
+        "https://api.etherscan.io/api",
+        ("full", "full"),
+        "creation",
+    );
+});
+
+forgetest_async!(can_ignore_runtime, |prj, cmd| {
+    test_verify_bytecode_with_ignore(
+        prj,
+        cmd,
+        "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
+        "SystemConfig",
+        Config {
+            evm_version: EvmVersion::London,
+            optimizer_runs: 999999,
+            optimizer: true,
+            cbor_metadata: false,
+            bytecode_hash: BytecodeHash::None,
+            ..Default::default()
+        },
+        "etherscan",
+        "https://api.etherscan.io/api",
+        ("full", "full"),
+        "runtime",
     );
 });
