@@ -1630,6 +1630,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 SurroundingChunk::new("if (", Some(loc.start()), Some(cond.loc().start())),
                 SurroundingChunk::new(")", None, Some(if_branch.loc().start())),
                 |fmt, _| {
+                    fmt.write_prefix_comments_before(cond.loc().end())?;
                     cond.visit(fmt)?;
                     fmt.write_postfix_comments_before(if_branch.loc().start())
                 },
