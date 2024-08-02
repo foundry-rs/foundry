@@ -1233,6 +1233,6 @@ async fn can_mine_multiple_in_block() {
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    let txs = block.transactions.hashes().copied().collect::<Vec<_>>();
+    let txs = block.transactions.hashes().collect::<Vec<_>>();
     assert_eq!(txs, vec![first, second]);
 }
