@@ -176,12 +176,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
         // Get creation tx hash.
         let creation_data = etherscan.contract_creation_data(args.address).await?;
 
-        /* Verifying Creation Code. What do we need?
-         * 1. Creation Tx Data - Hash, Address, Creator
-         * 2. Creation Transaction Receipt. - To extract `input`.
-         * 3. Source Code - To extract `name` and `constructor_args`.
-         */
-
         trace!(creation_tx_hash = ?creation_data.transaction_hash);
         let mut transaction = provider
             .get_transaction_by_hash(creation_data.transaction_hash)
