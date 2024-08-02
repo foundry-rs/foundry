@@ -482,4 +482,5 @@ function setNumber1(uint256 newNumber , uint256 sjdfasdfasdfasdfasfsdfsadfasdfas
 
 function setNumber(uint256 newNumber, uint256 sjdfasdfasdfasdfasfsdfsadfasdfasdfasdfsadjfkhasdfljkahsdfkjasdkfhsaf) public { // forgefmt: disable-line
     number = newNumber;
+    number1 =   newNumber1; // forgefmt: disable-line
 }
