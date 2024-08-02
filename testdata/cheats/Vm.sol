@@ -23,6 +23,7 @@ interface Vm {
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
+    struct DebugStep { uint256[] stack; uint8[] memoryData; uint8 opcode; uint64 depth; uint8 instructionResult; address contractAddr; }
     function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
     function activeFork() external view returns (uint256 forkId);
     function addr(uint256 privateKey) external pure returns (address keyAddr);
@@ -399,10 +400,12 @@ interface Vm {
     function startBroadcast() external;
     function startBroadcast(address signer) external;
     function startBroadcast(uint256 privateKey) external;
+    function startDebugTraceRecording() external;
     function startMappingRecording() external;
     function startPrank(address msgSender) external;
     function startPrank(address msgSender, address txOrigin) external;
     function startStateDiffRecording() external;
+    function stopAndReturnDebugTraceRecording() external returns (DebugStep[] memory steps);
     function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
     function stopBroadcast() external;
     function stopExpectSafeMemory() external;
