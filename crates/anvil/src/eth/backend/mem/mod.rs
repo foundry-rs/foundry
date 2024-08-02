@@ -183,6 +183,8 @@ pub struct Backend {
     slots_in_an_epoch: u64,
     /// Precompiles to inject to the EVM.
     precompile_factory: Option<Arc<dyn PrecompileFactory>>,
+    /// Prevent race conditions during mining
+    mining: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Backend {
@@ -259,6 +261,7 @@ impl Backend {
             node_config,
             slots_in_an_epoch,
             precompile_factory,
+            mining: Arc::new(tokio::sync::Mutex::new(())),
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -927,6 +930,7 @@ impl Backend {
         &self,
         pool_transactions: Vec<Arc<PoolTransaction>>,
     ) -> MinedBlockOutcome {
+        let mining_guard = self.mining.lock().await;
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
         let (outcome, header, block_hash) = {
@@ -1086,6 +1090,8 @@ impl Backend {
 
         // notify all listeners
         self.notify_on_new_block(header, block_hash);
+
+        drop(mining_guard);
 
         outcome
     }
