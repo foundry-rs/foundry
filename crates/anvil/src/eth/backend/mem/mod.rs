@@ -32,9 +32,9 @@ use crate::{
     revm::{db::DatabaseRef, primitives::AccountInfo},
     NodeConfig, PrecompileFactory,
 };
-use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom};
+use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom, Sealable};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
-use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U256, U64};
+use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, Uint, B256, U256, U64};
 use alloy_rpc_types::{
     anvil::Forking,
     request::TransactionRequest,
@@ -48,7 +48,7 @@ use alloy_rpc_types::{
         },
         parity::{
             Action::{Call, Create, Reward, Selfdestruct},
-            LocalizedTransactionTrace,
+            LocalizedTransactionTrace, TraceOutput,
         },
     },
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
@@ -95,7 +95,7 @@ use revm::{
     },
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     io::{Read, Write},
     sync::Arc,
     time::Duration,
@@ -461,6 +461,7 @@ impl Backend {
                 fork.total_difficulty(),
             );
             self.states.write().clear();
+
             self.db.write().await.clear();
 
             self.apply_genesis().await?;
@@ -679,7 +680,7 @@ impl Backend {
     ///
     /// Returns the id of the snapshot created
     pub async fn create_snapshot(&self) -> U256 {
-        let num = self.best_number();
+        let num: u64 = self.best_number();
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
@@ -1919,6 +1920,20 @@ impl Backend {
         .await?
     }
 
+    /// Returns the storage map of an address by block
+    pub async fn get_storage_at_block(
+        &self,
+        address: Address,
+        block_request: Option<BlockRequest>,
+    ) -> Result<HashMap<Uint<256, 4>, Uint<256, 4>>, BlockchainError> {
+        self.with_database_at(block_request, |block_db, _| {
+            let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+            let account = db.get(&address).cloned().unwrap_or_default();
+            Ok(account.storage)
+        })
+        .await?
+    }
+
     pub fn get_balance_with_state<D>(
         &self,
         state: D,
@@ -2424,6 +2439,154 @@ impl Backend {
         self.new_block_listeners
             .lock()
             .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
+    }
+
+    // Rewind the chain to a common height and execute blocks to build new chain
+    pub async fn reorg(
+        &self,
+        common_block: Block,
+        current_height: u64,
+        new_len: u64,
+        txs: HashMap<u64, Vec<Arc<PoolTransaction>>>,
+    ) -> Result<(), BlockchainError> {
+        // Trace all blocks to be reorged. Note that the reorg will be limited
+        // by the trace bounds
+        let traces = self
+            .trace_filter(TraceFilter {
+                from_block: Some(common_block.header.number),
+                to_block: Some(current_height),
+                ..Default::default()
+            })
+            .await?;
+
+        // Collect all dirty addresses which had their account mutated
+        let mut dirty_addresses = HashSet::new();
+        for trace in traces {
+            match trace.trace.action {
+                Call(call) => {
+                    dirty_addresses.insert(call.to);
+                    dirty_addresses.insert(call.from);
+                }
+                Create(create) => {
+                    dirty_addresses.insert(create.from);
+                    if let Some(TraceOutput::Create(output)) = trace.trace.result {
+                        dirty_addresses.insert(output.address);
+                    }
+                }
+                Selfdestruct(destruct) => {
+                    dirty_addresses.insert(destruct.address);
+                    dirty_addresses.insert(destruct.refund_address);
+                }
+                Reward(reward) => {
+                    dirty_addresses.insert(reward.author);
+                }
+            }
+        }
+
+        // Retrieve account state and storage at common height for dirty addresses
+        let mut accounts = HashMap::new();
+        for addr in dirty_addresses.into_iter() {
+            let account = self
+                .get_account_at_block(addr, Some(BlockRequest::Number(common_block.header.number)))
+                .await?;
+
+            // Only accumulate if storage is non empty
+            let storage = if account.storage_root.is_empty() {
+                None
+            } else {
+                let storage = self
+                    .get_storage_at_block(
+                        addr,
+                        Some(BlockRequest::Number(common_block.header.number)),
+                    )
+                    .await?;
+                Some(storage)
+            };
+
+            accounts.insert(addr, (account, storage));
+        }
+
+        // Reset state
+        self.reset_state_by_block(common_block, current_height).await?;
+
+        // Set account state and storage to common height
+        for (addr, account) in accounts {
+            let (acc_info, storage) = account;
+            // Set storage
+            if let Some(storage) = storage {
+                for (k, v) in storage {
+                    self.db.write().await.set_storage_at(addr, k, v)?;
+                }
+            }
+
+            // Set account
+            self.db.write().await.insert_account(
+                addr,
+                AccountInfo {
+                    balance: acc_info.balance,
+                    nonce: acc_info.nonce,
+                    code_hash: acc_info.code_hash,
+                    code: None,
+                },
+            );
+        }
+
+        // Create the new reorged chain, filling the blocks with transactions if supplied
+        for i in 0..new_len {
+            let to_be_mined = txs.get(&i).cloned().unwrap_or_else(Vec::new);
+            let outcome = self.do_mine_block(to_be_mined).await;
+            node_info!(
+                "    Mined reorg block with number {:?}. Mined {:?} txs with invalid {:?} txs",
+                outcome.block_number,
+                outcome.included.len(),
+                outcome.invalid.len()
+            );
+        }
+
+        Ok(())
+    }
+
+    // Reset the state to a given block
+    async fn reset_state_by_block(
+        &self,
+        block: Block,
+        current_height: u64,
+    ) -> Result<(), BlockchainError> {
+        // Reset the environment
+        {
+            let mut env = self.env.write();
+            env.block = BlockEnv {
+                number: U256::from(block.header.number),
+                timestamp: U256::from(block.header.timestamp),
+                gas_limit: U256::from(block.header.gas_limit),
+                difficulty: block.header.difficulty,
+                prevrandao: Some(block.header.mix_hash),
+                // Keep previous `coinbase` and `basefee` value
+                coinbase: env.block.coinbase,
+                basefee: env.block.basefee,
+                ..env.block.clone()
+            };
+            self.time.reset(env.block.timestamp.to::<u64>());
+        }
+
+        // Update base fee
+        let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+            block.header.gas_used,
+            block.header.gas_limit,
+            block.header.base_fee_per_gas.unwrap_or_default(),
+        );
+        self.fees.set_base_fee(next_block_base_fee);
+
+        // Rewind storage back to common height
+        {
+            self.blockchain.storage.write().rewind(
+                current_height,
+                block.header.number,
+                block.header.hash(),
+            );
+        }
+
+        Ok(())
     }
 }
 

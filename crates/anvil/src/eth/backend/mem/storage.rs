@@ -7,6 +7,7 @@ use crate::eth::{
     error::BlockchainError,
     pool::transactions::PoolTransaction,
 };
+use alloy_consensus::Sealable;
 use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
 use alloy_rpc_types::{
     trace::{
@@ -210,7 +211,7 @@ impl Default for InMemoryBlockStates {
 }
 
 /// Stores the blockchain data (blocks, transactions)
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
     pub blocks: HashMap<B256, Block>,
@@ -271,6 +272,15 @@ impl BlockchainStorage {
         }
     }
 
+    /// Rewind the chain state back to state defined at given block
+    pub fn rewind(&mut self, current_height: u64, block_number: u64, block_hash: B256) {
+        for num in (block_number + 1..=current_height).rev() {
+            self.remove_state_by_number(num);
+        }
+        self.best_hash = block_hash;
+        self.best_number = U64::from(block_number);
+    }
+
     #[allow(unused)]
     pub fn empty() -> Self {
         Self {
@@ -298,6 +308,22 @@ impl BlockchainStorage {
                 self.transactions.remove(&tx.hash());
             }
             block.transactions.clear();
+        }
+    }
+
+    pub fn remove_state_by_number(&mut self, num: u64) {
+        if let Some(hash) = self.hashes.get(&(U64::from(num))).copied() {
+            self.remove_state_by_block(hash);
+        }
+    }
+
+    pub fn remove_state_by_block(&mut self, block_hash: B256) {
+        if let Some(block) = self.blocks.get(&block_hash) {
+            let block_hash = block.header.hash();
+            let block_number = block.header.number;
+            self.remove_block_transactions(block_hash);
+            self.blocks.remove(&block_hash);
+            self.hashes.remove(&U64::from(block_number));
         }
     }
 }

@@ -1,8 +1,11 @@
 //! The `anvil` cli
 
+use alloy_provider::Provider;
+use alloy_rpc_types::TransactionRequest;
 use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
 use foundry_cli::utils;
+use foundry_common::{fs::read_json_file, provider::get_http_provider};
 
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
@@ -31,6 +34,20 @@ pub enum AnvilSubcommand {
     /// Generate Fig autocompletion spec.
     #[command(visible_alias = "fig")]
     GenerateFigSpec,
+
+    /// Reorg chain of live anvil instance.
+    Reorg {
+        // The depth of the reorg. This must not exceed current chain height
+        depth: u64,
+        // The lebngth of the newly reorged chain
+        new_len: u64,
+        /// Path to JSON file containing transaction request and block number pairs
+        #[arg(long, short)]
+        transactions_path: Option<String>,
+        /// The provider URL of the local anvil node. Defaults to localhost:8545
+        #[arg(long, short)]
+        rpc_url: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -56,6 +73,19 @@ async fn main() -> eyre::Result<()> {
                 "anvil",
                 &mut std::io::stdout(),
             ),
+            AnvilSubcommand::Reorg { depth, new_len, transactions_path, rpc_url } => {
+                let url = rpc_url.clone().unwrap_or("127.0.0.1:8545".to_string());
+                let provider = get_http_provider(url);
+
+                let tx_block_pairs = if let Some(path) = transactions_path {
+                    read_json_file::<Vec<(TransactionRequest, u64)>>(path.as_ref())?
+                } else {
+                    Vec::new()
+                };
+
+                let params = serde_json::json!([*depth, *new_len, tx_block_pairs]);
+                provider.raw_request("anvil_reorg".into(), params).await?;
+            }
         }
         return Ok(())
     }

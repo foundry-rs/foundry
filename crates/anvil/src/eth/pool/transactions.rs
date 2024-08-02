@@ -85,6 +85,14 @@ pub struct PoolTransaction {
 // == impl PoolTransaction ==
 
 impl PoolTransaction {
+    pub fn new(transaction: PendingTransaction) -> Self {
+        Self {
+            pending_transaction: transaction,
+            requires: vec![],
+            provides: vec![],
+            priority: TransactionPriority(0),
+        }
+    }
     /// Returns the hash of this transaction
     pub fn hash(&self) -> TxHash {
         *self.pending_transaction.hash()
@@ -121,7 +129,6 @@ impl TryFrom<RpcTransaction> for PoolTransaction {
         })
     }
 }
-
 /// A waiting pool of transaction that are pending, but not yet ready to be included in a new block.
 ///
 /// Keeps a set of transactions that are waiting for other transactions

@@ -1,15 +1,17 @@
 //! tests for custom anvil endpoints
 
 use crate::{
-    abi::{Greeter, MulticallContract, BUSD},
+    abi::{self, Greeter, MulticallContract, BUSD},
     fork::fork_config,
     utils::http_provider_with_signer,
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{address, fixed_bytes, Address, U256};
+use alloy_primitives::{address, fixed_bytes, Address, Bytes, U256};
 use alloy_provider::{ext::TxPoolApi, Provider};
 use alloy_rpc_types::{
-    anvil::{ForkedNetwork, Forking, Metadata, NodeEnvironment, NodeForkConfig, NodeInfo},
+    anvil::{
+        ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
+    },
     BlockId, BlockNumberOrTag, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
@@ -655,4 +657,102 @@ async fn can_remove_pool_transactions() {
 
     let final_txs = provider.txpool_inspect().await.unwrap();
     assert_eq!(final_txs.pending.len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reorg() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+
+    // Test calls
+    // Populate chain
+    for i in 0..10 {
+        let tx = TransactionRequest::default()
+            .to(accounts[0].address())
+            .value(U256::from(i))
+            .from(accounts[1].address());
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+
+        let tx = TransactionRequest::default()
+            .to(accounts[1].address())
+            .value(U256::from(i))
+            .from(accounts[2].address());
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    // Define transactions
+    let mut txs = vec![];
+    for i in 0..3 {
+        let from = accounts[i].address();
+        let to = accounts[i + 1].address();
+        for j in 0..5 {
+            let tx = TransactionRequest::default().from(from).to(to).value(U256::from(j));
+            txs.push((tx, i as u64));
+        }
+    }
+
+    let current_height = provider.get_block_number().await.unwrap();
+    let depth = 7;
+    let new_len = 3;
+    api.anvil_reorg(depth, new_len, txs).await.unwrap();
+
+    assert_eq!(provider.get_block_number().await.unwrap(), (current_height - depth) + new_len);
+    for num in 14..17 {
+        let block = provider.get_block_by_number(num.into(), true).await.unwrap();
+        let block = block.unwrap();
+        assert_eq!(block.transactions.len(), 5);
+    }
+
+    // Send a few more transaction to verify the chain can still progress
+    for i in 0..3 {
+        let tx = TransactionRequest::default()
+            .to(accounts[0].address())
+            .value(U256::from(i))
+            .from(accounts[1].address());
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    // Reset chain
+    let curr_height = provider.get_block_number().await.unwrap();
+    api.anvil_reorg(curr_height, 0, vec![]).await.unwrap();
+
+    // Test reverting code
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(5) })).await.unwrap();
+    let greeter = abi::Greeter::deploy(provider.clone(), "Reorg".to_string()).await.unwrap();
+    api.anvil_reorg(4, 0, vec![]).await.unwrap();
+    let code = api.get_code(*greeter.address(), Some(BlockId::latest())).await.unwrap();
+    assert_eq!(code, Bytes::default());
+    // Reset chain
+    let curr_height = provider.get_block_number().await.unwrap();
+    api.anvil_reorg(curr_height, 0, vec![]).await.unwrap();
+
+    // Test reverting contract storage
+    let storage =
+        abi::SimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(5) })).await.unwrap();
+    let _ = storage
+        .setValue("ReorgMe".to_string())
+        .from(accounts[0].address())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    api.anvil_reorg(5, 0, vec![]).await.unwrap();
+    let value = storage.getValue().call().await.unwrap()._0;
+    assert_eq!("initial value".to_string(), value);
+
+    // Test reorg depth exceeding current height
+    let res = api.anvil_reorg(100, 0, vec![]).await;
+    assert!(res.is_err());
+
+    // Test reorg tx pairs exceeds chain length
+    let res = api.anvil_reorg(1, 1, vec![(TransactionRequest::default(), 10)]).await;
+    assert!(res.is_err());
 }

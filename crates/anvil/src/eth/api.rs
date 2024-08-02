@@ -78,8 +78,14 @@ use foundry_evm::{
     },
 };
 use futures::channel::{mpsc::Receiver, oneshot};
+use itertools::Itertools;
 use parking_lot::RwLock;
-use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    sync::Arc,
+    time::Duration,
+};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -439,6 +445,9 @@ impl EthApi {
             }
             EthRequest::RemovePoolTransactions(address) => {
                 self.anvil_remove_pool_transactions(address).await.to_rpc_result()
+            }
+            EthRequest::Reorg(depth, new_len, tx_block_pairs) => {
+                self.anvil_reorg(depth, new_len, tx_block_pairs).await.to_rpc_result()
             }
         }
     }
@@ -1914,6 +1923,120 @@ impl EthApi {
     pub async fn anvil_remove_pool_transactions(&self, address: Address) -> Result<()> {
         node_info!("anvil_removePoolTransactions");
         self.pool.remove_transactions_by_address(address);
+        Ok(())
+    }
+
+    /// Reorg the chain by rewinding the state to a specific depth and mine new blocks ontop.
+    ///
+    /// Optionally supply a list of transactions that will populate the newly mined blocks
+    ///
+    /// Handler for RPC call: `anvil_reorg`
+    pub async fn anvil_reorg(
+        &self,
+        depth: u64,
+        new_len: u64,
+        tx_block_pairs: Vec<(TransactionRequest, u64)>,
+    ) -> Result<()> {
+        // TODO:
+        // - Encapsulate reorgs in a struct
+        // - Use read_json_file to read in a json of tx block pairs
+        // - Enhance logging
+        node_info!("anvil_reorg");
+        // Find common height
+        let current_height = self.backend.best_number();
+        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
+            RpcError::invalid_params("Reorg depth exceeds current chain height"),
+        ))?;
+
+        // Get the common ancestor block
+        let common_block =
+            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
+
+        // Construct the signed tx pairs for each new block
+        let txs = if !tx_block_pairs.is_empty() {
+            let mut pairs = tx_block_pairs;
+            // Validate that tx block pairs fit into new chain
+            if let Some(max) = pairs.iter().max_by_key(|item| item.1) {
+                if max.1 > new_len {
+                    return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                        "Maximum tx block pair exceeds reorg chain length",
+                    )));
+                }
+            }
+
+            // Sort by block number to make it easier to manage new nonces
+            pairs.iter_mut().sorted_by(|a, b| a.1.cmp(&b.1));
+
+            // Manage nonces for each signer
+            // address -> cumulative nonce
+            let mut nonces: HashMap<Address, u64> = HashMap::new();
+
+            // Construct pool transactions for each block
+            let mut signed_block_txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::new();
+            for pair in pairs {
+                let (tx_req, block_number) = pair;
+
+                let from = tx_req.from.map(Ok).unwrap_or_else(|| {
+                    self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
+                })?;
+
+                // Get the nonce at the common block
+                let curr_nonce = nonces.entry(from).or_insert(
+                    self.get_transaction_count(from, Some(common_block.header.number.into()))
+                        .await?,
+                );
+
+                let mut tx = WithOtherFields::new(tx_req);
+
+                // Estimate gas
+                if tx.gas.is_none() {
+                    if let Ok(gas) = self.estimate_gas(tx.clone(), None, None).await {
+                        tx.gas = Some(gas.to());
+                    }
+                }
+
+                // Convert the transaction requests to pending transaction
+                let typed = self.build_typed_tx_request(tx, *curr_nonce)?;
+                // Increment nonce
+                *curr_nonce += 1;
+
+                // Handle signer
+                let pending = if self.is_impersonated(from) {
+                    let bypass_signature = self.impersonated_signature(&typed);
+                    let transaction = sign::build_typed_transaction(typed, bypass_signature)?;
+                    self.ensure_typed_transaction_supported(&transaction)?;
+                    PendingTransaction::with_impersonated(transaction, from)
+                } else {
+                    let transaction = self.sign_request(&from, typed)?;
+                    self.ensure_typed_transaction_supported(&transaction)?;
+                    PendingTransaction::new(transaction)?
+                };
+
+                // Validate transactions
+                if let Err(err) = self.backend.validate_pool_transaction(&pending).await {
+                    match err {
+                        // Ignore nonce and balance checks as this state may be reorged. This will
+                        // be caught on the executor.
+                        BlockchainError::InvalidTransaction(
+                            InvalidTransactionError::NonceTooLow |
+                            InvalidTransactionError::InsufficientFunds |
+                            InvalidTransactionError::InsufficientFundsForTransfer,
+                        ) => (),
+                        _ => return Err(err),
+                    }
+                }
+
+                let pool_tx = PoolTransaction::new(pending);
+                signed_block_txs.entry(block_number).or_default().push(Arc::new(pool_tx));
+            }
+
+            signed_block_txs
+        } else {
+            HashMap::new()
+        };
+
+        node_info!("    Reoring chain to block number {:?}", common_block.header.number);
+        self.backend.reorg(common_block, current_height, new_len, txs).await?;
         Ok(())
     }
 

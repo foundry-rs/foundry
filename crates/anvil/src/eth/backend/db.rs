@@ -97,7 +97,7 @@ pub trait Db:
         Ok(())
     }
 
-    /// Sets the balance of the given address
+    /// Sets the code at the given address
     fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
         let mut info = self.basic(address)?.unwrap_or_default();
         let code_hash = if code.as_ref().is_empty() {
@@ -111,10 +111,10 @@ pub trait Db:
         Ok(())
     }
 
-    /// Sets the balance of the given address
+    /// Sets the storage of the given address
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()>;
 
-    /// inserts a blockhash for the given number
+    /// Inserts a blockhash for the given number
     fn insert_block_hash(&mut self, number: U256, hash: B256);
 
     /// Write all chain data to serialized bytes buffer
