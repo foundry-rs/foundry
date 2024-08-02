@@ -66,6 +66,7 @@ fn test_verify_bytecode_with_ignore(
     verifier_url: &str,
     expected_matches: (&str, &str),
     ignore: &str,
+    chain: &str,
 ) {
     let etherscan_key = next_etherscan_api_key();
     let rpc_url = next_http_archive_rpc_endpoint();
@@ -73,7 +74,15 @@ fn test_verify_bytecode_with_ignore(
     // fetch and flatten source code
     let source_code = cmd
         .cast_fuse()
-        .args(["etherscan-source", addr, "--flatten", "--etherscan-api-key", &etherscan_key])
+        .args([
+            "etherscan-source",
+            addr,
+            "--flatten",
+            "--etherscan-api-key",
+            &etherscan_key,
+            "--chain",
+            chain,
+        ])
         .assert_success()
         .get_output()
         .stdout_lossy();
@@ -196,6 +205,7 @@ forgetest_async!(can_ignore_creation, |prj, cmd| {
         "https://api.etherscan.io/api",
         ("full", "full"),
         "creation",
+        "1",
     );
 });
 
@@ -215,7 +225,31 @@ forgetest_async!(can_ignore_runtime, |prj, cmd| {
         },
         "etherscan",
         "https://api.etherscan.io/api",
-        ("full", "full"),
+        ("full", "n-a"),
         "runtime",
+        "1",
     );
 });
+
+// Test predeploy contracts
+// forgetest_async!(can_verify_predeploys, |prj, cmd| {
+//     test_verify_bytecode_with_ignore(
+//         prj,
+//         cmd,
+//         "0xC0d3c0d3c0D3c0d3C0D3c0D3C0d3C0D3C0D30010",
+//         "L2StandardBridge",
+//         Config {
+//             evm_version: EvmVersion::Paris,
+//             optimizer: true,
+//             optimizer_runs: 999999,
+//             cbor_metadata: false,
+//             bytecode_hash: BytecodeHash::None,
+//             ..Default::default()
+//         },
+//         "etherscan",
+//         "https://api-optimistic.etherscan.io/api",
+//         ("n-a", "full"),
+//         "creation",
+//         "optimism",
+//     );
+// });

@@ -6,11 +6,12 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
-use alloy_primitives::hex;
+use alloy_primitives::{hex, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use eyre::{eyre, Context, OptionExt, Result};
 use foundry_block_explorers::{
+    contract::ContractCreationData,
     errors::EtherscanError,
     utils::lookup_compiler_version,
     verify::{CodeFormat, VerifyContract},
@@ -33,9 +34,10 @@ use foundry_evm::{
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use revm_primitives::{db::Database, Address, Bytes, EnvWithHandlerCfg, HandlerCfg, U256};
+use revm_primitives::{db::Database, Bytes, EnvWithHandlerCfg, HandlerCfg, U256};
 use semver::{BuildMetadata, Version};
 use std::fmt::Debug;
+use yansi::Paint;
 
 mod flatten;
 
@@ -171,10 +173,99 @@ impl VerificationProvider for EtherscanVerificationProvider {
             args.etherscan.key().as_deref(),
             config,
         )?;
+        let mut ignore = args.ignore;
         let provider = get_provider(config)?;
-
+        let mut json_results: Vec<JsonResult> = vec![];
         // Get creation tx hash.
-        let creation_data = etherscan.contract_creation_data(args.address).await?;
+        let creation_data = etherscan.contract_creation_data(args.address).await;
+        let mut maybe_predeploy_contract = false;
+        let creation_data = match creation_data {
+            Ok(creation_data) => creation_data,
+            // Ref: https://explorer.mode.network/api?module=contract&action=getcontractcreation&contractaddresses=0xC0d3c0d3c0D3c0d3C0D3c0D3C0d3C0D3C0D30010
+            Err(EtherscanError::EmptyResult { status, message })
+                if status == "1" && message == "OK" =>
+            {
+                println!("BLOCKSCOUT - Contract is a predeploy contract");
+                ignore = Some(BytecodeType::Creation);
+                maybe_predeploy_contract = true;
+                ContractCreationData {
+                    contract_address: Address::ZERO,
+                    contract_creator: Address::ZERO,
+                    transaction_hash: B256::default(),
+                }
+            }
+            // Ref: https://api.basescan.org/api?module=contract&action=getcontractcreation&contractaddresses=0xC0d3c0d3c0D3c0d3C0D3c0D3C0d3C0D3C0D30010&apiKey=YourAPIKey
+            Err(EtherscanError::Serde { error: _, content }) if content.contains("GENESIS") => {
+                ignore = Some(BytecodeType::Creation);
+                maybe_predeploy_contract = true;
+                ContractCreationData {
+                    contract_address: Address::ZERO,
+                    contract_creator: Address::ZERO,
+                    transaction_hash: B256::default(),
+                }
+            }
+            Err(e) => eyre::bail!("Error fetching creation data from verifier-url: {:?}", e),
+        };
+
+        trace!(maybe_predeploy_contract = ?maybe_predeploy_contract);
+
+        // Get the constructor args using `source_code` endpoint.
+        let source_code = etherscan.contract_source_code(args.address).await?;
+
+        // Check if the contract name matches.
+        let name = source_code.items.first().map(|item| item.contract_name.to_owned());
+        if name.as_ref() != Some(&args.contract.name) {
+            eyre::bail!("Contract name mismatch");
+        }
+
+        // Obtain Etherscan compilation metadata.
+        let etherscan_metadata = source_code.items.first().unwrap();
+
+        // Obtain local artifact
+        let artifact = if let Ok(local_bytecode) =
+            helpers::build_using_cache(&args, etherscan_metadata, config)
+        {
+            trace!("using cache");
+            local_bytecode
+        } else {
+            helpers::build_project(&args, config)?
+        };
+
+        if maybe_predeploy_contract {
+            if !args.json {
+                println!(
+                    "{}",
+                    format!("Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.", args.address)
+                        .yellow()
+                        .bold()
+                )
+            }
+
+            // Cmp deployedBytecode with onchain runtime code
+            let deployed_bytecode = artifact
+                .deployed_bytecode
+                .and_then(|b| b.into_bytes())
+                .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
+
+            let onchain_runtime_code = provider.get_code_at(args.address).await?;
+            let match_type = helpers::match_bytecodes(
+                &deployed_bytecode,
+                &onchain_runtime_code,
+                &Bytes::default(),
+                true,
+            );
+
+            helpers::print_result(
+                &args,
+                match_type,
+                BytecodeType::Runtime,
+                &mut json_results,
+                etherscan_metadata,
+                config,
+            );
+
+            return Ok(());
+        }
 
         trace!(creation_tx_hash = ?creation_data.transaction_hash);
         let mut transaction = provider
@@ -209,28 +300,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     args.address
                 );
             };
-
-        // Get the constructor args using `source_code` endpoint.
-        let source_code = etherscan.contract_source_code(args.address).await?;
-
-        // Check if the contract name matches.
-        let name = source_code.items.first().map(|item| item.contract_name.to_owned());
-        if name.as_ref() != Some(&args.contract.name) {
-            eyre::bail!("Contract name mismatch");
-        }
-
-        // Obtain Etherscan compilation metadata.
-        let etherscan_metadata = source_code.items.first().unwrap();
-
-        // Obtain local artifact
-        let artifact = if let Ok(local_bytecode) =
-            helpers::build_using_cache(&args, etherscan_metadata, config)
-        {
-            trace!("using cache");
-            local_bytecode
-        } else {
-            helpers::build_project(&args, config)?
-        };
 
         let local_bytecode = artifact
             .bytecode
@@ -295,10 +364,9 @@ impl VerificationProvider for EtherscanVerificationProvider {
         local_bytecode_vec.extend_from_slice(&constructor_args);
 
         trace!(ignore = ?args.ignore);
-        let mut json_results: Vec<JsonResult> = vec![];
 
         // Check if `--ignore` is set to `creation`.
-        if !args.ignore.is_some_and(|b| b.is_creation()) {
+        if !ignore.is_some_and(|b| b.is_creation()) {
             // Compare creation code with locally built bytecode and `maybe_creation_code`.
             let match_type = helpers::match_bytecodes(
                 local_bytecode_vec.as_slice(),
@@ -334,7 +402,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         }
 
         // Check if `--ignore` is set `runtime`.
-        if !args.ignore.is_some_and(|b| b.is_runtime()) {
+        if !ignore.is_some_and(|b| b.is_runtime()) {
             // Get contract creation block.
             let simulation_block = match args.block {
                 Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
