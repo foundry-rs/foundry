@@ -210,6 +210,58 @@ impl From<RpcEndpoint> for RpcEndpointConfig {
     }
 }
 
+/// The auth token to be used for RPC endpoints
+/// It works in the same way as the `RpcEndpoint` type, where it can be a raw string or a reference
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RpcAuth {
+    Token(String),
+    Env(String),
+}
+
+impl RpcAuth {
+    /// Returns the auth token this type holds
+    ///
+    /// # Error
+    ///
+    /// Returns an error if the type holds a reference to an env var and the env var is not set
+    pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
+        match self {
+            Self::Token(auth) => Ok(auth),
+            Self::Env(var) => interpolate(&var),
+        }
+    }
+}
+
+impl fmt::Display for RpcAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Token(url) => url.fmt(f),
+            Self::Env(var) => var.fmt(f),
+        }
+    }
+}
+
+impl Serialize for RpcAuth {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for RpcAuth {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let val = String::deserialize(deserializer)?;
+        let auth = if RE_PLACEHOLDER.is_match(&val) { Self::Env(val) } else { Self::Token(val) };
+
+        Ok(auth)
+    }
+}
+
 /// Rpc endpoint configuration variant
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpcEndpointConfig {
@@ -228,7 +280,7 @@ pub struct RpcEndpointConfig {
     pub compute_units_per_second: Option<u64>,
 
     /// Token to be used as authentication
-    pub auth: Option<String>,
+    pub auth: Option<RpcAuth>,
 }
 
 impl RpcEndpointConfig {
@@ -307,7 +359,7 @@ impl<'de> Deserialize<'de> for RpcEndpointConfig {
             retries: Option<u32>,
             retry_backoff: Option<u64>,
             compute_units_per_second: Option<u64>,
-            auth: Option<String>,
+            auth: Option<RpcAuth>,
         }
 
         let RpcEndpointConfigInner {
@@ -390,7 +442,7 @@ mod tests {
                 retries: Some(5),
                 retry_backoff: Some(250),
                 compute_units_per_second: Some(100),
-                auth: Some(String::from("Bearer 123"))
+                auth: Some(RpcAuth::Token("Bearer 123".to_string())),
             }
         );
 
