@@ -17,3 +17,24 @@ function one() external {
             )
     });
 }
+
+// https://github.com/foundry-rs/foundry/issues/3979
+contract Format {
+    bool public test;
+
+    function testing(uint256 amount) public payable {
+        if (
+            // This is a comment
+            msg.value == amount
+        ) {
+            test = true;
+        } else {
+            test = false;
+        }
+
+        if (
+            // Another one
+            block.timestamp >= amount
+        ) {}
+    }
+}
