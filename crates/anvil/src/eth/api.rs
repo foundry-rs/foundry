@@ -48,7 +48,7 @@ use alloy_rpc_types::{
         parity::LocalizedTransactionTrace,
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
-    AccessList, AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber,
+    AccessList, AccessListResult, Block, BlockId, BlockNumberOrTag as BlockNumber,
     BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
     Transaction,
 };
@@ -1084,7 +1084,7 @@ impl EthApi {
         &self,
         mut request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
-    ) -> Result<AccessListWithGasUsed> {
+    ) -> Result<AccessListResult> {
         node_info!("eth_createAccessList");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
@@ -1117,9 +1117,10 @@ impl EthApi {
                 )?;
                 ensure_return_ok(exit, &out)?;
 
-                Ok(AccessListWithGasUsed {
+                Ok(AccessListResult {
                     access_list: AccessList(access_list.0),
                     gas_used: U256::from(gas_used),
+                    error: None,
                 })
             })
             .await?

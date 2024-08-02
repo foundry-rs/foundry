@@ -40,7 +40,7 @@ use std::{
 
 // === various limits in number of blocks ===
 
-const DEFAULT_HISTORY_LIMIT: usize = 500;
+pub const DEFAULT_HISTORY_LIMIT: usize = 500;
 const MIN_HISTORY_LIMIT: usize = 10;
 // 1hr of up-time at lowest 1s interval
 const MAX_ON_DISK_HISTORY_LIMIT: usize = 3_600;
@@ -69,13 +69,13 @@ pub struct InMemoryBlockStates {
 
 impl InMemoryBlockStates {
     /// Creates a new instance with limited slots
-    pub fn new(limit: usize) -> Self {
+    pub fn new(in_memory_limit: usize, on_disk_limit: usize) -> Self {
         Self {
             states: Default::default(),
             on_disk_states: Default::default(),
-            in_memory_limit: limit,
-            min_in_memory_limit: limit.min(MIN_HISTORY_LIMIT),
-            max_on_disk_limit: MAX_ON_DISK_HISTORY_LIMIT,
+            in_memory_limit,
+            min_in_memory_limit: in_memory_limit.min(MIN_HISTORY_LIMIT),
+            max_on_disk_limit: on_disk_limit,
             oldest_on_disk: Default::default(),
             present: Default::default(),
             disk_cache: Default::default(),
@@ -205,7 +205,7 @@ impl fmt::Debug for InMemoryBlockStates {
 impl Default for InMemoryBlockStates {
     fn default() -> Self {
         // enough in memory to store `DEFAULT_HISTORY_LIMIT` blocks in memory
-        Self::new(DEFAULT_HISTORY_LIMIT)
+        Self::new(DEFAULT_HISTORY_LIMIT, MAX_ON_DISK_HISTORY_LIMIT)
     }
 }
 
@@ -545,9 +545,32 @@ mod tests {
         assert_eq!(storage.in_memory_limit, DEFAULT_HISTORY_LIMIT * 3);
     }
 
+    #[test]
+    fn test_init_state_limits() {
+        let mut storage = InMemoryBlockStates::default();
+        assert_eq!(storage.in_memory_limit, DEFAULT_HISTORY_LIMIT);
+        assert_eq!(storage.min_in_memory_limit, MIN_HISTORY_LIMIT);
+        assert_eq!(storage.max_on_disk_limit, MAX_ON_DISK_HISTORY_LIMIT);
+
+        storage = storage.memory_only();
+        assert!(storage.is_memory_only());
+
+        storage = InMemoryBlockStates::new(1, 0);
+        assert!(storage.is_memory_only());
+        assert_eq!(storage.in_memory_limit, 1);
+        assert_eq!(storage.min_in_memory_limit, 1);
+        assert_eq!(storage.max_on_disk_limit, 0);
+
+        storage = InMemoryBlockStates::new(1, 2);
+        assert!(!storage.is_memory_only());
+        assert_eq!(storage.in_memory_limit, 1);
+        assert_eq!(storage.min_in_memory_limit, 1);
+        assert_eq!(storage.max_on_disk_limit, 2);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cached_state() {
-        let mut storage = InMemoryBlockStates::new(1);
+        let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
         let one = B256::from(U256::from(1));
         let two = B256::from(U256::from(2));
 
@@ -573,7 +596,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn can_decrease_state_cache_size() {
         let limit = 15;
-        let mut storage = InMemoryBlockStates::new(limit);
+        let mut storage = InMemoryBlockStates::new(limit, MAX_ON_DISK_HISTORY_LIMIT);
 
         let num_states = 30;
         for idx in 0..num_states {

@@ -349,8 +349,10 @@ impl EthApi {
         if block.transactions.is_uncle() {
             return Err(BlockchainError::DataUnavailable);
         }
-        let receipts_futs =
-            block.transactions.hashes().map(|hash| async { self.transaction_receipt(*hash).await });
+        let receipts_futs = block
+            .transactions
+            .hashes()
+            .map(|hash| async move { self.transaction_receipt(hash).await });
 
         // fetch all receipts
         let receipts = join_all(receipts_futs)
@@ -398,7 +400,7 @@ impl EthApi {
             BlockTransactions::Uncle => unreachable!(),
         };
 
-        let receipt_futs = block.transactions.hashes().map(|hash| self.transaction_receipt(*hash));
+        let receipt_futs = block.transactions.hashes().map(|hash| self.transaction_receipt(hash));
 
         let receipts = join_all(receipt_futs)
             .await

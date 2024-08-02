@@ -592,6 +592,7 @@ impl Cheatcodes {
             {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match expect::handle_expect_revert(
+                    false,
                     true,
                     expected_revert.reason.as_deref(),
                     outcome.result.result,
@@ -1035,7 +1036,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if ecx.journaled_state.depth() <= expected_revert.depth {
-                let needs_processing: bool = match expected_revert.kind {
+                let needs_processing = match expected_revert.kind {
                     ExpectedRevertKind::Default => !cheatcode_call,
                     // `pending_processing` == true means that we're in the `call_end` hook for
                     // `vm.expectCheatcodeRevert` and shouldn't expect revert here
@@ -1047,6 +1048,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 if needs_processing {
                     let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                     return match expect::handle_expect_revert(
+                        cheatcode_call,
                         false,
                         expected_revert.reason.as_deref(),
                         outcome.result.result,
@@ -1071,9 +1073,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 if let ExpectedRevertKind::Cheatcode { pending_processing } =
                     &mut self.expected_revert.as_mut().unwrap().kind
                 {
-                    if *pending_processing {
-                        *pending_processing = false;
-                    }
+                    *pending_processing = false;
                 }
             }
         }
@@ -1847,22 +1847,49 @@ fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
         };
     }
 
-    let _guard = trace_span_and_call(calls);
-    let result = vm_calls!(dispatch);
-    trace_return(&result);
+    let mut dyn_cheat = DynCheatCache::new(calls);
+    let _guard = trace_span_and_call(&mut dyn_cheat);
+    let mut result = vm_calls!(dispatch);
+    fill_and_trace_return(&mut dyn_cheat, &mut result);
     result
 }
 
-fn trace_span_and_call(calls: &Vm::VmCalls) -> tracing::span::EnteredSpan {
-    let mut cheat = None;
-    let mut get_cheat = || *cheat.get_or_insert_with(|| calls_as_dyn_cheatcode(calls));
-    let span = debug_span!(target: "cheatcodes", "apply", id = %get_cheat().id());
+// Caches the result of `calls_as_dyn_cheatcode`.
+// TODO: Remove this once Cheatcode is object-safe, as caching would not be necessary anymore.
+struct DynCheatCache<'a> {
+    calls: &'a Vm::VmCalls,
+    slot: Option<&'a dyn DynCheatcode>,
+}
+
+impl<'a> DynCheatCache<'a> {
+    fn new(calls: &'a Vm::VmCalls) -> Self {
+        Self { calls, slot: None }
+    }
+
+    fn get(&mut self) -> &dyn DynCheatcode {
+        *self.slot.get_or_insert_with(|| calls_as_dyn_cheatcode(self.calls))
+    }
+}
+
+fn trace_span_and_call(dyn_cheat: &mut DynCheatCache) -> tracing::span::EnteredSpan {
+    let span = debug_span!(target: "cheatcodes", "apply", id = %dyn_cheat.get().id());
     let entered = span.entered();
-    trace!(target: "cheatcodes", cheat = ?get_cheat().as_debug(), "applying");
+    trace!(target: "cheatcodes", cheat = ?dyn_cheat.get().as_debug(), "applying");
     entered
 }
 
-fn trace_return(result: &Result) {
+fn fill_and_trace_return(dyn_cheat: &mut DynCheatCache, result: &mut Result) {
+    if let Err(e) = result {
+        if e.is_str() {
+            let name = dyn_cheat.get().name();
+            // Skip showing the cheatcode name for:
+            // - assertions: too verbose, and can already be inferred from the error message
+            // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
+            if !name.contains("assert") && name != "rpcUrl" {
+                *e = fmt_err!("vm.{name}: {e}");
+            }
+        }
+    }
     trace!(
         target: "cheatcodes",
         return = %match result {
