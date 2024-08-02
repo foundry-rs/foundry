@@ -13,6 +13,8 @@ fn test_verify_bytecode(
     addr: &str,
     contract_name: &str,
     config: Config,
+    verifier: &str,
+    verifier_url: &str,
     expected_matches: (&str, &str),
 ) {
     let etherscan_key = next_etherscan_api_key();
@@ -37,6 +39,10 @@ fn test_verify_bytecode(
             contract_name,
             "--etherscan-api-key",
             &etherscan_key,
+            "--verifier",
+            verifier,
+            "--verifier-url",
+            verifier_url,
             "--rpc-url",
             &rpc_url,
         ])
@@ -64,6 +70,8 @@ forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {
             bytecode_hash: BytecodeHash::None,
             ..Default::default()
         },
+        "etherscan",
+        "https://api.etherscan.io/api",
         ("full", "full"),
     );
 });
@@ -80,6 +88,27 @@ forgetest_async!(can_verify_bytecode_with_metadata, |prj, cmd| {
             optimizer: true,
             ..Default::default()
         },
+        "etherscan",
+        "https://api.etherscan.io/api",
+        ("partial", "partial"),
+    );
+});
+
+// Test non-CREATE2 deployed contract with blockscout
+forgetest_async!(can_verify_bytecode_with_blockscout, |prj, cmd| {
+    test_verify_bytecode(
+        prj,
+        cmd,
+        "0x70f44C13944d49a236E3cD7a94f48f5daB6C619b",
+        "StrategyManager",
+        Config {
+            evm_version: EvmVersion::London,
+            optimizer: true,
+            optimizer_runs: 200,
+            ..Default::default()
+        },
+        "blockscout",
+        "https://eth.blockscout.com/api",
         ("partial", "partial"),
     );
 });
