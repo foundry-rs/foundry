@@ -1459,7 +1459,8 @@ impl<'a, W: Write> Formatter<'a, W> {
             self.extend_loc_until(&mut loc, ')');
             loc
         };
-        if self.inline_config.is_disabled(params_loc) {
+        let params_disabled = self.inline_config.is_disabled(params_loc);
+        if params_disabled {
             let chunk = self.chunked(func.loc.start(), None, |fmt| fmt.visit_source(params_loc))?;
             params_multiline = chunk.content.contains('\n');
             self.write_chunk(&chunk)?;
@@ -1519,7 +1520,16 @@ impl<'a, W: Write> Formatter<'a, W> {
                     .loc()
                     .with_end_from(&func.attributes.last().unwrap().loc());
                 if fmt.inline_config.is_disabled(attrs_loc) {
-                    fmt.indented(1, |fmt| fmt.visit_source(attrs_loc))?;
+                    // If params are also disabled then write functions attributes on the same line.
+                    if params_disabled {
+                        fmt.write_whitespace_separator(false)?;
+                        let attrs_src =
+                            String::from_utf8(self.source.as_bytes()[attrs_loc.range()].to_vec())
+                                .map_err(FormatterError::custom)?;
+                        fmt.write_raw(attrs_src)?;
+                    } else {
+                        fmt.indented(1, |fmt| fmt.visit_source(attrs_loc))?;
+                    }
                 } else {
                     fmt.write_postfix_comments_before(attrs_loc.start())?;
                     fmt.write_whitespace_separator(multiline)?;
@@ -1537,17 +1547,11 @@ impl<'a, W: Write> Formatter<'a, W> {
                 let returns_start_loc = func.returns.first().unwrap().0;
                 let returns_loc = returns_start_loc.with_end_from(&func.returns.last().unwrap().0);
                 if fmt.inline_config.is_disabled(returns_loc) {
-                    fmt.indented(1, |fmt| {
-                        fmt.surrounded(
-                            SurroundingChunk::new("returns (", Some(returns_loc.start()), None),
-                            SurroundingChunk::new(")", None, returns_end),
-                            |fmt, _| {
-                                fmt.visit_source(returns_loc)?;
-                                Ok(())
-                            },
-                        )?;
-                        Ok(())
-                    })?;
+                    fmt.write_whitespace_separator(false)?;
+                    let returns_src =
+                        String::from_utf8(self.source.as_bytes()[returns_loc.range()].to_vec())
+                            .map_err(FormatterError::custom)?;
+                    fmt.write_raw(format!("returns ({returns_src})"))?;
                 } else {
                     let mut returns = fmt.items_to_chunks(
                         returns_end,
@@ -3036,6 +3040,58 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             match &mut func.body {
                 Some(body) => {
                     let body_loc = body.loc();
+                    // Handle case where block / statements starts on disabled line.
+                    if fmt.inline_config.is_disabled(body_loc.with_end(body_loc.start())) {
+                        match body {
+                            Statement::Block { statements, .. } if !statements.is_empty() => {
+                                // TODO: move this logic in `visit_body` fn and reuse it.
+                                // Retain enabled statements.
+                                statements.retain(|stmt| {
+                                    !fmt.inline_config.is_disabled(
+                                        body_loc.with_end(CodeLocation::loc(stmt).start()),
+                                    )
+                                });
+
+                                // Disabled statement stops where first enabled statement starts or
+                                // where body ends (if no statement enabled).
+                                let disabled_stmts_end = match statements.first() {
+                                    Some(stmt) => CodeLocation::loc(stmt).start(),
+                                    None => body_loc.end(),
+                                };
+
+                                // Write non formatted statements. This includes the curly bracket
+                                // block start, comments and any other disabled statement.
+                                let disabled_stmts_src = String::from_utf8(
+                                    fmt.source.as_bytes()
+                                        [body_loc.with_end(disabled_stmts_end).range()]
+                                    .to_vec(),
+                                )
+                                .map_err(FormatterError::custom)?;
+                                fmt.write_whitespace_separator(false)?;
+                                fmt.write_raw(disabled_stmts_src.trim_end())?;
+                                // Remove all comments as they're already included in disabled src.
+                                let _ = fmt.comments.remove_all_comments_before(disabled_stmts_end);
+
+                                // Write enabled statements.
+                                fmt.indented(1, |fmt| {
+                                    fmt.write_lined_visitable(
+                                        body_loc.with_start(disabled_stmts_end),
+                                        statements.iter_mut(),
+                                        |_, _| false,
+                                    )?;
+                                    Ok(())
+                                })?;
+
+                                // Write curly bracket block end.
+                                fmt.write_whitespace_separator(true)?;
+                                write_chunk!(fmt, body_loc.end(), "}}")?;
+
+                                return Ok(())
+                            }
+                            _ => {}
+                        }
+                    }
+
                     let byte_offset = body_loc.start();
                     let body = fmt.visit_to_chunk(byte_offset, Some(body_loc.end()), body)?;
                     fmt.write_whitespace_separator(
@@ -3045,7 +3101,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 None => fmt.write_semicolon()?,
             }
-
             Ok(())
         })?;
 
