@@ -278,7 +278,7 @@ transactions:        {}",
     }
 }
 
-impl UIfmt for BlockTransactions {
+impl<T: UIfmt> UIfmt for BlockTransactions<T> {
     fn pretty(&self) -> String {
         match self {
             Self::Hashes(hashes) => hashes.pretty(),
