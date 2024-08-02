@@ -98,6 +98,8 @@ watchexec-signals = "3.0"
 clearscreen = "3.0"
 evm-disassembler.workspace = true
 rustc-hash.workspace = true
+notify = "6.1.1"
+notify-debouncer-full = "0.3.1"
 
 # doc server
 axum = { workspace = true, features = ["ws"] }

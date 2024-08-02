@@ -6,7 +6,14 @@ use forge_doc::{
 use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
 use foundry_common::compile::ProjectCompiler;
 use foundry_config::{find_project_root_path, load_config_with_root};
-use std::{path::PathBuf, process::Command};
+use notify::{EventKind, RecursiveMode, Watcher};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+    sync::mpsc::{channel, Receiver},
+    time::Duration,
+};
 
 mod server;
 use server::Server;
@@ -47,6 +54,10 @@ pub struct DocArgs {
     #[arg(long, requires = "serve")]
     hostname: Option<String>,
 
+    /// Watch on files and recompile on change.
+    #[arg(long, short)]
+    watch: bool,
+
     /// Port for serving documentation.
     #[arg(long, short, requires = "serve")]
     port: Option<usize>,
@@ -63,6 +74,61 @@ pub struct DocArgs {
 
 impl DocArgs {
     pub fn run(self) -> Result<()> {
+        self.generate_doc()?;
+
+        if self.watch {
+            let mut debouncer =
+                new_debouncer(Duration::from_secs(2), None, move |result: DebounceEventResult| {
+                    match result {
+                        Ok(events) => events.iter().for_each(|event| match event.event.kind {
+                            EventKind::Create(_) => {
+                                self.generate_doc().unwrap();
+                            }
+                            EventKind::Modify(_) => {
+                                self.generate_doc().unwrap();
+                            }
+                            EventKind::Remove(_) => {
+                                self.generate_doc().unwrap();
+                            }
+                            _ => {}
+                        }),
+                        Err(errors) => errors.iter().for_each(|_error| {}),
+                    }
+                })
+                .unwrap();
+
+            let (_tx, rx): (
+                std::sync::mpsc::Sender<notify::Result<notify::Event>>,
+                Receiver<notify::Result<notify::Event>>,
+            ) = channel();
+
+            // Watch src files sice if watch the cwd infinite loops happen since the generate doc
+            // edits the ./doc files
+            debouncer.watcher().watch(Path::new("./src"), RecursiveMode::Recursive).unwrap();
+
+            println!("Started watching...");
+
+            loop {
+                // Timeout to avoid blocking indefinitely
+                match rx.recv_timeout(Duration::from_secs(1800)) {
+                    Ok(_event_result) => {}
+                    Err(err) => match err {
+                        std::sync::mpsc::RecvTimeoutError::Timeout => {
+                            break;
+                        }
+                        std::sync::mpsc::RecvTimeoutError::Disconnected => {
+                            // The channel has been disconnected
+                            break;
+                        }
+                    },
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn generate_doc(&self) -> Result<()> {
         let root = self.root.clone().unwrap_or(find_project_root_path(None)?);
         let config = load_config_with_root(Some(root.clone()));
         let project = config.project()?;
@@ -70,7 +136,7 @@ impl DocArgs {
         let _output = compiler.compile(&project)?;
 
         let mut doc_config = config.doc.clone();
-        if let Some(out) = self.out {
+        if let Some(out) = self.out.clone() {
             doc_config.out = out;
         }
         if doc_config.repository.is_none() {
@@ -95,7 +161,7 @@ impl DocArgs {
 
         let mut builder = DocBuilder::new(
             root.clone(),
-            project.paths.sources,
+            project.paths.sources.clone(),
             project.paths.libraries,
             self.include_libraries,
         )
@@ -112,7 +178,7 @@ impl DocArgs {
         });
 
         // If deployment docgen is enabled, add the [Deployments] preprocessor
-        if let Some(deployments) = self.deployments {
+        if let Some(deployments) = self.deployments.clone() {
             builder = builder.with_preprocessor(Deployments { root, deployments });
         }
 
@@ -120,7 +186,7 @@ impl DocArgs {
 
         if self.serve {
             Server::new(doc_config.out)
-                .with_hostname(self.hostname.unwrap_or("localhost".to_owned()))
+                .with_hostname(self.hostname.clone().unwrap_or("localhost".to_owned()))
                 .with_port(self.port.unwrap_or(3000))
                 .open(self.open)
                 .serve()?;
