@@ -46,10 +46,7 @@ use alloy_rpc_types::{
             GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
             GethDebugTracingOptions, GethTrace, NoopFrame,
         },
-        parity::{
-            Action::{Call, Create, Reward, Selfdestruct},
-            LocalizedTransactionTrace,
-        },
+        parity::LocalizedTransactionTrace,
     },
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
@@ -2095,14 +2092,7 @@ impl Backend {
         // Execute tasks and filter traces
         let traces = futures::future::try_join_all(trace_tasks).await?;
         let filtered_traces =
-            traces.into_iter().flatten().filter(|trace| match &trace.trace.action {
-                Call(call) => matcher.matches(call.from, Some(call.to)),
-                Create(create) => matcher.matches(create.from, None),
-                Selfdestruct(self_destruct) => {
-                    matcher.matches(self_destruct.address, Some(self_destruct.refund_address))
-                }
-                Reward(reward) => matcher.matches(reward.author, None),
-            });
+            traces.into_iter().flatten().filter(|trace| matcher.matches(&trace.trace));
 
         // Apply after and count
         let filtered_traces: Vec<_> = if let Some(after) = filter.after {
@@ -2126,7 +2116,7 @@ impl Backend {
         let mut receipts = Vec::new();
         let storage = self.blockchain.storage.read();
         for tx in block.transactions.hashes() {
-            let receipt = storage.transactions.get(tx)?.receipt.clone();
+            let receipt = storage.transactions.get(&tx)?.receipt.clone();
             receipts.push(receipt);
         }
         Some(receipts)
