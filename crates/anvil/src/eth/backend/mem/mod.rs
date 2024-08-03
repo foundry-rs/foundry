@@ -930,7 +930,7 @@ impl Backend {
         &self,
         pool_transactions: Vec<Arc<PoolTransaction>>,
     ) -> MinedBlockOutcome {
-        let mining_guard = self.mining.lock().await;
+        let _mining_guard = self.mining.lock().await;
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
         let (outcome, header, block_hash) = {
@@ -1090,8 +1090,6 @@ impl Backend {
 
         // notify all listeners
         self.notify_on_new_block(header, block_hash);
-
-        drop(mining_guard);
 
         outcome
     }
