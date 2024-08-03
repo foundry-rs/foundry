@@ -13,6 +13,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
+use futures::join;
 use std::{collections::HashMap, time::Duration};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -374,4 +375,45 @@ async fn can_call_with_state_override() {
     let value = simple_storage_contract.getValue().state(overrides).call().await.unwrap()._0;
     // `value` *is* changed with state
     assert_eq!(value, "");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_mine_while_mining() {
+    let (api, _) = spawn(NodeConfig::test()).await;
+
+    let total_blocks = 200;
+
+    let block_number = api
+        .block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .number
+        .unwrap();
+    assert_eq!(block_number, 0);
+
+    let block = api.block_by_number(BlockNumberOrTag::Number(block_number)).await.unwrap().unwrap();
+    assert_eq!(block.header.number.unwrap(), 0);
+
+    let result = join!(
+        api.anvil_mine(Some(U256::from(total_blocks / 2)), None),
+        api.anvil_mine(Some(U256::from(total_blocks / 2)), None)
+    );
+    result.0.unwrap();
+    result.1.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let block_number = api
+        .block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .number
+        .unwrap();
+    assert_eq!(block_number, total_blocks);
+
+    let block = api.block_by_number(BlockNumberOrTag::Number(block_number)).await.unwrap().unwrap();
+    assert_eq!(block.header.number.unwrap(), total_blocks);
 }
