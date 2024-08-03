@@ -1,4 +1,4 @@
-use alloy_primitives::Address;
+use alloy_primitives::{hex, keccak256, Address};
 use clap::Parser;
 use comfy_table::{presets::ASCII_MARKDOWN, Table};
 use eyre::{Context, Result};
@@ -133,7 +133,7 @@ impl InspectArgs {
                 let mut out = serde_json::Map::new();
                 if let Some(abi) = &artifact.abi {
                     let abi = &abi;
-                    // Print the signature of all errors
+                    // Print the signature of all errors.
                     for er in abi.errors.iter().flat_map(|(_, errors)| errors) {
                         let types = er.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
                         let sig = format!("{:x}", er.selector());
@@ -150,13 +150,13 @@ impl InspectArgs {
                 let mut out = serde_json::Map::new();
                 if let Some(abi) = &artifact.abi {
                     let abi = &abi;
-
-                    // print the signature of all events including anonymous
+                    // Print the topic of all events including anonymous.
                     for ev in abi.events.iter().flat_map(|(_, events)| events) {
                         let types = ev.inputs.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
+                        let topic = hex::encode(keccak256(ev.signature()));
                         out.insert(
                             format!("{}({})", ev.name, types.join(",")),
-                            format!("{:?}", ev.signature()).into(),
+                            format!("0x{topic}").into(),
                         );
                     }
                 }
