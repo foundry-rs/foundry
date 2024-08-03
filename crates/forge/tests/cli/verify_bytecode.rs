@@ -187,9 +187,8 @@ forgetest_async!(can_verify_bytecode_with_blockscout, |prj, cmd| {
 });
 
 // Test CREATE2 deployed contract with blockscout
-// Note: Use `--ignore runtime`. Ref: https://github.com/foundry-rs/foundry/pull/8510#issuecomment-2264872638
 forgetest_async!(can_vb_create2_with_blockscout, |prj, cmd| {
-    test_verify_bytecode_with_ignore(
+    test_verify_bytecode(
         prj,
         cmd,
         "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
@@ -204,9 +203,7 @@ forgetest_async!(can_vb_create2_with_blockscout, |prj, cmd| {
         },
         "blockscout",
         "https://eth.blockscout.com/api",
-        ("full", "ignored"),
-        "runtime",
-        "1",
+        ("full", "full"),
     );
 });
 
