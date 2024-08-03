@@ -11,7 +11,7 @@ use alloy_consensus::{
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_primitives::{
-    Address, Bloom, Bytes, Log, Parity, Signature, TxHash, TxKind, B256, U256, U64,
+    Address, Bloom, Bytes, Log, Parity, Signature, TxHash, TxKind, B256, U128, U256, U64,
 };
 use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
 use alloy_rpc_types::{
@@ -57,13 +57,15 @@ pub fn transaction_request_to_typed(
         other,
     } = tx;
 
-    // Special case: OP-stack deposit tx
     if transaction_type == Some(0x7E) || has_optimism_fields(&other) {
         return Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
             from: from.unwrap_or_default(),
             source_hash: other.get_deserialized::<B256>("sourceHash")?.ok()?,
             kind: to.unwrap_or_default(),
-            mint: other.get_deserialized::<U256>("mint")?.ok()?,
+            mint: other
+                .get_deserialized::<Option<U128>>("mint")?
+                .ok()?
+                .map_or(Some(0), |mint| mint.try_into().ok()),
             value: value.unwrap_or_default(),
             gas_limit: gas.unwrap_or_default(),
             is_system_tx: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
@@ -646,7 +648,7 @@ impl PendingTransaction {
                     access_list: vec![],
                     optimism: OptimismFields {
                         source_hash: Some(*source_hash),
-                        mint: Some(mint.to::<u128>()),
+                        mint: *mint,
                         is_system_transaction: Some(*is_system_tx),
                         enveloped_tx: None,
                     },

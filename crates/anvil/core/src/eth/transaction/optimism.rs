@@ -1,21 +1,26 @@
 use alloy_consensus::{SignableTransaction, Signed, Transaction};
 use alloy_primitives::{keccak256, Address, Bytes, ChainId, Signature, TxKind, B256, U256};
 use alloy_rlp::{
-    length_of_length, Decodable, Encodable, Error as DecodeError, Header as RlpHeader,
+    length_of_length, Buf, BufMut, Decodable, Encodable, Error as DecodeError, Header as RlpHeader,
+    EMPTY_STRING_CODE,
 };
-use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 use std::mem;
 
 pub const DEPOSIT_TX_TYPE_ID: u8 = 0x7E;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct DepositTransactionRequest {
     pub source_hash: B256,
     pub from: Address,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "TxKind::is_create"))]
     pub kind: TxKind,
-    pub mint: U256,
+    #[cfg_attr(feature = "serde", serde(default, with = "alloy_serde::quantity::opt"))]
+    pub mint: Option<u128>,
     pub value: U256,
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub gas_limit: u128,
     pub is_system_tx: bool,
     pub input: Bytes,
@@ -35,7 +40,11 @@ impl DepositTransactionRequest {
         self.source_hash.encode(out);
         self.from.encode(out);
         self.kind.encode(out);
-        self.mint.encode(out);
+        if let Some(mint) = self.mint {
+            mint.encode(out);
+        } else {
+            out.put_u8(EMPTY_STRING_CODE);
+        };
         self.value.encode(out);
         self.gas_limit.encode(out);
         self.is_system_tx.encode(out);
@@ -48,7 +57,7 @@ impl DepositTransactionRequest {
         len += self.source_hash.length();
         len += self.from.length();
         len += self.kind.length();
-        len += self.mint.length();
+        len += self.mint.map_or(1, |mint| mint.length());
         len += self.value.length();
         len += self.gas_limit.length();
         len += self.is_system_tx.length();
@@ -74,7 +83,12 @@ impl DepositTransactionRequest {
             source_hash: Decodable::decode(buf)?,
             from: Decodable::decode(buf)?,
             kind: Decodable::decode(buf)?,
-            mint: Decodable::decode(buf)?,
+            mint: if *buf.first().ok_or(DecodeError::InputTooShort)? == EMPTY_STRING_CODE {
+                buf.advance(1);
+                None
+            } else {
+                Some(Decodable::decode(buf)?)
+            },
             value: Decodable::decode(buf)?,
             gas_limit: Decodable::decode(buf)?,
             is_system_tx: Decodable::decode(buf)?,
@@ -234,14 +248,14 @@ impl Encodable for DepositTransactionRequest {
 }
 
 /// An op-stack deposit transaction.
-/// See <https://github.com/ethereum-optimism/optimism/blob/develop/specs/deposits.md#the-deposited-transaction-type>
+/// See <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/deposits.md>
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DepositTransaction {
     pub nonce: u64,
     pub source_hash: B256,
     pub from: Address,
     pub kind: TxKind,
-    pub mint: U256,
+    pub mint: Option<u128>,
     pub value: U256,
     pub gas_limit: u128,
     pub is_system_tx: bool,
@@ -278,7 +292,11 @@ impl DepositTransaction {
         self.source_hash.encode(out);
         self.from.encode(out);
         self.kind.encode(out);
-        self.mint.encode(out);
+        if let Some(mint) = self.mint {
+            mint.encode(out);
+        } else {
+            out.put_u8(EMPTY_STRING_CODE);
+        };
         self.value.encode(out);
         self.gas_limit.encode(out);
         self.is_system_tx.encode(out);
@@ -291,7 +309,7 @@ impl DepositTransaction {
         len += self.source_hash.length();
         len += self.from.length();
         len += self.kind.length();
-        len += self.mint.length();
+        len += self.mint.map_or(1, |mint| mint.length());
         len += self.value.length();
         len += self.gas_limit.length();
         len += self.is_system_tx.length();
@@ -332,7 +350,12 @@ impl DepositTransaction {
             source_hash: Decodable::decode(buf)?,
             from: Decodable::decode(buf)?,
             kind: Decodable::decode(buf)?,
-            mint: Decodable::decode(buf)?,
+            mint: if *buf.first().ok_or(DecodeError::InputTooShort)? == EMPTY_STRING_CODE {
+                buf.advance(1);
+                None
+            } else {
+                Some(Decodable::decode(buf)?)
+            },
             value: Decodable::decode(buf)?,
             gas_limit: Decodable::decode(buf)?,
             is_system_tx: Decodable::decode(buf)?,
@@ -371,7 +394,7 @@ mod tests {
             source_hash: B256::default(),
             from: Address::default(),
             kind: TxKind::Call(Address::default()),
-            mint: U256::from(100),
+            mint: Some(100_u128),
             value: U256::from(100),
             gas_limit: 50000,
             is_system_tx: false,
@@ -391,7 +414,7 @@ mod tests {
             source_hash: B256::default(),
             from: Address::default(),
             kind: TxKind::Call(Address::default()),
-            mint: U256::from(100),
+            mint: Some(100_u128),
             value: U256::from(100),
             gas_limit: 50000,
             is_system_tx: false,
@@ -413,7 +436,7 @@ mod tests {
             source_hash: B256::default(),
             from: Address::default(),
             kind: TxKind::Call(Address::default()),
-            mint: U256::from(100),
+            mint: Some(100_u128),
             value: U256::from(100),
             gas_limit: 50000,
             is_system_tx: false,
