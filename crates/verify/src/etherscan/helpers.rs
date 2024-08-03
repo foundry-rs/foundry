@@ -25,12 +25,12 @@ pub enum BytecodeType {
 impl BytecodeType {
     /// Check if the bytecode type is creation
     pub fn is_creation(&self) -> bool {
-        matches!(self, BytecodeType::Creation)
+        matches!(self, Self::Creation)
     }
 
     /// Check if the bytecode type is runtime
     pub fn is_runtime(&self) -> bool {
-        matches!(self, BytecodeType::Runtime)
+        matches!(self, Self::Runtime)
     }
 }
 
