@@ -1,7 +1,11 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
+use alloy_primitives::{Address, B256};
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
-use foundry_block_explorers::contract::Metadata;
+use foundry_block_explorers::{
+    contract::{ContractCreationData, Metadata},
+    errors::EtherscanError,
+};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::artifacts::CompactContractBytecode;
 use foundry_config::Config;
@@ -236,4 +240,37 @@ fn find_mismatch_in_settings(
     }
 
     mismatches
+}
+
+pub fn maybe_predeploy_contract(
+    creation_data: Result<ContractCreationData, EtherscanError>,
+) -> Result<(ContractCreationData, bool), eyre::ErrReport> {
+    let mut maybe_predeploy = false;
+    match creation_data {
+        Ok(creation_data) => Ok((creation_data, maybe_predeploy)),
+        // Ref: https://explorer.mode.network/api?module=contract&action=getcontractcreation&contractaddresses=0xC0d3c0d3c0D3c0d3C0D3c0D3C0d3C0D3C0D30010
+        Err(EtherscanError::EmptyResult { status, message })
+            if status == "1" && message == "OK" =>
+        {
+            maybe_predeploy = true;
+            let creation_data = ContractCreationData {
+                contract_address: Address::ZERO,
+                contract_creator: Address::ZERO,
+                transaction_hash: B256::default(),
+            };
+
+            Ok((creation_data, maybe_predeploy))
+        }
+        // Ref: https://api.basescan.org/api?module=contract&action=getcontractcreation&contractaddresses=0xC0d3c0d3c0D3c0d3C0D3c0D3C0d3C0D3C0D30010&apiKey=YourAPIKey
+        Err(EtherscanError::Serde { error: _, content }) if content.contains("GENESIS") => {
+            maybe_predeploy = true;
+            let creation_data = ContractCreationData {
+                contract_address: Address::ZERO,
+                contract_creator: Address::ZERO,
+                transaction_hash: B256::default(),
+            };
+            Ok((creation_data, maybe_predeploy))
+        }
+        Err(e) => eyre::bail!("Error fetching creation data from verifier-url: {:?}", e),
+    }
 }

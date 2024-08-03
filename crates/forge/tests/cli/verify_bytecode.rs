@@ -186,6 +186,30 @@ forgetest_async!(can_verify_bytecode_with_blockscout, |prj, cmd| {
     );
 });
 
+// Test CREATE2 deployed contract with blockscout
+// Note: Use `--ignore runtime`. Ref: https://github.com/foundry-rs/foundry/pull/8510#issuecomment-2264872638
+forgetest_async!(can_vb_create2_with_blockscout, |prj, cmd| {
+    test_verify_bytecode_with_ignore(
+        prj,
+        cmd,
+        "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
+        "SystemConfig",
+        Config {
+            evm_version: EvmVersion::London,
+            optimizer_runs: 999999,
+            optimizer: true,
+            cbor_metadata: false,
+            bytecode_hash: BytecodeHash::None,
+            ..Default::default()
+        },
+        "blockscout",
+        "https://eth.blockscout.com/api",
+        ("full", "ignored"),
+        "runtime",
+        "1",
+    );
+});
+
 // `--ignore` tests
 forgetest_async!(can_ignore_creation, |prj, cmd| {
     test_verify_bytecode_with_ignore(
@@ -225,31 +249,33 @@ forgetest_async!(can_ignore_runtime, |prj, cmd| {
         },
         "etherscan",
         "https://api.etherscan.io/api",
-        ("full", "n-a"),
+        ("full", "ignored"),
         "runtime",
         "1",
     );
 });
 
 // Test predeploy contracts
+// TODO: Add test utils for base such as basescan keys and alchemy keys.
+// WETH9 Predeploy
 // forgetest_async!(can_verify_predeploys, |prj, cmd| {
 //     test_verify_bytecode_with_ignore(
 //         prj,
 //         cmd,
-//         "0xC0d3c0d3c0D3c0d3C0D3c0D3C0d3C0D3C0D30010",
-//         "L2StandardBridge",
+//         "0x4200000000000000000000000000000000000006",
+//         "WETH9",
 //         Config {
-//             evm_version: EvmVersion::Paris,
+//             evm_version: EvmVersion::default(),
 //             optimizer: true,
-//             optimizer_runs: 999999,
-//             cbor_metadata: false,
-//             bytecode_hash: BytecodeHash::None,
+//             optimizer_runs: 10000,
+//             cbor_metadata: true,
+//             bytecode_hash: BytecodeHash::Bzzr1,
 //             ..Default::default()
 //         },
 //         "etherscan",
-//         "https://api-optimistic.etherscan.io/api",
-//         ("n-a", "full"),
+//         "https://api.basescan.org/api",
+//         ("ignored", "partial"),
 //         "creation",
-//         "optimism",
+//         "base",
 //     );
 // });
