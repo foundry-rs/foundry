@@ -8,7 +8,6 @@ use crate::{
 use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;
 use solang_parser::pt::{Base, FunctionDefinition};
-use std::path::{Path, PathBuf};
 
 /// The result of [`AsDoc::as_doc`].
 pub type AsDocResult = Result<String, std::fmt::Error>;
@@ -126,34 +125,35 @@ impl AsDoc for Document {
                     ParseSource::Contract(contract) => {
                         if !contract.base.is_empty() {
                             writer.write_bold("Inherits:")?;
-
-                            // we need this to find the _relative_ paths
-                            let src_target_dir = self.target_src_dir();
-
                             let mut bases = vec![];
                             let linked =
                                 read_context!(self, CONTRACT_INHERITANCE_ID, ContractInheritance);
                             for base in contract.base.iter() {
                                 let base_doc = base.as_doc()?;
                                 let base_ident = &base.name.identifiers.last().unwrap().name;
-
                                 let link = linked
                                     .as_ref()
                                     .and_then(|link| {
                                         link.get(base_ident).map(|path| {
-                                            let path = Path::new("/").join(
-                                                path.strip_prefix(&src_target_dir)
-                                                    .ok()
-                                                    .unwrap_or(path),
-                                            );
-                                            Markdown::Link(&base_doc, &path.display().to_string())
-                                                .as_doc()
+                                            let path_str = path.to_str().unwrap_or_default();
+
+                                            // Remove duplicate 'docs/' after concatanate path
+                                            let path_str = path_str.replace("docs/docs/", "docs/");
+
+                                            // Change 'src' to 'book'
+                                            let path_str = path_str.replace("/src/", "/book/");
+
+                                            // Change file extension from '.md' to '.html'
+                                            let path_str = path_str.replace(".md", ".html");
+
+                                            let full_path = format!("file://{path_str}");
+                                            Markdown::Link(&base_doc, &full_path).as_doc()
                                         })
                                     })
                                     .transpose()?
                                     .unwrap_or(base_doc);
 
-                                bases.push(link);
+                                bases.push(link.clone());
                             }
 
                             writer.writeln_raw(bases.join(", "))?;
@@ -272,11 +272,6 @@ impl AsDoc for Document {
 }
 
 impl Document {
-    /// Where all the source files are written to
-    fn target_src_dir(&self) -> PathBuf {
-        self.out_target_dir.join("src")
-    }
-
     /// Writes a function to the buffer.
     fn write_function(
         &self,

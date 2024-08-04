@@ -62,6 +62,10 @@ impl Document {
         context.insert(id, output);
     }
 
+    pub fn full_output_path(&self) -> PathBuf {
+        self.out_target_dir.join(self.relative_output_path())
+    }
+
     /// Read preprocessor result from context
     pub fn get_from_context(&self, id: PreprocessorId) -> Option<PreprocessorOutput> {
         let context = self.context.lock().expect("failed to lock context");

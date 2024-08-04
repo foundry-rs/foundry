@@ -59,7 +59,8 @@ impl ContractInheritance {
             if let DocumentContent::Single(ref item) = candidate.content {
                 if let ParseSource::Contract(ref contract) = item.source {
                     if base == contract.name.safe_unwrap().name {
-                        return Some(candidate.target_path.clone())
+                        let full_path = candidate.full_output_path();
+                        return Some(full_path);
                     }
                 }
             }

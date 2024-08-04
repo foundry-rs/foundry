@@ -187,7 +187,7 @@ impl DocBuilder {
                             path.clone(),
                             target_path,
                             from_library,
-                            self.config.out.clone(),
+                            self.root.join(&self.config.out),
                         )
                         .with_content(DocumentContent::Single(item), ident))
                     })
