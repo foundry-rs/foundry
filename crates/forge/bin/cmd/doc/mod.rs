@@ -6,17 +6,12 @@ use forge_doc::{
 use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
 use foundry_common::compile::ProjectCompiler;
 use foundry_config::{find_project_root_path, load_config_with_root};
-use notify::{EventKind, RecursiveMode, Watcher};
-use notify_debouncer_full::{new_debouncer, DebounceEventResult};
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-    sync::mpsc::{channel, Receiver},
-    time::Duration,
-};
+use std::{path::PathBuf, process::Command};
 
 mod server;
 use server::Server;
+
+use super::watch::WatchArgs;
 
 #[derive(Clone, Debug, Parser)]
 pub struct DocArgs {
@@ -54,9 +49,8 @@ pub struct DocArgs {
     #[arg(long, requires = "serve")]
     hostname: Option<String>,
 
-    /// Watch on files and recompile on change.
-    #[arg(long, short)]
-    watch: bool,
+    #[command(flatten)]
+    pub watch: WatchArgs,
 
     /// Port for serving documentation.
     #[arg(long, short, requires = "serve")]
@@ -73,62 +67,7 @@ pub struct DocArgs {
 }
 
 impl DocArgs {
-    pub fn run(self) -> Result<()> {
-        self.generate_doc()?;
-
-        if self.watch {
-            let mut debouncer =
-                new_debouncer(Duration::from_secs(2), None, move |result: DebounceEventResult| {
-                    match result {
-                        Ok(events) => events.iter().for_each(|event| match event.event.kind {
-                            EventKind::Create(_) => {
-                                self.generate_doc().unwrap();
-                            }
-                            EventKind::Modify(_) => {
-                                self.generate_doc().unwrap();
-                            }
-                            EventKind::Remove(_) => {
-                                self.generate_doc().unwrap();
-                            }
-                            _ => {}
-                        }),
-                        Err(errors) => errors.iter().for_each(|_error| {}),
-                    }
-                })
-                .unwrap();
-
-            let (_tx, rx): (
-                std::sync::mpsc::Sender<notify::Result<notify::Event>>,
-                Receiver<notify::Result<notify::Event>>,
-            ) = channel();
-
-            // Watch src files sice if watch the cwd infinite loops happen since the generate doc
-            // edits the ./doc files
-            debouncer.watcher().watch(Path::new("./src"), RecursiveMode::Recursive).unwrap();
-
-            println!("Started watching...");
-
-            loop {
-                // Timeout to avoid blocking indefinitely
-                match rx.recv_timeout(Duration::from_secs(1800)) {
-                    Ok(_event_result) => {}
-                    Err(err) => match err {
-                        std::sync::mpsc::RecvTimeoutError::Timeout => {
-                            break;
-                        }
-                        std::sync::mpsc::RecvTimeoutError::Disconnected => {
-                            // The channel has been disconnected
-                            break;
-                        }
-                    },
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn generate_doc(&self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         let root = self.root.clone().unwrap_or(find_project_root_path(None)?);
         let config = load_config_with_root(Some(root.clone()));
         let project = config.project()?;
@@ -193,5 +132,10 @@ impl DocArgs {
         }
 
         Ok(())
+    }
+
+    /// Returns whether was configured with `--watch`
+    pub fn is_watch(&self) -> bool {
+        self.watch.watch.is_some()
     }
 }

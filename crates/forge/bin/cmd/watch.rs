@@ -1,7 +1,8 @@
-use super::{build::BuildArgs, snapshot::SnapshotArgs, test::TestArgs};
+use super::{build::BuildArgs, doc::DocArgs, snapshot::SnapshotArgs, test::TestArgs};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::utils::{self, FoundryPathExt};
+use foundry_compilers::{solc::Solc, ProjectPathsConfig};
 use foundry_config::Config;
 use parking_lot::Mutex;
 use std::{
@@ -311,6 +312,17 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     Ok(())
 }
 
+/// Executes a [`Watchexec`] that listens for changes in the project's src dir
+pub async fn watch_doc(args: DocArgs) -> Result<()> {
+    //TODO avoid hardcoded path
+    let path_config = ProjectPathsConfig::builder().build_with_root::<Solc>("./");
+    let src_path = &path_config.sources;
+    let config = args.watch.watchexec_config(|| [src_path])?;
+    run(config).await?;
+
+    Ok(())
+}
+
 /// Converts a list of arguments to a `watchexec::Command`.
 ///
 /// The first index in `args` is the path to the executable.
@@ -342,11 +354,11 @@ fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
         fn contains_w_in_short(arg: &str) -> Option<bool> {
             let mut iter = arg.chars().peekable();
             if *iter.peek()? != '-' {
-                return None
+                return None;
             }
             iter.next();
             if *iter.peek()? == '-' {
-                return None
+                return None;
             }
             Some(iter.any(|c| c == 'w'))
         }
