@@ -133,11 +133,11 @@ jobs:
         run: |
           set -eo pipefail
           target="${{ matrix.target }}"
-          flags=(--release --bins --no-default-features --features rustls,aws-kms,cli)
+          flags=(--release --bins --no-default-features --features rustls,aws-kms,cli,asm-keccak)
 
-          # `jemalloc` and `keccak-asm` are not supported on MSVC or aarch64 Linux.
+          # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
           if [[ "$target" != *msvc* && "$target" != "aarch64-unknown-linux-gnu" ]]; then
-            flags+=(--features asm-keccak,jemalloc)
+            flags+=(--features jemalloc)
           fi
 
           [[ "$target" == *windows* ]] && exe=".exe"
