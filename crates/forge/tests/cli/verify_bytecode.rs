@@ -7,6 +7,7 @@ use foundry_test_utils::{
     TestCommand, TestProject,
 };
 
+#[allow(clippy::too_many_arguments)]
 fn test_verify_bytecode(
     prj: TestProject,
     mut cmd: TestCommand,
@@ -56,6 +57,7 @@ fn test_verify_bytecode(
         .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn test_verify_bytecode_with_ignore(
     prj: TestProject,
     mut cmd: TestCommand,
