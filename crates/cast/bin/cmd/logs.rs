@@ -393,7 +393,7 @@ mod tests {
         .unwrap()
         .to_string();
 
-        assert_eq!(err, "parser error:\n1234\n^\nInvalid string length");
+        assert_eq!(err, "parser error:\n1234\n^\ninvalid string length");
     }
 
     #[test]
@@ -403,7 +403,7 @@ mod tests {
             .unwrap()
             .to_string();
 
-        assert_eq!(err, "Odd number of digits");
+        assert_eq!(err, "odd number of digits");
     }
 
     #[test]
@@ -413,7 +413,7 @@ mod tests {
             .unwrap()
             .to_string();
 
-        assert_eq!(err, "Invalid string length");
+        assert_eq!(err, "invalid string length");
     }
 
     #[test]
@@ -429,6 +429,6 @@ mod tests {
         .unwrap()
         .to_string();
 
-        assert_eq!(err, "Invalid string length");
+        assert_eq!(err, "invalid string length");
     }
 }
