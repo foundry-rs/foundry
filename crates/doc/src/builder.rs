@@ -442,11 +442,16 @@ impl DocBuilder {
                         .transpose()?
                         .unwrap_or(summary_path);
                     readme.write_link_list_item(ident, &readme_path.display().to_string(), 0)?;
+                    println!("if readme_path: {}", readme_path.display());
+                    println!("if summary_path: {}", summary_path.display());
                 }
             } else {
                 let name = path.iter().last().unwrap().to_string_lossy();
-                let readme_path = Path::new("/").join(&path).display().to_string();
-                readme.write_link_list_item(&name, &readme_path, 0)?;
+                let doc_root = self.out_dir();
+                let relative_path = path.strip_prefix(&self.root).unwrap_or(&path);
+                let full_path = doc_root.join("book/").join(relative_path);
+                let full_absolute_link = format!("file://{}/index.html", full_path.display());
+                readme.write_link_list_item(&name, &full_absolute_link, 0)?;
                 self.write_summary_section(summary, &files, Some(&path), depth + 1)?;
             }
         }
