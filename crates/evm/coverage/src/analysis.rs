@@ -534,10 +534,23 @@ impl<'a> ContractVisitor<'a> {
     }
 }
 
-/// Helper function to check if a given node contains any statement.
+/// Helper function to check if a given node is or contains any statement.
 fn has_statements(node: &Node) -> bool {
-    let statements: Vec<Node> = node.attribute("statements").unwrap_or_default();
-    !statements.is_empty()
+    match node.node_type {
+        NodeType::DoWhileStatement |
+        NodeType::EmitStatement |
+        NodeType::ExpressionStatement |
+        NodeType::ForStatement |
+        NodeType::IfStatement |
+        NodeType::RevertStatement |
+        NodeType::TryStatement |
+        NodeType::VariableDeclarationStatement |
+        NodeType::WhileStatement => true,
+        _ => {
+            let statements: Vec<Node> = node.attribute("statements").unwrap_or_default();
+            !statements.is_empty()
+        }
+    }
 }
 
 /// [`SourceAnalyzer`] result type.
