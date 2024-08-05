@@ -41,7 +41,20 @@ impl RpcEndpoints {
     /// Returns all (alias -> url) pairs
     pub fn resolved(self) -> ResolvedRpcEndpoints {
         ResolvedRpcEndpoints {
-            endpoints: self.endpoints.into_iter().map(|(name, e)| (name, e.resolve())).collect(),
+            endpoints: self
+                .endpoints
+                .clone()
+                .into_iter()
+                .map(|(name, e)| (name, e.resolve()))
+                .collect(),
+            auths: self
+                .endpoints
+                .into_iter()
+                .map(|(name, e)| match e.auth {
+                    Some(auth) => (name, auth.resolve().map(Some)),
+                    None => (name, Ok(None)),
+                })
+                .collect(),
         }
     }
 }
@@ -214,7 +227,7 @@ impl From<RpcEndpoint> for RpcEndpointConfig {
 /// It works in the same way as the `RpcEndpoint` type, where it can be a raw string or a reference
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RpcAuth {
-    Token(String),
+    Raw(String),
     Env(String),
 }
 
@@ -226,7 +239,7 @@ impl RpcAuth {
     /// Returns an error if the type holds a reference to an env var and the env var is not set
     pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
         match self {
-            Self::Token(auth) => Ok(auth),
+            Self::Raw(raw_auth) => Ok(raw_auth),
             Self::Env(var) => interpolate(&var),
         }
     }
@@ -235,7 +248,7 @@ impl RpcAuth {
 impl fmt::Display for RpcAuth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Token(url) => url.fmt(f),
+            Self::Raw(url) => url.fmt(f),
             Self::Env(var) => var.fmt(f),
         }
     }
@@ -256,7 +269,7 @@ impl<'de> Deserialize<'de> for RpcAuth {
         D: Deserializer<'de>,
     {
         let val = String::deserialize(deserializer)?;
-        let auth = if RE_PLACEHOLDER.is_match(&val) { Self::Env(val) } else { Self::Token(val) };
+        let auth = if RE_PLACEHOLDER.is_match(&val) { Self::Env(val) } else { Self::Raw(val) };
 
         Ok(auth)
     }
@@ -398,6 +411,7 @@ pub struct ResolvedRpcEndpoints {
     /// contains all named endpoints and their URL or an error if we failed to resolve the env var
     /// alias
     endpoints: BTreeMap<String, Result<String, UnresolvedEnvVarError>>,
+    auths: BTreeMap<String, Result<Option<String>, UnresolvedEnvVarError>>,
 }
 
 impl ResolvedRpcEndpoints {
@@ -442,7 +456,7 @@ mod tests {
                 retries: Some(5),
                 retry_backoff: Some(250),
                 compute_units_per_second: Some(100),
-                auth: Some(RpcAuth::Token("Bearer 123".to_string())),
+                auth: Some(RpcAuth::Raw("Bearer 123".to_string())),
             }
         );
 
