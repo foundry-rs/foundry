@@ -16,6 +16,7 @@ contract SimpleComments {
 
     function test() public view {
         // do smth here
+        uint256 a = 1;
 
         // then here
 

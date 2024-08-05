@@ -21,5 +21,6 @@ contract Contract {
         int int256_expl
     ) public {
         // do something
+        uint256_impl = 0;
     }
 }
