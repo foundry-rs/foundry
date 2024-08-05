@@ -925,7 +925,7 @@ impl TypedTransaction {
     /// This appends the `address` before hashing it
     #[cfg(feature = "impersonated-tx")]
     pub fn impersonated_hash(&self, sender: Address) -> B256 {
-        let mut buffer = Vec::<u8>::new();
+        let mut buffer = Vec::new();
         Encodable::encode(self, &mut buffer);
         buffer.extend_from_slice(sender.as_ref());
         B256::from_slice(alloy_primitives::utils::keccak256(&buffer).as_slice())
@@ -1101,7 +1101,7 @@ impl Decodable for TypedTransaction {
         if ty != 0x7E {
             Ok(TxEnvelope::decode(buf)?.into())
         } else {
-            Ok(Self::Deposit(DepositTransaction::decode(&mut h_decode_copy)?))
+            Ok(Self::Deposit(DepositTransaction::decode_2718(buf)?))
         }
     }
 }
@@ -1133,8 +1133,7 @@ impl Encodable2718 for TypedTransaction {
             Self::EIP4844(tx) => TxEnvelope::from(tx.clone()).encode_2718(out),
             Self::EIP7702(tx) => tx.tx().encode_with_signature(tx.signature(), out, false),
             Self::Deposit(tx) => {
-                out.put_u8(0x7E);
-                tx.encode(out);
+                tx.encode_2718(out);
             }
         }
     }
@@ -1695,6 +1694,28 @@ mod tests {
 
         let from = tx.recover_signer().unwrap();
         assert_eq!(from, address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2"));
+    }
+
+    #[test]
+    fn test_decode_encode_deposit_tx() {
+        // https://sepolia-optimism.etherscan.io/tx/0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7
+        let tx_hash: TxHash = "0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7"
+            .parse::<TxHash>()
+            .unwrap();
+
+        // https://sepolia-optimism.etherscan.io/getRawTx?tx=0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7
+        let raw_tx = alloy_primitives::hex::decode(
+            "7ef861a0dfd7ae78bf3c414cfaa77f13c0205c82eb9365e217b2daa3448c3156b69b27ac94778f2146f48179643473b82931c4cd7b8f153efd94778f2146f48179643473b82931c4cd7b8f153efd872386f26fc10000872386f26fc10000830186a08080",
+        )
+        .unwrap();
+        let dep_tx = TypedTransaction::decode(&mut raw_tx.as_slice()).unwrap();
+
+        let mut encoded = Vec::new();
+        dep_tx.encode_2718(&mut encoded);
+
+        assert_eq!(raw_tx, encoded);
+
+        assert_eq!(tx_hash, dep_tx.hash());
     }
 
     #[test]

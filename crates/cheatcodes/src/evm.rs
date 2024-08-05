@@ -65,7 +65,7 @@ pub struct DealRecord {
 impl Cheatcode for addrCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
-        let wallet = super::utils::parse_wallet(privateKey)?;
+        let wallet = super::crypto::parse_wallet(privateKey)?;
         Ok(wallet.address().abi_encode())
     }
 }
@@ -74,6 +74,13 @@ impl Cheatcode for getNonce_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { account } = self;
         get_nonce(ccx, account)
+    }
+}
+
+impl Cheatcode for getNonce_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { wallet } = self;
+        get_nonce(ccx, &wallet.addr)
     }
 }
 
@@ -156,61 +163,6 @@ impl Cheatcode for dumpStateCall {
 
         write_json_file(path, &alloc)?;
         Ok(Default::default())
-    }
-}
-
-impl Cheatcode for sign_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
-        let Self { privateKey, digest } = self;
-        let sig = super::utils::sign(privateKey, digest)?;
-        Ok(super::utils::encode_full_sig(sig))
-    }
-}
-
-impl Cheatcode for signCompact_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
-        let Self { privateKey, digest } = self;
-        let sig = super::utils::sign(privateKey, digest)?;
-        Ok(super::utils::encode_compact_sig(sig))
-    }
-}
-
-impl Cheatcode for sign_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { digest } = self;
-        let sig = super::utils::sign_with_wallet(ccx, None, digest)?;
-        Ok(super::utils::encode_full_sig(sig))
-    }
-}
-
-impl Cheatcode for signCompact_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { digest } = self;
-        let sig = super::utils::sign_with_wallet(ccx, None, digest)?;
-        Ok(super::utils::encode_compact_sig(sig))
-    }
-}
-
-impl Cheatcode for sign_2Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { signer, digest } = self;
-        let sig = super::utils::sign_with_wallet(ccx, Some(*signer), digest)?;
-        Ok(super::utils::encode_full_sig(sig))
-    }
-}
-
-impl Cheatcode for signCompact_2Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { signer, digest } = self;
-        let sig = super::utils::sign_with_wallet(ccx, Some(*signer), digest)?;
-        Ok(super::utils::encode_compact_sig(sig))
-    }
-}
-
-impl Cheatcode for signP256Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { privateKey, digest } = self;
-        super::utils::sign_p256(privateKey, digest, ccx.state)
     }
 }
 
