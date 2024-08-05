@@ -6,9 +6,9 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::Function;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{
-    hex,
-    utils::{keccak256, ParseUnits, Unit},
-    Address, Keccak256, TxHash, TxKind, B256, I256, U256,
+    Address,
+    B256,
+    hex, I256, Keccak256, TxHash, TxKind, U256, utils::{keccak256, ParseUnits, Unit},
 };
 use alloy_provider::{
     network::eip2718::{Decodable2718, Encodable2718},
@@ -18,11 +18,11 @@ use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use alloy_transport::Transport;
+use alloy_transport::{Transport, TransportErrorKind};
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
 use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
-use eyre::{Context, ContextCompat, Result};
+use eyre::{Context, ContextCompat, Report as ErrReport, Report, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
@@ -44,7 +44,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::signal::ctrl_c;
-
+use alloy_json_rpc::RpcError;
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
 
@@ -129,8 +129,15 @@ where
         func: Option<&Function>,
         block: Option<BlockId>,
     ) -> Result<String> {
-        let res = self.provider.call(req).block(block.unwrap_or_default()).await?;
-
+        let res = match self.provider.call(req).block(block.unwrap_or_default()).await {
+            Ok(r) => {
+                r
+            },
+            Err(e) => {
+                let r = add_data_to_err_report(e);
+                return Err(r)
+            }
+        };
         let mut decoded = vec![];
 
         if let Some(func) = func {
@@ -2150,4 +2157,21 @@ mod tests {
             r#"["0x2b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca","0x","0x","0x2838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f903","0x","0xe46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd87549","0x","0x1d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5","0x","0x","0x","0x236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff0","0x","0x","0x","0x","0x"]"#
         )
     }
+}
+
+pub fn add_data_to_err_report(e: RpcError<TransportErrorKind>) -> Report {
+    match e {
+        RpcError::ErrorResp(error_payload) => {
+            let err_str = format!(
+                "{} with data: {}",
+                error_payload,
+                error_payload.data.as_ref()
+                    .map_or_else(String::new, |err_data| err_data.get().trim_matches('"').to_string())
+            );
+            return ErrReport::msg(err_str)
+        }
+        _ => {
+            return e.into()
+        }
+    };
 }

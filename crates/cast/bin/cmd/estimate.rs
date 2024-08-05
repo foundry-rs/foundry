@@ -11,6 +11,7 @@ use foundry_cli::{
 use foundry_common::ens::NameOrAddress;
 use foundry_config::Config;
 use std::str::FromStr;
+use cast::add_data_to_err_report;
 
 /// CLI arguments for `cast estimate`.
 #[derive(Debug, Parser)]
@@ -104,7 +105,15 @@ impl EstimateArgs {
             .build_raw(sender)
             .await?;
 
-        let gas = provider.estimate_gas(&tx).block(block.unwrap_or_default()).await?;
+        let gas = match provider.estimate_gas(&tx).block(block.unwrap_or_default()).await {
+            Ok(r) => {
+                r
+            },
+            Err(e) => {
+                let r = add_data_to_err_report(e);
+                return Err(r)
+            }
+        };
         println!("{gas}");
         Ok(())
     }

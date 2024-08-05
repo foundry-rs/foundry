@@ -1,7 +1,7 @@
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
-use alloy_primitives::{hex, Address, Bytes, TxKind};
+use alloy_primitives::{Address, Bytes, hex, TxKind};
 use alloy_provider::Provider;
 use alloy_rpc_types::{TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -256,7 +256,14 @@ where
         if !self.legacy &&
             (self.tx.max_fee_per_gas.is_none() || self.tx.max_priority_fee_per_gas.is_none())
         {
-            let estimate = self.provider.estimate_eip1559_fees(None).await?;
+            let estimate = match self.provider.estimate_eip1559_fees(None).await {
+                    Ok(gas_estimate) => {
+                        gas_estimate
+                    },
+                    Err(e) => {
+                        return Err(cast::add_data_to_err_report(e))
+                    }
+            };
 
             if !self.legacy {
                 if self.tx.max_fee_per_gas.is_none() {
@@ -270,7 +277,15 @@ where
         }
 
         if self.tx.gas.is_none() {
-            self.tx.gas = Some(self.provider.estimate_gas(&self.tx).await?);
+            let resp = self.provider.estimate_gas(&self.tx).await;
+            match resp  {
+                Ok(gas_estimate) => {
+                    self.tx.gas = Some(gas_estimate);
+                },
+                Err(e) => {
+                    return Err(cast::add_data_to_err_report(e))
+                }
+            }
         }
 
         if self.tx.nonce.is_none() {
