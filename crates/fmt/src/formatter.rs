@@ -3089,49 +3089,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     if fmt.inline_config.is_disabled(body_loc.with_end(body_loc.start())) {
                         match body {
                             Statement::Block { statements, .. } if !statements.is_empty() => {
-                                // TODO: merge with logic from `visit_block` fn.
-                                // Write first block line as it is until the end of line and remove
-                                // all comments (as they're already included in disabled src).
-                                let end_of_first_line =
-                                    fmt.find_next_line(body_loc.start()).unwrap_or_default();
-                                let disabled_stmts_src = String::from_utf8(
-                                    fmt.source.as_bytes()
-                                        [body_loc.with_end(end_of_first_line).range()]
-                                    .to_vec(),
-                                )
-                                .map_err(FormatterError::custom)?;
                                 fmt.write_whitespace_separator(false)?;
-                                fmt.write_raw(disabled_stmts_src.trim_end())?;
-                                let _ = fmt.comments.remove_all_comments_before(end_of_first_line);
-                                fmt.write_whitespace_separator(true)?;
-
-                                // Write function statements after first block line, if any.
-                                let next_stmt_pos = statements
-                                    .iter()
-                                    .position(|stmt| stmt.loc().start() > end_of_first_line);
-                                // Write remaining statements if any.
-                                if let Some(start) = next_stmt_pos {
-                                    fmt.indented(1, |fmt| {
-                                        fmt.write_lined_visitable(
-                                            body_loc.with_start(end_of_first_line),
-                                            statements[start..].iter_mut(),
-                                            |_, _| false,
-                                        )?;
-                                        Ok(())
-                                    })?;
-                                }
-
-                                // Write curly bracket block end if last block line format not
-                                // disabled. If last line format is disabled then block is already
-                                // written as part of last statement.
-                                if !fmt
-                                    .inline_config
-                                    .is_disabled(body_loc.with_start(body_loc.end()))
-                                {
-                                    fmt.write_whitespace_separator(true)?;
-                                    write_chunk!(fmt, body_loc.end(), "}}")?;
-                                }
-
+                                fmt.visit_block(body_loc, statements, false, false)?;
                                 return Ok(())
                             }
                             _ => {
