@@ -118,7 +118,7 @@ where
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None).await?;
+    /// let data = cast.call(&tx, None, None, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -128,9 +128,10 @@ where
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
-        json: bool,
+        json: Option<bool>,
     ) -> Result<String> {
         let res = self.provider.call(req).block(block.unwrap_or_default()).await?;
+        let json = json.unwrap_or(false);
 
         let mut decoded = vec![];
 
