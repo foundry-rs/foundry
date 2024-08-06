@@ -22,6 +22,8 @@ pub enum PrivateKeyError {
 pub enum WalletSignerError {
     #[error(transparent)]
     Local(#[from] LocalSignerError),
+    #[error("Failed to decrypt keystore: incorrect password")]
+    IncorrectKeystorePassword,
     #[error(transparent)]
     Ledger(#[from] LedgerError),
     #[error(transparent)]

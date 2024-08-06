@@ -46,10 +46,7 @@ use alloy_rpc_types::{
             GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
             GethDebugTracingOptions, GethTrace, NoopFrame,
         },
-        parity::{
-            Action::{Call, Create, Reward, Selfdestruct},
-            LocalizedTransactionTrace,
-        },
+        parity::LocalizedTransactionTrace,
     },
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
@@ -186,6 +183,8 @@ pub struct Backend {
     slots_in_an_epoch: u64,
     /// Precompiles to inject to the EVM.
     precompile_factory: Option<Arc<dyn PrecompileFactory>>,
+    /// Prevent race conditions during mining
+    mining: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Backend {
@@ -262,6 +261,7 @@ impl Backend {
             node_config,
             slots_in_an_epoch,
             precompile_factory,
+            mining: Arc::new(tokio::sync::Mutex::new(())),
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -930,6 +930,7 @@ impl Backend {
         &self,
         pool_transactions: Vec<Arc<PoolTransaction>>,
     ) -> MinedBlockOutcome {
+        let _mining_guard = self.mining.lock().await;
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
         let (outcome, header, block_hash) = {
@@ -2095,14 +2096,7 @@ impl Backend {
         // Execute tasks and filter traces
         let traces = futures::future::try_join_all(trace_tasks).await?;
         let filtered_traces =
-            traces.into_iter().flatten().filter(|trace| match &trace.trace.action {
-                Call(call) => matcher.matches(call.from, Some(call.to)),
-                Create(create) => matcher.matches(create.from, None),
-                Selfdestruct(self_destruct) => {
-                    matcher.matches(self_destruct.address, Some(self_destruct.refund_address))
-                }
-                Reward(reward) => matcher.matches(reward.author, None),
-            });
+            traces.into_iter().flatten().filter(|trace| matcher.matches(&trace.trace));
 
         // Apply after and count
         let filtered_traces: Vec<_> = if let Some(after) = filter.after {
@@ -2126,7 +2120,7 @@ impl Backend {
         let mut receipts = Vec::new();
         let storage = self.blockchain.storage.read();
         for tx in block.transactions.hashes() {
-            let receipt = storage.transactions.get(tx)?.receipt.clone();
+            let receipt = storage.transactions.get(&tx)?.receipt.clone();
             receipts.push(receipt);
         }
         Some(receipts)

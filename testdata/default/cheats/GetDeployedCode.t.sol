@@ -45,7 +45,7 @@ contract GetDeployedCodeTest is DSTest {
 
         assertEq(address(test).code, code);
 
-        vm._expectCheatcodeRevert("No matching artifact found");
+        vm._expectCheatcodeRevert("no matching artifact found");
         vm.getDeployedCode("cheats/GetDeployedCode.t.sol:TestContract:0.8.19");
     }
 }

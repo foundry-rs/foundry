@@ -8,17 +8,17 @@ contract BroadcastRawTransactionTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function test_revert_not_a_tx() public {
-        vm.expectRevert("broadcastRawTransaction: error decoding transaction (unexpected string)");
+        vm._expectCheatcodeRevert("failed to decode RLP-encoded transaction: unexpected string");
         vm.broadcastRawTransaction(hex"0102");
     }
 
     function test_revert_missing_signature() public {
-        vm.expectRevert("broadcastRawTransaction: error decoding transaction (input too short)");
+        vm._expectCheatcodeRevert("failed to decode RLP-encoded transaction: input too short");
         vm.broadcastRawTransaction(hex"dd806483030d40940993863c19b0defb183ca2b502db7d1b331ded757b80");
     }
 
     function test_revert_wrong_chainid() public {
-        vm.expectRevert("transaction validation error: invalid chain ID");
+        vm._expectCheatcodeRevert("transaction validation error: invalid chain ID");
         vm.broadcastRawTransaction(
             hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
         );

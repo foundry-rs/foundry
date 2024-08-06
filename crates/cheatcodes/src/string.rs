@@ -186,9 +186,7 @@ fn parse_value_fallback(s: &str, ty: &DynSolType) -> Option<Result<DynSolValue, 
                 "0" => false,
                 s if s.eq_ignore_ascii_case("true") => true,
                 s if s.eq_ignore_ascii_case("false") => false,
-                _ => {
-                    return None;
-                }
+                _ => return None,
             };
             return Some(Ok(DynSolValue::Bool(b)));
         }

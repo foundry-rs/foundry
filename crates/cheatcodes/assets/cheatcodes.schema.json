@@ -306,6 +306,13 @@
           ]
         },
         {
+          "description": "Cryptography-related cheatcodes.\n\nExamples: `sign*`.\n\nSafety: safe.",
+          "type": "string",
+          "enum": [
+            "crypto"
+          ]
+        },
+        {
           "description": "Generic, uncategorized utilities.\n\nExamples: `toString`, `parse*`, `serialize*`.\n\nSafety: safe.",
           "type": "string",
           "enum": [

@@ -2,6 +2,7 @@
 
 use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::PoolTransaction};
 use alloy_consensus::Account;
+use alloy_eips::eip2930::AccessListResult;
 use alloy_primitives::{Address, Bytes, StorageValue, B256, U256};
 use alloy_provider::{
     ext::{DebugApi, TraceApi},
@@ -13,7 +14,7 @@ use alloy_rpc_types::{
         geth::{GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace as Trace,
     },
-    AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
+    Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     EIP1186AccountProofResponse, FeeHistory, Filter, Log, Transaction,
 };
 use alloy_serde::WithOtherFields;
@@ -205,7 +206,7 @@ impl ClientFork {
         &self,
         request: &WithOtherFields<TransactionRequest>,
         block: Option<BlockNumber>,
-    ) -> Result<AccessListWithGasUsed, TransportError> {
+    ) -> Result<AccessListResult, TransportError> {
         self.provider().create_access_list(request).block_id(block.unwrap_or_default().into()).await
     }
 
@@ -273,7 +274,7 @@ impl ClientFork {
         blocknumber: u64,
     ) -> Result<Account, TransportError> {
         trace!(target: "backend::fork", "get_account={:?}", address);
-        self.provider().get_account(address).await.block_id(blocknumber.into()).await
+        self.provider().get_account(address).block_id(blocknumber.into()).await
     }
 
     pub async fn transaction_by_block_number_and_index(
@@ -577,7 +578,7 @@ impl ClientFork {
         };
         let mut transactions = Vec::with_capacity(block_txs_len);
         for tx in block.transactions.hashes() {
-            if let Some(tx) = storage.transactions.get(tx).cloned() {
+            if let Some(tx) = storage.transactions.get(&tx).cloned() {
                 transactions.push(tx.inner);
             }
         }

@@ -41,6 +41,8 @@ once_cell.workspace = true
 yansi.workspace = true
 itertools.workspace = true
 
+ciborium = "0.2"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }
 foundry-test-utils.workspace = true
