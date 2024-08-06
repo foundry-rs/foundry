@@ -2421,7 +2421,6 @@ impl Backend {
         &self,
         common_block: Block,
         current_height: u64,
-        new_len: u64,
         txs: HashMap<u64, Vec<Arc<PoolTransaction>>>,
     ) -> Result<(), BlockchainError> {
         // Trace all blocks to be reorged. Note that the reorg will be limited
@@ -2506,17 +2505,17 @@ impl Backend {
             );
         }
 
-        // Create the new reorged chain, filling the blocks with transactions if supplied
-        for i in 0..new_len {
-            let to_be_mined = txs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block(to_be_mined).await;
-            node_info!(
-                "    Mined reorg block with number {:?}. Mined {:?} txs with invalid {:?} txs",
-                outcome.block_number,
-                outcome.included.len(),
-                outcome.invalid.len()
-            );
-        }
+        // // Create the new reorged chain, filling the blocks with transactions if supplied
+        // for i in 0..new_len {
+        //     let to_be_mined = txs.get(&i).cloned().unwrap_or_else(Vec::new);
+        //     let outcome = self.do_mine_block(to_be_mined).await;
+        //     node_info!(
+        //         "    Mined reorg block with number {:?}. Mined {:?} txs with invalid {:?} txs",
+        //         outcome.block_number,
+        //         outcome.included.len(),
+        //         outcome.invalid.len()
+        //     );
+        // }
 
         Ok(())
     }

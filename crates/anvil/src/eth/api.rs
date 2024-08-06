@@ -446,8 +446,8 @@ impl EthApi {
             EthRequest::RemovePoolTransactions(address) => {
                 self.anvil_remove_pool_transactions(address).await.to_rpc_result()
             }
-            EthRequest::Reorg(depth, new_len, tx_block_pairs) => {
-                self.anvil_reorg(depth, new_len, tx_block_pairs).await.to_rpc_result()
+            EthRequest::Reorg(depth, tx_block_pairs) => {
+                self.anvil_reorg(depth, tx_block_pairs).await.to_rpc_result()
             }
         }
     }
@@ -1934,13 +1934,13 @@ impl EthApi {
     pub async fn anvil_reorg(
         &self,
         depth: u64,
-        new_len: u64,
         tx_block_pairs: Vec<(TransactionRequest, u64)>,
     ) -> Result<()> {
         // TODO:
-        // - Encapsulate reorgs in a struct
-        // - Use read_json_file to read in a json of tx block pairs
-        // - Enhance logging
+        // - convert the above params into an object
+        // - simplify the flow below, interface with executor directly perhaps?
+        // - how to update to state more concisely to reflect reorg?
+        // - study how geth handles reorgs
         node_info!("anvil_reorg");
         // Find common height
         let current_height = self.backend.best_number();
@@ -1955,14 +1955,6 @@ impl EthApi {
         // Construct the signed tx pairs for each new block
         let txs = if !tx_block_pairs.is_empty() {
             let mut pairs = tx_block_pairs;
-            // Validate that tx block pairs fit into new chain
-            if let Some(max) = pairs.iter().max_by_key(|item| item.1) {
-                if max.1 > new_len {
-                    return Err(BlockchainError::RpcError(RpcError::invalid_params(
-                        "Maximum tx block pair exceeds reorg chain length",
-                    )));
-                }
-            }
 
             // Sort by block number to make it easier to manage new nonces
             pairs.iter_mut().sorted_by(|a, b| a.1.cmp(&b.1));
@@ -2036,7 +2028,7 @@ impl EthApi {
         };
 
         node_info!("    Reoring chain to block number {:?}", common_block.header.number);
-        self.backend.reorg(common_block, current_height, new_len, txs).await?;
+        self.backend.reorg(common_block, current_height, txs).await?;
         Ok(())
     }
 

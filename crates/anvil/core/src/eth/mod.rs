@@ -771,7 +771,7 @@ pub enum EthRequest {
 
     // Reorg the chain
     #[cfg_attr(feature = "serde", serde(rename = "anvil_reorg",))]
-    Reorg(u64, u64, #[cfg_attr(feature = "serde", serde(default))] Vec<(TransactionRequest, u64)>),
+    Reorg(u64, #[cfg_attr(feature = "serde", serde(default))] Vec<(TransactionRequest, u64)>),
 }
 
 /// Represents ethereum JSON-RPC API
