@@ -128,6 +128,7 @@ where
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
+        json: bool,
     ) -> Result<String> {
         let res = self.provider.call(req).block(block.unwrap_or_default()).await?;
 
@@ -168,6 +169,9 @@ where
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
             format!("{res}\n")
+        } else if json {
+            let tokens = decoded.iter().map(format_token_raw).collect::<Vec<_>>();
+            serde_json::to_string_pretty(&tokens).unwrap()
         } else {
             // seth compatible user-friendly return type conversions
             decoded.iter().map(format_token).collect::<Vec<_>>().join("\n")
