@@ -171,7 +171,7 @@ fn broadcast_key<DB: DatabaseExt>(
     private_key: &U256,
     single_call: bool,
 ) -> Result {
-    let wallet = super::utils::parse_wallet(private_key)?;
+    let wallet = super::crypto::parse_wallet(private_key)?;
     let new_origin = wallet.address();
 
     let result = broadcast(ccx, Some(&new_origin), single_call);

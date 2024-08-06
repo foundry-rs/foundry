@@ -114,6 +114,12 @@ pub enum Group {
     ///
     /// Safety: safe.
     Toml,
+    /// Cryptography-related cheatcodes.
+    ///
+    /// Examples: `sign*`.
+    ///
+    /// Safety: safe.
+    Crypto,
     /// Generic, uncategorized utilities.
     ///
     /// Examples: `toString`, `parse*`, `serialize*`.
@@ -137,6 +143,7 @@ impl Group {
             Self::String |
             Self::Json |
             Self::Toml |
+            Self::Crypto |
             Self::Utilities => Some(Safety::Safe),
         }
     }
@@ -153,6 +160,7 @@ impl Group {
             Self::String => "string",
             Self::Json => "json",
             Self::Toml => "toml",
+            Self::Crypto => "crypto",
             Self::Utilities => "utilities",
         }
     }

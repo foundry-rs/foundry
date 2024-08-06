@@ -1030,3 +1030,86 @@ contract FooTest is DSTest {
 "#]],
     );
 });
+
+// https://github.com/foundry-rs/foundry/issues/8605
+forgetest!(test_single_statement_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    event IsTrue(bool isTrue);
+    event IsFalse(bool isFalse);
+
+    function ifElseStatementIgnored(bool flag) external {
+        if (flag) emit IsTrue(true);
+        else emit IsFalse(false);
+
+        if (flag) flag = true;
+        else flag = false;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function testTrueCoverage() external {
+        AContract a = new AContract();
+        a.ifElseStatementIgnored(true);
+    }
+
+    function testFalseCoverage() external {
+        AContract a = new AContract();
+        a.ifElseStatementIgnored(false);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert 50% coverage for true branches.
+    cmd.arg("coverage")
+        .args(["--mt".to_string(), "testTrueCoverage".to_string()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+| File              | % Lines      | % Statements | % Branches   | % Funcs       |
+|-------------------|--------------|--------------|--------------|---------------|
+| src/AContract.sol | 50.00% (2/4) | 50.00% (2/4) | 50.00% (2/4) | 100.00% (1/1) |
+| Total             | 50.00% (2/4) | 50.00% (2/4) | 50.00% (2/4) | 100.00% (1/1) |
+
+"#]]);
+
+    // Assert 50% coverage for false branches.
+    cmd.forge_fuse()
+        .arg("coverage")
+        .args(["--mt".to_string(), "testFalseCoverage".to_string()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements | % Branches   | % Funcs       |
+|-------------------|---------------|--------------|--------------|---------------|
+| src/AContract.sol | 100.00% (4/4) | 50.00% (2/4) | 50.00% (2/4) | 100.00% (1/1) |
+| Total             | 100.00% (4/4) | 50.00% (2/4) | 50.00% (2/4) | 100.00% (1/1) |
+
+"#]]);
+
+    // Assert 100% coverage (true/false branches properly covered).
+    cmd.forge_fuse().arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(
+        str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (4/4) | 100.00% (4/4) | 100.00% (4/4) | 100.00% (1/1) |
+| Total             | 100.00% (4/4) | 100.00% (4/4) | 100.00% (4/4) | 100.00% (1/1) |
+
+"#]],
+    );
+});
