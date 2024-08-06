@@ -3727,8 +3727,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97b8ffe1d5a00cd78a9461262377270d88b8d6a8a5f51b402996242bccef3994"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=05cb214982b2bebd359bd72b3fc2de67dd6f9492#05cb214982b2bebd359bd72b3fc2de67dd6f9492"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3765,8 +3764,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cdb80803e20447fc8c3f4ec97d47ad5fa37286648bb8224edbbc553ebe1a0f4"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=05cb214982b2bebd359bd72b3fc2de67dd6f9492#05cb214982b2bebd359bd72b3fc2de67dd6f9492"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3775,8 +3773,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3280cf657d802358856a397cb8465b18a0a6c09b1fa6422842e422a9aa21276d"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=05cb214982b2bebd359bd72b3fc2de67dd6f9492#05cb214982b2bebd359bd72b3fc2de67dd6f9492"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3799,8 +3796,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22ecc61aa540bff773d4441a94e0f158769fcedd61f61d3e91608a76d6bcd7aa"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=05cb214982b2bebd359bd72b3fc2de67dd6f9492#05cb214982b2bebd359bd72b3fc2de67dd6f9492"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3814,8 +3810,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a14603a33a217e64cc38977c215b01b37b48a0cae0a739a9f9b3555f16938704"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=05cb214982b2bebd359bd72b3fc2de67dd6f9492#05cb214982b2bebd359bd72b3fc2de67dd6f9492"
 dependencies = [
  "alloy-primitives",
  "cfg-if",

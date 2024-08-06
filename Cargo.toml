@@ -264,3 +264,6 @@ soldeer = "0.2.19"
 
 proptest = "1"
 comfy-table = "7"
+
+[patch.crates-io]
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "05cb214982b2bebd359bd72b3fc2de67dd6f9492", default-features = false }

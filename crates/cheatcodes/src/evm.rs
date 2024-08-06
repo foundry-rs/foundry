@@ -8,7 +8,7 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use foundry_common::fs::{read_json_file, write_json_file};
+use foundry_common::fs::{create_dir_all, read_json_file, write_json_file};
 use foundry_evm_core::{
     backend::{DatabaseExt, RevertSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
@@ -507,7 +507,19 @@ impl Cheatcode for stopSnapshotGasCall {
             .ok_or_else(|| fmt_err!("gas snapshot not found: {name}"))?;
         record.gas_end = ccx.state.last_call_gas.clone();
 
-        // Write record to disk
+        let gas_used = record
+            .gas_end
+            .as_ref()
+            .zip(record.gas_start.as_ref())
+            .map(|(end, start)| end.gasTotalUsed - start.gasTotalUsed)
+            .unwrap_or_default();
+
+        // Create the snapshot if it doesn't exist
+        create_dir_all(ccx.state.config.paths.snapshots.clone())?;
+
+        // Write the snapshot to a file
+        let snapshot_path = ccx.state.config.paths.snapshots.join(name).join(".json");
+        write_json_file(&snapshot_path, &gas_used)?;
 
         Ok(Default::default())
     }
