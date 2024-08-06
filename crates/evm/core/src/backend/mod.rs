@@ -72,14 +72,14 @@ pub const GLOBAL_FAIL_SLOT: U256 =
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut)]
 pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
-    /// Creates a new snapshot at the current point of execution.
+    /// Creates a new state snapshot at the current point of execution.
     ///
     /// A snapshot is associated with a new unique id that's created for the snapshot.
     /// Snapshots can be reverted: [DatabaseExt::revert], however, depending on the
     /// [RevertSnapshotAction], it will keep the snapshot alive or delete it.
-    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256;
+    fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &Env) -> U256;
 
-    /// Reverts the snapshot if it exists
+    /// Reverts the state snapshot if it exists.
     ///
     /// Returns `true` if the snapshot was successfully reverted, `false` if no snapshot for that id
     /// exists.
@@ -91,7 +91,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     /// `Self::snapshot`.
     ///
     /// Depending on [RevertSnapshotAction] it will keep the snapshot alive or delete it.
-    fn revert(
+    fn revert_state_snapshot(
         &mut self,
         id: U256,
         journaled_state: &JournaledState,
@@ -99,11 +99,11 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         action: RevertSnapshotAction,
     ) -> Option<JournaledState>;
 
-    /// Deletes the state snapshot with the given `id`
+    /// Deletes the state snapshot with the given `id`.
     ///
     /// Returns `true` if the snapshot was successfully deleted, `false` if no snapshot for that id
     /// exists.
-    fn delete_snapshot(&mut self, id: U256) -> bool;
+    fn delete_state_snapshot(&mut self, id: U256) -> bool;
 
     /// Deletes all state snapshots.
     fn delete_state_snapshots(&mut self);
@@ -902,8 +902,8 @@ impl Backend {
 }
 
 impl DatabaseExt for Backend {
-    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
-        trace!("create snapshot");
+    fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
+        trace!("create state snapshot");
         let id = self.inner.state_snapshots.insert(BackendSnapshot::new(
             self.create_db_snapshot(),
             journaled_state.clone(),
@@ -913,7 +913,7 @@ impl DatabaseExt for Backend {
         id
     }
 
-    fn revert(
+    fn revert_state_snapshot(
         &mut self,
         id: U256,
         current_state: &JournaledState,
@@ -979,7 +979,7 @@ impl DatabaseExt for Backend {
         }
     }
 
-    fn delete_snapshot(&mut self, id: U256) -> bool {
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
         self.inner.state_snapshots.remove_at(id).is_some()
     }
 

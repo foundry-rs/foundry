@@ -111,24 +111,24 @@ impl<'a> CowBackend<'a> {
 }
 
 impl<'a> DatabaseExt for CowBackend<'a> {
-    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
-        self.backend_mut(env).snapshot(journaled_state, env)
+    fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
+        self.backend_mut(env).snapshot_state(journaled_state, env)
     }
 
-    fn revert(
+    fn revert_state_snapshot(
         &mut self,
         id: U256,
         journaled_state: &JournaledState,
         current: &mut Env,
         action: RevertSnapshotAction,
     ) -> Option<JournaledState> {
-        self.backend_mut(current).revert(id, journaled_state, current, action)
+        self.backend_mut(current).revert_state_snapshot(id, journaled_state, current, action)
     }
 
-    fn delete_snapshot(&mut self, id: U256) -> bool {
-        // delete snapshot requires a previous snapshot to be initialized
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
+        // Requires a previous snapshot to be initialized.
         if let Some(backend) = self.initialized_backend_mut() {
-            return backend.delete_snapshot(id)
+            return backend.delete_state_snapshot(id)
         }
         false
     }

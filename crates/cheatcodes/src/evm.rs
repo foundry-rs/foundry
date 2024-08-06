@@ -498,14 +498,14 @@ impl Cheatcode for stopSnapshotGasCall {
 impl Cheatcode for snapshotStateCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.db.snapshot(&ccx.ecx.journaled_state, &ccx.ecx.env).abi_encode())
+        Ok(ccx.ecx.db.snapshot_state(&ccx.ecx.journaled_state, &ccx.ecx.env).abi_encode())
     }
 }
 
 impl Cheatcode for revertToStateCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = if let Some(journaled_state) = ccx.ecx.db.revert(
+        let result = if let Some(journaled_state) = ccx.ecx.db.revert_state_snapshot(
             *snapshotId,
             &ccx.ecx.journaled_state,
             &mut ccx.ecx.env,
@@ -524,7 +524,7 @@ impl Cheatcode for revertToStateCall {
 impl Cheatcode for revertToStateAndDeleteCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = if let Some(journaled_state) = ccx.ecx.db.revert(
+        let result = if let Some(journaled_state) = ccx.ecx.db.revert_state_snapshot(
             *snapshotId,
             &ccx.ecx.journaled_state,
             &mut ccx.ecx.env,
@@ -543,7 +543,7 @@ impl Cheatcode for revertToStateAndDeleteCall {
 impl Cheatcode for deleteStateSnapshotCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = ccx.ecx.db.delete_snapshot(*snapshotId);
+        let result = ccx.ecx.db.delete_state_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
 }
