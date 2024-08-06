@@ -218,29 +218,26 @@ impl<'a> ContractVisitor<'a> {
                         // statements.
                         if has_statements(&true_body) || has_statements(&false_body) {
                             // Add the coverage item for branch 0 (true body).
-                            // The relevant source range for the true branch is the `if(...)`
-                            // statement itself and the true body of the if statement.
-                            //
-                            // The false body of the statement is processed as its own thing.
-                            // If this source range is not processed like this, it is virtually
-                            // impossible to correctly map instructions back to branches that
-                            // include more complex logic like conditional logic.
+                            // The branch instruction is mapped to the first opcode within the true
+                            // body source range.
                             self.push_item(CoverageItem {
-                                kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
-                                loc: self.source_location_for(&ast::LowFidelitySourceLocation {
-                                    start: node.src.start,
-                                    length: true_body.src.length.map(|length| {
-                                        true_body.src.start - node.src.start + length
-                                    }),
-                                    index: node.src.index,
-                                }),
+                                kind: CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 0,
+                                    first_opcode: true,
+                                },
+                                loc: self.source_location_for(&true_body.src),
                                 hits: 0,
                             });
                             // Add the coverage item for branch 1 (false body).
                             // The relevant source range for the false branch is the `else`
                             // statement itself and the false body of the else statement.
                             self.push_item(CoverageItem {
-                                kind: CoverageItemKind::Branch { branch_id, path_id: 1 },
+                                kind: CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 1,
+                                    first_opcode: false,
+                                },
                                 loc: self.source_location_for(&ast::LowFidelitySourceLocation {
                                     start: node.src.start,
                                     length: false_body.src.length.map(|length| {
@@ -294,7 +291,7 @@ impl<'a> ContractVisitor<'a> {
                 self.branch_id += 1;
 
                 self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
+                    kind: CoverageItemKind::Branch { branch_id, path_id: 0, first_opcode: false },
                     loc: self.source_location_for(&node.src),
                     hits: 0,
                 });
@@ -424,12 +421,20 @@ impl<'a> ContractVisitor<'a> {
                             let branch_id = self.branch_id;
                             self.branch_id += 1;
                             self.push_item(CoverageItem {
-                                kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
+                                kind: CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 0,
+                                    first_opcode: false,
+                                },
                                 loc: self.source_location_for(&node.src),
                                 hits: 0,
                             });
                             self.push_item(CoverageItem {
-                                kind: CoverageItemKind::Branch { branch_id, path_id: 1 },
+                                kind: CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 1,
+                                    first_opcode: false,
+                                },
                                 loc: self.source_location_for(&node.src),
                                 hits: 0,
                             });
