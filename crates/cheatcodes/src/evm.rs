@@ -68,9 +68,7 @@ pub struct GasRecord {
     /// The name of the snapshot.
     pub name: String,
     /// The total gas used at the start of the snapshot.
-    pub gas_start: Option<Gas>,
-    /// The amount of gas used at the end of the snapshot.
-    pub gas_end: Option<Gas>,
+    pub gas: Option<Gas>,
 }
 
 impl Cheatcode for addrCall {
@@ -486,11 +484,7 @@ impl Cheatcode for lastCallGasCall {
 impl Cheatcode for startSnapshotGasCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
-        let record = GasRecord {
-            name: name.clone(),
-            gas_start: ccx.state.last_call_gas.clone(),
-            gas_end: None,
-        };
+        let record = GasRecord { name: name.clone(), gas: ccx.state.last_call_gas.clone() };
         ccx.state.recorded_gas.push(record);
         Ok(Default::default())
     }
@@ -505,12 +499,11 @@ impl Cheatcode for stopSnapshotGasCall {
             .iter_mut()
             .find(|record| record.name == *name)
             .ok_or_else(|| fmt_err!("gas snapshot not found: {name}"))?;
-        record.gas_end = ccx.state.last_call_gas.clone();
+        let gas_end = ccx.state.last_call_gas.clone();
 
-        let gas_used = record
-            .gas_end
+        let gas_used = gas_end
             .as_ref()
-            .zip(record.gas_start.as_ref())
+            .zip(record.gas.as_ref())
             .map(|(end, start)| end.gasTotalUsed - start.gasTotalUsed)
             .unwrap_or_default();
 
