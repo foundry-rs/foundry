@@ -224,7 +224,7 @@ impl<'a> ContractVisitor<'a> {
                                 kind: CoverageItemKind::Branch {
                                     branch_id,
                                     path_id: 0,
-                                    first_opcode: true,
+                                    is_first_opcode: true,
                                 },
                                 loc: self.source_location_for(&true_body.src),
                                 hits: 0,
@@ -236,7 +236,7 @@ impl<'a> ContractVisitor<'a> {
                                 kind: CoverageItemKind::Branch {
                                     branch_id,
                                     path_id: 1,
-                                    first_opcode: false,
+                                    is_first_opcode: false,
                                 },
                                 loc: self.source_location_for(&ast::LowFidelitySourceLocation {
                                     start: node.src.start,
@@ -291,7 +291,11 @@ impl<'a> ContractVisitor<'a> {
                 self.branch_id += 1;
 
                 self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Branch { branch_id, path_id: 0, first_opcode: false },
+                    kind: CoverageItemKind::Branch {
+                        branch_id,
+                        path_id: 0,
+                        is_first_opcode: false,
+                    },
                     loc: self.source_location_for(&node.src),
                     hits: 0,
                 });
@@ -424,7 +428,7 @@ impl<'a> ContractVisitor<'a> {
                                 kind: CoverageItemKind::Branch {
                                     branch_id,
                                     path_id: 0,
-                                    first_opcode: false,
+                                    is_first_opcode: false,
                                 },
                                 loc: self.source_location_for(&node.src),
                                 hits: 0,
@@ -433,7 +437,7 @@ impl<'a> ContractVisitor<'a> {
                                 kind: CoverageItemKind::Branch {
                                     branch_id,
                                     path_id: 1,
-                                    first_opcode: false,
+                                    is_first_opcode: false,
                                 },
                                 loc: self.source_location_for(&node.src),
                                 hits: 0,

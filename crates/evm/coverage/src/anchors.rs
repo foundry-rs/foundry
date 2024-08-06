@@ -34,8 +34,8 @@ pub fn find_anchors(
                 }
             };
             match item.kind {
-                CoverageItemKind::Branch { path_id, first_opcode, .. } => {
-                    if first_opcode {
+                CoverageItemKind::Branch { path_id, is_first_opcode, .. } => {
+                    if is_first_opcode {
                         find_anchor_by_first_opcode(item)
                     } else {
                         match find_anchor_branch(bytecode, source_map, item_id, &item.loc) {

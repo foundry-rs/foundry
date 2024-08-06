@@ -295,7 +295,7 @@ pub enum CoverageItemKind {
         /// The first path has ID 0, the next ID 1, and so on.
         path_id: usize,
         /// If true, then the branch anchor is the first opcode within the branch source range.
-        first_opcode: bool,
+        is_first_opcode: bool,
     },
     /// A branch in the code.
     SinglePathBranch {
