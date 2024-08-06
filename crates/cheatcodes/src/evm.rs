@@ -64,11 +64,13 @@ pub struct DealRecord {
 
 /// Records the `snapshotGas` cheatcodes.
 #[derive(Clone, Debug)]
-pub struct SnapshotGasRecord {
+pub struct GasRecord {
     /// The name of the snapshot.
     pub name: String,
-    /// The total gas used in the snapshot.
-    pub gas_used: U256,
+    /// The total gas used at the start of the snapshot.
+    pub gas_start: Option<Gas>,
+    /// The amount of gas used at the end of the snapshot.
+    pub gas_end: Option<Gas>,
 }
 
 impl Cheatcode for addrCall {
@@ -484,13 +486,29 @@ impl Cheatcode for lastCallGasCall {
 impl Cheatcode for startSnapshotGasCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
-
+        let record = GasRecord {
+            name: name.clone(),
+            gas_start: ccx.state.last_call_gas.clone(),
+            gas_end: None,
+        };
+        ccx.state.recorded_gas.push(record);
         Ok(Default::default())
     }
 }
 
 impl Cheatcode for stopSnapshotGasCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name } = self;
+        let record = ccx
+            .state
+            .recorded_gas
+            .iter_mut()
+            .find(|record| record.name == *name)
+            .ok_or_else(|| fmt_err!("gas snapshot not found: {name}"))?;
+        record.gas_end = ccx.state.last_call_gas.clone();
+
+        // Write record to disk
+
         Ok(Default::default())
     }
 }

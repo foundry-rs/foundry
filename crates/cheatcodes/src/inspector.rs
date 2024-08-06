@@ -5,7 +5,7 @@ use crate::{
         mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
-        DealRecord, RecordAccess,
+        DealRecord, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
     script::{Broadcast, ScriptWallets},
@@ -13,8 +13,8 @@ use crate::{
         self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedEmit,
         ExpectedRevert, ExpectedRevertKind,
     },
-    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
-    Vm::AccountAccess,
+    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
+    Vm::{self, AccountAccess},
 };
 use alloy_primitives::{hex, Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
@@ -259,6 +259,9 @@ pub struct Cheatcodes {
     /// This is used by the `lastCallGas` cheatcode.
     pub last_call_gas: Option<crate::Vm::Gas>,
 
+    /// Recorded gas
+    pub recorded_gas: Vec<GasRecord>,
+
     /// Mocked calls
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
     pub mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
@@ -341,6 +344,7 @@ impl Cheatcodes {
             accesses: Default::default(),
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
+            recorded_gas: Default::default(),
             last_call_gas: Default::default(),
             mocked_calls: Default::default(),
             expected_calls: Default::default(),
@@ -1090,7 +1094,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         self.last_call_gas = Some(crate::Vm::Gas {
             gasLimit: gas.limit(),
             gasTotalUsed: gas.spent(),
-            gasMemoryUsed: 0,
             gasRefunded: gas.refunded(),
             gasRemaining: gas.remaining(),
         });

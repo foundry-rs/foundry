@@ -103,7 +103,7 @@ interface Vm {
         /// The total gas used.
         uint64 gasTotalUsed;
         /// DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>
-        uint64 gasMemoryUsed;
+        // uint64 gasMemoryUsed;
         /// The amount of gas refunded.
         int64 gasRefunded;
         /// The amount of gas remaining.
@@ -507,11 +507,11 @@ interface Vm {
 
     /// Start a snapshot capture of the current gas usage.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function startSnapshotGas(string calldata name) external returns (uint256 snapshotId);
+    function startSnapshotGas(string calldata name) external returns (bool success);
 
     /// Stop the snapshot capture of the current gas usage, capturing the gas used since the start.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function stopSnapshotGas() external returns (bool success);
+    function stopSnapshotGas(string calldata name) external returns (Gas memory gas);
 
     // -------- State Snapshots --------
 
