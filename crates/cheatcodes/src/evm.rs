@@ -521,6 +521,9 @@ impl Cheatcode for stopSnapshotGasCall {
         let snapshot_path = ccx.state.config.paths.snapshots.join(name).join(".json");
         write_json_file(&snapshot_path, &gas_used)?;
 
+        // Delete the snapshot after writing it
+        ccx.state.recorded_gas.retain(|record| record.name != *name);
+
         Ok(Default::default())
     }
 }
