@@ -197,29 +197,25 @@ impl<'a> ContractVisitor<'a> {
                         // Add branch coverage items only if one of true/branch bodies contains
                         // statements.
                         if has_statements(&true_body) || has_statements(&false_body) {
-                            // Add the coverage item for branch 0 (true body).
-                            // The relevant source range for the true branch is the `if(...)`
-                            // statement itself and the true body of the if statement.
-                            //
-                            // The false body of the statement is processed as its own thing.
-                            // If this source range is not processed like this, it is virtually
-                            // impossible to correctly map instructions back to branches that
-                            // include more complex logic like conditional logic.
+                            // The branch instruction is mapped to the first opcode within the true
+                            // body source range.
                             self.push_item_kind(
-                                CoverageItemKind::Branch { branch_id, path_id: 0 },
-                                &ast::LowFidelitySourceLocation {
-                                    start: node.src.start,
-                                    length: true_body.src.length.map(|length| {
-                                        true_body.src.start - node.src.start + length
-                                    }),
-                                    index: node.src.index,
+                                CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 0,
+                                    is_first_opcode: true,
                                 },
+                                &true_body.src,
                             );
                             // Add the coverage item for branch 1 (false body).
                             // The relevant source range for the false branch is the `else`
                             // statement itself and the false body of the else statement.
                             self.push_item_kind(
-                                CoverageItemKind::Branch { branch_id, path_id: 1 },
+                                CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 1,
+                                    is_first_opcode: false,
+                                },
                                 &ast::LowFidelitySourceLocation {
                                     start: node.src.start,
                                     length: false_body.src.length.map(|length| {
@@ -270,7 +266,10 @@ impl<'a> ContractVisitor<'a> {
                 // branch ID as we do
                 self.branch_id += 1;
 
-                self.push_item_kind(CoverageItemKind::Branch { branch_id, path_id: 0 }, &node.src);
+                self.push_item_kind(
+                    CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: false },
+                    &node.src,
+                );
                 self.visit_block(body)?;
 
                 Ok(())
@@ -369,11 +368,19 @@ impl<'a> ContractVisitor<'a> {
                             let branch_id = self.branch_id;
                             self.branch_id += 1;
                             self.push_item_kind(
-                                CoverageItemKind::Branch { branch_id, path_id: 0 },
+                                CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 0,
+                                    is_first_opcode: false,
+                                },
                                 &node.src,
                             );
                             self.push_item_kind(
-                                CoverageItemKind::Branch { branch_id, path_id: 1 },
+                                CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 1,
+                                    is_first_opcode: false,
+                                },
                                 &node.src,
                             );
                         }
