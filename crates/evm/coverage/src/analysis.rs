@@ -59,11 +59,7 @@ impl<'a> ContractVisitor<'a> {
 
         match &node.body {
             Some(body) => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Function { name },
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+                self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
                 self.visit_block(body)
             }
             _ => Ok(()),
@@ -76,11 +72,7 @@ impl<'a> ContractVisitor<'a> {
 
         match &node.body {
             Some(body) => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Function { name },
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+                self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
                 self.visit_block(body)
             }
             _ => Ok(()),
@@ -119,22 +111,14 @@ impl<'a> ContractVisitor<'a> {
             NodeType::YulContinue |
             NodeType::YulLeave |
             NodeType::YulVariableDeclaration => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+                self.push_item_kind(CoverageItemKind::Statement, &node.src);
                 Ok(())
             }
             // Skip placeholder statements as they are never referenced in source maps.
             NodeType::PlaceholderStatement => Ok(()),
             // Return with eventual subcall
             NodeType::Return => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+                self.push_item_kind(CoverageItemKind::Statement, &node.src);
                 if let Some(expr) = node.attribute("expression") {
                     self.visit_expression(&expr)?;
                 }
@@ -142,11 +126,7 @@ impl<'a> ContractVisitor<'a> {
             }
             // Variable declaration
             NodeType::VariableDeclarationStatement => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+                self.push_item_kind(CoverageItemKind::Statement, &node.src);
                 if let Some(expr) = node.attribute("initialValue") {
                     self.visit_expression(&expr)?;
                 }
@@ -217,36 +197,33 @@ impl<'a> ContractVisitor<'a> {
                         // Add branch coverage items only if one of true/branch bodies contains
                         // statements.
                         if has_statements(&true_body) || has_statements(&false_body) {
-                            // Add the coverage item for branch 0 (true body).
                             // The branch instruction is mapped to the first opcode within the true
                             // body source range.
-                            self.push_item(CoverageItem {
-                                kind: CoverageItemKind::Branch {
+                            self.push_item_kind(
+                                CoverageItemKind::Branch {
                                     branch_id,
                                     path_id: 0,
                                     is_first_opcode: true,
                                 },
-                                loc: self.source_location_for(&true_body.src),
-                                hits: 0,
-                            });
+                                &true_body.src,
+                            );
                             // Add the coverage item for branch 1 (false body).
                             // The relevant source range for the false branch is the `else`
                             // statement itself and the false body of the else statement.
-                            self.push_item(CoverageItem {
-                                kind: CoverageItemKind::Branch {
+                            self.push_item_kind(
+                                CoverageItemKind::Branch {
                                     branch_id,
                                     path_id: 1,
                                     is_first_opcode: false,
                                 },
-                                loc: self.source_location_for(&ast::LowFidelitySourceLocation {
+                                &ast::LowFidelitySourceLocation {
                                     start: node.src.start,
                                     length: false_body.src.length.map(|length| {
                                         false_body.src.start - true_body.src.start + length
                                     }),
                                     index: node.src.index,
-                                }),
-                                hits: 0,
-                            });
+                                },
+                            );
 
                             // Process the true body.
                             self.visit_block_or_statement(&true_body)?;
@@ -258,11 +235,10 @@ impl<'a> ContractVisitor<'a> {
                         // Add single branch coverage only if it contains statements.
                         if has_statements(&true_body) {
                             // Add the coverage item for branch 0 (true body).
-                            self.push_item(CoverageItem {
-                                kind: CoverageItemKind::SinglePathBranch { branch_id },
-                                loc: self.source_location_for(&true_body.src),
-                                hits: 0,
-                            });
+                            self.push_item_kind(
+                                CoverageItemKind::SinglePathBranch { branch_id },
+                                &true_body.src,
+                            );
                             // Process the true body.
                             self.visit_block_or_statement(&true_body)?;
                         }
@@ -290,15 +266,10 @@ impl<'a> ContractVisitor<'a> {
                 // branch ID as we do
                 self.branch_id += 1;
 
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Branch {
-                        branch_id,
-                        path_id: 0,
-                        is_first_opcode: false,
-                    },
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+                self.push_item_kind(
+                    CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: false },
+                    &node.src,
+                );
                 self.visit_block(body)?;
 
                 Ok(())
@@ -318,21 +289,13 @@ impl<'a> ContractVisitor<'a> {
                     .ok_or_else(|| eyre::eyre!("try statement had no clause"))?
                 {
                     // Add coverage for clause statement.
-                    self.push_item(CoverageItem {
-                        kind: CoverageItemKind::Statement,
-                        loc: self.source_location_for(&clause.src),
-                        hits: 0,
-                    });
+                    self.push_item_kind(CoverageItemKind::Statement, &clause.src);
                     self.visit_statement(&clause)?;
 
                     // Add coverage for clause body only if it is not empty.
                     if let Some(block) = clause.attribute::<Node>("block") {
                         if has_statements(&block) {
-                            self.push_item(CoverageItem {
-                                kind: CoverageItemKind::Statement,
-                                loc: self.source_location_for(&block.src),
-                                hits: 0,
-                            });
+                            self.push_item_kind(CoverageItemKind::Statement, &block.src);
                             self.visit_block(&block)?;
                         }
                     }
@@ -346,19 +309,11 @@ impl<'a> ContractVisitor<'a> {
                     .attribute::<Vec<Node>>("cases")
                     .ok_or_else(|| eyre::eyre!("yul switch had no case"))?
                 {
-                    self.push_item(CoverageItem {
-                        kind: CoverageItemKind::Statement,
-                        loc: self.source_location_for(&case.src),
-                        hits: 0,
-                    });
+                    self.push_item_kind(CoverageItemKind::Statement, &case.src);
                     self.visit_statement(&case)?;
 
                     if let Some(body) = case.body {
-                        self.push_item(CoverageItem {
-                            kind: CoverageItemKind::Statement,
-                            loc: self.source_location_for(&body.src),
-                            hits: 0,
-                        });
+                        self.push_item_kind(CoverageItemKind::Statement, &body.src);
                         self.visit_block(&body)?
                     }
                 }
@@ -376,11 +331,7 @@ impl<'a> ContractVisitor<'a> {
                 }
 
                 if let Some(body) = &node.body {
-                    self.push_item(CoverageItem {
-                        kind: CoverageItemKind::Statement,
-                        loc: self.source_location_for(&body.src),
-                        hits: 0,
-                    });
+                    self.push_item_kind(CoverageItemKind::Statement, &body.src);
                     self.visit_block(body)?
                 }
                 Ok(())
@@ -399,11 +350,7 @@ impl<'a> ContractVisitor<'a> {
             NodeType::UnaryOperation |
             NodeType::Conditional |
             NodeType::YulFunctionCall => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+                self.push_item_kind(CoverageItemKind::Statement, &node.src);
                 Ok(())
             }
             NodeType::FunctionCall => {
@@ -411,11 +358,7 @@ impl<'a> ContractVisitor<'a> {
                 // and `structConstructorCall`).
                 let kind: Option<String> = node.attribute("kind");
                 if let Some("functionCall") = kind.as_deref() {
-                    self.push_item(CoverageItem {
-                        kind: CoverageItemKind::Statement,
-                        loc: self.source_location_for(&node.src),
-                        hits: 0,
-                    });
+                    self.push_item_kind(CoverageItemKind::Statement, &node.src);
 
                     let expr: Option<Node> = node.attribute("expression");
                     if let Some(NodeType::Identifier) = expr.as_ref().map(|expr| &expr.node_type) {
@@ -424,24 +367,22 @@ impl<'a> ContractVisitor<'a> {
                         if let Some("require" | "assert") = name.as_deref() {
                             let branch_id = self.branch_id;
                             self.branch_id += 1;
-                            self.push_item(CoverageItem {
-                                kind: CoverageItemKind::Branch {
+                            self.push_item_kind(
+                                CoverageItemKind::Branch {
                                     branch_id,
                                     path_id: 0,
                                     is_first_opcode: false,
                                 },
-                                loc: self.source_location_for(&node.src),
-                                hits: 0,
-                            });
-                            self.push_item(CoverageItem {
-                                kind: CoverageItemKind::Branch {
+                                &node.src,
+                            );
+                            self.push_item_kind(
+                                CoverageItemKind::Branch {
                                     branch_id,
                                     path_id: 1,
                                     is_first_opcode: false,
                                 },
-                                loc: self.source_location_for(&node.src),
-                                hits: 0,
-                            });
+                                &node.src,
+                            );
                         }
                     }
                 }
@@ -449,11 +390,7 @@ impl<'a> ContractVisitor<'a> {
                 Ok(())
             }
             NodeType::BinaryOperation => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+                self.push_item_kind(CoverageItemKind::Statement, &node.src);
 
                 // visit left and right expressions
                 // There could possibly a function call in the left or right expression
@@ -509,24 +446,24 @@ impl<'a> ContractVisitor<'a> {
         }
     }
 
-    /// Pushes a coverage item to the internal collection, and might push a line item as well.
-    fn push_item(&mut self, item: CoverageItem) {
-        let source_location = &item.loc;
-
+    /// Creates a coverage item for a given kind and source location. Pushes item to the internal
+    /// collection (plus additional coverage line if item is a statement).
+    fn push_item_kind(&mut self, kind: CoverageItemKind, src: &ast::LowFidelitySourceLocation) {
+        let item = CoverageItem { kind, loc: self.source_location_for(src), hits: 0 };
         // Push a line item if we haven't already
         if matches!(
             item.kind,
             CoverageItemKind::Statement |
                 CoverageItemKind::Branch { .. } |
                 CoverageItemKind::SinglePathBranch { .. }
-        ) && self.last_line < source_location.line
+        ) && self.last_line < item.loc.line
         {
             self.items.push(CoverageItem {
                 kind: CoverageItemKind::Line,
-                loc: source_location.clone(),
+                loc: item.loc.clone(),
                 hits: 0,
             });
-            self.last_line = source_location.line;
+            self.last_line = item.loc.line;
         }
 
         self.items.push(item);
