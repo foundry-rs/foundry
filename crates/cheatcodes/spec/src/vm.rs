@@ -505,7 +505,7 @@ interface Vm {
     /// Returns the ID of the snapshot that was created.
     /// To revert a snapshot use `revertTo`.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function snapshot() external returns (uint256 snapshotId);
+    function snapshotState() external returns (uint256 snapshotId);
 
     /// Revert the state of the EVM to a previous snapshot
     /// Takes the snapshot ID to revert to.
@@ -513,9 +513,9 @@ interface Vm {
     /// Returns `true` if the snapshot was successfully reverted.
     /// Returns `false` if the snapshot does not exist.
     ///
-    /// **Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteSnapshot`.
+    /// **Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteStateSnapshot`.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function revertTo(uint256 snapshotId) external returns (bool success);
+    function revertToState(uint256 snapshotId) external returns (bool success);
 
     /// Revert the state of the EVM to a previous snapshot and automatically deletes the snapshots
     /// Takes the snapshot ID to revert to.
@@ -523,7 +523,7 @@ interface Vm {
     /// Returns `true` if the snapshot was successfully reverted and deleted.
     /// Returns `false` if the snapshot does not exist.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function revertToAndDelete(uint256 snapshotId) external returns (bool success);
+    function revertToStateAndDelete(uint256 snapshotId) external returns (bool success);
 
     /// Removes the snapshot with the given ID created by `snapshot`.
     /// Takes the snapshot ID to delete.
@@ -531,11 +531,11 @@ interface Vm {
     /// Returns `true` if the snapshot was successfully deleted.
     /// Returns `false` if the snapshot does not exist.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function deleteSnapshot(uint256 snapshotId) external returns (bool success);
+    function deleteStateSnapshot(uint256 snapshotId) external returns (bool success);
 
     /// Removes _all_ snapshots previously created by `snapshot`.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function deleteSnapshots() external;
+    function deleteStateSnapshots() external;
 
     // -------- Forking --------
     // --- Creation and Selection ---

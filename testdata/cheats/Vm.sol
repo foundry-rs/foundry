@@ -172,8 +172,8 @@ interface Vm {
     function createWallet(uint256 privateKey) external returns (Wallet memory wallet);
     function createWallet(uint256 privateKey, string calldata walletLabel) external returns (Wallet memory wallet);
     function deal(address account, uint256 newBalance) external;
-    function deleteSnapshot(uint256 snapshotId) external returns (bool success);
-    function deleteSnapshots() external;
+    function deleteStateSnapshot(uint256 snapshotId) external returns (bool success);
+    function deleteStateSnapshots() external;
     function deployCode(string calldata artifactPath) external returns (address deployedAddress);
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);
     function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);
@@ -346,8 +346,8 @@ interface Vm {
     function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);
     function resetNonce(address account) external;
     function resumeGasMetering() external;
-    function revertTo(uint256 snapshotId) external returns (bool success);
-    function revertToAndDelete(uint256 snapshotId) external returns (bool success);
+    function revertToState(uint256 snapshotId) external returns (bool success);
+    function revertToStateAndDelete(uint256 snapshotId) external returns (bool success);
     function revokePersistent(address account) external;
     function revokePersistent(address[] calldata accounts) external;
     function roll(uint256 newHeight) external;
@@ -394,11 +394,12 @@ interface Vm {
     function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function skip(bool skipTest) external;
     function sleep(uint256 duration) external;
-    function snapshot() external returns (uint256 snapshotId);
+    function snapshotState() external returns (uint256 snapshotId);
     function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);
     function startBroadcast() external;
     function startBroadcast(address signer) external;
     function startBroadcast(uint256 privateKey) external;
+    function startGasSnapshot() external;
     function startMappingRecording() external;
     function startPrank(address msgSender) external;
     function startPrank(address msgSender, address txOrigin) external;
@@ -406,6 +407,7 @@ interface Vm {
     function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
     function stopBroadcast() external;
     function stopExpectSafeMemory() external;
+    function stopGasSnapshot() external;
     function stopMappingRecording() external;
     function stopPrank() external;
     function store(address target, bytes32 slot, bytes32 value) external;

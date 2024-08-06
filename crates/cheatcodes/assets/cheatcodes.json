@@ -3533,18 +3533,18 @@
     },
     {
       "func": {
-        "id": "deleteSnapshot",
+        "id": "deleteStateSnapshot",
         "description": "Removes the snapshot with the given ID created by `snapshot`.\nTakes the snapshot ID to delete.\nReturns `true` if the snapshot was successfully deleted.\nReturns `false` if the snapshot does not exist.",
-        "declaration": "function deleteSnapshot(uint256 snapshotId) external returns (bool success);",
+        "declaration": "function deleteStateSnapshot(uint256 snapshotId) external returns (bool success);",
         "visibility": "external",
         "mutability": "",
-        "signature": "deleteSnapshot(uint256)",
-        "selector": "0xa6368557",
+        "signature": "deleteStateSnapshot(uint256)",
+        "selector": "0x08d6b37a",
         "selectorBytes": [
-          166,
-          54,
-          133,
-          87
+          8,
+          214,
+          179,
+          122
         ]
       },
       "group": "evm",
@@ -3553,18 +3553,18 @@
     },
     {
       "func": {
-        "id": "deleteSnapshots",
+        "id": "deleteStateSnapshots",
         "description": "Removes _all_ snapshots previously created by `snapshot`.",
-        "declaration": "function deleteSnapshots() external;",
+        "declaration": "function deleteStateSnapshots() external;",
         "visibility": "external",
         "mutability": "",
-        "signature": "deleteSnapshots()",
-        "selector": "0x421ae469",
+        "signature": "deleteStateSnapshots()",
+        "selector": "0xe0933c74",
         "selectorBytes": [
-          66,
-          26,
-          228,
-          105
+          224,
+          147,
+          60,
+          116
         ]
       },
       "group": "evm",
@@ -7013,18 +7013,18 @@
     },
     {
       "func": {
-        "id": "revertTo",
-        "description": "Revert the state of the EVM to a previous snapshot\nTakes the snapshot ID to revert to.\nReturns `true` if the snapshot was successfully reverted.\nReturns `false` if the snapshot does not exist.\n**Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteSnapshot`.",
-        "declaration": "function revertTo(uint256 snapshotId) external returns (bool success);",
+        "id": "revertToState",
+        "description": "Revert the state of the EVM to a previous snapshot\nTakes the snapshot ID to revert to.\nReturns `true` if the snapshot was successfully reverted.\nReturns `false` if the snapshot does not exist.\n**Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteStateSnapshot`.",
+        "declaration": "function revertToState(uint256 snapshotId) external returns (bool success);",
         "visibility": "external",
         "mutability": "",
-        "signature": "revertTo(uint256)",
-        "selector": "0x44d7f0a4",
+        "signature": "revertToState(uint256)",
+        "selector": "0xc2527405",
         "selectorBytes": [
-          68,
-          215,
-          240,
-          164
+          194,
+          82,
+          116,
+          5
         ]
       },
       "group": "evm",
@@ -7033,18 +7033,18 @@
     },
     {
       "func": {
-        "id": "revertToAndDelete",
+        "id": "revertToStateAndDelete",
         "description": "Revert the state of the EVM to a previous snapshot and automatically deletes the snapshots\nTakes the snapshot ID to revert to.\nReturns `true` if the snapshot was successfully reverted and deleted.\nReturns `false` if the snapshot does not exist.",
-        "declaration": "function revertToAndDelete(uint256 snapshotId) external returns (bool success);",
+        "declaration": "function revertToStateAndDelete(uint256 snapshotId) external returns (bool success);",
         "visibility": "external",
         "mutability": "",
-        "signature": "revertToAndDelete(uint256)",
-        "selector": "0x03e0aca9",
+        "signature": "revertToStateAndDelete(uint256)",
+        "selector": "0x3a1985dc",
         "selectorBytes": [
-          3,
-          224,
-          172,
-          169
+          58,
+          25,
+          133,
+          220
         ]
       },
       "group": "evm",
@@ -7973,18 +7973,18 @@
     },
     {
       "func": {
-        "id": "snapshot",
+        "id": "snapshotState",
         "description": "Snapshot the current state of the evm.\nReturns the ID of the snapshot that was created.\nTo revert a snapshot use `revertTo`.",
-        "declaration": "function snapshot() external returns (uint256 snapshotId);",
+        "declaration": "function snapshotState() external returns (uint256 snapshotId);",
         "visibility": "external",
         "mutability": "",
-        "signature": "snapshot()",
-        "selector": "0x9711715a",
+        "signature": "snapshotState()",
+        "selector": "0x9cd23835",
         "selectorBytes": [
-          151,
-          17,
-          113,
-          90
+          156,
+          210,
+          56,
+          53
         ]
       },
       "group": "evm",
@@ -8070,6 +8070,26 @@
       "group": "scripting",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "startGasSnapshot",
+        "description": "",
+        "declaration": "function startGasSnapshot() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startGasSnapshot()",
+        "selector": "0xe6b17ea5",
+        "selectorBytes": [
+          230,
+          177,
+          126,
+          165
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -8208,6 +8228,26 @@
         ]
       },
       "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "stopGasSnapshot",
+        "description": "",
+        "declaration": "function stopGasSnapshot() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopGasSnapshot()",
+        "selector": "0x10aa79b7",
+        "selectorBytes": [
+          16,
+          170,
+          121,
+          183
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "unsafe"
     },
