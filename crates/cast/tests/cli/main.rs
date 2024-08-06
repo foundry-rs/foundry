@@ -910,6 +910,40 @@ interface Interface {
     assert_eq!(output.trim(), s);
 });
 
+// tests that fetches WETH interface from etherscan
+// <https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2>
+casttest!(fetch_weth_interface_from_etherscan, |_prj, cmd| {
+    let weth_address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+    let api_key = "ZUB97R31KSYX7NYVW6224Q6EYY6U56H591";
+    cmd.args(["interface", "--etherscan-api-key", api_key, weth_address]);
+    let output = cmd.stdout_lossy();
+
+    let weth_interface = r#"// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+interface WETH9 {
+    event Approval(address indexed src, address indexed guy, uint256 wad);
+    event Deposit(address indexed dst, uint256 wad);
+    event Transfer(address indexed src, address indexed dst, uint256 wad);
+    event Withdrawal(address indexed src, uint256 wad);
+
+    fallback() external payable;
+
+    function allowance(address, address) external view returns (uint256);
+    function approve(address guy, uint256 wad) external returns (bool);
+    function balanceOf(address) external view returns (uint256);
+    function decimals() external view returns (uint8);
+    function deposit() external payable;
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+    function totalSupply() external view returns (uint256);
+    function transfer(address dst, uint256 wad) external returns (bool);
+    function transferFrom(address src, address dst, uint256 wad) external returns (bool);
+    function withdraw(uint256 wad) external;
+}"#;
+    assert_eq!(output.trim(), weth_interface);
+});
+
 const ENS_NAME: &str = "emo.eth";
 const ENS_NAMEHASH: B256 =
     b256!("0a21aaf2f6414aa664deb341d1114351fdb023cad07bf53b28e57c26db681910");

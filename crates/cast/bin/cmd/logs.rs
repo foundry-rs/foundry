@@ -391,9 +391,10 @@ mod tests {
         )
         .err()
         .unwrap()
-        .to_string();
+        .to_string()
+        .to_lowercase();
 
-        assert_eq!(err, "parser error:\n1234\n^\nInvalid string length");
+        assert_eq!(err, "parser error:\n1234\n^\ninvalid string length");
     }
 
     #[test]
@@ -401,9 +402,10 @@ mod tests {
         let err = build_filter(None, None, None, Some("asdasdasd".to_string()), vec![])
             .err()
             .unwrap()
-            .to_string();
+            .to_string()
+            .to_lowercase();
 
-        assert_eq!(err, "Odd number of digits");
+        assert_eq!(err, "odd number of digits");
     }
 
     #[test]
@@ -411,9 +413,10 @@ mod tests {
         let err = build_filter(None, None, None, Some(ADDRESS.to_string()), vec![])
             .err()
             .unwrap()
-            .to_string();
+            .to_string()
+            .to_lowercase();
 
-        assert_eq!(err, "Invalid string length");
+        assert_eq!(err, "invalid string length");
     }
 
     #[test]
@@ -427,8 +430,9 @@ mod tests {
         )
         .err()
         .unwrap()
-        .to_string();
+        .to_string()
+        .to_lowercase();
 
-        assert_eq!(err, "Invalid string length");
+        assert_eq!(err, "invalid string length");
     }
 }
