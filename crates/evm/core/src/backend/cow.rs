@@ -83,8 +83,8 @@ impl<'a> CowBackend<'a> {
     /// Returns whether there was a snapshot failure in the backend.
     ///
     /// This is bubbled up from the underlying Copy-On-Write backend when a revert occurs.
-    pub fn has_snapshot_failure(&self) -> bool {
-        self.backend.has_snapshot_failure()
+    pub fn has_state_snapshot_failure(&self) -> bool {
+        self.backend.has_state_snapshot_failure()
     }
 
     /// Returns a mutable instance of the Backend.
@@ -133,9 +133,9 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         false
     }
 
-    fn delete_snapshots(&mut self) {
+    fn delete_state_snapshots(&mut self) {
         if let Some(backend) = self.initialized_backend_mut() {
-            backend.delete_snapshots()
+            backend.delete_state_snapshots()
         }
     }
 

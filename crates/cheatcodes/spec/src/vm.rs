@@ -499,6 +499,20 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
 
+    // -------- Gas Snapshots --------
+
+    /// Gets the gas used in the last call.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function lastCallGas() external view returns (Gas memory gas);
+
+    /// Start a snapshot capture of the current gas usage.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function startSnapshotGas(string calldata name) external returns (uint256 snapshotId);
+
+    /// Stop the snapshot capture of the current gas usage, capturing the gas used since the start.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function stopSnapshotGas() external returns (bool success);
+
     // -------- State Snapshots --------
 
     /// Snapshot the current state of the evm.
@@ -661,12 +675,6 @@ interface Vm {
     /// Resumes gas metering (i.e. gas usage is counted again). Noop if already on.
     #[cheatcode(group = Evm, safety = Safe)]
     function resumeGasMetering() external;
-
-    // -------- Gas Measurement --------
-
-    /// Gets the gas used in the last call.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function lastCallGas() external view returns (Gas memory gas);
 
     // ======== Test Assertions and Utilities ========
 

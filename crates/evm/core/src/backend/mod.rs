@@ -99,14 +99,14 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         action: RevertSnapshotAction,
     ) -> Option<JournaledState>;
 
-    /// Deletes the snapshot with the given `id`
+    /// Deletes the state snapshot with the given `id`
     ///
     /// Returns `true` if the snapshot was successfully deleted, `false` if no snapshot for that id
     /// exists.
     fn delete_snapshot(&mut self, id: U256) -> bool;
 
-    /// Deletes all snapshots.
-    fn delete_snapshots(&mut self);
+    /// Deletes all state snapshots.
+    fn delete_state_snapshots(&mut self);
 
     /// Creates and also selects a new fork
     ///
@@ -554,9 +554,9 @@ impl Backend {
         }
     }
 
-    /// Returns all snapshots created in this backend
-    pub fn snapshots(&self) -> &Snapshots<BackendSnapshot<BackendDatabaseSnapshot>> {
-        &self.inner.snapshots
+    /// Returns all state snapshots created in this backend.
+    pub fn state_snapshots(&self) -> &Snapshots<BackendSnapshot<BackendDatabaseSnapshot>> {
+        &self.inner.state_snapshots
     }
 
     /// Sets the address of the `DSTest` contract that is being executed
@@ -592,18 +592,18 @@ impl Backend {
         self.inner.caller
     }
 
-    /// Failures occurred in snapshots are tracked when the snapshot is reverted
+    /// Failures occurred in state snapshots are tracked when the snapshot is reverted
     ///
     /// If an error occurs in a restored snapshot, the test is considered failed.
     ///
     /// This returns whether there was a reverted snapshot that recorded an error
-    pub fn has_snapshot_failure(&self) -> bool {
-        self.inner.has_snapshot_failure
+    pub fn has_state_snapshot_failure(&self) -> bool {
+        self.inner.has_state_snapshot_failure
     }
 
     /// Sets the snapshot failure flag.
-    pub fn set_snapshot_failure(&mut self, has_snapshot_failure: bool) {
-        self.inner.has_snapshot_failure = has_snapshot_failure
+    pub fn set_state_snapshot_failure(&mut self, has_state_snapshot_failure: bool) {
+        self.inner.has_state_snapshot_failure = has_state_snapshot_failure
     }
 
     /// When creating or switching forks, we update the AccountInfo of the contract
@@ -904,7 +904,7 @@ impl Backend {
 impl DatabaseExt for Backend {
     fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
         trace!("create snapshot");
-        let id = self.inner.snapshots.insert(BackendSnapshot::new(
+        let id = self.inner.state_snapshots.insert(BackendSnapshot::new(
             self.create_db_snapshot(),
             journaled_state.clone(),
             env.clone(),
@@ -920,11 +920,11 @@ impl DatabaseExt for Backend {
         current: &mut Env,
         action: RevertSnapshotAction,
     ) -> Option<JournaledState> {
-        trace!(?id, "revert snapshot");
-        if let Some(mut snapshot) = self.inner.snapshots.remove_at(id) {
+        trace!(?id, "revert state snapshot");
+        if let Some(mut snapshot) = self.inner.state_snapshots.remove_at(id) {
             // Re-insert snapshot to persist it
             if action.is_keep() {
-                self.inner.snapshots.insert_at(snapshot.clone(), id);
+                self.inner.state_snapshots.insert_at(snapshot.clone(), id);
             }
 
             // https://github.com/foundry-rs/foundry/issues/3055
@@ -934,7 +934,7 @@ impl DatabaseExt for Backend {
             if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS) {
                 if let Some(slot) = account.storage.get(&GLOBAL_FAIL_SLOT) {
                     if !slot.present_value.is_zero() {
-                        self.set_snapshot_failure(true);
+                        self.set_state_snapshot_failure(true);
                     }
                 }
             }
@@ -970,21 +970,21 @@ impl DatabaseExt for Backend {
             }
 
             update_current_env_with_fork_env(current, env);
-            trace!(target: "backend", "Reverted snapshot {}", id);
+            trace!(target: "backend", "Reverted state snapshot {}", id);
 
             Some(journaled_state)
         } else {
-            warn!(target: "backend", "No snapshot to revert for {}", id);
+            warn!(target: "backend", "No state snapshot to revert for {}", id);
             None
         }
     }
 
     fn delete_snapshot(&mut self, id: U256) -> bool {
-        self.inner.snapshots.remove_at(id).is_some()
+        self.inner.state_snapshots.remove_at(id).is_some()
     }
 
-    fn delete_snapshots(&mut self) {
-        self.inner.snapshots.clear()
+    fn delete_state_snapshots(&mut self) {
+        self.inner.state_snapshots.clear()
     }
 
     fn create_fork(&mut self, create_fork: CreateFork) -> eyre::Result<LocalForkId> {
@@ -1594,8 +1594,8 @@ pub struct BackendInner {
     // Note: data is stored in an `Option` so we can remove it without reshuffling
     pub forks: Vec<Option<Fork>>,
     /// Contains snapshots made at a certain point
-    pub snapshots: Snapshots<BackendSnapshot<BackendDatabaseSnapshot>>,
-    /// Tracks whether there was a failure in a snapshot that was reverted
+    pub state_snapshots: Snapshots<BackendSnapshot<BackendDatabaseSnapshot>>,
+    /// Tracks whether there was a failure in a state snapshot that was reverted
     ///
     /// The Test contract contains a bool variable that is set to true when an `assert` function
     /// failed. When a snapshot is reverted, it reverts the state of the evm, but we still want
@@ -1604,7 +1604,7 @@ pub struct BackendInner {
     /// reverted we get the _current_ `revm::JournaledState` which contains the state that we can
     /// check if the `_failed` variable is set,
     /// additionally
-    pub has_snapshot_failure: bool,
+    pub has_state_snapshot_failure: bool,
     /// Tracks the caller of the test function
     pub caller: Option<Address>,
     /// Tracks numeric identifiers for forks
@@ -1791,8 +1791,8 @@ impl Default for BackendInner {
             issued_local_fork_ids: Default::default(),
             created_forks: Default::default(),
             forks: vec![],
-            snapshots: Default::default(),
-            has_snapshot_failure: false,
+            state_snapshots: Default::default(),
+            has_state_snapshot_failure: false,
             caller: None,
             next_fork_id: Default::default(),
             persistent_accounts: Default::default(),

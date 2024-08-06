@@ -395,7 +395,7 @@ impl Executor {
         let mut inspector = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
         let result = backend.inspect(&mut env, &mut inspector)?;
-        convert_executed_result(env, inspector, result, backend.has_snapshot_failure())
+        convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())
     }
 
     /// Execute the transaction configured in `env.tx`.
@@ -405,7 +405,7 @@ impl Executor {
         let backend = self.backend_mut();
         let result = backend.inspect(&mut env, &mut inspector)?;
         let mut result =
-            convert_executed_result(env, inspector, result, backend.has_snapshot_failure())?;
+            convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())?;
         self.commit(&mut result);
         Ok(result)
     }
@@ -513,7 +513,7 @@ impl Executor {
         }
 
         // A failure occurred in a reverted snapshot, which is considered a failed test.
-        if self.backend().has_snapshot_failure() {
+        if self.backend().has_state_snapshot_failure() {
             return false;
         }
 

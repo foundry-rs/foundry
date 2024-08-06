@@ -62,6 +62,15 @@ pub struct DealRecord {
     pub new_balance: U256,
 }
 
+/// Records the `snapshotGas` cheatcodes.
+#[derive(Clone, Debug)]
+pub struct SnapshotGasRecord {
+    /// The name of the snapshot.
+    pub name: String,
+    /// The total gas used in the snapshot.
+    pub gas_used: U256,
+}
+
 impl Cheatcode for addrCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
@@ -221,16 +230,6 @@ impl Cheatcode for resumeGasMeteringCall {
         let Self {} = self;
         state.gas_metering = None;
         Ok(Default::default())
-    }
-}
-
-impl Cheatcode for lastCallGasCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        let Some(last_call_gas) = &state.last_call_gas else {
-            bail!("no external call was made yet");
-        };
-        Ok(last_call_gas.abi_encode())
     }
 }
 
@@ -472,6 +471,30 @@ impl Cheatcode for readCallersCall {
     }
 }
 
+impl Cheatcode for lastCallGasCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        let Some(last_call_gas) = &state.last_call_gas else {
+            bail!("no external call was made yet");
+        };
+        Ok(last_call_gas.abi_encode())
+    }
+}
+
+impl Cheatcode for startSnapshotGasCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name } = self;
+
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for stopSnapshotGasCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for snapshotStateCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
@@ -527,7 +550,7 @@ impl Cheatcode for deleteStateSnapshotCall {
 impl Cheatcode for deleteStateSnapshotsCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        ccx.ecx.db.delete_snapshots();
+        ccx.ecx.db.delete_state_snapshots();
         Ok(Default::default())
     }
 }
