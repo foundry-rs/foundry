@@ -1202,9 +1202,10 @@ impl<'a, W: Write> Formatter<'a, W> {
                 self.source.as_bytes()[loc.with_end(end_of_first_line).range()].to_vec(),
             )
             .map_err(FormatterError::custom)?;
-            self.write_raw(disabled_stmts_src)?;
+            self.write_raw(disabled_stmts_src.trim_end())?;
             // Remove comments as they're already included in disabled src.
             let _ = self.comments.remove_all_comments_before(end_of_first_line);
+            self.write_whitespace_separator(true)?;
 
             // Determine next statement in block after first line.
             next_stmt_pos =
@@ -3100,8 +3101,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                                 )
                                 .map_err(FormatterError::custom)?;
                                 fmt.write_whitespace_separator(false)?;
-                                fmt.write_raw(disabled_stmts_src)?;
+                                fmt.write_raw(disabled_stmts_src.trim_end())?;
                                 let _ = fmt.comments.remove_all_comments_before(end_of_first_line);
+                                fmt.write_whitespace_separator(true)?;
 
                                 // Write function statements after first block line, if any.
                                 let next_stmt_pos = statements
