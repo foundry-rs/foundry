@@ -1,6 +1,6 @@
 name: Bug report
 description: File a bug report
-labels: ["T-bug"]
+labels: ["T-bug", "T-needs-triage"]
 body:
     - type: markdown
       attributes:
