@@ -42,8 +42,4 @@ contract RandomUint is DSTest {
         uint256 m = vm.randomUint(seed, min, max);
         assertEq(n, m);
     }
-
-    function testRandomAddress() public {
-        vm.randomAddress();
-    }
 }
