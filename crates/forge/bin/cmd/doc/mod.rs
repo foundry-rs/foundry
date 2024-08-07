@@ -74,8 +74,8 @@ impl DocArgs {
         let compiler = ProjectCompiler::new().quiet(true);
         let _output = compiler.compile(&project)?;
 
-        let mut doc_config = config.doc.clone();
-        if let Some(out) = self.out.clone() {
+        let mut doc_config = config.doc;
+        if let Some(out) = self.out {
             doc_config.out = out;
         }
         if doc_config.repository.is_none() {
