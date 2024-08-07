@@ -11,10 +11,17 @@ contract RandomUint is DSTest {
         vm.randomUint();
     }
 
-    function testDeterministicRandomUint() public {
+    /// forge-config: default.fuzz.seed = 0x123
+    function testRandomUintWithSeed() public {
         uint256 n = vm.randomUint();
         uint256 m = vm.randomUint();
         assertEq(n, m);
+    }
+
+    function testRandomUintWithoutSeed() public {
+        uint256 n = vm.randomUint();
+        uint256 m = vm.randomUint();
+        vm.assertNotEq(n, m);
     }
 
     function testRandomUintRangeOverflow() public {
@@ -33,7 +40,8 @@ contract RandomUint is DSTest {
         assertTrue(rand <= max, "rand <= max");
     }
 
-    function testDeterministicRandomUintRange(uint256 min, uint256 max) public {
+    /// forge-config: default.fuzz.seed = 0x123
+    function testRandomUintRangeWithSeed(uint256 min, uint256 max) public {
         vm.assume(max >= min);
         uint256 n = vm.randomUint(min, max);
         assertTrue(n >= min, "n >= min");
@@ -41,5 +49,15 @@ contract RandomUint is DSTest {
 
         uint256 m = vm.randomUint(min, max);
         assertEq(n, m);
+    }
+
+    function testRandomUintRangeWithoutSeed(uint256 min, uint256 max) public {
+        vm.assume(max >= min);
+        uint256 n = vm.randomUint(min, max);
+        assertTrue(n >= min, "n >= min");
+        assertTrue(n <= max, "n <= max");
+
+        uint256 m = vm.randomUint(min, max);
+        vm.assertNotEq(n, m);
     }
 }
