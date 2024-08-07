@@ -4,7 +4,7 @@ use crate::inline::{
     parse_config_bool, parse_config_u32, InlineConfigParser, InlineConfigParserError,
     INLINE_CONFIG_FUZZ_KEY,
 };
-use revm_primitives::U256;
+use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -135,8 +135,6 @@ impl Default for FuzzDictionaryConfig {
 
 #[cfg(test)]
 mod tests {
-    use revm_primitives::U256;
-
     use crate::{inline::InlineConfigParser, FuzzConfig};
 
     #[test]
