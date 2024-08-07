@@ -1049,9 +1049,9 @@ Traces:
     ]]);
 });
 
-const DETERMINISTIC_RANDOM_CONTRACT: &str = r#"pragma solidity 0.8.24;
+const DETERMINISTIC_RANDOMNESS_TEST_CONTRACT: &str = r#"pragma solidity 0.8.24;
 import {Test, console2} from "forge-std/Test.sol";
-contract DeterministicRandom is Test {
+contract DeterministicRandomnessTest is Test {
 
     function testDeterministicRandomUint() public {
         uint256 x = vm.randomUint();
@@ -1077,7 +1077,8 @@ contract DeterministicRandom is Test {
 // tests that `forge test` with a seed produces deterministic random values for uint and addresses.
 forgetest_init!(deterministic_random_values_with_seed, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_test("DeterministicRandom.t.sol", DETERMINISTIC_RANDOM_CONTRACT).unwrap();
+    prj.add_test("DeterministicRandomnessTest.t.sol", DETERMINISTIC_RANDOMNESS_TEST_CONTRACT)
+        .unwrap();
 
     // run test with seed, it should succeed
     cmd.args([
@@ -1092,7 +1093,8 @@ forgetest_init!(deterministic_random_values_with_seed, |prj, cmd| {
 // addresses.
 forgetest_init!(non_deterministic_random_values_without_seed, |prj, cmd| {
     prj.wipe_contracts();
-    prj.add_test("DeterministicRandom.t.sol", DETERMINISTIC_RANDOM_CONTRACT).unwrap();
+    prj.add_test("DeterministicRandomnessTest.t.sol", DETERMINISTIC_RANDOMNESS_TEST_CONTRACT)
+        .unwrap();
 
     // run test without seed, it should fail
     cmd.args(["test", "-vv"]).assert_failure().stdout_eq(str![[r#"
