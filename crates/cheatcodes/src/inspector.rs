@@ -933,7 +933,7 @@ impl Cheatcodes {
     }
 
     pub fn rng(&mut self) -> &mut impl Rng {
-        self.rng.get_or_insert(match self.config.seed {
+        self.rng.get_or_insert_with(|| match self.config.seed {
             Some(seed) => StdRng::from_seed(seed.to_be_bytes::<32>()),
             None => StdRng::from_entropy(),
         })
