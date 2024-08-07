@@ -3600,7 +3600,6 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rand",
- "rand_chacha",
  "revm",
  "rustc-hash",
  "semver 1.0.23",
