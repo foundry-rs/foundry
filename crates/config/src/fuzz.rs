@@ -1,8 +1,8 @@
 //! Configuration for fuzz testing.
 
 use crate::inline::{
-    parse_config_bool, parse_config_encoded_u256, parse_config_u32, InlineConfigParser,
-    InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY,
+    parse_config_bool, parse_config_u32, InlineConfigParser, InlineConfigParserError,
+    INLINE_CONFIG_FUZZ_KEY,
 };
 use revm_primitives::U256;
 use serde::{Deserialize, Serialize};
@@ -90,7 +90,6 @@ impl InlineConfigParser for FuzzConfig {
                 }
                 "failure-persist-file" => conf_clone.failure_persist_file = Some(value),
                 "show-logs" => conf_clone.show_logs = parse_config_bool(key, value)?,
-                "seed" => conf_clone.seed = Some(parse_config_encoded_u256(key, value)?),
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
@@ -157,21 +156,12 @@ mod tests {
             "forge-config: default.fuzz.runs = 42424242".to_string(),
             "forge-config: default.fuzz.dictionary-weight = 42".to_string(),
             "forge-config: default.fuzz.failure-persist-file = fuzz-failure".to_string(),
-            "forge-config: default.fuzz.seed = foundry rulez".to_string(),
         ];
         let base_config = FuzzConfig::default();
         let merged: FuzzConfig = base_config.try_merge(configs).expect("No errors").unwrap();
         assert_eq!(merged.runs, 42424242);
         assert_eq!(merged.dictionary.dictionary_weight, 42);
         assert_eq!(merged.failure_persist_file, Some("fuzz-failure".to_string()));
-
-        // The keccak256 hash of "foundry rulez".
-        let seed: [u8; 32] = [
-            0x01, 0x00, 0xfa, 0x69, 0xa5, 0xf1, 0x71, 0x0a, 0x95, 0xcd, 0xef, 0x94, 0x88, 0x9b,
-            0x02, 0x84, 0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d,
-            0x49, 0xee, 0x70, 0xe6,
-        ];
-        assert_eq!(merged.seed, Some(U256::from_be_bytes(seed)));
     }
 
     #[test]
