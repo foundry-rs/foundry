@@ -6,13 +6,10 @@ use foundry_compilers::{solc::Solc, ProjectPathsConfig};
 use foundry_config::Config;
 use parking_lot::Mutex;
 use std::{
-    collections::HashSet,
-    path::PathBuf,
-    sync::{
+    collections::HashSet, env, path::PathBuf, sync::{
         atomic::{AtomicU8, Ordering},
         Arc,
-    },
-    time::Duration,
+    }, time::Duration
 };
 use tokio::process::Command as TokioCommand;
 use watchexec::{
@@ -314,8 +311,12 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir
 pub async fn watch_doc(args: DocArgs) -> Result<()> {
-    //TODO avoid hardcoded path
-    let path_config = ProjectPathsConfig::builder().build_with_root::<Solc>("./");
+    let root_path = if let Some(root_path) = args.root {
+        root_path
+    } else {
+        env::current_dir()?
+    };
+    let path_config = ProjectPathsConfig::builder().build_with_root::<Solc>(root_path);
     let src_path = &path_config.sources;
     let config = args.watch.watchexec_config(|| [src_path])?;
     run(config).await?;
