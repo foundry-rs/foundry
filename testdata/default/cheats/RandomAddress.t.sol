@@ -11,16 +11,9 @@ contract RandomAddress is DSTest {
     vm.randomAddress();
   }
 
-  /// forge-config: default.fuzz.seed = 0x123
-  function testRandomAddressWithSeed() public {
+  function testDeterministicRandomAddress() public {
     address alice = vm.randomAddress();
     address bob = vm.randomAddress();
     assertEq(alice, bob);
-  }
-
-  function testRandomAddressWithoutSeed() public {
-    address alice = vm.randomAddress();
-    address bob = vm.randomAddress();
-    vm.assertNotEq(alice, bob);
   }
 }
