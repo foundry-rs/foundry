@@ -359,7 +359,7 @@ fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
             }
             iter.next();
             if *iter.peek()? == '-' {
-                return None;
+                return None
             }
             Some(iter.any(|c| c == 'w'))
         }
