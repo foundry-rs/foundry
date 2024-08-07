@@ -11,6 +11,12 @@ pub enum InlineConfigParserError {
     /// An error occurred while trying to parse an integer configuration value
     #[error("Invalid config value for key '{0}'. Unable to parse '{1}' into an integer value")]
     ParseInt(String, String),
+    /// An error occurred while trying to parse an unsigned integer configuration value
+    /// (revm_primitives::U256)
+    #[error(
+        "Invalid config value for key '{0}'. Unable to parse '{1}' into an usigned integer value (revm_primitives::U256)"
+    )]
+    ParseU256(String, String),
     /// An error occurred while trying to parse a boolean configuration value
     #[error("Invalid config value for key '{0}'. Unable to parse '{1}' into a boolean value")]
     ParseBool(String, String),
