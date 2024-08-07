@@ -1,6 +1,9 @@
+use std::str::FromStr;
+
 use super::{remove_whitespaces, InlineConfigParserError};
 use crate::{inline::INLINE_CONFIG_PREFIX, InlineConfigError, NatSpec};
 use regex::Regex;
+use revm_primitives::U256;
 
 /// This trait is intended to parse configurations from
 /// structured text. Foundry users can annotate Solidity test functions,
@@ -126,11 +129,8 @@ pub fn parse_config_u32(key: String, value: String) -> Result<u32, InlineConfigP
 pub fn parse_config_encoded_u256(
     key: String,
     value: String,
-) -> Result<revm_primitives::U256, InlineConfigParserError> {
-    value
-        .trim_start_matches("0x")
-        .parse()
-        .map_err(|_| InlineConfigParserError::ParseU256(key, value))
+) -> Result<U256, InlineConfigParserError> {
+    U256::from_str(&value).map_err(|_| InlineConfigParserError::ParseU256(key, value))
 }
 
 /// Tries to parse a `bool` from `value`. The `key` argument is used to give details
