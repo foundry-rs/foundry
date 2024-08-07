@@ -355,7 +355,7 @@ fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
         fn contains_w_in_short(arg: &str) -> Option<bool> {
             let mut iter = arg.chars().peekable();
             if *iter.peek()? != '-' {
-                return None;
+                return None
             }
             iter.next();
             if *iter.peek()? == '-' {
