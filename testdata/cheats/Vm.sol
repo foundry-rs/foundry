@@ -328,6 +328,7 @@ interface Vm {
     function promptSecretUint(string calldata promptText) external returns (uint256);
     function promptUint(string calldata promptText) external returns (uint256);
     function randomAddress() external returns (address);
+    function randomAddress(uint256 seed) external returns (address);
     function randomUint() external returns (uint256);
     function randomUint(uint256 seed) external returns (uint256);
     function randomUint(uint256 min, uint256 max) external returns (uint256);

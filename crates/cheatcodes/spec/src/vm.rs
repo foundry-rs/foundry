@@ -2286,6 +2286,10 @@ interface Vm {
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
     function randomAddress() external returns (address);
+
+    /// Returns a random `address` based on a seed.
+    #[cheatcode(group = Utilities)]
+    function randomAddress(uint256 seed) external returns (address);
 }
 }
 

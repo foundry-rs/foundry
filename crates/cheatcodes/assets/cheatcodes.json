@@ -6633,7 +6633,7 @@
     },
     {
       "func": {
-        "id": "randomAddress",
+        "id": "randomAddress_0",
         "description": "Returns a random `address`.",
         "declaration": "function randomAddress() external returns (address);",
         "visibility": "external",
@@ -6645,6 +6645,26 @@
           190,
           233,
           245
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomAddress_1",
+        "description": "Returns a random `address` based on a seed.",
+        "declaration": "function randomAddress(uint256 seed) external returns (address);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "randomAddress(uint256)",
+        "selector": "0x9237b40b",
+        "selectorBytes": [
+          146,
+          55,
+          180,
+          11
         ]
       },
       "group": "utilities",

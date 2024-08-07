@@ -110,10 +110,20 @@ impl Cheatcode for randomUint_3Call {
     }
 }
 
-impl Cheatcode for randomAddressCall {
+impl Cheatcode for randomAddress_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         let addr = Address::random();
+        Ok(addr.abi_encode())
+    }
+}
+
+impl Cheatcode for randomAddress_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { seed } = self;
+        let seed_bytes: [u8; 32] = seed.to_be_bytes();
+        let mut rng = ChaCha20Rng::from_seed(seed_bytes);
+        let addr = Address::random_with(&mut rng);
         Ok(addr.abi_encode())
     }
 }
