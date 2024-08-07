@@ -360,7 +360,7 @@ impl Cheatcodes {
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
-            rng: Default::default(),
+            rng: None,
         }
     }
 
