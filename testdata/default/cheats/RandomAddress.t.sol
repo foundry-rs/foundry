@@ -10,10 +10,4 @@ contract RandomAddress is DSTest {
   function testRandomAddress() public {
     vm.randomAddress();
   }
-
-  function testDeterministicRandomAddress() public {
-    address alice = vm.randomAddress();
-    address bob = vm.randomAddress();
-    assertEq(alice, bob);
-  }
 }
