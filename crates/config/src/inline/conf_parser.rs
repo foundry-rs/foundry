@@ -121,13 +121,16 @@ pub fn parse_config_u32(key: String, value: String) -> Result<u32, InlineConfigP
     value.parse().map_err(|_| InlineConfigParserError::ParseInt(key, value))
 }
 
-/// Tries to parse a `revm_primitives::U256` from `value`. The `key` argument is used to give
-/// details in the case of an error.
-pub fn parse_config_u256(
+/// Tries to parse an hexadecimal representation of `revm_primitives::U256` from `value`. The `key`
+/// argument is used to give details in the case of an error.
+pub fn parse_config_encoded_u256(
     key: String,
     value: String,
 ) -> Result<revm_primitives::U256, InlineConfigParserError> {
-    value.parse().map_err(|_| InlineConfigParserError::ParseU256(key, value))
+    value
+        .trim_start_matches("0x")
+        .parse()
+        .map_err(|_| InlineConfigParserError::ParseU256(key, value))
 }
 
 /// Tries to parse a `bool` from `value`. The `key` argument is used to give details

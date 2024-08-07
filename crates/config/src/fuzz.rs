@@ -1,7 +1,7 @@
 //! Configuration for fuzz testing.
 
 use crate::inline::{
-    parse_config_bool, parse_config_u256, parse_config_u32, InlineConfigParser,
+    parse_config_bool, parse_config_encoded_u256, parse_config_u32, InlineConfigParser,
     InlineConfigParserError, INLINE_CONFIG_FUZZ_KEY,
 };
 use alloy_primitives::U256;
@@ -90,7 +90,7 @@ impl InlineConfigParser for FuzzConfig {
                 }
                 "failure-persist-file" => conf_clone.failure_persist_file = Some(value),
                 "show-logs" => conf_clone.show_logs = parse_config_bool(key, value)?,
-                "seed" => conf_clone.seed = Some(parse_config_u256(key, value)?),
+                "seed" => conf_clone.seed = Some(parse_config_encoded_u256(key, value)?),
                 _ => Err(InlineConfigParserError::InvalidConfigProperty(key))?,
             }
         }
