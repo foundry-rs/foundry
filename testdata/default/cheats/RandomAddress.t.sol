@@ -11,9 +11,9 @@ contract RandomAddress is DSTest {
     vm.randomAddress();
   }
 
-  function testDeterministicRandomAddress(uint256 seed) public {
-    address alice = vm.randomAddress(seed);
-    address bob = vm.randomAddress(seed);
+  function testDeterministicRandomAddress() public {
+    address alice = vm.randomAddress();
+    address bob = vm.randomAddress();
     assertEq(alice, bob);
   }
 }
