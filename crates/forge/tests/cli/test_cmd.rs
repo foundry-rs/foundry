@@ -1049,37 +1049,35 @@ Traces:
     ]]);
 });
 
-// tests that `forge test` with a seed produces deterministic random values for uint and addresses.
-forgetest_init!(deterministic_random_values_with_seed, |prj, cmd| {
-    prj.wipe_contracts();
-    prj.add_test(
-        "DeterministicRandom.t.sol",
-        r#"pragma solidity 0.8.24;
-        import {Test, console2} from "forge-std/Test.sol";
+const DETERMINISTIC_RANDOM_CONTRACT: &str = r#"pragma solidity 0.8.24;
+    import {Test, console2} from "forge-std/Test.sol";
     contract DeterministicRandom is Test {
 
-      function testDeterministicRandomUint() public {
+        function testDeterministicRandomUint() public {
         uint256 x = vm.randomUint();
         uint256 y = vm.randomUint();
         assertEq(x, y);
-      }
+        }
 
-      function testDeterministicRandomUintRange(uint256 min, uint256 max) public {
+        function testDeterministicRandomUintRange(uint256 min, uint256 max) public {
         vm.assume(max >= min);
         uint256 x = vm.randomUint(min, max);
         uint256 y = vm.randomUint(min, max);
         assertEq(x, y);
-      }
+        }
 
-      function testDeterministicRandomAddress() public {
+        function testDeterministicRandomAddress() public {
         address x = vm.randomAddress();
         address y = vm.randomAddress();
         assertEq(x, y);
-      }
+        }
     }
-     "#,
-    )
-    .unwrap();
+"#;
+
+// tests that `forge test` with a seed produces deterministic random values for uint and addresses.
+forgetest_init!(deterministic_random_values_with_seed, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test("DeterministicRandom.t.sol", DETERMINISTIC_RANDOM_CONTRACT).unwrap();
 
     // run test with seed, it should succeed
     cmd.args([
@@ -1088,7 +1086,18 @@ forgetest_init!(deterministic_random_values_with_seed, |prj, cmd| {
         "0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
     ])
     .assert_success();
+});
+
+// tests that `forge test` without a seed does not produce deterministic random values for uint and
+// addresses.
+forgetest_init!(non_deterministic_random_values_without_seed, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test("DeterministicRandom.t.sol", DETERMINISTIC_RANDOM_CONTRACT).unwrap();
 
     // run test without seed, it should fail
-    cmd.args(["test"]).assert_failure();
+    cmd.args(["test", "-vv"]).assert_failure().stdout_eq(str![[r#"
+...
+Encountered a total of 3 failing tests, 0 tests succeeded
+...
+"#]]);
 });
