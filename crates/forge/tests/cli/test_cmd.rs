@@ -597,7 +597,7 @@ contract GasWaster {
 contract GasLimitTest is Test {
     function test() public {
         vm.createSelectFork("<rpc>");
-        
+
         GasWaster waster = new GasWaster();
         waster.waste();
     }
@@ -613,7 +613,7 @@ contract GasLimitTest is Test {
 forgetest!(test_match_path, |prj, cmd| {
     prj.add_source(
         "dummy",
-        r"  
+        r"
 contract Dummy {
     function testDummy() public {}
 }
@@ -984,14 +984,14 @@ Traces:
     ├─ [22638] SimpleContract::increment()
     │   ├─ [20150] SimpleContract::_setNum(1)
     │   │   └─ ← 0
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [23219] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
     │   ├─ [250] SimpleContract::_setNum(100)
     │   │   └─ ← 1
     │   ├─ [22339] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 ...
 "#]]);
 });
@@ -1042,9 +1042,53 @@ Traces:
     ├─ [2534] SimpleContract::setStr("new value")
     │   ├─ [1600] SimpleContract::_setStr("new value")
     │   │   └─ ← "initial value"
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 ...
 "#
     ]]);
+});
+
+// tests that `forge test` with a seed produces deterministic random values for uint and addresses.
+forgetest_init!(deterministic_random_values_with_seed, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "DeterministicRandom.t.sol",
+        r#"pragma solidity 0.8.24;
+        import {Test, console2} from "forge-std/Test.sol";
+    contract DeterministicRandom is Test {
+
+      function testDeterministicRandomUint() public {
+        uint256 x = vm.randomUint();
+        uint256 y = vm.randomUint();
+        assertEq(x, y);
+      }
+
+      function testDeterministicRandomUintRange(uint256 min, uint256 max) public {
+        vm.assume(max >= min);
+        uint256 x = vm.randomUint(min, max);
+        uint256 y = vm.randomUint(min, max);
+        assertEq(x, y);
+      }
+
+      function testDeterministicRandomAddress() public {
+        address x = vm.randomAddress();
+        address y = vm.randomAddress();
+        assertEq(x, y);
+      }
+    }
+     "#,
+    )
+    .unwrap();
+
+    // run test with seed, it should succeed
+    cmd.args([
+        "test",
+        "--fuzz-seed",
+        "0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+    ])
+    .assert_success();
+
+    // run test without seed, it should fail
+    cmd.args(["test"]).assert_failure();
 });
