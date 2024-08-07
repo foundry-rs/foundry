@@ -5,9 +5,9 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract RandomAddress is DSTest {
-  Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant vm = Vm(HEVM_ADDRESS);
 
-  function testRandomAddress() public {
-    vm.randomAddress();
-  }
+    function testRandomAddress() public {
+        vm.randomAddress();
+    }
 }

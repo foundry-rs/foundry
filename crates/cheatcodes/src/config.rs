@@ -95,7 +95,7 @@ impl CheatsConfig {
             available_artifacts,
             running_version,
             assertions_revert: config.assertions_revert,
-            seed: config.fuzz.seed.clone(),
+            seed: config.fuzz.seed,
         }
     }
 
