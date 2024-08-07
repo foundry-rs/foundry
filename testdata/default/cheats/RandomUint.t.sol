@@ -11,6 +11,12 @@ contract RandomUint is DSTest {
         vm.randomUint();
     }
 
+    function testDeterministicRandomUint(uint256 seed) public {
+        uint256 n = vm.randomUint(seed);
+        uint256 m = vm.randomUint(seed);
+        assertEq(n, m);
+    }
+
     function testRandomUintRangeOverflow() public {
         vm.randomUint(0, uint256(int256(-1)));
     }
@@ -25,6 +31,16 @@ contract RandomUint is DSTest {
         uint256 rand = vm.randomUint(min, max);
         assertTrue(rand >= min, "rand >= min");
         assertTrue(rand <= max, "rand <= max");
+    }
+
+    function testDeterministicRandomUintRange(uint256 seed, uint256 min, uint256 max) public {
+        vm.assume(max >= min);
+        uint256 n = vm.randomUint(seed, min, max);
+        assertTrue(n >= min, "n >= min");
+        assertTrue(n <= max, "n <= max");
+
+        uint256 m = vm.randomUint(seed, min, max);
+        assertEq(n, m);
     }
 
     function testRandomAddress() public {

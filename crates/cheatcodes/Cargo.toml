@@ -63,6 +63,7 @@ thiserror.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }
 tracing.workspace = true
 walkdir.workspace = true
+rand_chacha = "0.3.1"
 
 [dev-dependencies]
 proptest.workspace = true

@@ -329,7 +329,9 @@ interface Vm {
     function promptUint(string calldata promptText) external returns (uint256);
     function randomAddress() external returns (address);
     function randomUint() external returns (uint256);
+    function randomUint(uint256 seed) external returns (uint256);
     function randomUint(uint256 min, uint256 max) external returns (uint256);
+    function randomUint(uint256 seed, uint256 min, uint256 max) external returns (uint256);
     function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
     function readDir(string calldata path) external view returns (DirEntry[] memory entries);
     function readDir(string calldata path, uint64 maxDepth) external view returns (DirEntry[] memory entries);

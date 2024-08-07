@@ -2271,9 +2271,17 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function randomUint() external returns (uint256);
 
+    /// Returns a random uint256 value based on a seed.
+    #[cheatcode(group = Utilities)]
+    function randomUint(uint256 seed) external returns (uint256);
+
     /// Returns random uin256 value between the provided range (=min..=max).
     #[cheatcode(group = Utilities)]
     function randomUint(uint256 min, uint256 max) external returns (uint256);
+
+    /// Returns random uin256 value between the provided range (=min..=max) based on a seed.
+    #[cheatcode(group = Utilities)]
+    function randomUint(uint256 seed, uint256 min, uint256 max) external returns (uint256);
 
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
