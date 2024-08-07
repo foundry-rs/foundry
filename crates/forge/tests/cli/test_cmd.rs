@@ -984,14 +984,14 @@ Traces:
     ├─ [22638] SimpleContract::increment()
     │   ├─ [20150] SimpleContract::_setNum(1)
     │   │   └─ ← 0
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [23219] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
     │   ├─ [250] SimpleContract::_setNum(100)
     │   │   └─ ← 1
     │   ├─ [22339] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 ...
 "#]]);
 });
@@ -1042,8 +1042,8 @@ Traces:
     ├─ [2534] SimpleContract::setStr("new value")
     │   ├─ [1600] SimpleContract::_setStr("new value")
     │   │   └─ ← "initial value"
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 ...
 "#
     ]]);
@@ -1054,28 +1054,32 @@ import {Test, console2} from "forge-std/Test.sol";
 contract DeterministicRandomnessTest is Test {
 
     function testDeterministicRandomUint() public {
-        uint256 x = vm.randomUint();
-        uint256 y = vm.randomUint();
-        assertEq(x, y);
+        // Values computed with seed=0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
+        assertEq(vm.randomUint(), 77081245346511865599562993006478104953925486436965894010918779131974790769683);
+        assertEq(vm.randomUint(), 14542802942652090507428621915178123789774624752096317033652316187323944929692);
+        assertEq(vm.randomUint(), 39147676640426175167070557719485824063633890234647166597297614898342291873676);
     }
 
-    function testDeterministicRandomUintRange(uint256 min, uint256 max) public {
-        vm.assume(max >= min);
-        uint256 x = vm.randomUint(min, max);
-        uint256 y = vm.randomUint(min, max);
-        assertEq(x, y);
+    function testDeterministicRandomUintRange() public {
+        // Values computed with seed=0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
+        uint256 min = 0;
+        uint256 max = 1000000000;
+        assertEq(vm.randomUint(min, max), 151489241);
+        assertEq(vm.randomUint(min, max), 110477840);
+        assertEq(vm.randomUint(min, max), 718247925);
     }
 
     function testDeterministicRandomAddress() public {
-        address x = vm.randomAddress();
-        address y = vm.randomAddress();
-        assertEq(x, y);
+        // Addresses computed with seed=0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2.
+        assertEq(vm.randomAddress(), 0x136c65E70b2d713e61e35722de327EAf2b873177);
+        assertEq(vm.randomAddress(), 0x54907c7459ed556b55706aAa9C09888835fb9533);
+        assertEq(vm.randomAddress(), 0x5622128676a721459a18209e150E48e0d318303B);
     }
 }
 "#;
 
 // tests that `forge test` with a seed produces deterministic random values for uint and addresses.
-forgetest_init!(deterministic_random_values_with_seed, |prj, cmd| {
+forgetest_init!(deterministic_random_values_with_seed_0xa, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test("DeterministicRandomnessTest.t.sol", DETERMINISTIC_RANDOMNESS_TEST_CONTRACT)
         .unwrap();
@@ -1087,6 +1091,27 @@ forgetest_init!(deterministic_random_values_with_seed, |prj, cmd| {
         "0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
     ])
     .assert_success();
+});
+
+// tests that `forge test` with a different seed produces different deterministic random values for
+// uint and addresses.
+forgetest_init!(deterministic_random_values_with_seed_0xb, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test("DeterministicRandomnessTest.t.sol", DETERMINISTIC_RANDOMNESS_TEST_CONTRACT)
+        .unwrap();
+
+    // run test with seed, it should succeed
+    cmd.args([
+        "test",
+        "--fuzz-seed",
+        "0xb1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+...
+Encountered a total of 3 failing tests, 0 tests succeeded
+...
+"#]]);
 });
 
 // tests that `forge test` without a seed does not produce deterministic random values for uint and
