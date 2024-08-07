@@ -116,13 +116,6 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
                             if hits == 0 { "-".to_string() } else { hits.to_string() }
                         )?;
                     }
-                    CoverageItemKind::SinglePathBranch { branch_id } => {
-                        writeln!(
-                            self.destination,
-                            "BRDA:{line},{branch_id},0,{}",
-                            if hits == 0 { "-".to_string() } else { hits.to_string() }
-                        )?;
-                    }
                     // Statements are not in the LCOV format.
                     // We don't add them in order to avoid doubling line hits.
                     _ => {}
