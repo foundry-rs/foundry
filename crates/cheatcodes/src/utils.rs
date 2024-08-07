@@ -5,8 +5,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha20Rng;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 impl Cheatcode for labelCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
@@ -56,31 +55,26 @@ impl Cheatcode for ensNamehashCall {
 }
 
 impl Cheatcode for randomUint_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        // Use thread_rng to get a random number
-        let mut rng = rand::thread_rng();
+        let mut rng = match state.config.seed {
+            Some(seed) => StdRng::from_seed(seed.to_be_bytes::<32>()),
+            None => StdRng::from_entropy(),
+        };
         let random_number: U256 = rng.gen();
         Ok(random_number.abi_encode())
     }
 }
 
 impl Cheatcode for randomUint_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { seed } = self;
-        let seed_bytes: [u8; 32] = seed.to_be_bytes();
-        let mut rng = ChaCha20Rng::from_seed(seed_bytes);
-        let random_number: U256 = rng.gen();
-        Ok(random_number.abi_encode())
-    }
-}
-
-impl Cheatcode for randomUint_2Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { min, max } = *self;
         ensure!(min <= max, "min must be less than or equal to max");
         // Generate random between range min..=max
-        let mut rng = rand::thread_rng();
+        let mut rng = match state.config.seed {
+            Some(seed) => StdRng::from_seed(seed.to_be_bytes::<32>()),
+            None => StdRng::from_entropy(),
+        };
         let exclusive_modulo = max - min;
         let mut random_number = rng.gen::<U256>();
         if exclusive_modulo != U256::MAX {
@@ -92,37 +86,13 @@ impl Cheatcode for randomUint_2Call {
     }
 }
 
-impl Cheatcode for randomUint_3Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { seed, min, max } = *self;
-        ensure!(min <= max, "min must be less than or equal to max");
-        // Generate random between range min..=max
-        let seed_bytes: [u8; 32] = seed.to_be_bytes();
-        let mut rng = ChaCha20Rng::from_seed(seed_bytes);
-        let exclusive_modulo = max - min;
-        let mut random_number = rng.gen::<U256>();
-        if exclusive_modulo != U256::MAX {
-            let inclusive_modulo = exclusive_modulo + U256::from(1);
-            random_number %= inclusive_modulo;
-        }
-        random_number += min;
-        Ok(random_number.abi_encode())
-    }
-}
-
-impl Cheatcode for randomAddress_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for randomAddressCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        let addr = Address::random();
-        Ok(addr.abi_encode())
-    }
-}
-
-impl Cheatcode for randomAddress_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { seed } = self;
-        let seed_bytes: [u8; 32] = seed.to_be_bytes();
-        let mut rng = ChaCha20Rng::from_seed(seed_bytes);
+        let mut rng = match state.config.seed {
+            Some(seed) => StdRng::from_seed(seed.to_be_bytes::<32>()),
+            None => StdRng::from_entropy(),
+        };
         let addr = Address::random_with(&mut rng);
         Ok(addr.abi_encode())
     }

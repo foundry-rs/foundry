@@ -6633,7 +6633,7 @@
     },
     {
       "func": {
-        "id": "randomAddress_0",
+        "id": "randomAddress",
         "description": "Returns a random `address`.",
         "declaration": "function randomAddress() external returns (address);",
         "visibility": "external",
@@ -6645,26 +6645,6 @@
           190,
           233,
           245
-        ]
-      },
-      "group": "utilities",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "randomAddress_1",
-        "description": "Returns a random `address` based on a seed.",
-        "declaration": "function randomAddress(uint256 seed) external returns (address);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "randomAddress(uint256)",
-        "selector": "0x9237b40b",
-        "selectorBytes": [
-          146,
-          55,
-          180,
-          11
         ]
       },
       "group": "utilities",
@@ -6694,26 +6674,6 @@
     {
       "func": {
         "id": "randomUint_1",
-        "description": "Returns a random uint256 value based on a seed.",
-        "declaration": "function randomUint(uint256 seed) external returns (uint256);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "randomUint(uint256)",
-        "selector": "0xcf81e69c",
-        "selectorBytes": [
-          207,
-          129,
-          230,
-          156
-        ]
-      },
-      "group": "utilities",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "randomUint_2",
         "description": "Returns random uin256 value between the provided range (=min..=max).",
         "declaration": "function randomUint(uint256 min, uint256 max) external returns (uint256);",
         "visibility": "external",
@@ -6725,26 +6685,6 @@
           27,
           5,
           27
-        ]
-      },
-      "group": "utilities",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "randomUint_3",
-        "description": "Returns random uin256 value between the provided range (=min..=max) based on a seed.",
-        "declaration": "function randomUint(uint256 seed, uint256 min, uint256 max) external returns (uint256);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "randomUint(uint256,uint256,uint256)",
-        "selector": "0x75e579fe",
-        "selectorBytes": [
-          117,
-          229,
-          121,
-          254
         ]
       },
       "group": "utilities",
