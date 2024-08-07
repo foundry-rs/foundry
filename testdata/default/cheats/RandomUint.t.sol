@@ -33,12 +33,9 @@ contract RandomUint is DSTest {
         assertTrue(rand <= max, "rand <= max");
     }
 
-    function testDeterministicRandomUintRangeEqual(uint256 min, uint256 max) public {
+    function testDeterministicRandomUintRange(uint256 min, uint256 max) public {
         vm.assume(max >= min);
         uint256 n = vm.randomUint(min, max);
-        assertTrue(n >= min, "n >= min");
-        assertTrue(n <= max, "n <= max");
-
         uint256 m = vm.randomUint(min, max);
         assertEq(n, m);
     }
