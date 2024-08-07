@@ -313,7 +313,7 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     Ok(())
 }
 
-/// Executes a [`Watchexec`] that listens for changes in the project's src dir
+/// Executes a [`Watchexec`] that listens for changes in the project's sources directory
 pub async fn watch_doc(args: DocArgs) -> Result<()> {
     let root_path = if let Some(root_path) = args.root { root_path } else { env::current_dir()? };
     let path_config = ProjectPathsConfig::builder().build_with_root::<Solc>(root_path);
