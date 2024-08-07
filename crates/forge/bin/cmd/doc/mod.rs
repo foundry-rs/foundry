@@ -134,7 +134,7 @@ impl DocArgs {
         Ok(())
     }
 
-    /// Returns whether was configured with `--watch`
+    /// Returns whether watch mode is enabled
     pub fn is_watch(&self) -> bool {
         self.watch.watch.is_some()
     }
