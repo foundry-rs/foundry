@@ -6,9 +6,9 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::RpcOpts,
-    utils::{handle_traces, init_progress, TraceResult},
+    utils::{cache_local_signatures, handle_traces, init_progress, TraceResult},
 };
-use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{compile::ProjectCompiler, is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
@@ -75,6 +75,13 @@ pub struct RunArgs {
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
+
+    /// If generate a file with the signatures of the functions and events of the project.
+    /// The file will be saved in the foundry cache directory.
+    ///
+    /// default value: false
+    #[arg(long, short = 'c', visible_alias = "cls")]
+    pub cache_local_signatures: bool,
 }
 
 impl RunArgs {
@@ -160,7 +167,7 @@ impl RunArgs {
                 pb.set_position(0);
 
                 let BlockTransactions::Full(txs) = block.transactions else {
-                    return Err(eyre::eyre!("Could not get block txs"))
+                    return Err(eyre::eyre!("Could not get block txs"));
                 };
 
                 for (index, tx) in txs.into_iter().enumerate() {
@@ -224,6 +231,18 @@ impl RunArgs {
                 TraceResult::try_from(executor.deploy_with_env(env, None))?
             }
         };
+
+        if self.cache_local_signatures {
+            let project = config.project()?;
+            let compiler = ProjectCompiler::new().quiet(true);
+            let output = compiler.compile(&project)?;
+            if let Err(err) = cache_local_signatures(&output, Config::foundry_cache_dir().unwrap())
+            {
+                warn!(target: "cast::run", ?err, "failed to flush signature cache");
+            } else {
+                trace!(target: "cast::run", "flushed signature cache")
+            }
+        }
 
         handle_traces(result, &config, chain, self.label, self.debug, self.decode_internal).await?;
 

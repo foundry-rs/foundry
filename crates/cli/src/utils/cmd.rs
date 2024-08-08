@@ -16,7 +16,7 @@ use foundry_evm::{
     traces::{
         debug::DebugTraceIdentifier,
         decode_trace_arena,
-        identifier::{EtherscanIdentifier, SignaturesIdentifier},
+        identifier::{CachedSignatures, EtherscanIdentifier, SignaturesIdentifier},
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
@@ -161,7 +161,7 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return matches!(
+        return matches! (
             chain,
             NamedChain::Acala |
                 NamedChain::AcalaMandalaTestnet |
@@ -433,5 +433,27 @@ pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) 
     }
 
     println!("Gas used: {}", result.gas_used);
+    Ok(())
+}
+
+/// Traverse the artifacts in the project to generate local signatures and merge them into the cache
+/// file.
+pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
+    let path = cache_path.join("signatures");
+    let mut cached_signatures = CachedSignatures::load(cache_path.clone());
+    output.artifacts().for_each(|(_, artifact)| {
+        if let Some(abi) = &artifact.abi {
+            for func in abi.functions() {
+                cached_signatures.functions.insert(func.selector().to_string(), func.signature());
+            }
+            for event in abi.events() {
+                cached_signatures
+                    .events
+                    .insert(event.selector().to_string(), event.full_signature());
+            }
+        }
+    });
+
+    fs::write_json_file(&path, &cached_signatures)?;
     Ok(())
 }
