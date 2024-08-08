@@ -30,7 +30,6 @@ contract HelloWorld {
     *  
      * Let's find out.
      */
-        uint256 a;
     }
 
     /** @dev Calculates a rectangle's surface and perimeter.

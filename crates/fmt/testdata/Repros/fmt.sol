@@ -40,12 +40,11 @@ contract Format {
 }
 
 // https://github.com/foundry-rs/foundry/issues/3830
-contract TestContract is Test {
-    function test() public {
-        assembly {
-            sstore(1, 1)
-            sstore(2, 2)
-        }// forgefmt: disable-line
+contract TestContract {
+    function test(uint256 a) public {
+        if (a > 1) {
+            a = 2;
+        } // forgefmt: disable-line
     }
 
     function test1() public {

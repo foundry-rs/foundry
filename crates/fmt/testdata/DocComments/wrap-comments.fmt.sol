@@ -35,7 +35,6 @@ contract HelloWorld {
          *
          * Let's find out.
          */
-        uint256 a;
     }
 
     /**

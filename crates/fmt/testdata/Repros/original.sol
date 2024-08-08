@@ -40,20 +40,20 @@ contract Format {
 }
 
 // https://github.com/foundry-rs/foundry/issues/3830
-contract TestContract is Test {
-    function test() public {
-        assembly { sstore(   1,    1)
-            sstore(2,    2)
-        }// forgefmt: disable-line
+contract TestContract {
+    function test(uint256 a) public {
+        if (a > 1) {
+            a = 2;
+        } // forgefmt: disable-line
     }
 
-   function test1() public {
+    function test1() public {
         assembly { sstore(   1,    1) /* inline comment*/ // forgefmt: disable-line
             sstore(2,    2)
         }
     }
 
-   function test2() public {
+    function test2() public {
         assembly { sstore(   1,    1) // forgefmt: disable-line
             sstore(2,    2)
             sstore(3,    3) // forgefmt: disable-line
@@ -61,7 +61,7 @@ contract TestContract is Test {
         }
     }
 
-   function test3() public {
+    function test3() public {
         // forgefmt: disable-next-line
         assembly{ sstore(   1,    1)
             sstore(2,    2)
@@ -70,7 +70,7 @@ contract TestContract is Test {
         }// forgefmt: disable-line
     }
 
-   function test4() public {
+    function test4() public {
         // forgefmt: disable-next-line
                   assembly {
             sstore(   1,    1)
@@ -81,9 +81,9 @@ contract TestContract is Test {
         if (condition) execute(); // comment7
     }
 
-   function test5() public {
+    function test5() public {
          assembly { sstore(0, 0) }// forgefmt: disable-line
-   }
+    }
 
     function test6() returns (bool) { // forgefmt: disable-line
         if (  true  ) {  // forgefmt: disable-line
