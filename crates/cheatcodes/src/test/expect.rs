@@ -585,7 +585,7 @@ pub(crate) fn handle_expect_revert(
         Ok(success_return())
     } else {
         let stringify = |data: &[u8]| {
-            if let Ok(s) = String::abi_decode(data, false) {
+            if let Ok(s) = String::abi_decode(data, true) {
                 return s;
             }
             if data.is_ascii() {
