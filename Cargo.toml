@@ -164,8 +164,8 @@ solang-parser = "=0.3.3"
 
 ## revm
 # no default features to avoid c-kzg
-revm = { version = "12.1.0", default-features = false }
-revm-primitives = { version = "7.1.0", default-features = false }
+revm = { version = "13.0.0", default-features = false }
+revm-primitives = { version = "8.0.0", default-features = false }
 revm-inspectors = { version = "0.5", features = ["serde"] }
 
 ## ethers
