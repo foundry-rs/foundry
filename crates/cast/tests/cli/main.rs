@@ -3,7 +3,7 @@
 use alloy_primitives::{address, b256, Address, B256};
 use foundry_test_utils::{
     casttest,
-    rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint},
+    rpc::{next_http_rpc_endpoint, next_mainnet_etherscan_api_key, next_ws_rpc_endpoint},
     str,
     util::OutputExt,
 };
@@ -752,72 +752,82 @@ casttest!(send_requires_to, |_prj, cmd| {
         "send",
         "--private-key",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
-    ]);
-    let output = cmd.stderr_lossy();
-    assert_eq!(
-        output.trim(),
-        "Error: \nMust specify a recipient address or contract code to deploy"
-    );
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: 
+Must specify a recipient address or contract code to deploy
+
+"#]]);
 });
 
 casttest!(storage, |_prj, cmd| {
-    let empty = "0x0000000000000000000000000000000000000000000000000000000000000000";
+    let rpc = next_http_rpc_endpoint();
+    cmd.cast_fuse()
+        .args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000000
+
+"#]]);
 
     let rpc = next_http_rpc_endpoint();
-    cmd.cast_fuse().args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc]);
-    assert_eq!(cmd.stdout_lossy().trim(), empty);
+    cmd.cast_fuse()
+        .args(["storage", "vitalik.eth", "0x01", "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000000
 
-    let rpc = next_http_rpc_endpoint();
-    cmd.cast_fuse().args(["storage", "vitalik.eth", "0x01", "--rpc-url", &rpc]);
-    assert_eq!(cmd.stdout_lossy().trim(), empty);
+"#]]);
 
     let rpc = next_http_rpc_endpoint();
     let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
     let decimals_slot = "0x09";
-    let six = "0x0000000000000000000000000000000000000000000000000000000000000006";
-    cmd.cast_fuse().args(["storage", usdt, decimals_slot, "--rpc-url", &rpc]);
-    assert_eq!(cmd.stdout_lossy().trim(), six);
+    cmd.cast_fuse()
+        .args(["storage", usdt, decimals_slot, "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000006
+
+"#]]);
 
     let rpc = next_http_rpc_endpoint();
     let total_supply_slot = "0x01";
-    let issued = "0x000000000000000000000000000000000000000000000000000000174876e800";
     let block_before = "4634747";
     let block_after = "4634748";
-    cmd.cast_fuse().args([
-        "storage",
-        usdt,
-        total_supply_slot,
-        "--rpc-url",
-        &rpc,
-        "--block",
-        block_before,
-    ]);
-    assert_eq!(cmd.stdout_lossy().trim(), empty);
-    cmd.cast_fuse().args([
-        "storage",
-        usdt,
-        total_supply_slot,
-        "--rpc-url",
-        &rpc,
-        "--block",
-        block_after,
-    ]);
-    assert_eq!(cmd.stdout_lossy().trim(), issued);
+    cmd.cast_fuse()
+        .args(["storage", usdt, total_supply_slot, "--rpc-url", &rpc, "--block", block_before])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000000
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["storage", usdt, total_supply_slot, "--rpc-url", &rpc, "--block", block_after])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000174876e800
+
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
 casttest!(storage_layout, |_prj, cmd| {
-    cmd.cast_fuse().args([
-        "storage",
-        "--rpc-url",
-        "https://mainnet.optimism.io",
-        "--block",
-        "110000000",
-        "--etherscan-api-key",
-        "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
-        "0xB67c152E69217b5aCB85A2e19dF13423351b0E27",
-    ]);
-    let output = r#"| Name                          | Type                                                            | Slot | Offset | Bytes | Value                                             | Hex Value                                                          | Contract                                           |
+    cmd.cast_fuse()
+        .args([
+            "storage",
+            "--rpc-url",
+            "https://mainnet.optimism.io",
+            "--block",
+            "110000000",
+            "--etherscan-api-key",
+            "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
+            "0xB67c152E69217b5aCB85A2e19dF13423351b0E27",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+| Name                          | Type                                                            | Slot | Offset | Bytes | Value                                             | Hex Value                                                          | Contract                                           |
 |-------------------------------|-----------------------------------------------------------------|------|--------|-------|---------------------------------------------------|--------------------------------------------------------------------|----------------------------------------------------|
 | gov                           | address                                                         | 0    | 0      | 20    | 1352965747418285184211909460723571462248744342032 | 0x000000000000000000000000ecfd15165d994c2766fbe0d6bacdc2e8dedfd210 | contracts/perp/PositionManager.sol:PositionManager |
 | _status                       | uint256                                                         | 1    | 0      | 32    | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
@@ -845,13 +855,14 @@ casttest!(storage_layout, |_prj, cmd| {
 | closePositionRequests         | mapping(bytes32 => struct PositionManager.ClosePositionRequest) | 20   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
 | managers                      | mapping(address => bool)                                        | 21   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
 | approvedManagers              | mapping(address => mapping(address => bool))                    | 22   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
-"#;
-    assert_eq!(cmd.stdout_lossy(), output);
+
+"#]]);
 });
 
 casttest!(balance, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+
     cmd.cast_fuse().args([
         "balance",
         "0x0000000000000000000000000000000000000000",
@@ -860,6 +871,8 @@ casttest!(balance, |_prj, cmd| {
         "--rpc-url",
         &rpc,
     ]);
+    let usdt_result = cmd.stdout_lossy();
+
     cmd.cast_fuse().args([
         "balance",
         "0x0000000000000000000000000000000000000000",
@@ -868,8 +881,6 @@ casttest!(balance, |_prj, cmd| {
         "--rpc-url",
         &rpc,
     ]);
-
-    let usdt_result = cmd.stdout_lossy();
     let alias_result = cmd.stdout_lossy();
 
     assert_ne!(usdt_result, "0x0000000000000000000000000000000000000000000000000000000000000000");
@@ -879,18 +890,14 @@ casttest!(balance, |_prj, cmd| {
 // tests that `cast interface` excludes the constructor
 // <https://github.com/alloy-rs/core/issues/555>
 casttest!(interface_no_constructor, |prj, cmd| {
-    let interface = include_str!("../fixtures/interface.json");
-
-    let path = prj.root().join("interface.json");
-    fs::write(&path, interface).unwrap();
-    // Call `cast find-block`
-    cmd.args(["interface"]).arg(&path);
-    let output = cmd.stdout_lossy();
-
-    let s = r#"// SPDX-License-Identifier: UNLICENSED
+    let path = prj.root().join("IIntegrationManager.json");
+    fs::write(&path, include_str!("../fixtures/IIntegrationManager.json")).unwrap();
+    cmd.args(["interface", "--name", "IIntegrationManager"]).arg(&path).assert_success().stdout_eq(
+        str![[r#"
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
-interface Interface {
+interface IIntegrationManager {
     type SpendAssetsHandleType is uint8;
 
     function getIntegrationManager() external view returns (address integrationManager_);
@@ -906,19 +913,24 @@ interface Interface {
             uint256[] memory minIncomingAssetAmounts_
         );
     function redeem(address _vaultProxy, bytes memory, bytes memory _assetData) external;
-}"#;
-    assert_eq!(output.trim(), s);
+}
+
+"#]],
+    );
 });
 
 // tests that fetches WETH interface from etherscan
 // <https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2>
 casttest!(fetch_weth_interface_from_etherscan, |_prj, cmd| {
-    let weth_address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
-    let api_key = "ZUB97R31KSYX7NYVW6224Q6EYY6U56H591";
-    cmd.args(["interface", "--etherscan-api-key", api_key, weth_address]);
-    let output = cmd.stdout_lossy();
-
-    let weth_interface = r#"// SPDX-License-Identifier: UNLICENSED
+    cmd.args([
+        "interface",
+        "--etherscan-api-key",
+        &next_mainnet_etherscan_api_key(),
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
 interface WETH9 {
@@ -940,8 +952,9 @@ interface WETH9 {
     function transfer(address dst, uint256 wad) external returns (bool);
     function transferFrom(address src, address dst, uint256 wad) external returns (bool);
     function withdraw(uint256 wad) external;
-}"#;
-    assert_eq!(output.trim(), weth_interface);
+}
+
+"#]]);
 });
 
 const ENS_NAME: &str = "emo.eth";

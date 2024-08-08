@@ -264,3 +264,13 @@ soldeer = "0.2.19"
 
 proptest = "1"
 comfy-table = "7"
+
+[patch.crates-io]
+alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", branch = "dani/to-sol-contract-specifiers" }
+alloy-json-abi = { git = "https://github.com/alloy-rs/core", branch = "dani/to-sol-contract-specifiers" }
+alloy-primitives = { git = "https://github.com/alloy-rs/core", branch = "dani/to-sol-contract-specifiers" }
+alloy-sol-macro = { git = "https://github.com/alloy-rs/core", branch = "dani/to-sol-contract-specifiers" }
+alloy-sol-macro-expander = { git = "https://github.com/alloy-rs/core", branch = "dani/to-sol-contract-specifiers" }
+alloy-sol-macro-input = { git = "https://github.com/alloy-rs/core", branch = "dani/to-sol-contract-specifiers" }
+alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core", branch = "dani/to-sol-contract-specifiers" }
+alloy-sol-types = { git = "https://github.com/alloy-rs/core", branch = "dani/to-sol-contract-specifiers" }

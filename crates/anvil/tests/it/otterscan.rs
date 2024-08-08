@@ -1,6 +1,6 @@
 //! Tests for otterscan endpoints.
 
-use crate::abi::MulticallContract;
+use crate::abi::Multicall;
 use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -37,13 +37,8 @@ async fn ots_get_internal_operations_contract_deploy() {
     let provider = handle.http_provider();
     let sender = handle.dev_accounts().next().unwrap();
 
-    let contract_receipt = MulticallContract::deploy_builder(&provider)
-        .send()
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+    let contract_receipt =
+        Multicall::deploy_builder(&provider).send().await.unwrap().get_receipt().await.unwrap();
 
     let res = api.ots_get_internal_operations(contract_receipt.transaction_hash).await.unwrap();
     assert_eq!(
@@ -181,7 +176,7 @@ async fn ots_has_code() {
     // no code in the address before deploying
     assert!(!api.ots_has_code(contract_address, BlockNumberOrTag::Number(1)).await.unwrap());
 
-    let contract_builder = MulticallContract::deploy_builder(&provider);
+    let contract_builder = Multicall::deploy_builder(&provider);
     let contract_receipt = contract_builder.send().await.unwrap().get_receipt().await.unwrap();
 
     let num = provider.get_block_number().await.unwrap();
@@ -501,13 +496,8 @@ async fn ots_get_contract_creator() {
     let provider = handle.http_provider();
     let sender = handle.dev_accounts().next().unwrap();
 
-    let receipt = MulticallContract::deploy_builder(&provider)
-        .send()
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+    let receipt =
+        Multicall::deploy_builder(&provider).send().await.unwrap().get_receipt().await.unwrap();
     let contract_address = receipt.contract_address.unwrap();
 
     let creator = api.ots_get_contract_creator(contract_address).await.unwrap().unwrap();

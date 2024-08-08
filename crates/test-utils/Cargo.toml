@@ -35,6 +35,10 @@ walkdir.workspace = true
 rand.workspace = true
 snapbox = { version = "0.6.9", features = ["json"] }
 
+[dev-dependencies]
+tokio.workspace = true
+foundry-block-explorers.workspace = true
+
 [features]
 # feature for integration tests that test external projects
 external-integration-tests = []
