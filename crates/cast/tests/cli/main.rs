@@ -691,10 +691,14 @@ casttest!(mktx_signer_from_mismatch, |_prj, cmd| {
         "1",
         "0x0000000000000000000000000000000000000001",
     ]);
-    let output = cmd.stderr_lossy();
-    assert!(
-        output.contains("The specified sender via CLI/env vars does not match the sender configured via\nthe hardware wallet's HD Path.")
-    );
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: 
+The specified sender via CLI/env vars does not match the sender configured via
+the hardware wallet's HD Path.
+Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
+corresponds to the sender, or let foundry automatically detect it by not specifying any sender address.
+
+"#]]);
 });
 
 casttest!(mktx_signer_from_match, |_prj, cmd| {
@@ -761,11 +765,11 @@ casttest!(send_requires_to, |_prj, cmd| {
         "--private-key",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
     ]);
-    let output = cmd.stderr_lossy();
-    assert_eq!(
-        output.trim(),
-        "Error: \nMust specify a recipient address or contract code to deploy"
-    );
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: 
+Must specify a recipient address or contract code to deploy
+
+"#]]);
 });
 
 casttest!(storage, |_prj, cmd| {

@@ -898,14 +898,6 @@ impl TestCommand {
         lossy_string(&self.output().stdout)
     }
 
-    /// Executes the command and returns the stderr as lossy `String`.
-    ///
-    /// **Note**: This function does **not** check whether the command was successful.
-    #[track_caller]
-    pub fn stderr_lossy(&mut self) -> String {
-        lossy_string(&self.unchecked_output().stderr)
-    }
-
     /// Returns the output but does not expect that the command was successful
     #[track_caller]
     pub fn unchecked_output(&mut self) -> Output {
@@ -1083,9 +1075,6 @@ pub trait OutputExt {
     /// Ensure the command wrote the expected data to `stderr`.
     fn stderr_matches_path(&self, expected_path: impl AsRef<Path>);
 
-    /// Returns the stderr as lossy string
-    fn stderr_lossy(&self) -> String;
-
     /// Returns the stdout as lossy string
     fn stdout_lossy(&self) -> String;
 }
@@ -1134,10 +1123,6 @@ impl OutputExt for Output {
         let expected = fs::read_to_string(expected_path).unwrap();
         let err = lossy_string(&self.stderr);
         similar_asserts::assert_eq!(normalize_output(&err), normalize_output(&expected));
-    }
-
-    fn stderr_lossy(&self) -> String {
-        lossy_string(&self.stderr)
     }
 
     fn stdout_lossy(&self) -> String {

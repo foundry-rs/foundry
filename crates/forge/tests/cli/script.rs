@@ -125,10 +125,11 @@ forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
     cmd.arg("script").arg(script);
 
     // run command and assert error exit code
-    cmd.assert_err();
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: 
+script failed: revert: failed
 
-    let output = cmd.stderr_lossy();
-    assert!(output.contains("script failed: revert: failed"));
+"#]]);
 });
 
 // Tests that execution throws upon encountering a revert in the script with --json option.
@@ -141,10 +142,11 @@ forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| 
     cmd.arg("script").arg(script).arg("--json");
 
     // run command and assert error exit code
-    cmd.assert_err();
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: 
+script failed: revert: failed
 
-    let output = cmd.stderr_lossy();
-    assert!(output.contains("script failed: revert: failed"));
+"#]]);
 });
 
 // Tests that the manually specified gas limit is used when using the --unlocked option
@@ -1192,7 +1194,11 @@ contract Script {
         .unwrap();
 
     cmd.arg("script").args([&script.to_string_lossy(), "--sig", "run"]);
-    assert!(cmd.stderr_lossy().contains("Multiple functions with the same name"));
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: 
+Multiple functions with the same name `run` found in the ABI
+
+"#]]);
 });
 
 forgetest_async!(can_decode_custom_errors, |prj, cmd| {
@@ -1226,7 +1232,10 @@ contract CustomErrorScript is Script {
         .unwrap();
 
     cmd.arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
-    assert!(cmd.stderr_lossy().contains("script failed: CustomError()"));
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: 
+script failed: CustomError()
+"#]]);
 });
 
 // https://github.com/foundry-rs/foundry/issues/7620
@@ -1352,8 +1361,10 @@ contract SimpleScript is Script {
         "--unlocked",
     ]);
 
-    let output = cmd.stderr_lossy();
-    assert!(output.contains("missing CREATE2 deployer"));
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: 
+script failed: missing CREATE2 deployer
+"#]]);
 });
 
 forgetest_async!(can_switch_forks_in_setup, |prj, cmd| {
