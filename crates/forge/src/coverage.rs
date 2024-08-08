@@ -109,17 +109,10 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
                     CoverageItemKind::Line => {
                         writeln!(self.destination, "DA:{line},{hits}")?;
                     }
-                    CoverageItemKind::Branch { branch_id, path_id } => {
+                    CoverageItemKind::Branch { branch_id, path_id, .. } => {
                         writeln!(
                             self.destination,
                             "BRDA:{line},{branch_id},{path_id},{}",
-                            if hits == 0 { "-".to_string() } else { hits.to_string() }
-                        )?;
-                    }
-                    CoverageItemKind::SinglePathBranch { branch_id } => {
-                        writeln!(
-                            self.destination,
-                            "BRDA:{line},{branch_id},0,{}",
                             if hits == 0 { "-".to_string() } else { hits.to_string() }
                         )?;
                     }
