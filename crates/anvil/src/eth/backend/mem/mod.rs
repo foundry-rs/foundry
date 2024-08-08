@@ -1758,7 +1758,6 @@ impl Backend {
                 },
             };
 
-        dbg!(current, requested);
         if requested > current {
             Err(BlockchainError::BlockOutOfRange(current, requested))
         } else {
