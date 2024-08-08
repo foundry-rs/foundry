@@ -90,8 +90,7 @@ function testFunc(uint256   num, bytes32 data  ,    address receiver)
 
 function testAttrs(uint256 num, bytes32 data, address receiver)
     // forgefmt: disable-next-line
-    public payable    attr1   Cool( "hello"   )
-{}
+    public payable    attr1   Cool( "hello"   ) {}
 
 // forgefmt: disable-next-line
 function testParams(uint256   num, bytes32 data  ,    address receiver)
