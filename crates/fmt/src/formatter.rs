@@ -246,6 +246,17 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Write unformatted src and comments for given location.
+    fn write_raw_src(&mut self, loc: Loc) -> Result<()> {
+        let disabled_stmts_src = String::from_utf8(self.source.as_bytes()[loc.range()].to_vec())
+            .map_err(FormatterError::custom)?;
+        self.write_raw(disabled_stmts_src.trim_end())?;
+        self.write_whitespace_separator(true)?;
+        // Remove comments as they're already included in disabled src.
+        let _ = self.comments.remove_all_comments_before(loc.end());
+        Ok(())
+    }
+
     /// Returns number of blank lines in source between two byte indexes
     fn blank_lines(&self, start: usize, end: usize) -> usize {
         // because of sorting import statements, start can be greater than end
@@ -1192,22 +1203,114 @@ impl<'a, W: Write> Formatter<'a, W> {
             }
         }
 
-        write_chunk!(self, "{{")?;
+        // Determine if any of start / end of the block is disabled and block lines boundaries.
+        let is_start_disabled = self.inline_config.is_disabled(loc.with_end(loc.start()));
+        let is_end_disabled = self.inline_config.is_disabled(loc.with_start(loc.end()));
+        let end_of_first_line = self.find_next_line(loc.start()).unwrap_or_default();
+        let end_of_last_line = self.find_next_line(loc.end()).unwrap_or_default();
 
-        if let Some(statement) = statements.first() {
-            self.write_whitespace_separator(true)?;
-            self.write_postfix_comments_before(CodeLocation::loc(statement).start())?;
+        // Write first line of the block:
+        // - as it is until the end of line, if format disabled
+        // - start block if line formatted
+        if is_start_disabled {
+            self.write_raw_src(loc.with_end(end_of_first_line))?;
+        } else {
+            write_chunk!(self, "{{")?;
         }
 
-        self.indented(1, |fmt| {
-            fmt.write_lined_visitable(loc, statements.iter_mut(), |_, _| false)?;
-            Ok(())
-        })?;
+        // Write comments and close block if no statement.
+        if statements.is_empty() {
+            self.indented(1, |fmt| {
+                fmt.write_prefix_comments_before(loc.end())?;
+                fmt.write_postfix_comments_before(loc.end())?;
+                Ok(())
+            })?;
 
-        if !statements.is_empty() {
+            write_chunk!(self, "}}")?;
+            return Ok(true)
+        }
+
+        // Determine writable statements by excluding statements from disabled start / end lines.
+        // We check the position of last statement from first line (if disabled) and position of
+        // first statement from last line (if disabled) and slice accordingly.
+        let writable_statments = match (
+            statements.iter().rposition(|stmt| {
+                is_start_disabled &&
+                    self.find_next_line(stmt.loc().end()).unwrap_or_default() ==
+                        end_of_first_line
+            }),
+            statements.iter().position(|stmt| {
+                is_end_disabled &&
+                    self.find_next_line(stmt.loc().end()).unwrap_or_default() == end_of_last_line
+            }),
+        ) {
+            // We have statements on both disabled start / end lines.
+            (Some(start), Some(end)) => {
+                if start == end || start + 1 == end {
+                    None
+                } else {
+                    Some(&mut statements[start + 1..end])
+                }
+            }
+            // We have statements only on disabled start line.
+            (Some(start), None) => {
+                if start + 1 == statements.len() {
+                    None
+                } else {
+                    Some(&mut statements[start + 1..])
+                }
+            }
+            // We have statements only on disabled end line.
+            (None, Some(end)) => {
+                if end == 0 {
+                    None
+                } else {
+                    Some(&mut statements[..end])
+                }
+            }
+            // No statements on disabled start / end line.
+            (None, None) => Some(statements),
+        };
+
+        // Write statements that are not on any disabled first / last block line.
+        let mut statements_loc = loc;
+        if let Some(writable_statements) = writable_statments {
+            if let Some(first_statement) = writable_statements.first() {
+                statements_loc = statements_loc.with_start(first_statement.loc().start());
+                self.write_whitespace_separator(true)?;
+                self.write_postfix_comments_before(statements_loc.start())?;
+            }
+            // If last line is disabled then statements location ends where last block line starts.
+            if is_end_disabled {
+                if let Some(last_statement) = writable_statements.last() {
+                    statements_loc = statements_loc.with_end(
+                        self.find_next_line(last_statement.loc().end()).unwrap_or_default(),
+                    );
+                }
+            }
+            self.indented(1, |fmt| {
+                fmt.write_lined_visitable(
+                    statements_loc,
+                    writable_statements.iter_mut(),
+                    |_, _| false,
+                )?;
+                Ok(())
+            })?;
             self.write_whitespace_separator(true)?;
         }
-        write_chunk!(self, loc.end(), "}}")?;
+
+        // Write last line of the block:
+        // - as it is from where statements location ends until the end of last line, if format
+        // disabled
+        // - close block if line formatted
+        if is_end_disabled {
+            self.write_raw_src(loc.with_start(statements_loc.end()).with_end(end_of_last_line))?;
+        } else {
+            if end_of_first_line != end_of_last_line {
+                self.write_whitespace_separator(true)?;
+            }
+            write_chunk!(self, loc.end(), "}}")?;
+        }
 
         Ok(false)
     }
@@ -3045,51 +3148,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     if fmt.inline_config.is_disabled(body_loc.with_end(body_loc.start())) {
                         match body {
                             Statement::Block { statements, .. } if !statements.is_empty() => {
-                                // TODO: move this logic in `visit_body` fn and reuse it.
-                                // Retain enabled statements.
-                                statements.retain(|stmt| {
-                                    !fmt.inline_config.is_disabled(
-                                        body_loc.with_end(CodeLocation::loc(stmt).start()),
-                                    )
-                                });
-
-                                // Disabled statement stops where first enabled statement starts or
-                                // where body ends (if no statement enabled).
-                                let disabled_stmts_end = match statements.first() {
-                                    Some(stmt) => CodeLocation::loc(stmt).start(),
-                                    None => body_loc.end(),
-                                };
-
-                                // Write non formatted statements. This includes the curly bracket
-                                // block start, comments and any other disabled statement.
-                                let disabled_stmts_src = String::from_utf8(
-                                    fmt.source.as_bytes()
-                                        [body_loc.with_end(disabled_stmts_end).range()]
-                                    .to_vec(),
-                                )
-                                .map_err(FormatterError::custom)?;
                                 fmt.write_whitespace_separator(false)?;
-                                fmt.write_raw(disabled_stmts_src.trim_end())?;
-                                // Remove all comments as they're already included in disabled src.
-                                let _ = fmt.comments.remove_all_comments_before(disabled_stmts_end);
-
-                                // Write enabled statements.
-                                fmt.indented(1, |fmt| {
-                                    fmt.write_lined_visitable(
-                                        body_loc.with_start(disabled_stmts_end),
-                                        statements.iter_mut(),
-                                        |_, _| false,
-                                    )?;
-                                    Ok(())
-                                })?;
-
-                                // Write curly bracket block end.
-                                fmt.write_whitespace_separator(true)?;
-                                write_chunk!(fmt, body_loc.end(), "}}")?;
-
+                                fmt.visit_block(body_loc, statements, false, false)?;
                                 return Ok(())
                             }
-                            _ => {}
+                            _ => {
+                                // Attrs should be written on same line if first line is disabled
+                                // and there's no statement.
+                                attrs_multiline = false
+                            }
                         }
                     }
 
