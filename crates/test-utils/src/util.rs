@@ -893,18 +893,18 @@ impl TestCommand {
     /// Executes the command and returns the stderr as lossy `String`.
     ///
     /// **Note**: This function checks whether the command was successful.
-    #[track_caller]
-    pub fn stdout_lossy(&mut self) -> String {
-        lossy_string(&self.output().stdout)
-    }
+    // #[track_caller]
+    // pub fn stdout_lossy(&mut self) -> String {
+    //     lossy_string(&self.output().stdout)
+    // }
 
     /// Executes the command and returns the stderr as lossy `String`.
     ///
     /// **Note**: This function does **not** check whether the command was successful.
-    #[track_caller]
-    pub fn stderr_lossy(&mut self) -> String {
-        lossy_string(&self.unchecked_output().stderr)
-    }
+    // #[track_caller]
+    // pub fn stderr_lossy(&mut self) -> String {
+    //     lossy_string(&self.unchecked_output().stderr)
+    // }
 
     /// Returns the output but does not expect that the command was successful
     #[track_caller]
