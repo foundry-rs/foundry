@@ -262,7 +262,7 @@ impl EthApi {
                 self.transaction_receipt(tx).await.to_rpc_result()
             }
             EthRequest::EthGetBlockReceipts(number) => {
-                self.block_receipts(number.into()).await.to_rpc_result()
+                self.block_receipts(number).await.to_rpc_result()
             }
             EthRequest::EthGetUncleByBlockHashAndIndex(hash, index) => {
                 self.uncle_by_block_hash_and_index(hash, index).await.to_rpc_result()
