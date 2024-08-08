@@ -984,14 +984,14 @@ Traces:
     ├─ [22638] SimpleContract::increment()
     │   ├─ [20150] SimpleContract::_setNum(1)
     │   │   └─ ← 0
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [23219] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
     │   ├─ [250] SimpleContract::_setNum(100)
     │   │   └─ ← 1
     │   ├─ [22339] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 ...
 "#]]);
 });
@@ -1042,89 +1042,80 @@ Traces:
     ├─ [2534] SimpleContract::setStr("new value")
     │   ├─ [1600] SimpleContract::_setStr("new value")
     │   │   └─ ← "initial value"
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 ...
 "#
     ]]);
 });
 
-const DETERMINISTIC_RANDOMNESS_TEST_CONTRACT: &str = r#"pragma solidity 0.8.24;
+// tests that `forge test` with a seed produces deterministic random values for uint and addresses.
+forgetest_init!(deterministic_randomness_with_seed, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "DeterministicRandomnessTest.t.sol",
+        r#"pragma solidity 0.8.24;
 import {Test, console2} from "forge-std/Test.sol";
 contract DeterministicRandomnessTest is Test {
 
     function testDeterministicRandomUint() public {
-        // Values computed with seed=0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
-        assertEq(vm.randomUint(), 77081245346511865599562993006478104953925486436965894010918779131974790769683);
-        assertEq(vm.randomUint(), 14542802942652090507428621915178123789774624752096317033652316187323944929692);
-        assertEq(vm.randomUint(), 39147676640426175167070557719485824063633890234647166597297614898342291873676);
+        console2.log(vm.randomUint());
+        console2.log(vm.randomUint());
+        console2.log(vm.randomUint());
     }
 
     function testDeterministicRandomUintRange() public {
-        // Values computed with seed=0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
         uint256 min = 0;
         uint256 max = 1000000000;
-        assertEq(vm.randomUint(min, max), 151489241);
-        assertEq(vm.randomUint(min, max), 110477840);
-        assertEq(vm.randomUint(min, max), 718247925);
+        console2.log(vm.randomUint(min, max));
+        console2.log(vm.randomUint(min, max));
+        console2.log(vm.randomUint(min, max));
     }
 
     function testDeterministicRandomAddress() public {
-        // Addresses computed with seed=0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2.
-        assertEq(vm.randomAddress(), 0x136c65E70b2d713e61e35722de327EAf2b873177);
-        assertEq(vm.randomAddress(), 0x54907c7459ed556b55706aAa9C09888835fb9533);
-        assertEq(vm.randomAddress(), 0x5622128676a721459a18209e150E48e0d318303B);
+        console2.log(vm.randomAddress());
+        console2.log(vm.randomAddress());
+        console2.log(vm.randomAddress());
     }
 }
-"#;
+"#,
+    )
+    .unwrap();
 
-// tests that `forge test` with a seed produces deterministic random values for uint and addresses.
-forgetest_init!(deterministic_random_values_with_seed_0xa, |prj, cmd| {
-    prj.wipe_contracts();
-    prj.add_test("DeterministicRandomnessTest.t.sol", DETERMINISTIC_RANDOMNESS_TEST_CONTRACT)
-        .unwrap();
+    // Extracts the test result section from the DeterministicRandomnessTest contract output.
+    fn extract_test_result(out: &str) -> Option<&str> {
+        out.find(
+            "Ran 3 tests for test/DeterministicRandomnessTest.t.sol:DeterministicRandomnessTest",
+        )
+        .and_then(|start| out.find("Suite result: ok.").map(|end| &out[start..end]))
+    }
 
-    // run test with seed, it should succeed
-    cmd.args([
-        "test",
-        "--fuzz-seed",
-        "0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
-    ])
-    .assert_success();
-});
+    // Run the test twice with the same seed and verify the outputs are the same.
+    let seed1 = "0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2";
+    cmd.args(["test", "--fuzz-seed", seed1, "-vv"]).assert_success();
+    let out1 = cmd.stdout_lossy();
+    let res1 = extract_test_result(&out1);
 
-// tests that `forge test` with a different seed produces different deterministic random values for
-// uint and addresses.
-forgetest_init!(deterministic_random_values_with_seed_0xb, |prj, cmd| {
-    prj.wipe_contracts();
-    prj.add_test("DeterministicRandomnessTest.t.sol", DETERMINISTIC_RANDOMNESS_TEST_CONTRACT)
-        .unwrap();
+    cmd.forge_fuse();
+    cmd.args(["test", "--fuzz-seed", seed1, "-vv"]).assert_success();
+    let out2 = cmd.stdout_lossy();
+    let res2 = extract_test_result(&out2);
 
-    // run test with seed, it should succeed
-    cmd.args([
-        "test",
-        "--fuzz-seed",
-        "0xb1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
-    ])
-    .assert_failure()
-    .stdout_eq(str![[r#"
-...
-Encountered a total of 3 failing tests, 0 tests succeeded
-...
-"#]]);
-});
+    assert!(res1 == res2);
 
-// tests that `forge test` without a seed does not produce deterministic random values for uint and
-// addresses.
-forgetest_init!(non_deterministic_random_values_without_seed, |prj, cmd| {
-    prj.wipe_contracts();
-    prj.add_test("DeterministicRandomnessTest.t.sol", DETERMINISTIC_RANDOMNESS_TEST_CONTRACT)
-        .unwrap();
+    // Run the test with another seed and verify the output differs.
+    let seed2 = "0xb1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2";
+    cmd.forge_fuse();
+    cmd.args(["test", "--fuzz-seed", seed2, "-vv"]).assert_success();
+    let out3 = cmd.stdout_lossy();
+    let res3 = extract_test_result(&out3);
+    assert!(res3 != res1);
 
-    // run test without seed, it should fail
-    cmd.args(["test", "-vv"]).assert_failure().stdout_eq(str![[r#"
-...
-Encountered a total of 3 failing tests, 0 tests succeeded
-...
-"#]]);
+    // Run the test without a seed and verify the outputs differs once again.
+    cmd.forge_fuse();
+    cmd.args(["test", "-vv"]).assert_success();
+    let out4 = cmd.stdout_lossy();
+    let res4 = extract_test_result(&out4);
+    assert!(res4 != res1);
+    assert!(res4 != res3);
 });
