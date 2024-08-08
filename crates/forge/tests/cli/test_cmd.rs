@@ -984,14 +984,14 @@ Traces:
     ├─ [22638] SimpleContract::increment()
     │   ├─ [20150] SimpleContract::_setNum(1)
     │   │   └─ ← 0
-    │   └─ ← [Stop]
+    │   └─ ← [Stop] 
     ├─ [23219] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
     │   ├─ [250] SimpleContract::_setNum(100)
     │   │   └─ ← 1
     │   ├─ [22339] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
-    │   └─ ← [Stop]
-    └─ ← [Stop]
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
 ...
 "#]]);
 });
@@ -1042,8 +1042,8 @@ Traces:
     ├─ [2534] SimpleContract::setStr("new value")
     │   ├─ [1600] SimpleContract::_setStr("new value")
     │   │   └─ ← "initial value"
-    │   └─ ← [Stop]
-    └─ ← [Stop]
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
 ...
 "#
     ]]);
