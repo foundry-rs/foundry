@@ -912,6 +912,13 @@ impl TestCommand {
         output
     }
 
+    /// Runs the command, asserts that it resulted in success and returns the output as a lossy
+    /// string.
+    #[track_caller]
+    pub fn get_stdout_lossy(&mut self) -> String {
+        lossy_string(&self.assert_success().get_output().stdout)
+    }
+
     /// Runs the command and asserts that it resulted in success
     #[track_caller]
     pub fn assert_success(&mut self) -> OutputAssert {
@@ -1156,7 +1163,7 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
         .collect()
 }
 
-fn lossy_string(bytes: &[u8]) -> String {
+pub fn lossy_string(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).replace("\r\n", "\n")
 }
 

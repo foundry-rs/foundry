@@ -31,10 +31,14 @@ forgetest_init!(exact_build_output, |prj, cmd| {
 // tests build output is as expected
 forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
     cmd.args(["build", "--sizes"]);
-    let stdout = cmd.stdout_lossy();
-    assert!(!stdout.contains("console"), "\n{stdout}");
-    assert!(!stdout.contains("std"), "\n{stdout}");
-    assert!(stdout.contains("Counter"), "\n{stdout}");
+    cmd.assert_success().stdout_eq(str![
+        r#"
+...
+| Contract | Size (B) | Margin (B) |
+|----------|----------|------------|
+...
+"#
+    ]);
 });
 
 // tests that skip key in config can be used to skip non-compilable contract

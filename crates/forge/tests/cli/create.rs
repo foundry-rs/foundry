@@ -107,8 +107,8 @@ where
         cmd.arg("create");
         cmd.args(info.create_args()).arg(contract_path);
 
-        let out = cmd.stdout_lossy();
-        let _address = utils::parse_deployed_address(out.as_str())
+        let out = cmd.get_stdout_lossy();
+        let _address = utils::parse_deployed_address(&out)
             .unwrap_or_else(|| panic!("Failed to parse deployer {out}"));
     }
 }
