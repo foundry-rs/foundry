@@ -166,7 +166,7 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
             NamedChain::Acala |
                 NamedChain::AcalaMandalaTestnet |
                 NamedChain::AcalaTestnet |
-                NamedChain::Arbitrum
+                NamedChain::Arbitrum |
                 NamedChain::ArbitrumGoerli |
                 NamedChain::ArbitrumSepolia |
                 NamedChain::ArbitrumTestnet |
