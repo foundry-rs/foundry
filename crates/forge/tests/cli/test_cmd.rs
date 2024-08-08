@@ -6,6 +6,7 @@ use foundry_test_utils::{
     rpc, str,
     util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
 };
+use similar_asserts::assert_eq;
 use std::{path::PathBuf, str::FromStr};
 
 // tests that test filters are handled correctly
@@ -1084,11 +1085,12 @@ contract DeterministicRandomnessTest is Test {
     .unwrap();
 
     // Extracts the test result section from the DeterministicRandomnessTest contract output.
-    fn extract_test_result(out: &str) -> Option<&str> {
-        out.find(
-            "Ran 3 tests for test/DeterministicRandomnessTest.t.sol:DeterministicRandomnessTest",
-        )
-        .and_then(|start| out.find("Suite result: ok.").map(|end| &out[start..end]))
+    fn extract_test_result(out: &str) -> &str {
+        let start = out
+            .find("for test/DeterministicRandomnessTest.t.sol:DeterministicRandomnessTest")
+            .unwrap();
+        let end = out.find("Suite result: ok.").unwrap();
+        &out[start..end]
     }
 
     // Run the test twice with the same seed and verify the outputs are the same.
