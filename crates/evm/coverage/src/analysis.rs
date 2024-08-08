@@ -236,7 +236,11 @@ impl<'a> ContractVisitor<'a> {
                         if has_statements(&true_body) {
                             // Add the coverage item for branch 0 (true body).
                             self.push_item_kind(
-                                CoverageItemKind::SinglePathBranch { branch_id },
+                                CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 0,
+                                    is_first_opcode: true,
+                                },
                                 &true_body.src,
                             );
                             // Process the true body.
@@ -451,12 +455,8 @@ impl<'a> ContractVisitor<'a> {
     fn push_item_kind(&mut self, kind: CoverageItemKind, src: &ast::LowFidelitySourceLocation) {
         let item = CoverageItem { kind, loc: self.source_location_for(src), hits: 0 };
         // Push a line item if we haven't already
-        if matches!(
-            item.kind,
-            CoverageItemKind::Statement |
-                CoverageItemKind::Branch { .. } |
-                CoverageItemKind::SinglePathBranch { .. }
-        ) && self.last_line < item.loc.line
+        if matches!(item.kind, CoverageItemKind::Statement | CoverageItemKind::Branch { .. }) &&
+            self.last_line < item.loc.line
         {
             self.items.push(CoverageItem {
                 kind: CoverageItemKind::Line,

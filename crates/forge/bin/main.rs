@@ -105,7 +105,14 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        ForgeSubcommand::Doc(cmd) => cmd.run(),
+        ForgeSubcommand::Doc(cmd) => {
+            if cmd.is_watch() {
+                utils::block_on(watch::watch_doc(cmd))
+            } else {
+                utils::block_on(cmd.run())?;
+                Ok(())
+            }
+        }
         ForgeSubcommand::Selectors { command } => utils::block_on(command.run()),
         ForgeSubcommand::Generate(cmd) => match cmd.sub {
             GenerateSubcommands::Test(cmd) => cmd.run(),
