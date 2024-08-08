@@ -469,6 +469,7 @@ pub struct ScriptResult {
     pub transactions: Option<BroadcastableTransactions>,
     pub returned: Bytes,
     pub address: Option<Address>,
+    #[serde(skip)]
     pub breakpoints: Breakpoints,
 }
 
