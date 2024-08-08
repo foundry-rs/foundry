@@ -7,7 +7,7 @@ use crate::{
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Transaction};
 use clap::{Parser, ValueHint};
 use eyre::{OptionExt, Result};
 use foundry_cli::{
@@ -20,7 +20,7 @@ use foundry_config::{figment, impl_figment_convert, Config};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
 };
-use revm_primitives::{db::Database, EnvWithHandlerCfg, HandlerCfg};
+use revm_primitives::{db::Database, AccountInfo, EnvWithHandlerCfg, HandlerCfg};
 use std::path::PathBuf;
 use yansi::Paint;
 
@@ -186,6 +186,48 @@ impl VerifyBytecodeArgs {
             crate::utils::build_project(&self, &config)?
         };
 
+        // Get local bytecode (creation code)
+        let local_bytecode = artifact
+            .bytecode
+            .and_then(|b| b.into_bytes())
+            .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
+
+        // Get the constructor args from etherscan
+        let mut constructor_args = if let Some(args) = source_code.items.first() {
+            args.constructor_arguments.clone()
+        } else {
+            eyre::bail!("No constructor arguments found for contract at address {}", self.address);
+        };
+
+        // Get and encode user provided constructor args
+        let provided_constructor_args = if let Some(path) = self.constructor_args_path.to_owned() {
+            // Read from file
+            Some(read_constructor_args_file(path)?)
+        } else {
+            self.constructor_args.to_owned()
+        }
+        .map(|args| {
+            if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
+                if constructor.inputs.len() != args.len() {
+                    eyre::bail!(
+                        "Mismatch of constructor arguments length. Expected {}, got {}",
+                        constructor.inputs.len(),
+                        args.len()
+                    );
+                }
+                encode_args(&constructor.inputs, &args)
+                    .map(|args| DynSolValue::Tuple(args).abi_encode())
+            } else {
+                Ok(Vec::new())
+            }
+        })
+        .transpose()?
+        .or(self.encoded_constructor_args.to_owned().map(hex::decode).transpose()?);
+
+        if let Some(ref provided) = provided_constructor_args {
+            constructor_args = provided.to_owned().into();
+        }
+
         if maybe_predeploy {
             if !self.json {
                 println!(
@@ -196,16 +238,103 @@ impl VerifyBytecodeArgs {
                 )
             }
 
-            // Cmp deployedBytecode with onchain runtime code
-            let deployed_bytecode = artifact
-                .deployed_bytecode
-                .and_then(|b| b.into_bytes())
-                .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
+            // If predeloy:
+            // 1. Compile locally
+            // 2. Get creation code from artifact.
+            // 3. Append constructor args
+
+            // Append constructor args to the local_bytecode.
+            trace!(%constructor_args);
+            let mut local_bytecode_vec = local_bytecode.to_vec();
+            local_bytecode_vec.extend_from_slice(&constructor_args);
+
+            // 4. Deploy at genesis
+            let genesis_block_number = 0_u64;
+            let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
+            fork_config.fork_block_number = Some(genesis_block_number);
+            fork_config.evm_version =
+                etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default());
+            let (mut env, fork, _chain) =
+                TracingExecutor::get_fork_material(&fork_config, evm_opts).await?;
+
+            let mut executor = TracingExecutor::new(
+                env.clone(),
+                fork,
+                Some(fork_config.evm_version),
+                false,
+                false,
+            );
+
+            env.block.number = U256::ZERO; // Genesis block
+            let genesis_block =
+                provider.get_block(genesis_block_number.into(), true.into()).await?;
+
+            // Setup genesis tx and env.
+            let deployer = Address::with_last_byte(0x1);
+            let mut genesis_transaction = Transaction {
+                from: deployer,
+                to: None,
+                input: Bytes::from(local_bytecode_vec),
+                ..Default::default()
+            };
+
+            if let Some(ref block) = genesis_block {
+                env.block.timestamp = U256::from(block.header.timestamp);
+                env.block.coinbase = block.header.miner;
+                env.block.difficulty = block.header.difficulty;
+                env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
+                env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
+                env.block.gas_limit = U256::from(block.header.gas_limit);
+
+                genesis_transaction.max_fee_per_gas =
+                    Some(block.header.base_fee_per_gas.unwrap_or_default());
+                genesis_transaction.gas = block.header.gas_limit;
+                genesis_transaction.gas_price =
+                    Some(block.header.base_fee_per_gas.unwrap_or_default());
+            }
+
+            configure_tx_env(&mut env, &genesis_transaction);
+
+            // Seed deployer account with funds
+            let account_info = AccountInfo {
+                balance: U256::from(100 * 10_u128.pow(18)),
+                nonce: 0,
+                ..Default::default()
+            };
+            executor.backend_mut().insert_account_info(deployer, account_info);
+
+            let env_with_handler = EnvWithHandlerCfg::new(
+                Box::new(env.clone()),
+                HandlerCfg::new(config.evm_spec_id()),
+            );
+
+            // Deploy contract
+            let deploy_result = executor.deploy_with_env(env_with_handler, None)?;
+            trace!(deploy_result = ?deploy_result.raw.exit_reason);
+            let deployed_address = deploy_result.address;
+
+            // Compare runtime bytecode
+            let deployed_bytecode = executor
+                .backend_mut()
+                .basic(deployed_address)?
+                .ok_or_else(|| {
+                    eyre::eyre!(
+                        "Failed to get runtime code for contract deployed on fork at address {}",
+                        deployed_address
+                    )
+                })?
+                .code
+                .ok_or_else(|| {
+                    eyre::eyre!(
+                        "Bytecode does not exist for contract deployed on fork at address {}",
+                        deployed_address
+                    )
+                })?;
 
             let onchain_runtime_code = provider.get_code_at(self.address).await?;
 
             let match_type = crate::utils::match_bytecodes(
-                &deployed_bytecode,
+                &deployed_bytecode.original_bytes(),
                 &onchain_runtime_code,
                 &Bytes::default(),
                 true,
@@ -261,43 +390,6 @@ impl VerifyBytecodeArgs {
                     self.address
                 );
             };
-
-        let local_bytecode = artifact
-            .bytecode
-            .and_then(|b| b.into_bytes())
-            .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
-
-        // Get the constructor args from etherscan
-        let mut constructor_args = if let Some(args) = source_code.items.first() {
-            args.constructor_arguments.clone()
-        } else {
-            eyre::bail!("No constructor arguments found for contract at address {}", self.address);
-        };
-
-        // Get and encode user provided constructor args
-        let provided_constructor_args = if let Some(path) = self.constructor_args_path.to_owned() {
-            // Read from file
-            Some(read_constructor_args_file(path)?)
-        } else {
-            self.constructor_args.to_owned()
-        }
-        .map(|args| {
-            if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-                if constructor.inputs.len() != args.len() {
-                    eyre::bail!(
-                        "Mismatch of constructor arguments length. Expected {}, got {}",
-                        constructor.inputs.len(),
-                        args.len()
-                    );
-                }
-                encode_args(&constructor.inputs, &args)
-                    .map(|args| DynSolValue::Tuple(args).abi_encode())
-            } else {
-                Ok(Vec::new())
-            }
-        })
-        .transpose()?
-        .or(self.encoded_constructor_args.to_owned().map(hex::decode).transpose()?);
 
         if let Some(provided) = provided_constructor_args {
             constructor_args = provided.into();
