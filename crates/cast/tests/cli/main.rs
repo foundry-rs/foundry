@@ -673,11 +673,11 @@ casttest!(mktx_requires_to, |_prj, cmd| {
         "--private-key",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
     ]);
-    let output = cmd.stderr_lossy();
-    assert_eq!(
-        output.trim(),
-        "Error: \nMust specify a recipient address or contract code to deploy"
-    );
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: 
+Must specify a recipient address or contract code to deploy
+
+"#]]);
 });
 
 casttest!(mktx_signer_from_mismatch, |_prj, cmd| {

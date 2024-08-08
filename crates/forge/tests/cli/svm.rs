@@ -64,7 +64,7 @@ Ran 1 test for test/Counter.sol:CounterTest
 Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in [..] ([..] CPU time)
 ...
 Ran 2 tests for test/Counter.t.sol:CounterTest
-[PASS] testFuzz_SetNumber(uint256) (runs: [..], μ: [..], ~: [..])
+[PASS] testFuzz_SetNumber(uint256) (runs: [..], [..]: [..], [..]: [..])
 [PASS] test_Increment() (gas: [..])
 Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in [..] ([..] CPU time)
 
