@@ -6,6 +6,7 @@ use foundry_test_utils::{
     rpc, str,
     util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
 };
+use similar_asserts::assert_eq;
 use std::{path::PathBuf, str::FromStr};
 
 // tests that test filters are handled correctly
@@ -597,7 +598,7 @@ contract GasWaster {
 contract GasLimitTest is Test {
     function test() public {
         vm.createSelectFork("<rpc>");
-        
+
         GasWaster waster = new GasWaster();
         waster.waste();
     }
@@ -613,7 +614,7 @@ contract GasLimitTest is Test {
 forgetest!(test_match_path, |prj, cmd| {
     prj.add_source(
         "dummy",
-        r"  
+        r"
 contract Dummy {
     function testDummy() public {}
 }
@@ -1047,4 +1048,77 @@ Traces:
 ...
 "#
     ]]);
+});
+
+// tests that `forge test` with a seed produces deterministic random values for uint and addresses.
+forgetest_init!(deterministic_randomness_with_seed, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "DeterministicRandomnessTest.t.sol",
+        r#"
+import {Test, console} from "forge-std/Test.sol";
+
+contract DeterministicRandomnessTest is Test {
+
+    function testDeterministicRandomUint() public {
+        console.log(vm.randomUint());
+        console.log(vm.randomUint());
+        console.log(vm.randomUint());
+    }
+
+    function testDeterministicRandomUintRange() public {
+        uint256 min = 0;
+        uint256 max = 1000000000;
+        console.log(vm.randomUint(min, max));
+        console.log(vm.randomUint(min, max));
+        console.log(vm.randomUint(min, max));
+    }
+
+    function testDeterministicRandomAddress() public {
+        console.log(vm.randomAddress());
+        console.log(vm.randomAddress());
+        console.log(vm.randomAddress());
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Extracts the test result section from the DeterministicRandomnessTest contract output.
+    fn extract_test_result(out: &str) -> &str {
+        let start = out
+            .find("for test/DeterministicRandomnessTest.t.sol:DeterministicRandomnessTest")
+            .unwrap();
+        let end = out.find("Suite result: ok.").unwrap();
+        &out[start..end]
+    }
+
+    // Run the test twice with the same seed and verify the outputs are the same.
+    let seed1 = "0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2";
+    cmd.args(["test", "--fuzz-seed", seed1, "-vv"]).assert_success();
+    let out1 = cmd.stdout_lossy();
+    let res1 = extract_test_result(&out1);
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--fuzz-seed", seed1, "-vv"]).assert_success();
+    let out2 = cmd.stdout_lossy();
+    let res2 = extract_test_result(&out2);
+
+    assert_eq!(res1, res2);
+
+    // Run the test with another seed and verify the output differs.
+    let seed2 = "0xb1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2";
+    cmd.forge_fuse();
+    cmd.args(["test", "--fuzz-seed", seed2, "-vv"]).assert_success();
+    let out3 = cmd.stdout_lossy();
+    let res3 = extract_test_result(&out3);
+    assert_ne!(res3, res1);
+
+    // Run the test without a seed and verify the outputs differs once again.
+    cmd.forge_fuse();
+    cmd.args(["test", "-vv"]).assert_success();
+    let out4 = cmd.stdout_lossy();
+    let res4 = extract_test_result(&out4);
+    assert_ne!(res4, res1);
+    assert_ne!(res4, res3);
 });
