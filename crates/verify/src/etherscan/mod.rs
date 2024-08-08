@@ -1,14 +1,11 @@
 use crate::{
-    bytecode::VerifyBytecodeArgs,
-    provider::{VerificationBytecodeContext, VerificationContext, VerificationProvider},
+    provider::{VerificationContext, VerificationProvider},
     retry::RETRY_CHECK_ON_VERIFY,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
-use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
-use alloy_primitives::{hex, Address};
+use alloy_primitives::hex;
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use eyre::{eyre, Context, OptionExt, Result};
 use foundry_block_explorers::{
     errors::EtherscanError,
@@ -16,32 +13,22 @@ use foundry_block_explorers::{
     verify::{CodeFormat, VerifyContract},
     Client,
 };
-use foundry_cli::utils::{self, get_provider, read_constructor_args_file, LoadConfig};
+use foundry_cli::utils::{get_provider, read_constructor_args_file, LoadConfig};
 use foundry_common::{
-    abi::{encode_args, encode_function_args},
+    abi::encode_function_args,
     retry::{Retry, RetryError},
     shell,
 };
-use foundry_compilers::{
-    artifacts::{BytecodeObject, EvmVersion},
-    Artifact,
-};
+use foundry_compilers::{artifacts::BytecodeObject, Artifact};
 use foundry_config::{Chain, Config};
-use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
-};
+use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use revm_primitives::{db::Database, Bytes, EnvWithHandlerCfg, HandlerCfg, U256};
 use semver::{BuildMetadata, Version};
 use std::fmt::Debug;
-use yansi::Paint;
 
 mod flatten;
-
-pub mod helpers;
-pub use helpers::{BytecodeType, JsonResult};
 
 mod standard_json;
 
@@ -157,365 +144,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
             println!("Contract source code already verified");
         }
 
-        Ok(())
-    }
-
-    async fn verify_bytecode(
-        &mut self,
-        args: VerifyBytecodeArgs,
-        context: VerificationBytecodeContext,
-    ) -> Result<()> {
-        let config = &context.config;
-        let etherscan = self.client(
-            args.etherscan.chain.unwrap_or_default(),
-            args.verifier.verifier_url.as_deref(),
-            args.etherscan.key().as_deref(),
-            config,
-        )?;
-        let ignore = args.ignore;
-        let provider = get_provider(config)?;
-        let mut json_results: Vec<JsonResult> = vec![];
-        // Get creation tx hash.
-        let creation_data = etherscan.contract_creation_data(args.address).await;
-
-        // Check if contract is a predeploy
-        let (creation_data, maybe_predeploy) = helpers::maybe_predeploy_contract(creation_data)?;
-
-        trace!(maybe_predeploy = ?maybe_predeploy);
-
-        // Get the constructor args using `source_code` endpoint.
-        let source_code = etherscan.contract_source_code(args.address).await?;
-
-        // Check if the contract name matches.
-        let name = source_code.items.first().map(|item| item.contract_name.to_owned());
-        if name.as_ref() != Some(&args.contract.name) {
-            eyre::bail!("Contract name mismatch");
-        }
-
-        // Obtain Etherscan compilation metadata.
-        let etherscan_metadata = source_code.items.first().unwrap();
-
-        // Obtain local artifact
-        let artifact = if let Ok(local_bytecode) =
-            helpers::build_using_cache(&args, etherscan_metadata, config)
-        {
-            trace!("using cache");
-            local_bytecode
-        } else {
-            helpers::build_project(&args, config)?
-        };
-
-        if maybe_predeploy {
-            if !args.json {
-                println!(
-                    "{}",
-                    format!("Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.", args.address)
-                        .yellow()
-                        .bold()
-                )
-            }
-
-            // Cmp deployedBytecode with onchain runtime code
-            let deployed_bytecode = artifact
-                .deployed_bytecode
-                .and_then(|b| b.into_bytes())
-                .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
-
-            let onchain_runtime_code = provider.get_code_at(args.address).await?;
-            let match_type = helpers::match_bytecodes(
-                &deployed_bytecode,
-                &onchain_runtime_code,
-                &Bytes::default(),
-                true,
-            );
-
-            helpers::print_result(
-                &args,
-                match_type,
-                BytecodeType::Runtime,
-                &mut json_results,
-                etherscan_metadata,
-                config,
-            );
-
-            if args.json {
-                println!("{}", serde_json::to_string(&json_results)?);
-            }
-
-            return Ok(());
-        }
-
-        trace!(creation_tx_hash = ?creation_data.transaction_hash);
-        let mut transaction = provider
-            .get_transaction_by_hash(creation_data.transaction_hash)
-            .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?
-            .ok_or_else(|| {
-                eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
-            })?;
-        let receipt = provider
-            .get_transaction_receipt(creation_data.transaction_hash)
-            .await
-            .or_else(|e| eyre::bail!("Couldn't fetch transaction receipt from RPC: {:?}", e))?;
-        let receipt = if let Some(receipt) = receipt {
-            receipt
-        } else {
-            eyre::bail!(
-                "Receipt not found for transaction hash {}",
-                creation_data.transaction_hash
-            );
-        };
-
-        // Extract creation code.
-        let maybe_creation_code =
-            if receipt.to.is_none() && receipt.contract_address == Some(args.address) {
-                &transaction.input
-            } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
-                &transaction.input[32..]
-            } else {
-                eyre::bail!(
-                    "Could not extract the creation code for contract at address {}",
-                    args.address
-                );
-            };
-
-        let local_bytecode = artifact
-            .bytecode
-            .and_then(|b| b.into_bytes())
-            .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
-
-        // Get the constructor args from etherscan
-        let mut constructor_args = if let Some(args) = source_code.items.first() {
-            args.constructor_arguments.clone()
-        } else {
-            eyre::bail!("No constructor arguments found for contract at address {}", args.address);
-        };
-
-        // Get and encode user provided constructor args
-        let provided_constructor_args = if let Some(path) = args.constructor_args_path.to_owned() {
-            // Read from file
-            Some(read_constructor_args_file(path)?)
-        } else {
-            args.constructor_args.to_owned()
-        }
-        .map(|args| {
-            if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-                if constructor.inputs.len() != args.len() {
-                    eyre::bail!(
-                        "Mismatch of constructor arguments length. Expected {}, got {}",
-                        constructor.inputs.len(),
-                        args.len()
-                    );
-                }
-                encode_args(&constructor.inputs, &args)
-                    .map(|args| DynSolValue::Tuple(args).abi_encode())
-            } else {
-                Ok(Vec::new())
-            }
-        })
-        .transpose()?
-        .or(args.encoded_constructor_args.to_owned().map(hex::decode).transpose()?);
-
-        if let Some(provided) = provided_constructor_args {
-            constructor_args = provided.into();
-        } else {
-            // In some cases, Etherscan will return incorrect constructor arguments. If this
-            // happens, try extracting arguments ourselves.
-            if !maybe_creation_code.ends_with(&constructor_args) {
-                trace!("mismatch of constructor args with etherscan");
-                // If local bytecode is longer than on-chain one, this is probably not a match.
-                if maybe_creation_code.len() >= local_bytecode.len() {
-                    constructor_args =
-                        Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
-                    trace!(
-                        target: "forge::verify",
-                        "setting constructor args to latest {} bytes of bytecode",
-                        constructor_args.len()
-                    );
-                }
-            }
-        }
-
-        // Append constructor args to the local_bytecode.
-        trace!(%constructor_args);
-        let mut local_bytecode_vec = local_bytecode.to_vec();
-        local_bytecode_vec.extend_from_slice(&constructor_args);
-
-        trace!(?ignore);
-
-        // Check if `--ignore` is set to `creation`.
-        if !ignore.is_some_and(|b| b.is_creation()) {
-            // Compare creation code with locally built bytecode and `maybe_creation_code`.
-            let match_type = helpers::match_bytecodes(
-                local_bytecode_vec.as_slice(),
-                maybe_creation_code,
-                &constructor_args,
-                false,
-            );
-
-            helpers::print_result(
-                &args,
-                match_type,
-                BytecodeType::Creation,
-                &mut json_results,
-                etherscan_metadata,
-                config,
-            );
-
-            // If the creation code does not match, the runtime also won't match. Hence return.
-            if match_type.is_none() {
-                helpers::print_result(
-                    &args,
-                    None,
-                    BytecodeType::Runtime,
-                    &mut json_results,
-                    etherscan_metadata,
-                    config,
-                );
-                if args.json {
-                    println!("{}", serde_json::to_string(&json_results)?);
-                }
-                return Ok(());
-            }
-        }
-
-        // Check if `--ignore` is set `runtime`.
-        if !ignore.is_some_and(|b| b.is_runtime()) {
-            // Get contract creation block.
-            let simulation_block = match args.block {
-                Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
-                Some(_) => eyre::bail!("Invalid block number"),
-                None => {
-                    let provider = utils::get_provider(config)?;
-                    provider
-                    .get_transaction_by_hash(creation_data.transaction_hash)
-                    .await.or_else(|e| eyre::bail!("Couldn't fetch transaction from RPC: {:?}", e))?.ok_or_else(|| {
-                        eyre::eyre!("Transaction not found for hash {}", creation_data.transaction_hash)
-                    })?
-                    .block_number.ok_or_else(|| {
-                        eyre::eyre!("Failed to get block number of the contract creation tx, specify using the --block flag")
-                    })?
-                }
-            };
-
-            // Fork the chain at `simulation_block`.
-            let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
-            fork_config.fork_block_number = Some(simulation_block - 1);
-            fork_config.evm_version =
-                etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default());
-            let (mut env, fork, _chain) =
-                TracingExecutor::get_fork_material(&fork_config, evm_opts).await?;
-
-            let mut executor = TracingExecutor::new(
-                env.clone(),
-                fork,
-                Some(fork_config.evm_version),
-                false,
-                false,
-            );
-            env.block.number = U256::from(simulation_block);
-            let block = provider.get_block(simulation_block.into(), true.into()).await?;
-
-            // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
-            // block.
-            let prev_block_id = BlockId::number(simulation_block - 1);
-
-            // Use `transaction.from` instead of `creation_data.contract_creator` to resolve
-            // blockscout creation data discrepancy in case of CREATE2.
-            let prev_block_nonce =
-                provider.get_transaction_count(transaction.from).block_id(prev_block_id).await?;
-            transaction.nonce = prev_block_nonce;
-
-            if let Some(ref block) = block {
-                env.block.timestamp = U256::from(block.header.timestamp);
-                env.block.coinbase = block.header.miner;
-                env.block.difficulty = block.header.difficulty;
-                env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-                env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
-                env.block.gas_limit = U256::from(block.header.gas_limit);
-            }
-
-            // Replace the `input` with local creation code in the creation tx.
-            if let Some(to) = transaction.to {
-                if to == DEFAULT_CREATE2_DEPLOYER {
-                    let mut input = transaction.input[..32].to_vec(); // Salt
-                    input.extend_from_slice(&local_bytecode_vec);
-                    transaction.input = Bytes::from(input);
-
-                    // Deploy default CREATE2 deployer
-                    executor.deploy_create2_deployer()?;
-                }
-            } else {
-                transaction.input = Bytes::from(local_bytecode_vec);
-            }
-
-            configure_tx_env(&mut env, &transaction);
-
-            let env_with_handler = EnvWithHandlerCfg::new(
-                Box::new(env.clone()),
-                HandlerCfg::new(config.evm_spec_id()),
-            );
-
-            let contract_address = if let Some(to) = transaction.to {
-                if to != DEFAULT_CREATE2_DEPLOYER {
-                    eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
-                }
-                let result = executor.transact_with_env(env_with_handler.clone())?;
-
-                if result.result.len() != 20 {
-                    eyre::bail!("Failed to deploy contract on fork at block {simulation_block}: call result is not exactly 20 bytes");
-                }
-
-                Address::from_slice(&result.result)
-            } else {
-                let deploy_result = executor.deploy_with_env(env_with_handler, None)?;
-                deploy_result.address
-            };
-
-            // State commited using deploy_with_env, now get the runtime bytecode from the db.
-            let fork_runtime_code = executor
-                .backend_mut()
-                .basic(contract_address)?
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "Failed to get runtime code for contract deployed on fork at address {}",
-                        contract_address
-                    )
-                })?
-                .code
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "Bytecode does not exist for contract deployed on fork at address {}",
-                        contract_address
-                    )
-                })?;
-
-            let onchain_runtime_code = provider
-                .get_code_at(args.address)
-                .block_id(BlockId::number(simulation_block))
-                .await?;
-
-            // Compare the onchain runtime bytecode with the runtime code from the fork.
-            let match_type = helpers::match_bytecodes(
-                &fork_runtime_code.original_bytes(),
-                &onchain_runtime_code,
-                &constructor_args,
-                true,
-            );
-
-            helpers::print_result(
-                &args,
-                match_type,
-                BytecodeType::Runtime,
-                &mut json_results,
-                etherscan_metadata,
-                config,
-            );
-        }
-
-        if args.json {
-            println!("{}", serde_json::to_string(&json_results)?);
-        }
         Ok(())
     }
 
