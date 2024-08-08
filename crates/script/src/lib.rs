@@ -457,13 +457,15 @@ impl Provider for ScriptArgs {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub struct ScriptResult {
     pub success: bool,
+    #[serde(rename = "raw_logs")]
     pub logs: Vec<Log>,
     pub traces: Traces,
     pub gas_used: u64,
     pub labeled_addresses: HashMap<Address, String>,
+    #[serde(skip)]
     pub transactions: Option<BroadcastableTransactions>,
     pub returned: Bytes,
     pub address: Option<Address>,
@@ -490,16 +492,12 @@ impl ScriptResult {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-struct JsonResult {
-    success: bool,
-    labeled_addresses: HashMap<Address, String>,
+#[derive(Serialize)]
+struct JsonResult<'a> {
     logs: Vec<String>,
-    traces: Traces,
-    gas_used: u64,
-    address: Option<Address>,
-    returns: HashMap<String, NestedValue>,
-    returned: Bytes,
+    returns: &'a HashMap<String, NestedValue>,
+    #[serde(flatten)]
+    result: &'a ScriptResult,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
