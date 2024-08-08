@@ -21,14 +21,22 @@ casttest!(latest_block, |_prj, cmd| {
 
     // Call `cast find-block`
     cmd.args(["block", "latest", "--rpc-url", eth_rpc_url.as_str()]);
-    let output = cmd.stdout_lossy();
-    assert!(output.contains("transactions:"));
-    assert!(output.contains("gasUsed"));
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+gasUsed [..]
+...
+transactions:        [
+...
+]
+
+"#]]);
 
     // <https://etherscan.io/block/15007840>
     cmd.cast_fuse().args(["block", "15007840", "-f", "hash", "--rpc-url", eth_rpc_url.as_str()]);
-    let output = cmd.stdout_lossy();
-    assert_eq!(output.trim(), "0x950091817a57e22b6c1f3b951a15f52d41ac89b299cc8f9c89bb6d185f80c415")
+    cmd.assert_success().stdout_eq(str![[r#"
+0x950091817a57e22b6c1f3b951a15f52d41ac89b299cc8f9c89bb6d185f80c415
+
+"#]]);
 });
 
 // tests that the `cast find-block` command works correctly
