@@ -1,11 +1,13 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
+use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::Bytes;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{
-    contract::{ContractCreationData, Metadata},
+    contract::{ContractCreationData, ContractMetadata, Metadata},
     errors::EtherscanError,
 };
-use foundry_common::compile::ProjectCompiler;
+use foundry_common::{abi::encode_args, compile::ProjectCompiler};
 use foundry_compilers::artifacts::CompactContractBytecode;
 use foundry_config::Config;
 use reqwest::Url;
@@ -261,6 +263,47 @@ pub fn maybe_predeploy_contract(
             Ok((None, maybe_predeploy))
         }
         Err(e) => eyre::bail!("Error fetching creation data from verifier-url: {:?}", e),
+    }
+}
+
+pub fn check_and_encode_args(
+    artifact: &CompactContractBytecode,
+    args: Vec<String>,
+) -> Result<Vec<u8>, eyre::ErrReport> {
+    if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
+        if constructor.inputs.len() != args.len() {
+            eyre::bail!(
+                "Mismatch of constructor arguments length. Expected {}, got {}",
+                constructor.inputs.len(),
+                args.len()
+            );
+        }
+        encode_args(&constructor.inputs, &args).map(|args| DynSolValue::Tuple(args).abi_encode())
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+pub fn check_explorer_args(
+    source_code: ContractMetadata,
+    artifact: &CompactContractBytecode,
+) -> Result<Bytes, eyre::ErrReport> {
+    if let Some(args) = source_code.items.first() {
+        let explorer_args = args.constructor_arguments.clone();
+        if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
+            if constructor.inputs.len() != explorer_args.len() {
+                eyre::bail!(
+                    "Mismatch of constructor arguments length. Expected {}, got {}",
+                    constructor.inputs.len(),
+                    explorer_args.len()
+                );
+            }
+            Ok(explorer_args)
+        } else {
+            Ok(Bytes::new())
+        }
+    } else {
+        eyre::bail!("No constructor arguments found from block explorer");
     }
 }
 

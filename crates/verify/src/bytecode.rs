@@ -1,10 +1,9 @@
 //! The `forge verify-bytecode` command.
 use crate::{
     etherscan::EtherscanVerificationProvider,
-    utils::{BytecodeType, JsonResult},
+    utils::{check_and_encode_args, check_explorer_args, BytecodeType, JsonResult},
     verify::VerifierArgs,
 };
-use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Transaction};
@@ -14,7 +13,6 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
 };
-use foundry_common::abi::encode_args;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Config};
 use foundry_evm::{
@@ -189,15 +187,9 @@ impl VerifyBytecodeArgs {
         // Get local bytecode (creation code)
         let local_bytecode = artifact
             .bytecode
-            .and_then(|b| b.into_bytes())
+            .as_ref()
+            .and_then(|b| b.to_owned().into_bytes())
             .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
-
-        // Get the constructor args from etherscan
-        let mut constructor_args = if let Some(args) = source_code.items.first() {
-            args.constructor_arguments.clone()
-        } else {
-            eyre::bail!("No constructor arguments found for contract at address {}", self.address);
-        };
 
         // Get and encode user provided constructor args
         let provided_constructor_args = if let Some(path) = self.constructor_args_path.to_owned() {
@@ -206,27 +198,16 @@ impl VerifyBytecodeArgs {
         } else {
             self.constructor_args.to_owned()
         }
-        .map(|args| {
-            if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-                if constructor.inputs.len() != args.len() {
-                    eyre::bail!(
-                        "Mismatch of constructor arguments length. Expected {}, got {}",
-                        constructor.inputs.len(),
-                        args.len()
-                    );
-                }
-                encode_args(&constructor.inputs, &args)
-                    .map(|args| DynSolValue::Tuple(args).abi_encode())
-            } else {
-                Ok(Vec::new())
-            }
-        })
+        .map(|args| check_and_encode_args(&artifact, args))
         .transpose()?
         .or(self.encoded_constructor_args.to_owned().map(hex::decode).transpose()?);
 
-        if let Some(ref provided) = provided_constructor_args {
-            constructor_args = provided.to_owned().into();
-        }
+        let mut constructor_args = if let Some(provided) = provided_constructor_args {
+            provided.into()
+        } else {
+            // If no constructor args were provided, try to retrieve them from the explorer.
+            check_explorer_args(source_code.clone(), &artifact)?
+        };
 
         if maybe_predeploy {
             if !self.json {
@@ -238,17 +219,12 @@ impl VerifyBytecodeArgs {
                 )
             }
 
-            // If predeloy:
-            // 1. Compile locally
-            // 2. Get creation code from artifact.
-            // 3. Append constructor args
-
             // Append constructor args to the local_bytecode.
             trace!(%constructor_args);
             let mut local_bytecode_vec = local_bytecode.to_vec();
             local_bytecode_vec.extend_from_slice(&constructor_args);
 
-            // 4. Deploy at genesis
+            // Deploy at genesis
             let genesis_block_number = 0_u64;
             let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
             fork_config.fork_block_number = Some(genesis_block_number);
@@ -356,8 +332,8 @@ impl VerifyBytecodeArgs {
             return Ok(());
         }
 
-        let creation_data = creation_data.unwrap(); // We can unwrap directly as maybe_predeploy is false
-
+        // We can unwrap directly as maybe_predeploy is false
+        let creation_data = creation_data.unwrap();
         // Get transaction and receipt.
         trace!(creation_tx_hash = ?creation_data.transaction_hash);
         let mut transaction = provider
@@ -393,23 +369,19 @@ impl VerifyBytecodeArgs {
                 );
             };
 
-        if let Some(provided) = provided_constructor_args {
-            constructor_args = provided.into();
-        } else {
-            // In some cases, Etherscan will return incorrect constructor arguments. If this
-            // happens, try extracting arguments ourselves.
-            if !maybe_creation_code.ends_with(&constructor_args) {
-                trace!("mismatch of constructor args with etherscan");
-                // If local bytecode is longer than on-chain one, this is probably not a match.
-                if maybe_creation_code.len() >= local_bytecode.len() {
-                    constructor_args =
-                        Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
-                    trace!(
-                        target: "forge::verify",
-                        "setting constructor args to latest {} bytes of bytecode",
-                        constructor_args.len()
-                    );
-                }
+        // In some cases, Etherscan will return incorrect constructor arguments. If this
+        // happens, try extracting arguments ourselves.
+        if !maybe_creation_code.ends_with(&constructor_args) {
+            trace!("mismatch of constructor args with etherscan");
+            // If local bytecode is longer than on-chain one, this is probably not a match.
+            if maybe_creation_code.len() >= local_bytecode.len() {
+                constructor_args =
+                    Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
+                trace!(
+                    target: "forge::verify",
+                    "setting constructor args to latest {} bytes of bytecode",
+                    constructor_args.len()
+                );
             }
         }
 
