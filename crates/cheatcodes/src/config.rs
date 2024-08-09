@@ -1,6 +1,6 @@
 use super::Result;
 use crate::{script::ScriptWallets, Vm::Rpc};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use foundry_common::{fs::normalize_path, ContractsByArtifact};
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
 use foundry_config::{
@@ -54,6 +54,8 @@ pub struct CheatsConfig {
     pub running_version: Option<Version>,
     /// Whether to enable legacy (non-reverting) assertions.
     pub assertions_revert: bool,
+    /// Optional seed for the RNG algorithm.
+    pub seed: Option<U256>,
 }
 
 impl CheatsConfig {
@@ -93,6 +95,7 @@ impl CheatsConfig {
             available_artifacts,
             running_version,
             assertions_revert: config.assertions_revert,
+            seed: config.fuzz.seed,
         }
     }
 
@@ -221,6 +224,7 @@ impl Default for CheatsConfig {
             available_artifacts: Default::default(),
             running_version: Default::default(),
             assertions_revert: true,
+            seed: None,
         }
     }
 }

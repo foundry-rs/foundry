@@ -26,8 +26,4 @@ contract RandomUint is DSTest {
         assertTrue(rand >= min, "rand >= min");
         assertTrue(rand <= max, "rand <= max");
     }
-
-    function testRandomAddress() public {
-        vm.randomAddress();
-    }
 }

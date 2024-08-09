@@ -5,7 +5,7 @@ use crate::{
     utils::{http_provider, http_provider_with_signer},
 };
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{address, bytes, Address, Bytes, TxHash, TxKind, U256};
+use alloy_primitives::{address, b256, bytes, Address, Bytes, TxHash, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     anvil::Forking,
@@ -1015,12 +1015,18 @@ async fn test_block_receipts() {
     let (api, _) = spawn(fork_config()).await;
 
     // Receipts from the forked block (14608400)
-    let receipts = api.block_receipts(BlockNumberOrTag::Number(BLOCK_NUMBER)).await.unwrap();
+    let receipts = api.block_receipts(BlockNumberOrTag::Number(BLOCK_NUMBER).into()).await.unwrap();
     assert!(receipts.is_some());
 
     // Receipts from a block in the future (14608401)
-    let receipts = api.block_receipts(BlockNumberOrTag::Number(BLOCK_NUMBER + 1)).await.unwrap();
+    let receipts =
+        api.block_receipts(BlockNumberOrTag::Number(BLOCK_NUMBER + 1).into()).await.unwrap();
     assert!(receipts.is_none());
+
+    // Receipts from a block hash (14608400)
+    let hash = b256!("4c1c76f89cfe4eb503b09a0993346dd82865cac9d76034efc37d878c66453f0a");
+    let receipts = api.block_receipts(BlockId::Hash(hash.into())).await.unwrap();
+    assert!(receipts.is_some());
 }
 
 #[tokio::test(flavor = "multi_thread")]

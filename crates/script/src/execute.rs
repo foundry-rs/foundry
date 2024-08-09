@@ -1,10 +1,9 @@
+use super::{runner::ScriptRunner, JsonResult, NestedValue, ScriptResult};
 use crate::{
     build::{CompiledState, LinkedBuildData},
     simulate::PreSimulationState,
     ScriptArgs, ScriptConfig,
 };
-
-use super::{runner::ScriptRunner, JsonResult, NestedValue, ScriptResult};
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
 use alloy_primitives::{Address, Bytes};
@@ -382,14 +381,13 @@ impl PreSimulationState {
     pub fn show_json(&self) -> Result<()> {
         let result = &self.execution_result;
 
-        let console_logs = decode_console_logs(&result.logs);
-        let output = JsonResult {
-            logs: console_logs,
-            gas_used: result.gas_used,
-            returns: self.execution_artifacts.returns.clone(),
+        let json_result = JsonResult {
+            logs: decode_console_logs(&result.logs),
+            returns: &self.execution_artifacts.returns,
+            result,
         };
-        let j = serde_json::to_string(&output)?;
-        shell::println(j)?;
+        let json = serde_json::to_string(&json_result)?;
+        shell::println(json)?;
 
         if !self.execution_result.success {
             return Err(eyre::eyre!(
