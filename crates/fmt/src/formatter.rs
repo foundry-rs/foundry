@@ -1626,6 +1626,10 @@ impl<'a, W: Write> Formatter<'a, W> {
                             &params,
                             ",",
                         )?;
+                    // Write new line if we have only one parameter and params on multiline set.
+                    if params.len() == 1 && params_multiline {
+                        writeln!(fmt.buf())?;
+                    }
                     fmt.write_chunks_separated(&params, ",", params_multiline)?;
                     Ok(())
                 },
