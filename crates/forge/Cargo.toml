@@ -78,6 +78,7 @@ dialoguer = { version = "0.11", default-features = false }
 dunce.workspace = true
 futures.workspace = true
 indicatif = "0.17"
+inferno = "0.11.19"
 itertools.workspace = true
 parking_lot.workspace = true
 regex = { version = "1", default-features = false }
