@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["ffi","get_artifact_code","prompt","prompt_input","prompt_password","read_dir","write_file"]};

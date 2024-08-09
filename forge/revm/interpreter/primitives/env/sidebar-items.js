@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AnalysisKind","AuthorizationList","CreateScheme","TxType"],"mod":["eip7702","handler_cfg"],"struct":["Authorization","BlobExcessGasAndPrice","BlockEnv","CfgEnv","CfgEnvWithHandlerCfg","Env","EnvWithHandlerCfg","HandlerCfg","OptimismFields","RecoveredAuthorization","SignedAuthorization","TxEnv"],"type":["Signature","TransactTo"]};

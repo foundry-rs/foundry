@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CONTRACT_SIZE_LIMIT"],"fn":["compile_target","deployed_contract_size","etherscan_project","with_compilation_reporter"],"struct":["ContractInfo","ProjectCompiler","SizeReport"]};

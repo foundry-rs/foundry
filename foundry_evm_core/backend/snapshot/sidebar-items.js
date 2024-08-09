@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RevertSnapshotAction"],"struct":["BackendSnapshot","StateSnapshot"]};
