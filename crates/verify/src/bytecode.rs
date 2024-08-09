@@ -206,7 +206,7 @@ impl VerifyBytecodeArgs {
             provided.into()
         } else {
             // If no constructor args were provided, try to retrieve them from the explorer.
-            check_explorer_args(source_code.clone(), &artifact)?
+            check_explorer_args(source_code.clone())?
         };
 
         if maybe_predeploy {
