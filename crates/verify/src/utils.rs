@@ -284,24 +284,9 @@ pub fn check_and_encode_args(
     }
 }
 
-pub fn check_explorer_args(
-    source_code: ContractMetadata,
-    artifact: &CompactContractBytecode,
-) -> Result<Bytes, eyre::ErrReport> {
+pub fn check_explorer_args(source_code: ContractMetadata) -> Result<Bytes, eyre::ErrReport> {
     if let Some(args) = source_code.items.first() {
-        let explorer_args = args.constructor_arguments.clone();
-        if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-            if constructor.inputs.len() != explorer_args.len() {
-                eyre::bail!(
-                    "Mismatch of constructor arguments length. Expected {}, got {}",
-                    constructor.inputs.len(),
-                    explorer_args.len()
-                );
-            }
-            Ok(explorer_args)
-        } else {
-            Ok(Bytes::new())
-        }
+        Ok(args.constructor_arguments.clone())
     } else {
         eyre::bail!("No constructor arguments found from block explorer");
     }
