@@ -405,7 +405,26 @@ impl<'a, W: Write> Formatter<'a, W> {
         while let Some((loc, item)) = items.next() {
             let chunk_next_byte_offset =
                 items.peek().map(|(loc, _)| loc.start()).or(next_byte_offset);
-            out.push(self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?);
+
+            let chunk = if self.inline_config.is_disabled(loc) {
+                // If item format is disabled, we determine last disabled line from item and create
+                // chunk with raw src.
+                let mut disabled_loc = loc;
+                self.chunked(disabled_loc.start(), chunk_next_byte_offset, |fmt| {
+                    while fmt.inline_config.is_disabled(disabled_loc) {
+                        if let Some(next_line) = fmt.find_next_line(disabled_loc.end()) {
+                            disabled_loc = disabled_loc.with_end(next_line);
+                        } else {
+                            break;
+                        }
+                    }
+                    fmt.write_raw_src(disabled_loc)?;
+                    Ok(())
+                })?
+            } else {
+                self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?
+            };
+            out.push(chunk);
         }
         Ok(out)
     }
