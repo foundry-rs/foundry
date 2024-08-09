@@ -1,21 +1,24 @@
 use alloy_consensus::{SignableTransaction, Signed, Transaction};
 use alloy_primitives::{keccak256, Address, Bytes, ChainId, Signature, TxKind, B256, U256};
 use alloy_rlp::{
-    length_of_length, Decodable, Encodable, Error as DecodeError, Header as RlpHeader,
+    length_of_length, BufMut, Decodable, Encodable, Error as DecodeError, Header as RlpHeader,
 };
-use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 use std::mem;
 
 pub const DEPOSIT_TX_TYPE_ID: u8 = 0x7E;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct DepositTransactionRequest {
     pub source_hash: B256,
     pub from: Address,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "TxKind::is_create"))]
     pub kind: TxKind,
     pub mint: U256,
     pub value: U256,
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub gas_limit: u128,
     pub is_system_tx: bool,
     pub input: Bytes,
@@ -234,7 +237,7 @@ impl Encodable for DepositTransactionRequest {
 }
 
 /// An op-stack deposit transaction.
-/// See <https://github.com/ethereum-optimism/optimism/blob/develop/specs/deposits.md#the-deposited-transaction-type>
+/// See <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/deposits.md>
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DepositTransaction {
     pub nonce: u64,

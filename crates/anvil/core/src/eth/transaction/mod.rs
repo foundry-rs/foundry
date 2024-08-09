@@ -57,7 +57,6 @@ pub fn transaction_request_to_typed(
         other,
     } = tx;
 
-    // Special case: OP-stack deposit tx
     if transaction_type == Some(0x7E) || has_optimism_fields(&other) {
         return Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
             from: from.unwrap_or_default(),
