@@ -6,7 +6,6 @@ use alloy_json_abi::{Error, JsonAbi};
 use alloy_primitives::{hex, Log, Selector};
 use alloy_sol_types::{SolCall, SolError, SolEventInterface, SolInterface, SolValue};
 use foundry_common::{abi::get_error, selectors::decode_function_selector, SELECTOR_LEN};
-use futures::executor::block_on;
 use itertools::Itertools;
 use revm::interpreter::InstructionResult;
 use rustc_hash::FxHashMap;
@@ -185,7 +184,8 @@ impl RevertDecoder {
         let encoded_selector = hex::encode(selector);
 
         thread::spawn(move || {
-            let result = block_on(decode_function_selector(&encoded_selector));
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let result = rt.block_on(decode_function_selector(&encoded_selector));
             tx.send(result).unwrap();
         });
 
