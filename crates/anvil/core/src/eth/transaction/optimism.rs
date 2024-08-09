@@ -1,8 +1,7 @@
 use alloy_consensus::{SignableTransaction, Signed, Transaction};
 use alloy_primitives::{keccak256, Address, Bytes, ChainId, Signature, TxKind, B256, U256};
 use alloy_rlp::{
-    length_of_length, Buf, BufMut, Decodable, Encodable, Error as DecodeError, Header as RlpHeader,
-    EMPTY_STRING_CODE,
+    length_of_length, BufMut, Decodable, Encodable, Error as DecodeError, Header as RlpHeader,
 };
 use serde::{Deserialize, Serialize};
 use std::mem;
@@ -17,8 +16,7 @@ pub struct DepositTransactionRequest {
     pub from: Address,
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "TxKind::is_create"))]
     pub kind: TxKind,
-    #[cfg_attr(feature = "serde", serde(default, with = "alloy_serde::quantity::opt"))]
-    pub mint: Option<u128>,
+    pub mint: U256,
     pub value: U256,
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub gas_limit: u128,
@@ -40,11 +38,7 @@ impl DepositTransactionRequest {
         self.source_hash.encode(out);
         self.from.encode(out);
         self.kind.encode(out);
-        if let Some(mint) = self.mint {
-            mint.encode(out);
-        } else {
-            out.put_u8(EMPTY_STRING_CODE);
-        };
+        self.mint.encode(out);
         self.value.encode(out);
         self.gas_limit.encode(out);
         self.is_system_tx.encode(out);
@@ -57,7 +51,7 @@ impl DepositTransactionRequest {
         len += self.source_hash.length();
         len += self.from.length();
         len += self.kind.length();
-        len += self.mint.map_or(1, |mint| mint.length());
+        len += self.mint.length();
         len += self.value.length();
         len += self.gas_limit.length();
         len += self.is_system_tx.length();
@@ -83,12 +77,7 @@ impl DepositTransactionRequest {
             source_hash: Decodable::decode(buf)?,
             from: Decodable::decode(buf)?,
             kind: Decodable::decode(buf)?,
-            mint: if *buf.first().ok_or(DecodeError::InputTooShort)? == EMPTY_STRING_CODE {
-                buf.advance(1);
-                None
-            } else {
-                Some(Decodable::decode(buf)?)
-            },
+            mint: Decodable::decode(buf)?,
             value: Decodable::decode(buf)?,
             gas_limit: Decodable::decode(buf)?,
             is_system_tx: Decodable::decode(buf)?,
@@ -255,7 +244,7 @@ pub struct DepositTransaction {
     pub source_hash: B256,
     pub from: Address,
     pub kind: TxKind,
-    pub mint: Option<u128>,
+    pub mint: U256,
     pub value: U256,
     pub gas_limit: u128,
     pub is_system_tx: bool,
@@ -292,11 +281,7 @@ impl DepositTransaction {
         self.source_hash.encode(out);
         self.from.encode(out);
         self.kind.encode(out);
-        if let Some(mint) = self.mint {
-            mint.encode(out);
-        } else {
-            out.put_u8(EMPTY_STRING_CODE);
-        };
+        self.mint.encode(out);
         self.value.encode(out);
         self.gas_limit.encode(out);
         self.is_system_tx.encode(out);
@@ -309,7 +294,7 @@ impl DepositTransaction {
         len += self.source_hash.length();
         len += self.from.length();
         len += self.kind.length();
-        len += self.mint.map_or(1, |mint| mint.length());
+        len += self.mint.length();
         len += self.value.length();
         len += self.gas_limit.length();
         len += self.is_system_tx.length();
@@ -350,12 +335,7 @@ impl DepositTransaction {
             source_hash: Decodable::decode(buf)?,
             from: Decodable::decode(buf)?,
             kind: Decodable::decode(buf)?,
-            mint: if *buf.first().ok_or(DecodeError::InputTooShort)? == EMPTY_STRING_CODE {
-                buf.advance(1);
-                None
-            } else {
-                Some(Decodable::decode(buf)?)
-            },
+            mint: Decodable::decode(buf)?,
             value: Decodable::decode(buf)?,
             gas_limit: Decodable::decode(buf)?,
             is_system_tx: Decodable::decode(buf)?,
@@ -394,7 +374,7 @@ mod tests {
             source_hash: B256::default(),
             from: Address::default(),
             kind: TxKind::Call(Address::default()),
-            mint: Some(100_u128),
+            mint: U256::from(100),
             value: U256::from(100),
             gas_limit: 50000,
             is_system_tx: false,
@@ -414,7 +394,7 @@ mod tests {
             source_hash: B256::default(),
             from: Address::default(),
             kind: TxKind::Call(Address::default()),
-            mint: Some(100_u128),
+            mint: U256::from(100),
             value: U256::from(100),
             gas_limit: 50000,
             is_system_tx: false,
@@ -436,7 +416,7 @@ mod tests {
             source_hash: B256::default(),
             from: Address::default(),
             kind: TxKind::Call(Address::default()),
-            mint: Some(100_u128),
+            mint: U256::from(100),
             value: U256::from(100),
             gas_limit: 50000,
             is_system_tx: false,
