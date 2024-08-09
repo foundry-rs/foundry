@@ -1,5 +1,4 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
-use alloy_primitives::{Address, B256};
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{
