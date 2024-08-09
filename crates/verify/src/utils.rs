@@ -1,16 +1,24 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_provider::Provider;
+use alloy_rpc_types::{Block, BlockId, Transaction};
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::{
     contract::{ContractCreationData, ContractMetadata, Metadata},
     errors::EtherscanError,
 };
-use foundry_common::{abi::encode_args, compile::ProjectCompiler};
-use foundry_compilers::artifacts::CompactContractBytecode;
+use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::RetryProvider};
+use foundry_compilers::artifacts::{CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
+use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts};
 use reqwest::Url;
+use revm_primitives::{
+    db::Database,
+    env::{EnvWithHandlerCfg, HandlerCfg},
+    Bytecode, Env, SpecId,
+};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
@@ -290,6 +298,94 @@ pub fn check_explorer_args(source_code: ContractMetadata) -> Result<Bytes, eyre:
     } else {
         eyre::bail!("No constructor arguments found from block explorer");
     }
+}
+
+pub async fn get_tracing_executor(
+    fork_config: &mut Config,
+    fork_blk_num: u64,
+    evm_version: EvmVersion,
+    evm_opts: EvmOpts,
+) -> Result<(Env, TracingExecutor)> {
+    fork_config.fork_block_number = Some(fork_blk_num);
+    fork_config.evm_version = evm_version;
+
+    let (env, fork, _chain) = TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
+
+    let executor =
+        TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false, false);
+
+    Ok((env, executor))
+}
+
+pub fn configure_env_block(env: &mut Env, block: &Block) {
+    env.block.timestamp = U256::from(block.header.timestamp);
+    env.block.coinbase = block.header.miner;
+    env.block.difficulty = block.header.difficulty;
+    env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
+    env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
+    env.block.gas_limit = U256::from(block.header.gas_limit);
+}
+
+pub fn deploy_contract(
+    executor: &mut TracingExecutor,
+    env: &Env,
+    spec_id: SpecId,
+    transaction: &Transaction,
+) -> Result<Address, eyre::ErrReport> {
+    let env_with_handler = EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(spec_id));
+
+    if let Some(to) = transaction.to {
+        if to != DEFAULT_CREATE2_DEPLOYER {
+            eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
+        }
+        let result = executor.transact_with_env(env_with_handler)?;
+
+        trace!(transact_result = ?result.exit_reason);
+        if result.result.len() != 20 {
+            eyre::bail!(
+                "Failed to deploy contract on fork at block: call result is not exactly 20 bytes"
+            );
+        }
+
+        Ok(Address::from_slice(&result.result))
+    } else {
+        let deploy_result = executor.deploy_with_env(env_with_handler, None)?;
+        trace!(deploy_result = ?deploy_result.raw.exit_reason);
+        Ok(deploy_result.address)
+    }
+}
+
+pub async fn get_runtime_codes(
+    executor: &mut TracingExecutor,
+    provider: &RetryProvider,
+    address: Address,
+    fork_address: Address,
+    block: Option<u64>,
+) -> Result<(Bytecode, Bytes)> {
+    let fork_runtime_code = executor
+        .backend_mut()
+        .basic(fork_address)?
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "Failed to get runtime code for contract deployed on fork at address {}",
+                fork_address
+            )
+        })?
+        .code
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "Bytecode does not exist for contract deployed on fork at address {}",
+                fork_address
+            )
+        })?;
+
+    let onchain_runtime_code = if let Some(block) = block {
+        provider.get_code_at(address).block_id(BlockId::number(block)).await?
+    } else {
+        provider.get_code_at(address).await?
+    };
+
+    Ok((fork_runtime_code, onchain_runtime_code))
 }
 
 /// Returns `true` if the URL only consists of host.

@@ -1,7 +1,10 @@
 //! The `forge verify-bytecode` command.
 use crate::{
     etherscan::EtherscanVerificationProvider,
-    utils::{check_and_encode_args, check_explorer_args, BytecodeType, JsonResult},
+    utils::{
+        check_and_encode_args, check_explorer_args, configure_env_block, maybe_predeploy_contract,
+        BytecodeType, JsonResult,
+    },
     verify::VerifierArgs,
 };
 use alloy_primitives::{hex, Address, Bytes, U256};
@@ -15,10 +18,8 @@ use foundry_cli::{
 };
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Config};
-use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, utils::configure_tx_env,
-};
-use revm_primitives::{db::Database, AccountInfo, EnvWithHandlerCfg, HandlerCfg};
+use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_env};
+use revm_primitives::AccountInfo;
 use std::path::PathBuf;
 use yansi::Paint;
 
@@ -157,8 +158,7 @@ impl VerifyBytecodeArgs {
         let creation_data = etherscan.contract_creation_data(self.address).await;
 
         // Check if contract is a predeploy
-        let (creation_data, maybe_predeploy) =
-            crate::utils::maybe_predeploy_contract(creation_data)?;
+        let (creation_data, maybe_predeploy) = maybe_predeploy_contract(creation_data)?;
 
         trace!(maybe_predeploy = ?maybe_predeploy);
 
@@ -225,29 +225,22 @@ impl VerifyBytecodeArgs {
             local_bytecode_vec.extend_from_slice(&constructor_args);
 
             // Deploy at genesis
-            let genesis_block_number = 0_u64;
+            let gen_blk_num = 0_u64;
             let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
-            fork_config.fork_block_number = Some(genesis_block_number);
-            fork_config.evm_version =
-                etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default());
-            let (mut env, fork, _chain) =
-                TracingExecutor::get_fork_material(&fork_config, evm_opts).await?;
-
-            let mut executor = TracingExecutor::new(
-                env.clone(),
-                fork,
-                Some(fork_config.evm_version),
-                false,
-                false,
-            );
+            let (mut env, mut executor) = crate::utils::get_tracing_executor(
+                &mut fork_config,
+                gen_blk_num,
+                etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default()),
+                evm_opts,
+            )
+            .await?;
 
             env.block.number = U256::ZERO; // Genesis block
-            let genesis_block =
-                provider.get_block(genesis_block_number.into(), true.into()).await?;
+            let genesis_block = provider.get_block(gen_blk_num.into(), true.into()).await?;
 
             // Setup genesis tx and env.
             let deployer = Address::with_last_byte(0x1);
-            let mut genesis_transaction = Transaction {
+            let mut gen_tx = Transaction {
                 from: deployer,
                 to: None,
                 input: Bytes::from(local_bytecode_vec),
@@ -255,21 +248,13 @@ impl VerifyBytecodeArgs {
             };
 
             if let Some(ref block) = genesis_block {
-                env.block.timestamp = U256::from(block.header.timestamp);
-                env.block.coinbase = block.header.miner;
-                env.block.difficulty = block.header.difficulty;
-                env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-                env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
-                env.block.gas_limit = U256::from(block.header.gas_limit);
-
-                genesis_transaction.max_fee_per_gas =
-                    Some(block.header.base_fee_per_gas.unwrap_or_default());
-                genesis_transaction.gas = block.header.gas_limit;
-                genesis_transaction.gas_price =
-                    Some(block.header.base_fee_per_gas.unwrap_or_default());
+                configure_env_block(&mut env, block);
+                gen_tx.max_fee_per_gas = Some(block.header.base_fee_per_gas.unwrap_or_default());
+                gen_tx.gas = block.header.gas_limit;
+                gen_tx.gas_price = Some(block.header.base_fee_per_gas.unwrap_or_default());
             }
 
-            configure_tx_env(&mut env, &genesis_transaction);
+            configure_tx_env(&mut env, &gen_tx);
 
             // Seed deployer account with funds
             let account_info = AccountInfo {
@@ -279,40 +264,23 @@ impl VerifyBytecodeArgs {
             };
             executor.backend_mut().insert_account_info(deployer, account_info);
 
-            let env_with_handler = EnvWithHandlerCfg::new(
-                Box::new(env.clone()),
-                HandlerCfg::new(config.evm_spec_id()),
-            );
-
-            // Deploy contract
-            let deploy_result = executor.deploy_with_env(env_with_handler, None)?;
-            trace!(deploy_result = ?deploy_result.raw.exit_reason);
-            let deployed_address = deploy_result.address;
+            let fork_address =
+                crate::utils::deploy_contract(&mut executor, &env, config.evm_spec_id(), &gen_tx)?;
 
             // Compare runtime bytecode
-            let deployed_bytecode = executor
-                .backend_mut()
-                .basic(deployed_address)?
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "Failed to get runtime code for contract deployed on fork at address {}",
-                        deployed_address
-                    )
-                })?
-                .code
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "Bytecode does not exist for contract deployed on fork at address {}",
-                        deployed_address
-                    )
-                })?;
-
-            let onchain_runtime_code = provider.get_code_at(self.address).await?;
+            let (deployed_bytecode, onchain_runtime_code) = crate::utils::get_runtime_codes(
+                &mut executor,
+                &provider,
+                self.address,
+                fork_address,
+                None,
+            )
+            .await?;
 
             let match_type = crate::utils::match_bytecodes(
                 &deployed_bytecode.original_bytes(),
                 &onchain_runtime_code,
-                &Bytes::default(),
+                &constructor_args,
                 true,
             );
 
@@ -447,19 +415,13 @@ impl VerifyBytecodeArgs {
 
             // Fork the chain at `simulation_block`.
             let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
-            fork_config.fork_block_number = Some(simulation_block - 1);
-            fork_config.evm_version =
-                etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default());
-            let (mut env, fork, _chain) =
-                TracingExecutor::get_fork_material(&fork_config, evm_opts).await?;
-
-            let mut executor = TracingExecutor::new(
-                env.clone(),
-                fork,
-                Some(fork_config.evm_version),
-                false,
-                false,
-            );
+            let (mut env, mut executor) = crate::utils::get_tracing_executor(
+                &mut fork_config,
+                simulation_block - 1, // env.fork_block_number
+                etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default()),
+                evm_opts,
+            )
+            .await?;
             env.block.number = U256::from(simulation_block);
             let block = provider.get_block(simulation_block.into(), true.into()).await?;
 
@@ -474,12 +436,7 @@ impl VerifyBytecodeArgs {
             transaction.nonce = prev_block_nonce;
 
             if let Some(ref block) = block {
-                env.block.timestamp = U256::from(block.header.timestamp);
-                env.block.coinbase = block.header.miner;
-                env.block.difficulty = block.header.difficulty;
-                env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-                env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
-                env.block.gas_limit = U256::from(block.header.gas_limit);
+                configure_env_block(&mut env, block)
             }
 
             // Replace the `input` with local creation code in the creation tx.
@@ -498,49 +455,22 @@ impl VerifyBytecodeArgs {
 
             configure_tx_env(&mut env, &transaction);
 
-            let env_with_handler = EnvWithHandlerCfg::new(
-                Box::new(env.clone()),
-                HandlerCfg::new(config.evm_spec_id()),
-            );
-
-            let contract_address = if let Some(to) = transaction.to {
-                if to != DEFAULT_CREATE2_DEPLOYER {
-                    eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
-                }
-                let result = executor.transact_with_env(env_with_handler.clone())?;
-
-                if result.result.len() != 20 {
-                    eyre::bail!("Failed to deploy contract on fork at block {simulation_block}: call result is not exactly 20 bytes");
-                }
-
-                Address::from_slice(&result.result)
-            } else {
-                let deploy_result = executor.deploy_with_env(env_with_handler, None)?;
-                deploy_result.address
-            };
+            let fork_address = crate::utils::deploy_contract(
+                &mut executor,
+                &env,
+                config.evm_spec_id(),
+                &transaction,
+            )?;
 
             // State commited using deploy_with_env, now get the runtime bytecode from the db.
-            let fork_runtime_code = executor
-                .backend_mut()
-                .basic(contract_address)?
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "Failed to get runtime code for contract deployed on fork at address {}",
-                        contract_address
-                    )
-                })?
-                .code
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "Bytecode does not exist for contract deployed on fork at address {}",
-                        contract_address
-                    )
-                })?;
-
-            let onchain_runtime_code = provider
-                .get_code_at(self.address)
-                .block_id(BlockId::number(simulation_block))
-                .await?;
+            let (fork_runtime_code, onchain_runtime_code) = crate::utils::get_runtime_codes(
+                &mut executor,
+                &provider,
+                self.address,
+                fork_address,
+                Some(simulation_block),
+            )
+            .await?;
 
             // Compare the onchain runtime bytecode with the runtime code from the fork.
             let match_type = crate::utils::match_bytecodes(
