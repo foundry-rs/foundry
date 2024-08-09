@@ -5,7 +5,8 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Error, JsonAbi};
 use alloy_primitives::{hex, Log, Selector};
 use alloy_sol_types::{SolCall, SolError, SolEventInterface, SolInterface, SolValue};
-use foundry_common::SELECTOR_LEN;
+use foundry_common::{abi::get_error, selectors::decode_function_selector, SELECTOR_LEN};
+use futures::executor::block_on;
 use itertools::Itertools;
 use revm::interpreter::InstructionResult;
 use rustc_hash::FxHashMap;
@@ -174,6 +175,21 @@ impl RevertDecoder {
         // ASCII string.
         if err.is_ascii() {
             return Some(std::str::from_utf8(err).unwrap().to_string());
+        }
+
+        // try from https://openchain.xyz
+        if let Ok(sigs) = block_on(decode_function_selector(&hex::encode(selector))) {
+            for sig in sigs {
+                if let Ok(error) = get_error(&sig) {
+                    if let Ok(decoded) = error.abi_decode_input(data, true) {
+                        return Some(format!(
+                            "{}({})",
+                            error.name,
+                            decoded.iter().map(foundry_common::fmt::format_token).format(", ")
+                        ));
+                    }
+                }
+            }
         }
 
         // Generic custom error.
