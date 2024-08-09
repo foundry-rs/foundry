@@ -445,7 +445,15 @@ impl DocBuilder {
                 }
             } else {
                 let name = path.iter().last().unwrap().to_string_lossy();
-                let readme_path = Path::new("/").join(&path).display().to_string();
+                let readme_path = Path::new("/")
+                    .join(&path)
+                    .display()
+                    .to_string()
+                    .trim_start_matches('/')
+                    .to_string();
+                let slash_count = readme_path.chars().filter(|&c| c == '/').count();
+                let prefix = "../".repeat(slash_count);
+                let readme_path = format!("{prefix}{readme_path}/index.html");
                 readme.write_link_list_item(&name, &readme_path, 0)?;
                 self.write_summary_section(summary, &files, Some(&path), depth + 1)?;
             }
