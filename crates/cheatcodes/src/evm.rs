@@ -166,6 +166,41 @@ impl Cheatcode for dumpStateCall {
     }
 }
 
+impl Cheatcode for sign_0Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
+        let Self { privateKey, digest } = self;
+        super::utils::sign(privateKey, digest)
+    }
+}
+
+impl Cheatcode for sign_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { digest } = self;
+        super::utils::sign_with_wallet(ccx, None, digest)
+    }
+}
+
+impl Cheatcode for sign_2Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { signer, digest } = self;
+        super::utils::sign_with_wallet(ccx, Some(*signer), digest)
+    }
+}
+
+impl Cheatcode for signP256Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { privateKey, digest } = self;
+        super::utils::sign_p256(privateKey, digest, ccx.state)
+    }
+}
+
+impl Cheatcode for generate_public_key_p256Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self{ privateKey} = self;
+        super::utils::generate_public_key_p256(privateKey)
+    }
+}
+
 impl Cheatcode for recordCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
