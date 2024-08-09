@@ -10,7 +10,10 @@ use futures::executor::block_on;
 use itertools::Itertools;
 use revm::interpreter::InstructionResult;
 use rustc_hash::FxHashMap;
-use std::sync::OnceLock;
+use std::{
+    sync::{mpsc, OnceLock},
+    thread,
+};
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
@@ -178,7 +181,19 @@ impl RevertDecoder {
         }
 
         // try from https://openchain.xyz
-        if let Ok(sigs) = block_on(decode_function_selector(&hex::encode(selector))) {
+        let (tx, rx) = mpsc::channel();
+        let encoded_selector = hex::encode(selector);
+
+        thread::spawn(move || {
+            let result = block_on(decode_function_selector(&encoded_selector));
+            tx.send(result).unwrap();
+        });
+
+        let result = match rx.recv() {
+            Ok(Ok(sigs)) => Some(sigs),
+            Ok(Err(_)) | Err(_) => None,
+        };
+        if let Some(sigs) = result {
             for sig in sigs {
                 if let Ok(error) = get_error(&sig) {
                     if let Ok(decoded) = error.abi_decode_input(data, true) {
