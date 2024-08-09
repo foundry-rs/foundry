@@ -221,7 +221,7 @@ pub enum EthRequest {
     EthGetTransactionReceipt(B256),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getBlockReceipts", with = "sequence"))]
-    EthGetBlockReceipts(BlockNumber),
+    EthGetBlockReceipts(BlockId),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_getUncleByBlockHashAndIndex"))]
     EthGetUncleByBlockHashAndIndex(B256, Index),

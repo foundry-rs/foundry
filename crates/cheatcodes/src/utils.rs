@@ -55,22 +55,21 @@ impl Cheatcode for ensNamehashCall {
 }
 
 impl Cheatcode for randomUint_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        // Use thread_rng to get a random number
-        let mut rng = rand::thread_rng();
+        let rng = state.rng();
         let random_number: U256 = rng.gen();
         Ok(random_number.abi_encode())
     }
 }
 
 impl Cheatcode for randomUint_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { min, max } = *self;
         ensure!(min <= max, "min must be less than or equal to max");
         // Generate random between range min..=max
-        let mut rng = rand::thread_rng();
         let exclusive_modulo = max - min;
+        let rng = state.rng();
         let mut random_number = rng.gen::<U256>();
         if exclusive_modulo != U256::MAX {
             let inclusive_modulo = exclusive_modulo + U256::from(1);
@@ -82,9 +81,10 @@ impl Cheatcode for randomUint_1Call {
 }
 
 impl Cheatcode for randomAddressCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        let addr = Address::random();
+        let rng = state.rng();
+        let addr = Address::random_with(rng);
         Ok(addr.abi_encode())
     }
 }

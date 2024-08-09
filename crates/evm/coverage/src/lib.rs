@@ -294,11 +294,8 @@ pub enum CoverageItemKind {
         ///
         /// The first path has ID 0, the next ID 1, and so on.
         path_id: usize,
-    },
-    /// A branch in the code.
-    SinglePathBranch {
-        /// The ID that identifies the branch.
-        branch_id: usize,
+        /// If true, then the branch anchor is the first opcode within the branch source range.
+        is_first_opcode: bool,
     },
     /// A function in the code.
     Function {
@@ -326,11 +323,8 @@ impl Display for CoverageItem {
             CoverageItemKind::Statement => {
                 write!(f, "Statement")?;
             }
-            CoverageItemKind::Branch { branch_id, path_id } => {
+            CoverageItemKind::Branch { branch_id, path_id, .. } => {
                 write!(f, "Branch (branch: {branch_id}, path: {path_id})")?;
-            }
-            CoverageItemKind::SinglePathBranch { branch_id } => {
-                write!(f, "Branch (branch: {branch_id}, path: 0)")?;
             }
             CoverageItemKind::Function { name } => {
                 write!(f, r#"Function "{name}""#)?;
@@ -416,7 +410,7 @@ impl AddAssign<&CoverageItem> for CoverageSummary {
                     self.statement_hits += 1;
                 }
             }
-            CoverageItemKind::Branch { .. } | CoverageItemKind::SinglePathBranch { .. } => {
+            CoverageItemKind::Branch { .. } => {
                 self.branch_count += 1;
                 if item.hits > 0 {
                     self.branch_hits += 1;

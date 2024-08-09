@@ -618,7 +618,7 @@ mod tests {
             root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
             ..Default::default()
         };
-        Cheatcodes { config: Arc::new(config), ..Default::default() }
+        Cheatcodes::new(Arc::new(config))
     }
 
     #[test]
