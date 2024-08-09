@@ -245,32 +245,21 @@ fn find_mismatch_in_settings(
 
 pub fn maybe_predeploy_contract(
     creation_data: Result<ContractCreationData, EtherscanError>,
-) -> Result<(ContractCreationData, bool), eyre::ErrReport> {
+) -> Result<(Option<ContractCreationData>, bool), eyre::ErrReport> {
     let mut maybe_predeploy = false;
     match creation_data {
-        Ok(creation_data) => Ok((creation_data, maybe_predeploy)),
+        Ok(creation_data) => Ok((Some(creation_data), maybe_predeploy)),
         // Ref: https://explorer.mode.network/api?module=contract&action=getcontractcreation&contractaddresses=0xC0d3c0d3c0D3c0d3C0D3c0D3C0d3C0D3C0D30010
         Err(EtherscanError::EmptyResult { status, message })
             if status == "1" && message == "OK" =>
         {
             maybe_predeploy = true;
-            let creation_data = ContractCreationData {
-                contract_address: Address::ZERO,
-                contract_creator: Address::ZERO,
-                transaction_hash: B256::default(),
-            };
-
-            Ok((creation_data, maybe_predeploy))
+            Ok((None, maybe_predeploy))
         }
         // Ref: https://api.basescan.org/api?module=contract&action=getcontractcreation&contractaddresses=0xC0d3c0d3c0D3c0d3C0D3c0D3C0d3C0D3C0D30010&apiKey=YourAPIKey
         Err(EtherscanError::Serde { error: _, content }) if content.contains("GENESIS") => {
             maybe_predeploy = true;
-            let creation_data = ContractCreationData {
-                contract_address: Address::ZERO,
-                contract_creator: Address::ZERO,
-                transaction_hash: B256::default(),
-            };
-            Ok((creation_data, maybe_predeploy))
+            Ok((None, maybe_predeploy))
         }
         Err(e) => eyre::bail!("Error fetching creation data from verifier-url: {:?}", e),
     }

@@ -356,6 +356,8 @@ impl VerifyBytecodeArgs {
             return Ok(());
         }
 
+        let creation_data = creation_data.unwrap(); // We can unwrap directly as maybe_predeploy is false
+
         // Get transaction and receipt.
         trace!(creation_tx_hash = ?creation_data.transaction_hash);
         let mut transaction = provider
