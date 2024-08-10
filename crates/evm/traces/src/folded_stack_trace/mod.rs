@@ -21,17 +21,23 @@ impl FoldedStackTraceBuilder {
     fn process_call_node(&mut self, nodes: &[CallTraceNode], idx: usize) {
         let node = &nodes[idx];
 
-        let selector = node
-            .selector()
-            .map(|selector| selector.encode_hex_with_prefix())
-            .unwrap_or("fallback".to_string());
-        let signature =
-            node.trace.decoded.call_data.as_ref().map(|dc| &dc.signature).unwrap_or(&selector);
-
-        let label = if let Some(label) = &node.trace.decoded.label {
-            format!("{label}.{signature}")
+        let label = if node.trace.kind.is_any_create() {
+            let default_contract_name = "Contract".to_string();
+            let contract_name = node.trace.decoded.label.as_ref().unwrap_or(&default_contract_name);
+            format!("new {contract_name}")
         } else {
-            signature.clone()
+            let selector = node
+                .selector()
+                .map(|selector| selector.encode_hex_with_prefix())
+                .unwrap_or("fallback".to_string());
+            let signature =
+                node.trace.decoded.call_data.as_ref().map(|dc| &dc.signature).unwrap_or(&selector);
+
+            if let Some(label) = &node.trace.decoded.label {
+                format!("{label}.{signature}")
+            } else {
+                signature.clone()
+            }
         };
 
         self.enter(label, node.trace.gas_used as i64);
