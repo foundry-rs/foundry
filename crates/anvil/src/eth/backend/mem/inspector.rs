@@ -41,7 +41,7 @@ impl Inspector {
         self
     }
 
-    pub fn with_config(mut self, config: TracingInspectorConfig) -> Self {
+    pub fn with_tracing_config(mut self, config: TracingInspectorConfig) -> Self {
         self.tracer = Some(TracingInspector::new(config));
         self
     }
