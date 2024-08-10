@@ -45,7 +45,6 @@ impl FoldedStackTraceBuilder {
                 TraceMemberOrder::Call(child_idx) => {
                     let child_node_idx = node.children[*child_idx];
                     self.process_call_node(nodes, child_node_idx);
-                    self.exit();
                 }
                 TraceMemberOrder::Step(step_idx) => {
                     self.exit_previous_steps(&mut step_exits, *step_idx);
@@ -55,6 +54,7 @@ impl FoldedStackTraceBuilder {
             }
         }
 
+        // Exit from this call context in the folded stack trace.
         self.exit();
     }
 
