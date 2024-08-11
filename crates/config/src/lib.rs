@@ -107,7 +107,7 @@ mod inline;
 pub use inline::{validate_profiles, InlineConfig, InlineConfigError, InlineConfigParser, NatSpec};
 
 pub mod soldeer;
-use soldeer::SoldeerConfig;
+use soldeer::{SoldeerConfig, SoldeerDependencyConfig};
 
 mod vyper;
 use vyper::VyperConfig;
@@ -422,7 +422,10 @@ pub struct Config {
     pub vyper: VyperConfig,
 
     /// Soldeer dependencies
-    pub dependencies: Option<SoldeerConfig>,
+    pub dependencies: Option<SoldeerDependencyConfig>,
+
+    /// Soldeer custom configs
+    pub soldeer: Option<SoldeerConfig>,
 
     /// The root path where the config detection started from, [`Config::with_root`].
     // We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -492,6 +495,7 @@ impl Config {
         "invariant",
         "labels",
         "dependencies",
+        "soldeer",
         "vyper",
         "bind_json",
     ];
@@ -2134,6 +2138,7 @@ impl Default for Config {
             create2_library_salt: Self::DEFAULT_CREATE2_LIBRARY_SALT,
             skip: vec![],
             dependencies: Default::default(),
+            soldeer: Default::default(),
             assertions_revert: true,
             legacy_assertions: false,
             warnings: vec![],

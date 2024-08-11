@@ -143,6 +143,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         vyper: Default::default(),
         skip: vec![],
         dependencies: Default::default(),
+        soldeer: Default::default(),
         warnings: vec![],
         assertions_revert: true,
         legacy_assertions: false,

@@ -21,9 +21,9 @@ pub struct MapDependency {
 
 /// Type for Soldeer configs, under dependencies tag in the foundry.toml
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SoldeerConfig(BTreeMap<String, SoldeerDependencyValue>);
+pub struct SoldeerDependencyConfig(BTreeMap<String, SoldeerDependencyValue>);
 
-impl AsRef<Self> for SoldeerConfig {
+impl AsRef<Self> for SoldeerDependencyConfig {
     fn as_ref(&self) -> &Self {
         self
     }
@@ -37,5 +37,23 @@ impl AsRef<Self> for SoldeerConfig {
 #[serde(untagged)]
 pub enum SoldeerDependencyValue {
     Map(MapDependency),
+    Str(String),
+}
+
+/// Type for Soldeer configs, under soldeer tag in the foundry.toml
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SoldeerConfig(BTreeMap<String, SoldeerConfigValue>);
+
+impl AsRef<Self> for SoldeerConfig {
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+
+/// Values inside Soldeer Config can be both string or bool
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SoldeerConfigValue {
+    Bool(bool),
     Str(String),
 }
