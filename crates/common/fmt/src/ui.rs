@@ -339,7 +339,7 @@ transactionIndex     {}
 type                 {}
 value                {}
 yParity              {}{}",
-                self.access_list.as_deref().unwrap().pretty(),
+                self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.chain_id.pretty(),
@@ -378,7 +378,7 @@ transactionIndex     {}
 type                 {}
 value                {}
 yParity              {}{}",
-                self.access_list.as_deref().unwrap().pretty(),
+                self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.chain_id.pretty(),
@@ -420,8 +420,8 @@ transactionIndex     {}
 type                 {}
 value                {}
 yParity              {}{}",
-                self.access_list.as_deref().unwrap().pretty(),
-                self.blob_versioned_hashes.as_deref().unwrap().pretty(),
+                self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
+                self.blob_versioned_hashes.as_deref().unwrap_or(&[]).pretty(),
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.chain_id.pretty(),
@@ -463,7 +463,7 @@ transactionIndex     {}
 type                 {}
 value                {}
 yParity              {}{}",
-                self.access_list.as_deref().unwrap().pretty(),
+                self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
                 self.authorization_list
                     .as_ref()
                     .map(|l| serde_json::to_string(&l).unwrap())

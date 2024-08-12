@@ -246,6 +246,7 @@ impl NodeArgs {
             .with_auto_impersonate(self.evm_opts.auto_impersonate)
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm_opts.code_size_limit)
+            .disable_code_size_limit(self.evm_opts.disable_code_size_limit)
             .set_pruned_history(self.prune_history)
             .with_init_state(self.load_state.or_else(|| self.state.and_then(|s| s.state)))
             .with_transaction_block_keeper(self.transaction_block_keeper)
@@ -495,10 +496,19 @@ pub struct AnvilEvmArgs {
     )]
     pub disable_block_gas_limit: bool,
 
-    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
-    /// default, it is 0x6000 (~25kb).
+    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. To
+    /// disable entirely, use `--disable-code-size-limit`. By default, it is 0x6000 (~25kb).
     #[arg(long, value_name = "CODE_SIZE", help_heading = "Environment config")]
     pub code_size_limit: Option<usize>,
+
+    /// Disable EIP-170: Contract code size limit.
+    #[arg(
+        long,
+        value_name = "DISABLE_CODE_SIZE_LIMIT",
+        conflicts_with = "code_size_limit",
+        help_heading = "Environment config"
+    )]
+    pub disable_code_size_limit: bool,
 
     /// The gas price.
     #[arg(long, help_heading = "Environment config")]
@@ -802,6 +812,21 @@ mod tests {
 
         let args =
             NodeArgs::try_parse_from(["anvil", "--disable-block-gas-limit", "--gas-limit", "100"]);
+        assert!(args.is_err());
+    }
+
+    #[test]
+    fn can_parse_disable_code_size_limit() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--disable-code-size-limit"]);
+        assert!(args.evm_opts.disable_code_size_limit);
+
+        let args = NodeArgs::try_parse_from([
+            "anvil",
+            "--disable-code-size-limit",
+            "--code-size-limit",
+            "100",
+        ]);
+        // can't be used together
         assert!(args.is_err());
     }
 
