@@ -10,7 +10,7 @@ use foundry_block_explorers::{
     errors::EtherscanError,
 };
 use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::RetryProvider};
-use foundry_compilers::artifacts::{CompactContractBytecode, EvmVersion};
+use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts};
 use reqwest::Url;
@@ -57,9 +57,16 @@ pub fn match_bytecodes(
     bytecode: &[u8],
     constructor_args: &[u8],
     is_runtime: bool,
+    bytecode_hash: BytecodeHash,
 ) -> Option<VerificationType> {
     // 1. Try full match
     if local_bytecode == bytecode {
+        // If the bytecode_hash = 'none' in Config. Then it's always a partial match according to
+        // sourcify definitions. Ref: https://docs.sourcify.dev/docs/full-vs-partial-match/.
+        if bytecode_hash == BytecodeHash::None {
+            return Some(VerificationType::Partial);
+        }
+
         Some(VerificationType::Full)
     } else {
         is_partial_match(local_bytecode, bytecode, constructor_args, is_runtime)

@@ -147,7 +147,7 @@ forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {
         },
         "etherscan",
         "https://api.etherscan.io/api",
-        ("full", "full"),
+        ("partial", "partial"),
     );
 });
 
@@ -205,7 +205,7 @@ forgetest_async!(can_vb_create2_with_blockscout, |prj, cmd| {
         },
         "blockscout",
         "https://eth.blockscout.com/api",
-        ("full", "full"),
+        ("partial", "partial"),
     );
 });
 
@@ -226,7 +226,7 @@ forgetest_async!(can_ignore_creation, |prj, cmd| {
         },
         "etherscan",
         "https://api.etherscan.io/api",
-        ("full", "full"),
+        ("ignored", "partial"),
         "creation",
         "1",
     );
@@ -248,7 +248,7 @@ forgetest_async!(can_ignore_runtime, |prj, cmd| {
         },
         "etherscan",
         "https://api.etherscan.io/api",
-        ("full", "ignored"),
+        ("partial", "ignored"),
         "runtime",
         "1",
     );

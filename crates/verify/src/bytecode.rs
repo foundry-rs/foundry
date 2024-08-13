@@ -282,6 +282,7 @@ impl VerifyBytecodeArgs {
                 &onchain_runtime_code,
                 &constructor_args,
                 true,
+                config.bytecode_hash,
             );
 
             crate::utils::print_result(
@@ -367,6 +368,7 @@ impl VerifyBytecodeArgs {
                 maybe_creation_code,
                 &constructor_args,
                 false,
+                config.bytecode_hash,
             );
 
             crate::utils::print_result(
@@ -478,6 +480,7 @@ impl VerifyBytecodeArgs {
                 &onchain_runtime_code,
                 &constructor_args,
                 true,
+                config.bytecode_hash,
             );
 
             crate::utils::print_result(
