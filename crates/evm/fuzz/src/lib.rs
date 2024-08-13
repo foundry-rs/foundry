@@ -67,7 +67,7 @@ impl BaseCounterExample {
         contracts: &ContractsByAddress,
         traces: Option<CallTraceArena>,
     ) -> Self {
-        let value = if value == U256::ZERO {None} else {Some(value)};
+        let value = if value == U256::ZERO { None } else { Some(value) };
         if let Some((name, abi)) = &contracts.get(&addr) {
             if let Some(func) = abi.functions().find(|f| f.selector() == bytes[..4]) {
                 // skip the function selector when decoding

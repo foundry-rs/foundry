@@ -160,7 +160,7 @@ pub fn check_sequence(
             tx.sender,
             tx.call_details.target,
             tx.call_details.calldata.clone(),
-            tx.value
+            tx.value,
         )?;
         if call_result.reverted && fail_on_revert {
             // Candidate sequence fails test.

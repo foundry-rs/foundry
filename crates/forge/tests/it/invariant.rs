@@ -594,8 +594,7 @@ async fn test_invariant_msg_value() {
     let results = TEST_DATA_DEFAULT.runner().test_collect(&filter);
     assert_multiple(
         &results,
-        BTreeMap::from([
-            (
+        BTreeMap::from([(
                 "default/fuzz/invariant/common/InvariantMsgValue.t.sol:InvariantMsgValue",
                 vec![(
                     "invariant_msg_value_not_found()",
@@ -604,8 +603,7 @@ async fn test_invariant_msg_value() {
                     None,
                     None,
                 )],
-            ),
-        ]),
+            )]),
     );
 }
 

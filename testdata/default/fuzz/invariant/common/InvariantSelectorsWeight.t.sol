@@ -45,14 +45,15 @@ contract InvariantSelectorsWeightTest is DSTest {
 
     function afterInvariant() public {
         // selector hits uniformly distributed, see https://github.com/foundry-rs/foundry/issues/2986
-        uint256[5] memory hits = [handlerOne.hit1(), handlerTwo.hit2(), handlerTwo.hit3(), handlerTwo.hit4(), handlerTwo.hit5()];
+        uint256[5] memory hits =
+            [handlerOne.hit1(), handlerTwo.hit2(), handlerTwo.hit3(), handlerTwo.hit4(), handlerTwo.hit5()];
 
         uint256 hits_sum;
-        for (uint i = 0; i < hits.length; i++) {
+        for (uint256 i = 0; i < hits.length; i++) {
             hits_sum += hits[i];
         }
         uint256 average = (hits_sum) / hits.length;
-        for (uint i = 0; i < hits.length; i++) {
+        for (uint256 i = 0; i < hits.length; i++) {
             uint256 delta = average > hits[i] ? average - hits[i] : hits[i] - average;
             uint256 delta_scaled = delta * 100 / average;
             require(delta_scaled <= 10, "Selectors Delta > 10%");

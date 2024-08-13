@@ -8,10 +8,12 @@ contract Pay {
     bool public found; // CBA with 2,msg.value>0.1234,0
 
     function A(uint8 x) external {
-        if (counter == 2 && x == 0) found = true; else counter = 0;
+        if (counter == 2 && x == 0) found = true;
+        else counter = 0;
     }
     function B() external payable {
-        if (counter == 1 && msg.value > 0.1234 ether) counter++; else counter = 0;
+        if (counter == 1 && msg.value > 0.1234 ether) counter++;
+        else counter = 0;
     }
     function C(uint8 x) external {
         if (counter == 0 && x == 2) counter++;

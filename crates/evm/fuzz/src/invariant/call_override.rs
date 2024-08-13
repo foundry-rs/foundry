@@ -1,6 +1,5 @@
 use super::{BasicTxDetails, CallDetails};
-use alloy_primitives::Address;
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     option::weighted,

@@ -107,7 +107,8 @@ fn select_random_sender(
 
 /// Strategy to select a msg.value:
 /// * If the target function is not payable, the msg.value is zero.
-/// * If the target function is payable, the msg.value either a random number or from the dictionary.
+/// * If the target function is payable, the msg.value either a random number or
+/// * from the dictionary.
 fn select_random_msg_value(
     fuzz_state: &EvmFuzzState,
     dictionary_weight: u32,
