@@ -9,7 +9,8 @@ use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{Address, LogData, Selector, B256};
 use foundry_common::{
-    abi::get_indexed_event, fmt::format_token, get_contract_name, ContractsByArtifact, SELECTOR_LEN,
+    abi::get_indexed_event, fmt::format_token, get_contract_name, selectors::OpenChainClient,
+    ContractsByArtifact, SELECTOR_LEN,
 };
 use foundry_evm_core::{
     abi::{Console, HardhatConsole, Vm, HARDHAT_CONSOLE_SELECTOR_PATCHES},
@@ -86,6 +87,13 @@ impl CallTraceDecoderBuilder {
     #[inline]
     pub fn with_signature_identifier(mut self, identifier: SingleSignaturesIdentifier) -> Self {
         self.decoder.signature_identifier = Some(identifier);
+        self
+    }
+
+    /// Sets the openchain client.
+    #[inline]
+    pub fn with_openchain_client(mut self, client: OpenChainClient) -> Self {
+        self.decoder.revert_decoder.open_chain_client = Some(client);
         self
     }
 
