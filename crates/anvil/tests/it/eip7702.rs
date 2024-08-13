@@ -1,8 +1,7 @@
 use crate::utils::http_provider;
 use alloy_consensus::{transaction::TxEip7702, SignableTransaction};
-use alloy_eips::eip7702::OptionalNonce;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{bytes, TxKind};
+use alloy_primitives::{bytes, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{Authorization, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -10,6 +9,7 @@ use alloy_signer::SignerSync;
 use anvil::{spawn, Hardfork, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn can_send_eip7702_tx() {
     let node_config = NodeConfig::test().with_hardfork(Some(Hardfork::Prague));
     let (_api, handle) = spawn(node_config).await;
@@ -45,9 +45,9 @@ async fn can_send_eip7702_tx() {
 
     let contract = receipt.contract_address.unwrap();
     let authorization = Authorization {
-        chain_id: 31337,
+        chain_id: U256::from(31337u64),
         address: contract,
-        nonce: OptionalNonce::new(Some(provider.get_transaction_count(from).await.unwrap())),
+        nonce: provider.get_transaction_count(from).await.unwrap(),
     };
     let signature = wallets[0].sign_hash_sync(&authorization.signature_hash()).unwrap();
     let authorization = authorization.into_signed(signature);

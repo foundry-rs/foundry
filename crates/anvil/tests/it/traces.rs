@@ -3,6 +3,7 @@ use crate::{
     fork::fork_config,
     utils::http_provider_with_signer,
 };
+use alloy_eips::BlockId;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::{
@@ -18,7 +19,7 @@ use alloy_rpc_types::{
         },
         parity::{Action, LocalizedTransactionTrace},
     },
-    BlockNumberOrTag, TransactionRequest,
+    TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
@@ -132,7 +133,7 @@ async fn test_transfer_debug_trace_call() {
 
     let traces = handle
         .http_provider()
-        .debug_trace_call(tx, BlockNumberOrTag::Latest, GethDebugTracingCallOptions::default())
+        .debug_trace_call(tx, BlockId::latest(), GethDebugTracingCallOptions::default())
         .await
         .unwrap();
 
@@ -178,7 +179,7 @@ async fn test_call_tracer_debug_trace_call() {
         .http_provider()
         .debug_trace_call(
             internal_call_tx.clone(),
-            BlockNumberOrTag::Latest,
+            BlockId::latest(),
             GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
                     .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
@@ -206,7 +207,7 @@ async fn test_call_tracer_debug_trace_call() {
         .http_provider()
         .debug_trace_call(
             internal_call_tx.clone(),
-            BlockNumberOrTag::Latest,
+            BlockId::latest(),
             GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
                     .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
@@ -235,7 +236,7 @@ async fn test_call_tracer_debug_trace_call() {
         .http_provider()
         .debug_trace_call(
             direct_call_tx,
-            BlockNumberOrTag::Latest,
+            BlockId::latest(),
             GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
                     .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
