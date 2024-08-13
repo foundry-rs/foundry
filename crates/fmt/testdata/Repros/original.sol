@@ -129,3 +129,17 @@ library MyLib {
     );
     // forgefmt: disable-end
 }
+
+contract IfElseTest {
+     function setNumber(uint256 newNumber) public {
+         number = newNumber;
+         if (newNumber = 1) {
+             number = 1;
+         } else if (newNumber = 2) {
+         //            number = 2;
+         }
+         else {
+             newNumber = 3;
+         }
+     }
+}
