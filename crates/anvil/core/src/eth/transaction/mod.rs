@@ -1084,7 +1084,7 @@ impl TryFrom<RpcTransaction> for TypedTransaction {
                     value: tx.value,
                     access_list: tx.access_list.ok_or(ConversionError::MissingAccessList)?,
                     input: tx.input,
-                    authorization_list: vec![],
+                    authorization_list: tx.authorization_list.unwrap_or_default(),
                 };
                 let signature = tx
                     .signature

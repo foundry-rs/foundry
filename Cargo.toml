@@ -182,7 +182,7 @@ alloy-node-bindings = { version = "0.2.1", default-features = false }
 alloy-provider = { version = "0.2.1", default-features = false }
 alloy-pubsub = { version = "0.2.1", default-features = false }
 alloy-rpc-client = { version = "0.2.1", default-features = false }
-alloy-rpc-types = { version = "0.2.1", default-features = false }
+alloy-rpc-types = { version = "0.2.1", default-features = true }
 alloy-serde = { version = "0.2.1", default-features = false }
 alloy-signer = { version = "0.2.1", default-features = false }
 alloy-signer-aws = { version = "0.2.1", default-features = false }
@@ -266,7 +266,7 @@ proptest = "1"
 comfy-table = "7"
 
 [patch.crates-io]
-    alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "dbe6683" }
+alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "dbe6683" }
 alloy-contract = { git = "https://github.com/alloy-rs/alloy", rev = "dbe6683" }
 alloy-eips = { git = "https://github.com/alloy-rs/alloy", rev = "dbe6683" }
 alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "dbe6683" }

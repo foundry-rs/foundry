@@ -9,7 +9,6 @@ use alloy_signer::SignerSync;
 use anvil::{spawn, Hardfork, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
 async fn can_send_eip7702_tx() {
     let node_config = NodeConfig::test().with_hardfork(Some(Hardfork::Prague));
     let (_api, handle) = spawn(node_config).await;
