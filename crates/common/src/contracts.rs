@@ -115,24 +115,26 @@ impl ContractsByArtifact {
 
     /// Finds a contract which has a similar bytecode as `code`.
     pub fn find_by_creation_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_code(code, ContractData::bytecode)
+        self.find_by_code(code, 0.1, ContractData::bytecode)
     }
 
     /// Finds a contract which has a similar deployed bytecode as `code`.
     pub fn find_by_deployed_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_code(code, ContractData::deployed_bytecode)
+        self.find_by_code(code, 0.15, ContractData::deployed_bytecode)
     }
 
+    /// Finds a contract based on provided bytecode and accepted match score.
     fn find_by_code(
         &self,
         code: &[u8],
+        accepted_score: f64,
         get: impl Fn(&ContractData) -> Option<&Bytes>,
     ) -> Option<ArtifactWithContractRef<'_>> {
         self.iter()
             .filter_map(|(id, contract)| {
                 if let Some(deployed_bytecode) = get(contract) {
                     let score = bytecode_diff_score(deployed_bytecode.as_ref(), code);
-                    (score <= 0.1).then_some((score, (id, contract)))
+                    (score <= accepted_score).then_some((score, (id, contract)))
                 } else {
                     None
                 }

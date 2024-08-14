@@ -1202,3 +1202,72 @@ contract AContractTest is DSTest {
 "#]],
     );
 });
+
+forgetest!(test_identical_bytecodes, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public number;
+    address public immutable usdc1;
+    address public immutable usdc2;
+    address public immutable usdc3;
+    address public immutable usdc4;
+    address public immutable usdc5;
+    address public immutable usdc6;
+
+    constructor() {
+        address a = 0x176211869cA2b568f2A7D4EE941E073a821EE1ff;
+        usdc1 = a;
+        usdc2 = a;
+        usdc3 = a;
+        usdc4 = a;
+        usdc5 = a;
+        usdc6 = a;
+    }
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract public counter;
+
+    function setUp() public {
+        counter = new AContract();
+        counter.setNumber(0);
+    }
+
+    function test_Increment() public {
+        counter.increment();
+        assertEq(counter.number(), 1);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (9/9) | 100.00% (9/9) | 100.00% (0/0) | 100.00% (3/3) |
+| Total             | 100.00% (9/9) | 100.00% (9/9) | 100.00% (0/0) | 100.00% (3/3) |
+
+"#]]);
+});
