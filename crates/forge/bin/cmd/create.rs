@@ -223,6 +223,7 @@ impl CreateArgs {
     }
 
     /// Deploys the contract
+    #[allow(clippy::too_many_arguments)]
     async fn deploy<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
         self,
         abi: JsonAbi,
