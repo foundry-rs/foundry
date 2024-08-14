@@ -691,7 +691,7 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, false, false).await?;
+    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false, false).await?;
     /// println!("{}", receipt);
     /// # Ok(())
     /// # }
