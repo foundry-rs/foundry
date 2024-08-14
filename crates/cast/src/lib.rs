@@ -42,6 +42,7 @@ use std::{
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
 };
 use tokio::signal::ctrl_c;
 
@@ -700,6 +701,7 @@ where
         tx_hash: String,
         field: Option<String>,
         confs: u64,
+        timeout: Option<u64>,
         cast_async: bool,
         to_json: bool,
     ) -> Result<String> {
@@ -716,6 +718,7 @@ where
                     } else {
                         PendingTransactionBuilder::new(self.provider.root(), tx_hash)
                             .with_required_confirmations(confs)
+                            .with_timeout(timeout.map(Duration::from_secs))
                             .get_receipt()
                             .await?
                     }

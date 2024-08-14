@@ -170,7 +170,14 @@ impl BundledState {
             .map(|(sequence_idx, sequence)| async move {
                 let rpc_url = sequence.rpc_url();
                 let provider = Arc::new(get_http_provider(rpc_url));
-                progress_ref.wait_for_pending(sequence_idx, sequence, &provider).await
+                progress_ref
+                    .wait_for_pending(
+                        sequence_idx,
+                        sequence,
+                        &provider,
+                        self.script_config.config.transaction_timeout,
+                    )
+                    .await
             })
             .collect::<Vec<_>>();
 
@@ -368,7 +375,14 @@ impl BundledState {
                         self.sequence.save(true, false)?;
                         sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                        progress.wait_for_pending(i, sequence, &provider).await?
+                        progress
+                            .wait_for_pending(
+                                i,
+                                sequence,
+                                &provider,
+                                self.script_config.config.transaction_timeout,
+                            )
+                            .await?
                     }
                     // Checkpoint save
                     self.sequence.save(true, false)?;
