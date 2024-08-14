@@ -168,7 +168,7 @@ where
 
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
-            format!("{}", res.to_string())
+            res.to_string()
         } else if json {
             let tokens = decoded.iter().map(format_token_raw).collect::<Vec<_>>();
             serde_json::to_string_pretty(&tokens).unwrap()
