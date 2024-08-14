@@ -11,7 +11,7 @@ use foundry_compilers::{
     multi::{MultiCompilerLanguage, MultiCompilerParsedSource},
     project::ProjectCompiler,
     solc::SolcLanguage,
-    CompilerSettings, Graph, Project,
+    Graph, Project,
 };
 use foundry_config::Config;
 use itertools::Itertools;
@@ -72,7 +72,7 @@ impl BindJsonArgs {
         // We only generate bindings for a single Solidity version to avoid conflicts.
         let mut sources = graph
             // resolve graph into mapping language -> version -> sources
-            .into_sources_by_version(project.offline, &project.locked_versions, &project.compiler)?
+            .into_sources_by_version(&project)?
             .0
             .into_iter()
             // we are only interested in Solidity sources
@@ -81,7 +81,7 @@ impl BindJsonArgs {
             .1
             .into_iter()
             // For now, we are always picking the latest version.
-            .max_by(|(v1, _), (v2, _)| v1.cmp(v2))
+            .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
             .unwrap()
             .1;
 
@@ -229,7 +229,7 @@ impl PreprocessedState {
     fn compile(self) -> Result<CompiledState> {
         let Self { sources, target_path, mut project, config } = self;
 
-        project.settings.update_output_selection(|selection| {
+        project.update_output_selection(|selection| {
             *selection = OutputSelection::ast_output_selection();
         });
 

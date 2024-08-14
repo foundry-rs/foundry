@@ -33,8 +33,10 @@ use foundry_compilers::{
         Compiler,
     },
     error::SolcError,
+    multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
     solc::{CliSettings, SolcSettings},
-    ConfigurableArtifacts, Project, ProjectPathsConfig, VyperLanguage,
+    ConfigurableArtifacts, Graph, Project, ProjectPathsConfig, RestrictionsWithVersion,
+    VyperLanguage,
 };
 use inflector::Inflector;
 use regex::Regex;
@@ -43,7 +45,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize, Serializer};
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -114,6 +116,9 @@ use vyper::VyperConfig;
 
 mod bind_json;
 use bind_json::BindJsonConfig;
+
+mod compilation;
+use compilation::{CompilationRestrictions, SettingsOverrides};
 
 /// Foundry configuration
 ///
@@ -468,6 +473,14 @@ pub struct Config {
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
+
+    /// Additional settings profiles to use when compiling.
+    #[serde(default)]
+    pub additional_compiler_profiles: Vec<SettingsOverrides>,
+
+    /// Restrictions on compilation of certain files.
+    #[serde(default)]
+    pub compilation_restrictions: Vec<CompilationRestrictions>,
 
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
@@ -835,12 +848,65 @@ impl Config {
         self.create_project(false, true)
     }
 
+    /// Builds mapping with additional settings profiles.
+    fn additional_settings(
+        &self,
+        base: &MultiCompilerSettings,
+    ) -> BTreeMap<String, MultiCompilerSettings> {
+        let mut map = BTreeMap::new();
+
+        for profile in &self.additional_compiler_profiles {
+            let mut settings = base.clone();
+            profile.apply(&mut settings);
+            map.insert(profile.name.clone(), settings);
+        }
+
+        map
+    }
+
+    /// Resolves globs and builds a mapping from individual source files to their restrictions
+    fn restrictions(
+        &self,
+        paths: &ProjectPathsConfig,
+    ) -> Result<BTreeMap<PathBuf, RestrictionsWithVersion<MultiCompilerRestrictions>>, SolcError>
+    {
+        let mut map = BTreeMap::new();
+
+        let graph = Graph::<MultiCompilerParsedSource>::resolve(paths)?;
+        let (sources, _) = graph.into_sources();
+
+        for res in &self.compilation_restrictions {
+            for source in sources.keys().filter(|path| {
+                if res.paths.is_match(path) {
+                    true
+                } else if let Ok(path) = path.strip_prefix(&paths.root) {
+                    res.paths.is_match(path)
+                } else {
+                    false
+                }
+            }) {
+                let res: RestrictionsWithVersion<_> = res.clone().into();
+                if !map.contains_key(source) {
+                    map.insert(source.clone(), res);
+                } else {
+                    map.get_mut(source.as_path()).unwrap().merge(res);
+                }
+            }
+        }
+
+        Ok(map)
+    }
+
     /// Creates a [Project] with the given `cached` and `no_artifacts` flags
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
+        let settings = self.compiler_settings()?;
+        let paths = self.project_paths();
         let mut builder = Project::builder()
             .artifacts(self.configured_artifacts_handler())
-            .paths(self.project_paths())
-            .settings(self.compiler_settings()?)
+            .additional_settings(self.additional_settings(&settings))
+            .restrictions(self.restrictions(&paths)?)
+            .settings(settings)
+            .paths(paths)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .ignore_paths(self.ignored_file_paths.clone())
             .set_compiler_severity_filter(if self.deny_warnings {
@@ -2182,6 +2248,8 @@ impl Default for Config {
             eof_version: None,
             alphanet: false,
             transaction_timeout: 120,
+            additional_compiler_profiles: Default::default(),
+            compilation_restrictions: vec![],
             _non_exhaustive: (),
         }
     }
