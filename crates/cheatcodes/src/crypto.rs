@@ -261,12 +261,12 @@ fn validate_private_key<C: ecdsa::PrimeCurve>(private_key: &U256) -> Result<()> 
 }
 
 fn parse_private_key(private_key: &U256) -> Result<SigningKey> {
-    validate_private_key::<k256::Secp256k1>(&private_key)?;
+    validate_private_key::<k256::Secp256k1>(private_key)?;
     Ok(SigningKey::from_bytes((&private_key.to_be_bytes()).into())?)
 }
 
 fn parse_private_key_p256(private_key: &U256) -> Result<P256SigningKey> {
-    validate_private_key::<p256::NistP256>(&private_key)?;
+    validate_private_key::<p256::NistP256>(private_key)?;
     Ok(P256SigningKey::from_bytes((&private_key.to_be_bytes()).into())?)
 }
 
