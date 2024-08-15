@@ -6634,7 +6634,7 @@
     {
       "func": {
         "id": "publicKeyP256",
-        "description": "Signs `digest` with `privateKey` using the secp256r1 curve.",
+        "description": "Derives secp256r1 public key from the provided `privateKey`.",
         "declaration": "function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);",
         "visibility": "external",
         "mutability": "pure",

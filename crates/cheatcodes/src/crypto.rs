@@ -254,7 +254,8 @@ fn validate_private_key<C: ecdsa::PrimeCurve>(private_key: &U256) -> Result<()> 
     let order = U256::from_be_slice(&C::ORDER.to_be_byte_array());
     ensure!(
         *private_key < U256::from_be_slice(&C::ORDER.to_be_byte_array()),
-        "private key must be less than the curve order ({order})",
+        "private key must be less than the {curve:?} curve order ({order})",
+        curve = C::default(),
     );
 
     Ok(())
@@ -342,7 +343,7 @@ mod tests {
         )
         .unwrap();
         let result = sign_p256(&pk, &digest);
-        assert_eq!(result.err().unwrap().to_string(), "private key must be less than the curve order (115792089210356248762697446949407573529996955224135760342422259061068512044369)");
+        assert_eq!(result.err().unwrap().to_string(), "private key must be less than the NistP256 curve order (115792089210356248762697446949407573529996955224135760342422259061068512044369)");
     }
 
     #[test]
