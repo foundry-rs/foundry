@@ -450,7 +450,7 @@ impl DocBuilder {
                     .display()
                     .to_string()
                     .trim_start_matches('/')
-                    .to_string();
+                    .to_owned();
                 let slash_count = readme_path.chars().filter(|&c| c == '/').count();
                 let prefix = "../".repeat(slash_count);
                 let readme_path = format!("{prefix}{readme_path}/index.html");
