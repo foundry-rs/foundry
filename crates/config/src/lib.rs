@@ -447,6 +447,9 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eof_version: Option<EofVersion>,
 
+    /// Whether to enable Alphanet features.
+    pub alphanet: bool,
+
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
@@ -2139,6 +2142,7 @@ impl Default for Config {
             warnings: vec![],
             extra_args: vec![],
             eof_version: None,
+            alphanet: false,
             _non_exhaustive: (),
         }
     }
