@@ -7030,7 +7030,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "13.0.0"
-source = "git+https://github.com/bluealloy/revm?rev=16c3933#16c3933662eda5147a192f2fd9d4699253d43e70"
+source = "git+https://github.com/bluealloy/revm?rev=228b034#228b0343f372c69924023721c00f2d0e01e72a86"
 dependencies = [
  "auto_impl",
  "cfg-if",
@@ -7061,7 +7061,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "9.0.0"
-source = "git+https://github.com/bluealloy/revm?rev=16c3933#16c3933662eda5147a192f2fd9d4699253d43e70"
+source = "git+https://github.com/bluealloy/revm?rev=228b034#228b0343f372c69924023721c00f2d0e01e72a86"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -7070,7 +7070,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "10.0.0"
-source = "git+https://github.com/bluealloy/revm?rev=16c3933#16c3933662eda5147a192f2fd9d4699253d43e70"
+source = "git+https://github.com/bluealloy/revm?rev=228b034#228b0343f372c69924023721c00f2d0e01e72a86"
 dependencies = [
  "aurora-engine-modexp",
  "blst",
@@ -7089,7 +7089,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "8.0.0"
-source = "git+https://github.com/bluealloy/revm?rev=16c3933#16c3933662eda5147a192f2fd9d4699253d43e70"
+source = "git+https://github.com/bluealloy/revm?rev=228b034#228b0343f372c69924023721c00f2d0e01e72a86"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
