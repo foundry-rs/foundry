@@ -342,7 +342,7 @@ mod tests {
         )
         .unwrap();
         let result = sign_p256(&pk, &digest);
-        assert_eq!(result.err().unwrap().to_string(), "private key must be less than the secp256r1 curve order (115792089210356248762697446949407573529996955224135760342422259061068512044369)");
+        assert_eq!(result.err().unwrap().to_string(), "private key must be less than the curve order (115792089210356248762697446949407573529996955224135760342422259061068512044369)");
     }
 
     #[test]
