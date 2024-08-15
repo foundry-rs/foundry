@@ -146,6 +146,24 @@ casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
 "#]]);
 });
 
+// tests that `cast wallet sign-auth message` outputs the expected signature
+casttest!(wallet_sign_auth, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "sign-auth",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--nonce",
+        "100",
+        "--chain-id",
+        "1",
+        "--address",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"]).assert_success().stdout_eq(str![[r#"
+0xad489ee0314497c3f06567f3080a46a63908edc1c7cdf2ac2d609ca91121208665a6ba951c8748dd8634740fe498efb61770097d99ff5fdcb9a863b62ea899f61c
+
+"#]]);
+});
+
 // tests that `cast wallet list` outputs the local accounts
 casttest!(wallet_list_local_accounts, |prj, cmd| {
     let keystore_path = prj.root().join("keystore");

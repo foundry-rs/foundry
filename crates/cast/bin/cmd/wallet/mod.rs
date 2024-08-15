@@ -1,12 +1,15 @@
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{hex, Address, Signature, B256};
+use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_signer_local::{
     coins_bip39::{English, Entropy, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
 };
+use cast::revm::primitives::{Authorization, U256};
 use clap::Parser;
 use eyre::{Context, Result};
+use foundry_cli::{opts::RpcOpts, utils};
 use foundry_common::fs;
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
@@ -114,6 +117,26 @@ pub enum WalletSubcommands {
 
         #[command(flatten)]
         wallet: WalletOpts,
+    },
+
+    /// EIP-7702 sign authorization.
+    #[command(visible_alias = "sa")]
+    SignAuth {
+        #[command(flatten)]
+        rpc: Option<RpcOpts>,
+
+        #[arg(long, requires = "chain_id")]
+        nonce: Option<u64>,
+
+        #[arg(long, requires = "nonce")]
+        chain_id: Option<u64>,
+
+        #[command(flatten)]
+        wallet: WalletOpts,
+
+        /// Address to sign authorization for.
+        #[arg(long, short)]
+        address: Address,
     },
 
     /// Verify the signature of a message.
@@ -325,6 +348,31 @@ impl WalletSubcommands {
                 } else {
                     wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
                 };
+                println!("0x{}", hex::encode(sig.as_bytes()));
+            }
+            Self::SignAuth { rpc, nonce, chain_id, wallet, address } => {
+                let wallet = wallet.signer().await?;
+                let (nonce, chain_id) = match rpc {
+                    Some(rpc) => {
+                        let provider = utils::get_provider(&Config::from(&rpc))?;
+                        (
+                            provider.get_transaction_count(wallet.address()).await?,
+                            provider.get_chain_id().await?,
+                        )
+                    }
+                    None => {
+                        if nonce.is_none() || chain_id.is_none() {
+                            eyre::bail!("Nonce / chain id or RPC URL is required to create signed authorization.");
+                        }
+                        (nonce.unwrap(), chain_id.unwrap())
+                    }
+                };
+                let sig = wallet
+                    .sign_hash(
+                        &Authorization { chain_id: U256::from(chain_id), address, nonce }
+                            .signature_hash(),
+                    )
+                    .await?;
                 println!("0x{}", hex::encode(sig.as_bytes()));
             }
             Self::Verify { message, signature, address } => {
