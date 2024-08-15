@@ -482,6 +482,14 @@ impl NodeConfig {
         self.code_size_limit = code_size_limit;
         self
     }
+    /// Disables  code size limit
+    #[must_use]
+    pub fn disable_code_size_limit(mut self, disable_code_size_limit: bool) -> Self {
+        if disable_code_size_limit {
+            self.code_size_limit = Some(usize::MAX);
+        }
+        self
+    }
 
     /// Sets the init state if any
     #[must_use]

@@ -1782,7 +1782,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 self.visit_if(*loc, cond, if_branch, else_branch, false)?;
             } else {
                 let else_branch_is_single_line =
-                    self.visit_stmt_as_block(else_branch, if_branch_is_single_line)?;
+                    self.visit_stmt_as_block(else_branch, attempt_single_line)?;
                 if single_line_stmt_wide && !else_branch_is_single_line {
                     bail!(FormatterError::fmt())
                 }

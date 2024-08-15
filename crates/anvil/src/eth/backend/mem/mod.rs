@@ -851,7 +851,7 @@ impl Backend {
         }
 
         let db = self.db.read().await;
-        let mut inspector = Inspector::default();
+        let mut inspector = self.build_inspector();
         let mut evm = self.new_evm_with_inspector_ref(&**db, env, &mut inspector);
         let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out, logs) = match result {
@@ -1200,6 +1200,17 @@ impl Backend {
         env
     }
 
+    /// Builds [`Inspector`] with the configured options
+    fn build_inspector(&self) -> Inspector {
+        let mut inspector = Inspector::default();
+
+        if self.print_logs {
+            inspector = inspector.with_log_collector();
+        }
+
+        inspector
+    }
+
     pub fn call_with_state<D>(
         &self,
         state: D,
@@ -1210,7 +1221,7 @@ impl Backend {
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
-        let mut inspector = Inspector::default();
+        let mut inspector = self.build_inspector();
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
@@ -1251,7 +1262,7 @@ impl Backend {
                                 .into_call_config()
                                 .map_err(|e| (RpcError::invalid_params(e.to_string())))?;
 
-                            let mut inspector = Inspector::default().with_config(
+                            let mut inspector = self.build_inspector().with_tracing_config(
                                 TracingInspectorConfig::from_geth_call_config(&call_config),
                             );
 
@@ -1283,8 +1294,9 @@ impl Backend {
             }
 
             // defaults to StructLog tracer used since no tracer is specified
-            let mut inspector =
-                Inspector::default().with_config(TracingInspectorConfig::from_geth_config(&config));
+            let mut inspector = self
+                .build_inspector()
+                .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
             let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
