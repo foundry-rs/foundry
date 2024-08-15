@@ -2195,7 +2195,7 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
 
-    /// Signs `digest` with `privateKey` using the secp256r1 curve.
+    /// Derives secp256r1 public key from the provided `privateKey`.
     #[cheatcode(group = Crypto)]
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
 
