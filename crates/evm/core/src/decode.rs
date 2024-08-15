@@ -181,6 +181,16 @@ impl RevertDecoder {
             return Some(std::str::from_utf8(err).unwrap().to_string());
         }
 
+        // Generic custom error.
+        Some(format!(
+            "custom error {}:{}",
+            hex::encode(selector),
+            std::str::from_utf8(data).map_or_else(|_| trimmed_hex(data), String::from)
+        ))
+    }
+
+    pub fn may_decode_using_open_chain(&self, err: &[u8]) -> Option<String> {
+        let (selector, data) = err.split_at(SELECTOR_LEN);
         // try from https://openchain.xyz
         if let Some(client) = self.open_chain_client.clone() {
             if let Ok(handle) = Handle::try_current() {
@@ -214,13 +224,7 @@ impl RevertDecoder {
                 }
             }
         }
-
-        // Generic custom error.
-        Some(format!(
-            "custom error {}:{}",
-            hex::encode(selector),
-            std::str::from_utf8(data).map_or_else(|_| trimmed_hex(data), String::from)
-        ))
+        None
     }
 }
 

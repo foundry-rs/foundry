@@ -573,7 +573,15 @@ impl CallTraceDecoder {
 
     /// The default decoded return data for a trace.
     fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
-        (!trace.success).then(|| self.revert_decoder.decode(&trace.output, Some(trace.status)))
+        (!trace.success).then(|| {
+            let err_str = self.revert_decoder.decode(&trace.output, Some(trace.status));
+            if err_str.contains("custom error") {
+                if let Some(err) = self.revert_decoder.may_decode_using_open_chain(&trace.output) {
+                    return err;
+                }
+            }
+            err_str
+        })
     }
 
     /// Decodes an event.
