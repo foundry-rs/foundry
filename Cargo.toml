@@ -182,7 +182,7 @@ alloy-node-bindings = { version = "0.2.1", default-features = false }
 alloy-provider = { version = "0.2.1", default-features = false }
 alloy-pubsub = { version = "0.2.1", default-features = false }
 alloy-rpc-client = { version = "0.2.1", default-features = false }
-alloy-rpc-types = { version = "0.2.1", default-features = false }
+alloy-rpc-types = { version = "0.2.1", default-features = true }
 alloy-serde = { version = "0.2.1", default-features = false }
 alloy-signer = { version = "0.2.1", default-features = false }
 alloy-signer-aws = { version = "0.2.1", default-features = false }
@@ -264,3 +264,29 @@ soldeer = "0.2.19"
 
 proptest = "1"
 comfy-table = "7"
+
+[patch.crates-io]
+alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-contract = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-eips = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-network = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-node-bindings = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-provider = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-serde = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-signer-aws = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-signer-gcp = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-signer-ledger = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-signer-local = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-signer-trezor = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
+revm = { git = "https://github.com/bluealloy/revm", rev = "228b034" }
+revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "228b034" }
