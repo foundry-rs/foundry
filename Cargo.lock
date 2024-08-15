@@ -3539,6 +3539,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dialoguer",
+ "ecdsa",
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",

@@ -13,8 +13,7 @@ use alloy_signer_local::{
 use alloy_sol_types::SolValue;
 use k256::{
     ecdsa::SigningKey,
-    elliptic_curve::{sec1::ToEncodedPoint, Curve},
-    Secp256k1,
+    elliptic_curve::{bigint::ArrayEncoding, sec1::ToEncodedPoint},
 };
 use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey as P256SigningKey};
 
@@ -153,6 +152,18 @@ impl Cheatcode for signP256Call {
     }
 }
 
+impl Cheatcode for publicKeyP256Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { privateKey } = self;
+        let pub_key =
+            parse_private_key_p256(privateKey)?.verifying_key().as_affine().to_encoded_point(false);
+        let pub_key_x = U256::from_be_bytes((*pub_key.x().unwrap()).into());
+        let pub_key_y = U256::from_be_bytes((*pub_key.y().unwrap()).into());
+
+        Ok((pub_key_x, pub_key_y).abi_encode())
+    }
+}
+
 /// Using a given private key, return its public ETH address, its public key affine x and y
 /// coordinates, and its private key (see the 'Wallet' struct)
 ///
@@ -230,14 +241,7 @@ fn sign_with_wallet(
 }
 
 fn sign_p256(private_key: &U256, digest: &B256) -> Result {
-    ensure!(*private_key != U256::ZERO, "private key cannot be 0");
-    let n = U256::from_limbs(*p256::NistP256::ORDER.as_words());
-    ensure!(
-        *private_key < n,
-        format!("private key must be less than the secp256r1 curve order ({})", n),
-    );
-    let bytes = private_key.to_be_bytes();
-    let signing_key = P256SigningKey::from_bytes((&bytes).into())?;
+    let signing_key = parse_private_key_p256(private_key)?;
     let signature: Signature = signing_key.sign_prehash(digest.as_slice())?;
     let r_bytes: [u8; 32] = signature.r().to_bytes().into();
     let s_bytes: [u8; 32] = signature.s().to_bytes().into();
@@ -245,15 +249,26 @@ fn sign_p256(private_key: &U256, digest: &B256) -> Result {
     Ok((r_bytes, s_bytes).abi_encode())
 }
 
-fn parse_private_key(private_key: &U256) -> Result<SigningKey> {
+fn validate_private_key<C: ecdsa::PrimeCurve>(private_key: &U256) -> Result<()> {
     ensure!(*private_key != U256::ZERO, "private key cannot be 0");
+    let order = U256::from_be_slice(&C::ORDER.to_be_byte_array());
     ensure!(
-        *private_key < U256::from_limbs(*Secp256k1::ORDER.as_words()),
-        "private key must be less than the secp256k1 curve order \
-         (115792089237316195423570985008687907852837564279074904382605163141518161494337)",
+        *private_key < U256::from_be_slice(&C::ORDER.to_be_byte_array()),
+        "private key must be less than the {curve:?} curve order ({order})",
+        curve = C::default(),
     );
-    let bytes = private_key.to_be_bytes();
-    SigningKey::from_bytes((&bytes).into()).map_err(Into::into)
+
+    Ok(())
+}
+
+fn parse_private_key(private_key: &U256) -> Result<SigningKey> {
+    validate_private_key::<k256::Secp256k1>(private_key)?;
+    Ok(SigningKey::from_bytes((&private_key.to_be_bytes()).into())?)
+}
+
+fn parse_private_key_p256(private_key: &U256) -> Result<P256SigningKey> {
+    validate_private_key::<p256::NistP256>(private_key)?;
+    Ok(P256SigningKey::from_bytes((&private_key.to_be_bytes()).into())?)
 }
 
 pub(super) fn parse_wallet(private_key: &U256) -> Result<PrivateKeySigner> {
@@ -328,7 +343,7 @@ mod tests {
         )
         .unwrap();
         let result = sign_p256(&pk, &digest);
-        assert_eq!(result.err().unwrap().to_string(), "private key must be less than the secp256r1 curve order (115792089210356248762697446949407573529996955224135760342422259061068512044369)");
+        assert_eq!(result.err().unwrap().to_string(), "private key must be less than the NistP256 curve order (115792089210356248762697446949407573529996955224135760342422259061068512044369)");
     }
 
     #[test]
