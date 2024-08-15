@@ -51,7 +51,7 @@ pub const PRECOMPILES: &[Address] = &[
 
 /// [EIP-7212](https://eips.ethereum.org/EIPS/eip-7212) secp256r1 precompile address on Alphanet.
 ///
-/// https://github.com/paradigmxyz/alphanet/blob/5b675ee2b5214f157a62aee2b28fc7ca73e23561/crates/precompile/src/addresses.rs#L3
+/// <https://github.com/paradigmxyz/alphanet/blob/5b675ee2b5214f157a62aee2b28fc7ca73e23561/crates/precompile/src/addresses.rs#L3>
 pub const ALPHANET_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000014");
 
 /// Wrapper around revm P256 precompile, matching EIP-7212 spec.
