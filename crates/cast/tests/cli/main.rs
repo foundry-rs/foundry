@@ -1,6 +1,7 @@
 //! Contains various tests for checking cast commands
 
 use alloy_primitives::{address, b256, Address, B256};
+use anvil::{Hardfork, NodeConfig};
 use foundry_test_utils::{
     casttest,
     rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint},
@@ -1031,4 +1032,22 @@ casttest!(block_number_hash, |_prj, cmd| {
         ])
         .stdout_lossy();
     assert_eq!(s.trim().parse::<u64>().unwrap(), 1, "{s}")
+});
+
+casttest!(send_eip7702, async |_prj, cmd| {
+    anvil::spawn(NodeConfig::test().with_hardfork(Some(Hardfork::PragueEOF))).await;
+    cmd.args([
+        "send",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    cmd.cast_fuse()
+        .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"])
+        .assert_success()
+        .stdout_eq(str!["0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8"]);
 });
