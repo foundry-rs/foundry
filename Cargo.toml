@@ -288,5 +288,5 @@ alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
 alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
 alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "511ae98" }
-revm = { git = "https://github.com/bluealloy/revm", rev = "228b034" }
-revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "228b034" }
+revm = { git = "https://github.com/bluealloy/revm", rev = "caadc71" }
+revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "caadc71" }

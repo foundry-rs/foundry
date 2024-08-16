@@ -1867,6 +1867,7 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-types",
  "alloy-transport",
+ "anvil",
  "async-trait",
  "aws-sdk-kms",
  "chrono",
@@ -7031,7 +7032,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "13.0.0"
-source = "git+https://github.com/bluealloy/revm?rev=228b034#228b0343f372c69924023721c00f2d0e01e72a86"
+source = "git+https://github.com/bluealloy/revm?rev=caadc71#caadc71fd28929cd751cc997b4b454d8813c434b"
 dependencies = [
  "auto_impl",
  "cfg-if",
@@ -7062,7 +7063,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "9.0.0"
-source = "git+https://github.com/bluealloy/revm?rev=228b034#228b0343f372c69924023721c00f2d0e01e72a86"
+source = "git+https://github.com/bluealloy/revm?rev=caadc71#caadc71fd28929cd751cc997b4b454d8813c434b"
 dependencies = [
  "revm-primitives",
  "serde",
@@ -7071,7 +7072,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "10.0.0"
-source = "git+https://github.com/bluealloy/revm?rev=228b034#228b0343f372c69924023721c00f2d0e01e72a86"
+source = "git+https://github.com/bluealloy/revm?rev=caadc71#caadc71fd28929cd751cc997b4b454d8813c434b"
 dependencies = [
  "aurora-engine-modexp",
  "blst",
@@ -7090,7 +7091,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "8.0.0"
-source = "git+https://github.com/bluealloy/revm?rev=228b034#228b0343f372c69924023721c00f2d0e01e72a86"
+source = "git+https://github.com/bluealloy/revm?rev=caadc71#caadc71fd28929cd751cc997b4b454d8813c434b"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
