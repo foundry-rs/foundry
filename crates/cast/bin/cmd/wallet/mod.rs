@@ -1,3 +1,4 @@
+use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{hex, Address, Signature, B256};
 use alloy_provider::Provider;
@@ -125,11 +126,11 @@ pub enum WalletSubcommands {
         #[command(flatten)]
         rpc: Option<RpcOpts>,
 
-        #[arg(long, requires = "chain_id")]
+        #[arg(long)]
         nonce: Option<u64>,
 
-        #[arg(long, requires = "nonce")]
-        chain_id: Option<u64>,
+        #[arg(long)]
+        chain: Option<Chain>,
 
         #[command(flatten)]
         wallet: WalletOpts,
@@ -350,22 +351,28 @@ impl WalletSubcommands {
                 };
                 println!("0x{}", hex::encode(sig.as_bytes()));
             }
-            Self::SignAuth { rpc, nonce, chain_id, wallet, address } => {
+            Self::SignAuth { rpc, nonce, chain, wallet, address } => {
                 let wallet = wallet.signer().await?;
-                let (nonce, chain_id) = match rpc {
-                    Some(rpc) => {
+                let (nonce, chain_id) = match (rpc, nonce, chain) {
+                    (_, Some(nonce), Some(chain)) => (nonce, chain.id()),
+                    (Some(rpc), _, _) => {
                         let provider = utils::get_provider(&Config::from(&rpc))?;
-                        (
-                            provider.get_transaction_count(wallet.address()).await?,
-                            provider.get_chain_id().await?,
-                        )
+                        let nonce = if let Some(nonce) = nonce {
+                            nonce
+                        } else {
+                            provider.get_transaction_count(wallet.address()).await?
+                        };
+                        let chain = if let Some(chain) = chain {
+                            chain.id()
+                        } else {
+                            provider.get_chain_id().await?
+                        };
+
+                        (nonce, chain)
                     }
-                    None => {
-                        if nonce.is_none() || chain_id.is_none() {
-                            eyre::bail!("Nonce / chain id or RPC URL is required to create signed authorization.");
-                        }
-                        (nonce.unwrap(), chain_id.unwrap())
-                    }
+                    _ => eyre::bail!(
+                        "Nonce and chain id or RPC URL is required to create signed authorization."
+                    ),
                 };
                 let sig = wallet
                     .sign_hash(
@@ -373,7 +380,7 @@ impl WalletSubcommands {
                             .signature_hash(),
                     )
                     .await?;
-                println!("0x{}", hex::encode(sig.as_bytes()));
+                println!("{}", hex::encode_prefixed(sig.as_bytes()));
             }
             Self::Verify { message, signature, address } => {
                 let recovered_address = Self::recover_address_from_message(&message, &signature)?;
