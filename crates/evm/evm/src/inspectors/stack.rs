@@ -58,6 +58,8 @@ pub struct InspectorStackBuilder {
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
+    /// Whether to enable Alphanet features.
+    pub alphanet: bool,
 }
 
 impl InspectorStackBuilder {
@@ -140,6 +142,14 @@ impl InspectorStackBuilder {
         self
     }
 
+    /// Set whether to enable Alphanet features.
+    /// For description of call isolation, see [`InspectorStack::enable_isolation`].
+    #[inline]
+    pub fn alphanet(mut self, yes: bool) -> Self {
+        self.alphanet = yes;
+        self
+    }
+
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     pub fn build(self) -> InspectorStack {
         let Self {
@@ -153,6 +163,7 @@ impl InspectorStackBuilder {
             print,
             chisel_state,
             enable_isolation,
+            alphanet,
         } = self;
         let mut stack = InspectorStack::new();
 
@@ -172,6 +183,7 @@ impl InspectorStackBuilder {
         stack.tracing(trace_mode);
 
         stack.enable_isolation(enable_isolation);
+        stack.alphanet(alphanet);
 
         // environment, must come after all of the inspectors
         if let Some(block) = block {
@@ -284,6 +296,7 @@ pub struct InspectorStackInner {
     pub printer: Option<CustomPrintTracer>,
     pub tracer: Option<TracingInspector>,
     pub enable_isolation: bool,
+    pub alphanet: bool,
 
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -390,6 +403,12 @@ impl InspectorStack {
     #[inline]
     pub fn enable_isolation(&mut self, yes: bool) {
         self.enable_isolation = yes;
+    }
+
+    /// Set whether to enable call isolation.
+    #[inline]
+    pub fn alphanet(&mut self, yes: bool) {
+        self.alphanet = yes;
     }
 
     /// Set whether to enable the log collector.
@@ -914,6 +933,10 @@ impl<'a, DB: DatabaseExt> InspectorExt<DB> for InspectorStackRefMut<'a> {
             inspector, input
         ));
     }
+
+    fn is_alphanet(&self) -> bool {
+        self.inner.alphanet
+    }
 }
 
 impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
@@ -998,6 +1021,10 @@ impl<DB: DatabaseExt> InspectorExt<DB> for InspectorStack {
         inputs: &mut CreateInputs,
     ) -> bool {
         self.as_mut().should_use_create2_factory(ecx, inputs)
+    }
+
+    fn is_alphanet(&self) -> bool {
+        self.alphanet
     }
 }
 

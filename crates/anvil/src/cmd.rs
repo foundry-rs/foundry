@@ -252,6 +252,7 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_max_persisted_states(self.max_persisted_states)
             .with_optimism(self.evm_opts.optimism)
+            .with_alphanet(self.evm_opts.alphanet)
             .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm_opts.memory_limit)
@@ -550,6 +551,10 @@ pub struct AnvilEvmArgs {
     /// The memory limit per EVM execution in bytes.
     #[arg(long)]
     pub memory_limit: Option<u64>,
+
+    /// Enable Alphanet features
+    #[arg(long, visible_alias = "alphanet")]
+    pub alphanet: bool,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section

@@ -174,6 +174,7 @@ pub struct Backend {
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
+    alphanet: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
@@ -198,6 +199,7 @@ impl Backend {
         fork: Arc<RwLock<Option<ClientFork>>>,
         enable_steps_tracing: bool,
         print_logs: bool,
+        alphanet: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         max_persisted_states: Option<usize>,
         transaction_block_keeper: Option<usize>,
@@ -256,6 +258,7 @@ impl Backend {
             active_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
             print_logs,
+            alphanet,
             prune_state_history_config,
             transaction_block_keeper,
             node_config,
@@ -908,6 +911,7 @@ impl Backend {
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
             precompile_factory: self.precompile_factory.clone(),
+            alphanet: self.alphanet,
         };
 
         // create a new pending block
@@ -980,6 +984,7 @@ impl Backend {
                     blob_gas_used: 0,
                     enable_steps_tracing: self.enable_steps_tracing,
                     print_logs: self.print_logs,
+                    alphanet: self.alphanet,
                     precompile_factory: self.precompile_factory.clone(),
                 };
                 let executed_tx = executor.execute();
@@ -1203,7 +1208,7 @@ impl Backend {
 
     /// Builds [`Inspector`] with the configured options
     fn build_inspector(&self) -> Inspector {
-        let mut inspector = Inspector::default();
+        let mut inspector = Inspector::default().with_alphanet(self.alphanet);
 
         if self.print_logs {
             inspector = inspector.with_log_collector();

@@ -1,5 +1,5 @@
 pub use crate::ic::*;
-use crate::{constants::DEFAULT_CREATE2_DEPLOYER, InspectorExt};
+use crate::{constants::DEFAULT_CREATE2_DEPLOYER, precompiles::ALPHANET_P256, InspectorExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Selector, TxKind, U256};
 use alloy_rpc_types::{Block, Transaction};
@@ -207,6 +207,20 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
         });
 }
 
+/// Adds Alphanet P256 precompile to the list of loaded precompiles.
+pub fn alphanet_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
+    handler: &mut EvmHandler<'_, I, DB>,
+) {
+    let prev = handler.pre_execution.load_precompiles.clone();
+    handler.pre_execution.load_precompiles = Arc::new(move || {
+        let mut loaded_precompiles = prev();
+
+        loaded_precompiles.extend([ALPHANET_P256]);
+
+        loaded_precompiles
+    });
+}
+
 /// Creates a new EVM with the given inspector.
 pub fn new_evm_with_inspector<'a, DB, I>(
     db: DB,
@@ -232,10 +246,15 @@ where
         .build()
     */
 
-    let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);
+    if inspector.is_alphanet() {
+        handler.append_handler_register_plain(alphanet_handler_register);
+    }
     handler.append_handler_register_plain(create2_handler_register);
+
+    let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
+
     revm::Evm::new(context, handler)
 }
 
@@ -261,11 +280,16 @@ where
     I: InspectorExt<DB>,
 {
     let handler_cfg = HandlerCfg::new(inner.spec_id());
-    let context =
-        revm::Context::new(revm::EvmContext { inner, precompiles: Default::default() }, inspector);
+
     let mut handler = revm::Handler::new(handler_cfg);
     handler.append_handler_register_plain(revm::inspector_handle_register);
+    if inspector.is_alphanet() {
+        handler.append_handler_register_plain(alphanet_handler_register);
+    }
     handler.append_handler_register_plain(create2_handler_register);
+
+    let context =
+        revm::Context::new(revm::EvmContext { inner, precompiles: Default::default() }, inspector);
     revm::Evm::new(context, handler)
 }
 

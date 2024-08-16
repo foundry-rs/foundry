@@ -10,7 +10,14 @@ use foundry_cli::{
 };
 use foundry_common::ens::NameOrAddress;
 use foundry_compilers::artifacts::EvmVersion;
-use foundry_config::{find_project_root_path, Config};
+use foundry_config::{
+    figment::{
+        self,
+        value::{Dict, Map},
+        Figment, Metadata, Profile,
+    },
+    Config,
+};
 use foundry_evm::{executors::TracingExecutor, opts::EvmOpts};
 use std::str::FromStr;
 
@@ -66,6 +73,10 @@ pub struct CallArgs {
     #[arg(long, short, help_heading = "Display options")]
     json: bool,
 
+    /// Enable Alphanet features.
+    #[arg(long)]
+    pub alphanet: bool,
+
     #[command(subcommand)]
     command: Option<CallSubcommands>,
 
@@ -102,6 +113,10 @@ pub enum CallSubcommands {
 
 impl CallArgs {
     pub async fn run(self) -> Result<()> {
+        let figment = Into::<Figment>::into(&self.eth).merge(&self);
+        let evm_opts = figment.extract::<EvmOpts>()?;
+        let mut config = Config::try_from(figment)?.sanitized();
+
         let Self {
             to,
             mut sig,
@@ -117,13 +132,13 @@ impl CallArgs {
             labels,
             data,
             json,
+            ..
         } = self;
 
         if let Some(data) = data {
             sig = Some(data);
         }
 
-        let mut config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
         let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
         let from = sender.address();
@@ -160,22 +175,20 @@ impl CallArgs {
             .await?;
 
         if trace {
-            let figment =
-                Config::figment_with_root(find_project_root_path(None).unwrap()).merge(eth.rpc);
-            let evm_opts = figment.extract::<EvmOpts>()?;
             if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
                 // Override Config `fork_block_number` (if set) with CLI value.
                 config.fork_block_number = Some(block_number);
             }
 
-            let (mut env, fork, chain) =
+            let (mut env, fork, chain, alphanet) =
                 TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
             // modify settings that usually set in eth_call
             env.cfg.disable_block_gas_limit = true;
             env.block.gas_limit = U256::MAX;
 
-            let mut executor = TracingExecutor::new(env, fork, evm_version, debug, decode_internal);
+            let mut executor =
+                TracingExecutor::new(env, fork, evm_version, debug, decode_internal, alphanet);
 
             let value = tx.value.unwrap_or_default();
             let input = tx.inner.input.into_input().unwrap_or_default();
@@ -199,6 +212,26 @@ impl CallArgs {
         println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block, json).await?);
 
         Ok(())
+    }
+}
+
+impl figment::Provider for CallArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("CallArgs")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let mut map = Map::new();
+
+        if self.alphanet {
+            map.insert("alphanet".into(), self.alphanet.into());
+        }
+
+        if let Some(evm_version) = self.evm_version {
+            map.insert("evm_version".into(), figment::value::Value::serialize(evm_version)?);
+        }
+
+        Ok(Map::from([(Config::selected_profile(), map)]))
     }
 }
 
