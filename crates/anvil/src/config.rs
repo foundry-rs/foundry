@@ -474,8 +474,11 @@ impl NodeConfig {
         }
     }
 
-    /// Returns the base fee to use
+    /// Returns the hardfork to use
     pub fn get_hardfork(&self) -> Hardfork {
+        if self.alphanet {
+            return Hardfork::PragueEOF;
+        }
         self.hardfork.unwrap_or_default()
     }
 

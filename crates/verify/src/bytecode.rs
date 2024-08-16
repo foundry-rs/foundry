@@ -322,11 +322,17 @@ impl VerifyBytecodeArgs {
         fork_config.fork_block_number = Some(simulation_block - 1);
         fork_config.evm_version =
             etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default());
-        let (mut env, fork, _chain) =
+        let (mut env, fork, _chain, alphanet) =
             TracingExecutor::get_fork_material(&fork_config, evm_opts).await?;
 
-        let mut executor =
-            TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false, false);
+        let mut executor = TracingExecutor::new(
+            env.clone(),
+            fork,
+            Some(fork_config.evm_version),
+            false,
+            false,
+            alphanet,
+        );
         env.block.number = U256::from(simulation_block);
         let block = provider.get_block(simulation_block.into(), true.into()).await?;
 
