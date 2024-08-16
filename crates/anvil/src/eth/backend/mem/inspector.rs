@@ -60,7 +60,7 @@ impl Inspector {
         self
     }
 
-    /// Configures the `Tracer` [`revm::Inspector`]
+    /// Enables Alphanet features
     pub fn with_alphanet(mut self, yes: bool) -> Self {
         self.alphanet = yes;
         self
