@@ -68,7 +68,7 @@ impl SenderKind<'_> {
 
 impl From<Address> for SenderKind<'_> {
     fn from(addr: Address) -> Self {
-        Self::Address(addr.into())
+        Self::Address(addr)
     }
 }
 
