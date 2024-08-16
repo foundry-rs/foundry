@@ -1137,6 +1137,7 @@ impl Backend {
                     nonce,
                     access_list,
                     blob_versioned_hashes,
+                    authorization_list,
                     sidecar: _,
                     chain_id: _,
                     transaction_type: _,
@@ -1188,7 +1189,7 @@ impl Backend {
             access_list: access_list.unwrap_or_default().into(),
             blob_hashes: blob_versioned_hashes.unwrap_or_default(),
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
-            authorization_list: None,
+            authorization_list: authorization_list.map(Into::into),
         };
 
         if env.block.basefee.is_zero() {

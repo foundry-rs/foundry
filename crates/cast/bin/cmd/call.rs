@@ -1,4 +1,4 @@
-use crate::tx::CastTxBuilder;
+use crate::tx::{CastTxBuilder, SenderKind};
 use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use cast::{traces::TraceKind, Cast};
@@ -125,7 +125,8 @@ impl CallArgs {
 
         let mut config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
-        let sender = eth.wallet.sender().await;
+        let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
+        let from = sender.address();
 
         let tx_kind = if let Some(to) = to {
             TxKind::Call(to.resolve(&provider).await?)
@@ -181,11 +182,11 @@ impl CallArgs {
 
             let trace = match tx_kind {
                 TxKind::Create => {
-                    let deploy_result = executor.deploy(sender, input, value, None);
+                    let deploy_result = executor.deploy(from, input, value, None);
                     TraceResult::try_from(deploy_result)?
                 }
                 TxKind::Call(to) => TraceResult::from_raw(
-                    executor.transact_raw(sender, to, input, value)?,
+                    executor.transact_raw(from, to, input, value)?,
                     TraceKind::Execution,
                 ),
             };

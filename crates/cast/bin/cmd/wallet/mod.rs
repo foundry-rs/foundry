@@ -123,8 +123,11 @@ pub enum WalletSubcommands {
     /// EIP-7702 sign authorization.
     #[command(visible_alias = "sa")]
     SignAuth {
+        /// Address to sign authorization for.
+        address: Address,
+
         #[command(flatten)]
-        rpc: Option<RpcOpts>,
+        rpc: RpcOpts,
 
         #[arg(long)]
         nonce: Option<u64>,
@@ -134,10 +137,6 @@ pub enum WalletSubcommands {
 
         #[command(flatten)]
         wallet: WalletOpts,
-
-        /// Address to sign authorization for.
-        #[arg(long, short)]
-        address: Address,
     },
 
     /// Verify the signature of a message.
@@ -353,34 +352,21 @@ impl WalletSubcommands {
             }
             Self::SignAuth { rpc, nonce, chain, wallet, address } => {
                 let wallet = wallet.signer().await?;
-                let (nonce, chain_id) = match (rpc, nonce, chain) {
-                    (_, Some(nonce), Some(chain)) => (nonce, chain.id()),
-                    (Some(rpc), _, _) => {
-                        let provider = utils::get_provider(&Config::from(&rpc))?;
-                        let nonce = if let Some(nonce) = nonce {
-                            nonce
-                        } else {
-                            provider.get_transaction_count(wallet.address()).await?
-                        };
-                        let chain = if let Some(chain) = chain {
-                            chain.id()
-                        } else {
-                            provider.get_chain_id().await?
-                        };
-
-                        (nonce, chain)
-                    }
-                    _ => eyre::bail!(
-                        "Nonce and chain id or RPC URL is required to create signed authorization."
-                    ),
+                let provider = utils::get_provider(&Config::from(&rpc))?;
+                let nonce = if let Some(nonce) = nonce {
+                    nonce
+                } else {
+                    provider.get_transaction_count(wallet.address()).await?
                 };
-                let sig = wallet
-                    .sign_hash(
-                        &Authorization { chain_id: U256::from(chain_id), address, nonce }
-                            .signature_hash(),
-                    )
-                    .await?;
-                println!("{}", hex::encode_prefixed(sig.as_bytes()));
+                let chain_id = if let Some(chain) = chain {
+                    chain.id()
+                } else {
+                    provider.get_chain_id().await?
+                };
+                let auth = Authorization { chain_id: U256::from(chain_id), address, nonce };
+                let signature = wallet.sign_hash(&auth.signature_hash()).await?;
+                let auth = auth.into_signed(signature);
+                println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)));
             }
             Self::Verify { message, signature, address } => {
                 let recovered_address = Self::recover_address_from_message(&message, &signature)?;
