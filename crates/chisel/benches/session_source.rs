@@ -1,13 +1,12 @@
 use chisel::session_source::{SessionSource, SessionSourceConfig};
 use criterion::{criterion_group, Criterion};
-use foundry_compilers::Solc;
-use foundry_config::Config;
-use foundry_evm::opts::EvmOpts;
+use foundry_compilers::solc::Solc;
 use once_cell::sync::Lazy;
+use semver::Version;
 use std::hint::black_box;
 use tokio::runtime::Runtime;
 
-static SOLC: Lazy<Solc> = Lazy::new(|| Solc::find_or_install_svm_version("0.8.19").unwrap());
+static SOLC: Lazy<Solc> = Lazy::new(|| Solc::find_or_install(&Version::new(0, 8, 19)).unwrap());
 
 /// Benchmark for the `clone_with_new_line` function in [SessionSource]
 fn clone_with_new_line(c: &mut Criterion) {
@@ -66,16 +65,7 @@ fn inspect(c: &mut Criterion) {
 
 /// Helper function for getting an empty [SessionSource] with default configuration
 fn get_empty_session_source() -> SessionSource {
-    SessionSource::new(
-        SOLC.clone(),
-        SessionSourceConfig {
-            foundry_config: Config::default(),
-            evm_opts: EvmOpts::default(),
-            backend: None,
-            traces: false,
-            calldata: None,
-        },
-    )
+    SessionSource::new(SOLC.clone(), SessionSourceConfig::default())
 }
 
 fn rt() -> Runtime {

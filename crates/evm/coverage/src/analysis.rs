@@ -1,11 +1,12 @@
-use super::{ContractId, CoverageItem, CoverageItemKind, SourceLocation};
+use super::{CoverageItem, CoverageItemKind, SourceLocation};
 use foundry_common::TestFunctionExt;
 use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
-use semver::Version;
-use std::collections::{HashMap, HashSet};
+use rayon::prelude::*;
+use rustc_hash::FxHashMap;
+use std::sync::Arc;
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ContractVisitor<'a> {
     /// The source ID of the contract.
     source_id: usize,
@@ -13,7 +14,7 @@ pub struct ContractVisitor<'a> {
     source: &'a str,
 
     /// The name of the contract being walked.
-    contract_name: String,
+    contract_name: &'a Arc<str>,
 
     /// The current branch ID
     branch_id: usize,
@@ -22,84 +23,73 @@ pub struct ContractVisitor<'a> {
 
     /// Coverage items
     pub items: Vec<CoverageItem>,
-
-    /// Node IDs of this contract's base contracts, as well as IDs for referenced contracts such as
-    /// libraries
-    pub base_contract_node_ids: HashSet<usize>,
 }
 
 impl<'a> ContractVisitor<'a> {
-    pub fn new(source_id: usize, source: &'a str, contract_name: String) -> Self {
-        Self {
-            source_id,
-            source,
-            contract_name,
-            branch_id: 0,
-            last_line: 0,
-            items: Vec::new(),
-            base_contract_node_ids: HashSet::new(),
-        }
+    pub fn new(source_id: usize, source: &'a str, contract_name: &'a Arc<str>) -> Self {
+        Self { source_id, source, contract_name, branch_id: 0, last_line: 0, items: Vec::new() }
     }
 
-    pub fn visit(mut self, contract_ast: Node) -> eyre::Result<Self> {
-        let linearized_base_contracts: Vec<usize> =
-            contract_ast.attribute("linearizedBaseContracts").ok_or_else(|| {
-                eyre::eyre!(
-                    "The contract's AST node is missing a list of linearized base contracts"
-                )
-            })?;
-
-        // We skip the first ID because that's the ID of the contract itself
-        self.base_contract_node_ids.extend(&linearized_base_contracts[1..]);
-
+    pub fn visit_contract(&mut self, node: &Node) -> eyre::Result<()> {
         // Find all functions and walk their AST
-        for node in contract_ast.nodes {
-            if node.node_type == NodeType::FunctionDefinition {
-                self.visit_function_definition(node.clone())?;
+        for node in &node.nodes {
+            match node.node_type {
+                NodeType::FunctionDefinition => {
+                    self.visit_function_definition(node)?;
+                }
+                NodeType::ModifierDefinition => {
+                    self.visit_modifier_or_yul_fn_definition(node)?;
+                }
+                _ => {}
             }
         }
-
-        Ok(self)
+        Ok(())
     }
 
-    fn visit_function_definition(&mut self, mut node: Node) -> eyre::Result<()> {
+    fn visit_function_definition(&mut self, node: &Node) -> eyre::Result<()> {
         let name: String =
             node.attribute("name").ok_or_else(|| eyre::eyre!("Function has no name"))?;
 
-        // TODO(onbjerg): Re-enable constructor parsing when we walk both the deployment and runtime
-        // sourcemaps. Currently this fails because we are trying to look for anchors in the runtime
-        // sourcemap.
         // TODO(onbjerg): Figure out why we cannot find anchors for the receive function
         let kind: String =
             node.attribute("kind").ok_or_else(|| eyre::eyre!("Function has no kind"))?;
-        if kind == "constructor" || kind == "receive" {
+        if kind == "receive" {
             return Ok(())
         }
 
-        match node.body.take() {
+        match &node.body {
             Some(body) => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Function { name },
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
-                self.visit_block(*body)
+                self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
+                self.visit_block(body)
             }
             _ => Ok(()),
         }
     }
 
-    fn visit_block(&mut self, node: Node) -> eyre::Result<()> {
+    fn visit_modifier_or_yul_fn_definition(&mut self, node: &Node) -> eyre::Result<()> {
+        let name: String =
+            node.attribute("name").ok_or_else(|| eyre::eyre!("Modifier has no name"))?;
+
+        match &node.body {
+            Some(body) => {
+                self.push_item_kind(CoverageItemKind::Function { name }, &node.src);
+                self.visit_block(body)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn visit_block(&mut self, node: &Node) -> eyre::Result<()> {
         let statements: Vec<Node> = node.attribute("statements").unwrap_or_default();
 
-        for statement in statements {
+        for statement in &statements {
             self.visit_statement(statement)?;
         }
 
         Ok(())
     }
-    fn visit_statement(&mut self, node: Node) -> eyre::Result<()> {
-        // TODO: YulSwitch, YulForLoop, YulFunctionDefinition, YulVariableDeclaration
+
+    fn visit_statement(&mut self, node: &Node) -> eyre::Result<()> {
         match node.node_type {
             // Blocks
             NodeType::Block | NodeType::UncheckedBlock | NodeType::YulBlock => {
@@ -107,90 +97,86 @@ impl<'a> ContractVisitor<'a> {
             }
             // Inline assembly block
             NodeType::InlineAssembly => self.visit_block(
-                node.attribute("AST")
+                &node
+                    .attribute("AST")
                     .ok_or_else(|| eyre::eyre!("inline assembly block with no AST attribute"))?,
             ),
             // Simple statements
             NodeType::Break |
             NodeType::Continue |
             NodeType::EmitStatement |
-            NodeType::PlaceholderStatement |
             NodeType::RevertStatement |
             NodeType::YulAssignment |
             NodeType::YulBreak |
             NodeType::YulContinue |
-            NodeType::YulLeave => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+            NodeType::YulLeave |
+            NodeType::YulVariableDeclaration => {
+                self.push_item_kind(CoverageItemKind::Statement, &node.src);
                 Ok(())
             }
-
+            // Skip placeholder statements as they are never referenced in source maps.
+            NodeType::PlaceholderStatement => Ok(()),
             // Return with eventual subcall
             NodeType::Return => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+                self.push_item_kind(CoverageItemKind::Statement, &node.src);
                 if let Some(expr) = node.attribute("expression") {
-                    self.visit_expression(expr)?;
+                    self.visit_expression(&expr)?;
                 }
                 Ok(())
             }
-
             // Variable declaration
             NodeType::VariableDeclarationStatement => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+                self.push_item_kind(CoverageItemKind::Statement, &node.src);
                 if let Some(expr) = node.attribute("initialValue") {
-                    self.visit_expression(expr)?;
+                    self.visit_expression(&expr)?;
                 }
                 Ok(())
             }
             // While loops
             NodeType::DoWhileStatement | NodeType::WhileStatement => {
                 self.visit_expression(
-                    node.attribute("condition")
+                    &node
+                        .attribute("condition")
                         .ok_or_else(|| eyre::eyre!("while statement had no condition"))?,
                 )?;
 
-                let body =
-                    node.body.ok_or_else(|| eyre::eyre!("while statement had no body node"))?;
-                self.visit_block_or_statement(*body)
+                let body = node
+                    .body
+                    .as_deref()
+                    .ok_or_else(|| eyre::eyre!("while statement had no body node"))?;
+                self.visit_block_or_statement(body)
             }
             // For loops
             NodeType::ForStatement => {
                 if let Some(stmt) = node.attribute("initializationExpression") {
-                    self.visit_statement(stmt)?;
+                    self.visit_statement(&stmt)?;
                 }
                 if let Some(expr) = node.attribute("condition") {
-                    self.visit_expression(expr)?;
+                    self.visit_expression(&expr)?;
                 }
                 if let Some(stmt) = node.attribute("loopExpression") {
-                    self.visit_statement(stmt)?;
+                    self.visit_statement(&stmt)?;
                 }
 
-                let body =
-                    node.body.ok_or_else(|| eyre::eyre!("for statement had no body node"))?;
-                self.visit_block_or_statement(*body)
+                let body = node
+                    .body
+                    .as_deref()
+                    .ok_or_else(|| eyre::eyre!("for statement had no body node"))?;
+                self.visit_block_or_statement(body)
             }
             // Expression statement
             NodeType::ExpressionStatement | NodeType::YulExpressionStatement => self
                 .visit_expression(
-                    node.attribute("expression")
+                    &node
+                        .attribute("expression")
                         .ok_or_else(|| eyre::eyre!("expression statement had no expression"))?,
                 ),
             // If statement
             NodeType::IfStatement => {
                 self.visit_expression(
-                    node.attribute("condition")
-                        .ok_or_else(|| eyre::eyre!("while statement had no condition"))?,
+                    &node
+                        .attribute("condition")
+                        .ok_or_else(|| eyre::eyre!("if statement had no condition"))?,
                 )?;
 
                 let true_body: Node = node
@@ -202,43 +188,79 @@ impl<'a> ContractVisitor<'a> {
                 let branch_id = self.branch_id;
 
                 // We increase the branch ID here such that nested branches do not use the same
-                // branch ID as we do
+                // branch ID as we do.
                 self.branch_id += 1;
 
-                // The relevant source range for the branch is the `if(...)` statement itself and
-                // the true body of the if statement. The false body of the statement (if any) is
-                // processed as its own thing. If this source range is not processed like this, it
-                // is virtually impossible to correctly map instructions back to branches that
-                // include more complex logic like conditional logic.
-                self.push_branches(
-                    &foundry_compilers::artifacts::ast::LowFidelitySourceLocation {
-                        start: node.src.start,
-                        length: true_body
-                            .src
-                            .length
-                            .map(|length| true_body.src.start - node.src.start + length),
-                        index: node.src.index,
-                    },
-                    branch_id,
-                );
+                match node.attribute::<Node>("falseBody") {
+                    // Both if/else statements.
+                    Some(false_body) => {
+                        // Add branch coverage items only if one of true/branch bodies contains
+                        // statements.
+                        if has_statements(&true_body) || has_statements(&false_body) {
+                            // The branch instruction is mapped to the first opcode within the true
+                            // body source range.
+                            self.push_item_kind(
+                                CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 0,
+                                    is_first_opcode: true,
+                                },
+                                &true_body.src,
+                            );
+                            // Add the coverage item for branch 1 (false body).
+                            // The relevant source range for the false branch is the `else`
+                            // statement itself and the false body of the else statement.
+                            self.push_item_kind(
+                                CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 1,
+                                    is_first_opcode: false,
+                                },
+                                &ast::LowFidelitySourceLocation {
+                                    start: node.src.start,
+                                    length: false_body.src.length.map(|length| {
+                                        false_body.src.start - true_body.src.start + length
+                                    }),
+                                    index: node.src.index,
+                                },
+                            );
 
-                // Process the true branch
-                self.visit_block_or_statement(true_body)?;
-
-                // Process the false branch
-                let false_body: Option<Node> = node.attribute("falseBody");
-                if let Some(false_body) = false_body {
-                    self.visit_block_or_statement(false_body)?;
+                            // Process the true body.
+                            self.visit_block_or_statement(&true_body)?;
+                            // Process the false body.
+                            self.visit_block_or_statement(&false_body)?;
+                        }
+                    }
+                    None => {
+                        // Add single branch coverage only if it contains statements.
+                        if has_statements(&true_body) {
+                            // Add the coverage item for branch 0 (true body).
+                            self.push_item_kind(
+                                CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 0,
+                                    is_first_opcode: true,
+                                },
+                                &true_body.src,
+                            );
+                            // Process the true body.
+                            self.visit_block_or_statement(&true_body)?;
+                        }
+                    }
                 }
 
                 Ok(())
             }
             NodeType::YulIf => {
                 self.visit_expression(
-                    node.attribute("condition")
+                    &node
+                        .attribute("condition")
                         .ok_or_else(|| eyre::eyre!("yul if statement had no condition"))?,
                 )?;
-                let body = node.body.ok_or_else(|| eyre::eyre!("yul if statement had no body"))?;
+                let body = node
+                    .body
+                    .as_deref()
+                    .ok_or_else(|| eyre::eyre!("yul if statement had no body"))?;
 
                 // We need to store the current branch ID here since visiting the body of either of
                 // the if blocks may increase `self.branch_id` in the case of nested if statements.
@@ -248,24 +270,77 @@ impl<'a> ContractVisitor<'a> {
                 // branch ID as we do
                 self.branch_id += 1;
 
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
-                self.visit_block(*body)?;
+                self.push_item_kind(
+                    CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: false },
+                    &node.src,
+                );
+                self.visit_block(body)?;
 
                 Ok(())
             }
-            // Try-catch statement
+            // Try-catch statement. Coverage is reported for expression, for each clause and their
+            // bodies (if any).
             NodeType::TryStatement => {
-                // TODO: Clauses
-                // TODO: This is branching, right?
                 self.visit_expression(
-                    node.attribute("externalCall")
+                    &node
+                        .attribute("externalCall")
                         .ok_or_else(|| eyre::eyre!("try statement had no call"))?,
-                )
+                )?;
+
+                // Add coverage for each Try-catch clause.
+                for clause in node
+                    .attribute::<Vec<Node>>("clauses")
+                    .ok_or_else(|| eyre::eyre!("try statement had no clause"))?
+                {
+                    // Add coverage for clause statement.
+                    self.push_item_kind(CoverageItemKind::Statement, &clause.src);
+                    self.visit_statement(&clause)?;
+
+                    // Add coverage for clause body only if it is not empty.
+                    if let Some(block) = clause.attribute::<Node>("block") {
+                        if has_statements(&block) {
+                            self.push_item_kind(CoverageItemKind::Statement, &block.src);
+                            self.visit_block(&block)?;
+                        }
+                    }
+                }
+
+                Ok(())
             }
+            NodeType::YulSwitch => {
+                // Add coverage for each case statement amd their bodies.
+                for case in node
+                    .attribute::<Vec<Node>>("cases")
+                    .ok_or_else(|| eyre::eyre!("yul switch had no case"))?
+                {
+                    self.push_item_kind(CoverageItemKind::Statement, &case.src);
+                    self.visit_statement(&case)?;
+
+                    if let Some(body) = case.body {
+                        self.push_item_kind(CoverageItemKind::Statement, &body.src);
+                        self.visit_block(&body)?
+                    }
+                }
+                Ok(())
+            }
+            NodeType::YulForLoop => {
+                if let Some(condition) = node.attribute("condition") {
+                    self.visit_expression(&condition)?;
+                }
+                if let Some(pre) = node.attribute::<Node>("pre") {
+                    self.visit_block(&pre)?
+                }
+                if let Some(post) = node.attribute::<Node>("post") {
+                    self.visit_block(&post)?
+                }
+
+                if let Some(body) = &node.body {
+                    self.push_item_kind(CoverageItemKind::Statement, &body.src);
+                    self.visit_block(body)?
+                }
+                Ok(())
+            }
+            NodeType::YulFunctionDefinition => self.visit_modifier_or_yul_fn_definition(node),
             _ => {
                 warn!("unexpected node type, expected a statement: {:?}", node.node_type);
                 Ok(())
@@ -273,79 +348,65 @@ impl<'a> ContractVisitor<'a> {
         }
     }
 
-    fn visit_expression(&mut self, node: Node) -> eyre::Result<()> {
-        // TODO
-        // elementarytypenameexpression
-        //  memberaccess
-        //  newexpression
-        //  tupleexpression
-        //  yulfunctioncall
+    fn visit_expression(&mut self, node: &Node) -> eyre::Result<()> {
         match node.node_type {
-            NodeType::Assignment | NodeType::UnaryOperation => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+            NodeType::Assignment |
+            NodeType::UnaryOperation |
+            NodeType::Conditional |
+            NodeType::YulFunctionCall => {
+                self.push_item_kind(CoverageItemKind::Statement, &node.src);
+                Ok(())
+            }
+            NodeType::FunctionCall => {
+                // Do not count other kinds of calls towards coverage (like `typeConversion`
+                // and `structConstructorCall`).
+                let kind: Option<String> = node.attribute("kind");
+                if let Some("functionCall") = kind.as_deref() {
+                    self.push_item_kind(CoverageItemKind::Statement, &node.src);
+
+                    let expr: Option<Node> = node.attribute("expression");
+                    if let Some(NodeType::Identifier) = expr.as_ref().map(|expr| &expr.node_type) {
+                        // Might be a require call, add branch coverage.
+                        let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
+                        if let Some("require" | "assert") = name.as_deref() {
+                            let branch_id = self.branch_id;
+                            self.branch_id += 1;
+                            self.push_item_kind(
+                                CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 0,
+                                    is_first_opcode: false,
+                                },
+                                &node.src,
+                            );
+                            self.push_item_kind(
+                                CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id: 1,
+                                    is_first_opcode: false,
+                                },
+                                &node.src,
+                            );
+                        }
+                    }
+                }
+
                 Ok(())
             }
             NodeType::BinaryOperation => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
+                self.push_item_kind(CoverageItemKind::Statement, &node.src);
 
                 // visit left and right expressions
                 // There could possibly a function call in the left or right expression
                 // e.g: callFunc(a) + callFunc(b)
                 if let Some(expr) = node.attribute("leftExpression") {
-                    self.visit_expression(expr)?;
+                    self.visit_expression(&expr)?;
                 }
 
                 if let Some(expr) = node.attribute("rightExpression") {
-                    self.visit_expression(expr)?;
+                    self.visit_expression(&expr)?;
                 }
 
-                Ok(())
-            }
-            NodeType::FunctionCall => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
-
-                let expr: Option<Node> = node.attribute("expression");
-                match expr.as_ref().map(|expr| &expr.node_type) {
-                    // Might be a require/assert call
-                    Some(NodeType::Identifier) => {
-                        let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
-                        if let Some("assert" | "require") = name.as_deref() {
-                            self.push_branches(&node.src, self.branch_id);
-                            self.branch_id += 1;
-                        }
-                    }
-                    // Might be a call to a library
-                    Some(NodeType::MemberAccess) => {
-                        let referenced_declaration_id = expr
-                            .and_then(|expr| expr.attribute("expression"))
-                            .and_then(|subexpr: Node| subexpr.attribute("referencedDeclaration"));
-                        if let Some(id) = referenced_declaration_id {
-                            self.base_contract_node_ids.insert(id);
-                        }
-                    }
-                    _ => (),
-                }
-
-                Ok(())
-            }
-            NodeType::Conditional => {
-                self.push_item(CoverageItem {
-                    kind: CoverageItemKind::Statement,
-                    loc: self.source_location_for(&node.src),
-                    hits: 0,
-                });
                 Ok(())
             }
             // Does not count towards coverage
@@ -363,7 +424,7 @@ impl<'a> ContractVisitor<'a> {
         }
     }
 
-    fn visit_block_or_statement(&mut self, node: Node) -> eyre::Result<()> {
+    fn visit_block_or_statement(&mut self, node: &Node) -> eyre::Result<()> {
         match node.node_type {
             NodeType::Block => self.visit_block(node),
             NodeType::Break |
@@ -374,12 +435,14 @@ impl<'a> ContractVisitor<'a> {
             NodeType::ForStatement |
             NodeType::IfStatement |
             NodeType::InlineAssembly |
-            NodeType::PlaceholderStatement |
             NodeType::Return |
             NodeType::RevertStatement |
             NodeType::TryStatement |
             NodeType::VariableDeclarationStatement |
+            NodeType::YulVariableDeclaration |
             NodeType::WhileStatement => self.visit_statement(node),
+            // Skip placeholder statements as they are never referenced in source maps.
+            NodeType::PlaceholderStatement => Ok(()),
             _ => {
                 warn!("unexpected node type, expected block or statement: {:?}", node.node_type);
                 Ok(())
@@ -387,20 +450,20 @@ impl<'a> ContractVisitor<'a> {
         }
     }
 
-    /// Pushes a coverage item to the internal collection, and might push a line item as well.
-    fn push_item(&mut self, item: CoverageItem) {
-        let source_location = &item.loc;
-
+    /// Creates a coverage item for a given kind and source location. Pushes item to the internal
+    /// collection (plus additional coverage line if item is a statement).
+    fn push_item_kind(&mut self, kind: CoverageItemKind, src: &ast::LowFidelitySourceLocation) {
+        let item = CoverageItem { kind, loc: self.source_location_for(src), hits: 0 };
         // Push a line item if we haven't already
         if matches!(item.kind, CoverageItemKind::Statement | CoverageItemKind::Branch { .. }) &&
-            self.last_line < source_location.line
+            self.last_line < item.loc.line
         {
             self.items.push(CoverageItem {
                 kind: CoverageItemKind::Line,
-                loc: source_location.clone(),
+                loc: item.loc.clone(),
                 hits: 0,
             });
-            self.last_line = source_location.line;
+            self.last_line = item.loc.line;
         }
 
         self.items.push(item);
@@ -410,97 +473,56 @@ impl<'a> ContractVisitor<'a> {
         SourceLocation {
             source_id: self.source_id,
             contract_name: self.contract_name.clone(),
-            start: loc.start,
-            length: loc.length,
+            start: loc.start as u32,
+            length: loc.length.map(|x| x as u32),
             line: self.source[..loc.start].lines().count(),
         }
     }
+}
 
-    fn push_branches(&mut self, loc: &ast::LowFidelitySourceLocation, branch_id: usize) {
-        self.push_item(CoverageItem {
-            kind: CoverageItemKind::Branch { branch_id, path_id: 0 },
-            loc: self.source_location_for(loc),
-            hits: 0,
-        });
-        self.push_item(CoverageItem {
-            kind: CoverageItemKind::Branch { branch_id, path_id: 1 },
-            loc: self.source_location_for(loc),
-            hits: 0,
-        });
+/// Helper function to check if a given node is or contains any statement.
+fn has_statements(node: &Node) -> bool {
+    match node.node_type {
+        NodeType::DoWhileStatement |
+        NodeType::EmitStatement |
+        NodeType::ExpressionStatement |
+        NodeType::ForStatement |
+        NodeType::IfStatement |
+        NodeType::RevertStatement |
+        NodeType::TryStatement |
+        NodeType::VariableDeclarationStatement |
+        NodeType::WhileStatement => true,
+        _ => {
+            let statements: Vec<Node> = node.attribute("statements").unwrap_or_default();
+            !statements.is_empty()
+        }
     }
 }
 
+/// [`SourceAnalyzer`] result type.
 #[derive(Debug)]
 pub struct SourceAnalysis {
     /// A collection of coverage items.
     pub items: Vec<CoverageItem>,
-    /// A mapping of contract IDs to item IDs relevant to the contract (including items in base
-    /// contracts).
-    pub contract_items: HashMap<ContractId, Vec<usize>>,
 }
 
 /// Analyzes a set of sources to find coverage items.
-#[derive(Default, Clone, Debug)]
-pub struct SourceAnalyzer {
-    /// A map of source IDs to their source code
-    sources: HashMap<usize, String>,
-    /// A map of AST node IDs of contracts to their contract IDs.
-    contract_ids: HashMap<usize, ContractId>,
-    /// A map of contract IDs to their AST nodes.
-    contracts: HashMap<ContractId, Node>,
-    /// A collection of coverage items.
-    items: Vec<CoverageItem>,
-    /// A map of contract IDs to item IDs.
-    contract_items: HashMap<ContractId, Vec<usize>>,
-    /// A map of contracts to their base contracts
-    contract_bases: HashMap<ContractId, Vec<ContractId>>,
+#[derive(Debug)]
+pub struct SourceAnalyzer<'a> {
+    sources: &'a SourceFiles<'a>,
 }
 
-impl SourceAnalyzer {
+impl<'a> SourceAnalyzer<'a> {
     /// Creates a new source analyzer.
-    ///
-    /// The source analyzer expects all given sources to belong to the same compilation job
-    /// (defined by `version`).
-    pub fn new(
-        version: Version,
-        asts: HashMap<usize, Ast>,
-        sources: HashMap<usize, String>,
-    ) -> eyre::Result<Self> {
-        let mut analyzer = SourceAnalyzer { sources, ..Default::default() };
-
-        // TODO: Skip interfaces
-        for (source_id, ast) in asts.into_iter() {
-            for child in ast.nodes {
-                if !matches!(child.node_type, NodeType::ContractDefinition) {
-                    continue
-                }
-
-                let node_id =
-                    child.id.ok_or_else(|| eyre::eyre!("The contract's AST node has no ID"))?;
-                let contract_id = ContractId {
-                    version: version.clone(),
-                    source_id,
-                    contract_name: child
-                        .attribute("name")
-                        .ok_or_else(|| eyre::eyre!("Contract has no name"))?,
-                };
-                analyzer.contract_ids.insert(node_id, contract_id.clone());
-                analyzer.contracts.insert(contract_id, child);
-            }
-        }
-
-        Ok(analyzer)
+    pub fn new(data: &'a SourceFiles<'a>) -> Self {
+        Self { sources: data }
     }
 
     /// Analyzes contracts in the sources held by the source analyzer.
     ///
     /// Coverage items are found by:
     /// - Walking the AST of each contract (except interfaces)
-    /// - Recording the items and base contracts of each contract
-    ///
-    /// Finally, the item IDs of each contract and its base contracts are flattened, and the return
-    /// value represents all coverage items in the project, along with a mapping of contract IDs to
-    /// item IDs.
+    /// - Recording the items of each contract
     ///
     /// Each coverage item contains relevant information to find opcodes corresponding to them: the
     /// source ID the item is in, the source code range of the item, and the contract name the item
@@ -509,128 +531,64 @@ impl SourceAnalyzer {
     /// Note: Source IDs are only unique per compilation job; that is, a code base compiled with
     /// two different solc versions will produce overlapping source IDs if the compiler version is
     /// not taken into account.
-    pub fn analyze(mut self) -> eyre::Result<SourceAnalysis> {
-        // Analyze the contracts
-        self.analyze_contracts()?;
-
-        // Flatten the data
-        let mut flattened: HashMap<ContractId, Vec<usize>> = HashMap::new();
-        for contract_id in self.contract_items.keys() {
-            let mut item_ids: Vec<usize> = Vec::new();
-
-            //
-            // for a specific contract (id == contract_id):
-            //
-            // self.contract_bases.get(contract_id) includes the following contracts:
-            //   1. all the ancestors of this contract (including parent, grandparent, ...
-            //      contracts)
-            //   2. the libraries **directly** used by this contract
-            //
-            // The missing contracts are:
-            //   1. libraries used in ancestors of this contracts
-            //   2. libraries used in libraries (i.e libs indirectly used by this contract)
-            //
-            // We want to find out all the above contracts and libraries related to this contract.
-
-            for contract_or_lib in {
-                // A set of contracts and libraries related to this contract (will include "this"
-                // contract itself)
-                let mut contracts_libraries: HashSet<&ContractId> = HashSet::new();
-
-                // we use a stack for depth-first search.
-                let mut stack: Vec<&ContractId> = Vec::new();
-
-                // push "this" contract onto the stack
-                stack.push(contract_id);
-
-                while let Some(contract_or_lib) = stack.pop() {
-                    // whenever a contract_or_lib is removed from the stack, it is added to the set
-                    contracts_libraries.insert(contract_or_lib);
-
-                    // push all ancestors of contract_or_lib and libraries used by contract_or_lib
-                    // onto the stack
-                    if let Some(bases) = self.contract_bases.get(contract_or_lib) {
-                        stack.extend(
-                            bases.iter().filter(|base| !contracts_libraries.contains(base)),
-                        );
+    pub fn analyze(&self) -> eyre::Result<SourceAnalysis> {
+        let items = self
+            .sources
+            .sources
+            .par_iter()
+            .flat_map_iter(|(&source_id, SourceFile { source, ast })| {
+                ast.nodes.iter().map(move |node| {
+                    if !matches!(node.node_type, NodeType::ContractDefinition) {
+                        return Ok(vec![]);
                     }
-                }
 
-                contracts_libraries
-            } {
-                // get items of each contract or library
-                if let Some(items) = self.contract_items.get(contract_or_lib) {
-                    item_ids.extend(items.iter());
-                }
-            }
-
-            // If there are no items for this contract, then it was most likely filtered
-            if !item_ids.is_empty() {
-                flattened.insert(contract_id.clone(), item_ids);
-            }
-        }
-
-        Ok(SourceAnalysis { items: self.items.clone(), contract_items: flattened })
-    }
-
-    fn analyze_contracts(&mut self) -> eyre::Result<()> {
-        for contract_id in self.contracts.keys() {
-            // Find this contract's coverage items if we haven't already
-            if self.contract_items.get(contract_id).is_none() {
-                let ContractVisitor { items, base_contract_node_ids, .. } = ContractVisitor::new(
-                    contract_id.source_id,
-                    self.sources.get(&contract_id.source_id).unwrap_or_else(|| {
-                        panic!(
-                            "We should have the source code for source ID {}",
-                            contract_id.source_id
-                        )
-                    }),
-                    contract_id.contract_name.clone(),
-                )
-                .visit(
-                    self.contracts
-                        .get(contract_id)
-                        .unwrap_or_else(|| {
-                            panic!("We should have the AST of contract: {contract_id:?}")
-                        })
-                        .clone(),
-                )?;
-
-                let is_test = items.iter().any(|item| {
-                    if let CoverageItemKind::Function { name } = &item.kind {
-                        name.is_test()
-                    } else {
-                        false
+                    // Skip interfaces which have no function implementations.
+                    let contract_kind: String = node
+                        .attribute("contractKind")
+                        .ok_or_else(|| eyre::eyre!("Contract has no kind"))?;
+                    if contract_kind == "interface" {
+                        return Ok(vec![]);
                     }
-                });
 
-                // Record this contract's base contracts
-                // We don't do this for test contracts because we don't care about them
-                if !is_test {
-                    self.contract_bases.insert(
-                        contract_id.clone(),
-                        base_contract_node_ids
-                            .iter()
-                            .filter_map(|base_contract_node_id| {
-                                self.contract_ids.get(base_contract_node_id).cloned()
-                            })
-                            .collect(),
-                    );
-                }
+                    let name = node
+                        .attribute("name")
+                        .ok_or_else(|| eyre::eyre!("Contract has no name"))?;
 
-                // For tests and contracts with no items we still record an empty Vec so we don't
-                // end up here again
-                if items.is_empty() || is_test {
-                    self.contract_items.insert(contract_id.clone(), Vec::new());
-                } else {
-                    let item_ids: Vec<usize> =
-                        (self.items.len()..self.items.len() + items.len()).collect();
-                    self.items.extend(items);
-                    self.contract_items.insert(contract_id.clone(), item_ids.clone());
-                }
-            }
-        }
+                    let mut visitor = ContractVisitor::new(source_id, source, &name);
+                    visitor.visit_contract(node)?;
+                    let mut items = visitor.items;
 
-        Ok(())
+                    let is_test = items.iter().any(|item| {
+                        if let CoverageItemKind::Function { name } = &item.kind {
+                            name.is_any_test()
+                        } else {
+                            false
+                        }
+                    });
+                    if is_test {
+                        items.clear();
+                    }
+
+                    Ok(items)
+                })
+            })
+            .collect::<eyre::Result<Vec<Vec<_>>>>()?;
+        Ok(SourceAnalysis { items: items.concat() })
     }
+}
+
+/// A list of versioned sources and their ASTs.
+#[derive(Debug, Default)]
+pub struct SourceFiles<'a> {
+    /// The versioned sources.
+    pub sources: FxHashMap<usize, SourceFile<'a>>,
+}
+
+/// The source code and AST of a file.
+#[derive(Debug)]
+pub struct SourceFile<'a> {
+    /// The source code.
+    pub source: String,
+    /// The AST of the source code.
+    pub ast: &'a Ast,
 }

@@ -6,6 +6,7 @@ use crate::{
     comments::{
         CommentPosition, CommentState, CommentStringExt, CommentType, CommentWithMetadata, Comments,
     },
+    format_diagnostics_report,
     helpers::import_path_string,
     macros::*,
     solang_ext::{pt::*, *},
@@ -16,21 +17,24 @@ use crate::{
 use alloy_primitives::Address;
 use foundry_config::fmt::{HexUnderscore, MultilineFuncHeaderStyle, SingleLineBlockStyle};
 use itertools::{Either, Itertools};
-use solang_parser::pt::ImportPath;
-use std::{fmt::Write, str::FromStr};
+use solang_parser::diagnostics::Diagnostic;
+use std::{fmt::Write, path::PathBuf, str::FromStr};
 use thiserror::Error;
 
 type Result<T, E = FormatterError> = std::result::Result<T, E>;
 
 /// A custom Error thrown by the Formatter
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 pub enum FormatterError {
     /// Error thrown by `std::fmt::Write` interfaces
     #[error(transparent)]
     Fmt(#[from] std::fmt::Error),
     /// Encountered invalid parse tree item.
-    #[error("Encountered invalid parse tree item at {0:?}")]
+    #[error("encountered invalid parse tree item at {0:?}")]
     InvalidParsedItem(Loc),
+    /// Failed to parse the source code
+    #[error("failed to parse file:\n{}", format_diagnostics_report(_0, _1.as_deref(), _2))]
+    Parse(String, Option<PathBuf>, Vec<Diagnostic>),
     /// All other errors
     #[error(transparent)]
     Custom(Box<dyn std::error::Error + Send + Sync>),
@@ -40,6 +44,7 @@ impl FormatterError {
     fn fmt() -> Self {
         Self::Fmt(std::fmt::Error)
     }
+
     fn custom(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::Custom(Box::new(err))
     }
@@ -73,11 +78,18 @@ macro_rules! bail {
 
 // TODO: store context entities as references without copying
 /// Current context of the Formatter (e.g. inside Contract or Function definition)
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 struct Context {
     contract: Option<ContractDefinition>,
     function: Option<FunctionDefinition>,
     if_stmt_single_line: Option<bool>,
+}
+
+impl Context {
+    /// Returns true if the current function context is the constructor
+    pub(crate) fn is_constructor_function(&self) -> bool {
+        self.function.as_ref().map_or(false, |f| matches!(f.ty, FunctionTy::Constructor))
+    }
 }
 
 /// A Solidity formatter
@@ -234,6 +246,17 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Write unformatted src and comments for given location.
+    fn write_raw_src(&mut self, loc: Loc) -> Result<()> {
+        let disabled_stmts_src = String::from_utf8(self.source.as_bytes()[loc.range()].to_vec())
+            .map_err(FormatterError::custom)?;
+        self.write_raw(disabled_stmts_src.trim_end())?;
+        self.write_whitespace_separator(true)?;
+        // Remove comments as they're already included in disabled src.
+        let _ = self.comments.remove_all_comments_before(loc.end());
+        Ok(())
+    }
+
     /// Returns number of blank lines in source between two byte indexes
     fn blank_lines(&self, start: usize, end: usize) -> usize {
         // because of sorting import statements, start can be greater than end
@@ -382,12 +405,31 @@ impl<'a, W: Write> Formatter<'a, W> {
         while let Some((loc, item)) = items.next() {
             let chunk_next_byte_offset =
                 items.peek().map(|(loc, _)| loc.start()).or(next_byte_offset);
-            out.push(self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?);
+
+            let chunk = if self.inline_config.is_disabled(loc) {
+                // If item format is disabled, we determine last disabled line from item and create
+                // chunk with raw src.
+                let mut disabled_loc = loc;
+                self.chunked(disabled_loc.start(), chunk_next_byte_offset, |fmt| {
+                    while fmt.inline_config.is_disabled(disabled_loc) {
+                        if let Some(next_line) = fmt.find_next_line(disabled_loc.end()) {
+                            disabled_loc = disabled_loc.with_end(next_line);
+                        } else {
+                            break;
+                        }
+                    }
+                    fmt.write_raw_src(disabled_loc)?;
+                    Ok(())
+                })?
+            } else {
+                self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?
+            };
+            out.push(chunk);
         }
         Ok(out)
     }
 
-    /// Transform [Visitable] items to a list of chunks and then sort those chunks by [AttrSortKey]
+    /// Transform [Visitable] items to a list of chunks and then sort those chunks.
     fn items_to_chunks_sorted<'b>(
         &mut self,
         next_byte_offset: Option<usize>,
@@ -521,8 +563,12 @@ impl<'a, W: Write> Formatter<'a, W> {
             .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= self.buf.current_indent_len())
             .count();
         let to_skip = indent_whitespace_count - indent_whitespace_count % self.config.tab_width;
-        write!(self.buf(), " * ")?;
-        self.write_comment_line(comment, &line[to_skip..])?;
+        write!(self.buf(), " *")?;
+        let content = &line[to_skip..];
+        if !content.trim().is_empty() {
+            write!(self.buf(), " ")?;
+            self.write_comment_line(comment, &line[to_skip..])?;
+        }
         self.write_whitespace_separator(true)?;
         Ok(())
     }
@@ -575,8 +621,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(false)
     }
 
-    /// Write a raw comment. This is like [`write_comment`] but won't do any formatting or worry
-    /// about whitespace behind the comment
+    /// Write a raw comment. This is like [`write_comment`](Self::write_comment) but won't do any
+    /// formatting or worry about whitespace behind the comment.
     fn write_raw_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
         self.write_raw(&comment.comment)?;
         if comment.is_line() {
@@ -810,7 +856,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(self.transact(fun)?.buffer)
     }
 
-    /// Turn a chunk and its surrounding comments into a a string
+    /// Turn a chunk and its surrounding comments into a string
     fn chunk_to_string(&mut self, chunk: &Chunk) -> Result<String> {
         self.simulate_to_string(|fmt| fmt.write_chunk(chunk))
     }
@@ -885,7 +931,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 write_chunk!(fmt, "{}", stringified.trim_start())
             })?;
             if !last.content.trim_start().is_empty() {
-                self.write_whitespace_separator(true)?;
+                self.indented(1, |fmt| fmt.write_whitespace_separator(true))?;
             }
             let last_chunk =
                 self.chunk_at(last.loc_before(), last.loc_next(), last.spaced, &last.content);
@@ -1176,22 +1222,114 @@ impl<'a, W: Write> Formatter<'a, W> {
             }
         }
 
-        write_chunk!(self, "{{")?;
+        // Determine if any of start / end of the block is disabled and block lines boundaries.
+        let is_start_disabled = self.inline_config.is_disabled(loc.with_end(loc.start()));
+        let is_end_disabled = self.inline_config.is_disabled(loc.with_start(loc.end()));
+        let end_of_first_line = self.find_next_line(loc.start()).unwrap_or_default();
+        let end_of_last_line = self.find_next_line(loc.end()).unwrap_or_default();
 
-        if let Some(statement) = statements.first() {
-            self.write_whitespace_separator(true)?;
-            self.write_postfix_comments_before(CodeLocation::loc(statement).start())?;
+        // Write first line of the block:
+        // - as it is until the end of line, if format disabled
+        // - start block if line formatted
+        if is_start_disabled {
+            self.write_raw_src(loc.with_end(end_of_first_line))?;
+        } else {
+            write_chunk!(self, "{{")?;
         }
 
-        self.indented(1, |fmt| {
-            fmt.write_lined_visitable(loc, statements.iter_mut(), |_, _| false)?;
-            Ok(())
-        })?;
+        // Write comments and close block if no statement.
+        if statements.is_empty() {
+            self.indented(1, |fmt| {
+                fmt.write_prefix_comments_before(loc.end())?;
+                fmt.write_postfix_comments_before(loc.end())?;
+                Ok(())
+            })?;
 
-        if !statements.is_empty() {
+            write_chunk!(self, "}}")?;
+            return Ok(true)
+        }
+
+        // Determine writable statements by excluding statements from disabled start / end lines.
+        // We check the position of last statement from first line (if disabled) and position of
+        // first statement from last line (if disabled) and slice accordingly.
+        let writable_statments = match (
+            statements.iter().rposition(|stmt| {
+                is_start_disabled &&
+                    self.find_next_line(stmt.loc().end()).unwrap_or_default() ==
+                        end_of_first_line
+            }),
+            statements.iter().position(|stmt| {
+                is_end_disabled &&
+                    self.find_next_line(stmt.loc().end()).unwrap_or_default() == end_of_last_line
+            }),
+        ) {
+            // We have statements on both disabled start / end lines.
+            (Some(start), Some(end)) => {
+                if start == end || start + 1 == end {
+                    None
+                } else {
+                    Some(&mut statements[start + 1..end])
+                }
+            }
+            // We have statements only on disabled start line.
+            (Some(start), None) => {
+                if start + 1 == statements.len() {
+                    None
+                } else {
+                    Some(&mut statements[start + 1..])
+                }
+            }
+            // We have statements only on disabled end line.
+            (None, Some(end)) => {
+                if end == 0 {
+                    None
+                } else {
+                    Some(&mut statements[..end])
+                }
+            }
+            // No statements on disabled start / end line.
+            (None, None) => Some(statements),
+        };
+
+        // Write statements that are not on any disabled first / last block line.
+        let mut statements_loc = loc;
+        if let Some(writable_statements) = writable_statments {
+            if let Some(first_statement) = writable_statements.first() {
+                statements_loc = statements_loc.with_start(first_statement.loc().start());
+                self.write_whitespace_separator(true)?;
+                self.write_postfix_comments_before(statements_loc.start())?;
+            }
+            // If last line is disabled then statements location ends where last block line starts.
+            if is_end_disabled {
+                if let Some(last_statement) = writable_statements.last() {
+                    statements_loc = statements_loc.with_end(
+                        self.find_next_line(last_statement.loc().end()).unwrap_or_default(),
+                    );
+                }
+            }
+            self.indented(1, |fmt| {
+                fmt.write_lined_visitable(
+                    statements_loc,
+                    writable_statements.iter_mut(),
+                    |_, _| false,
+                )?;
+                Ok(())
+            })?;
             self.write_whitespace_separator(true)?;
         }
-        write_chunk!(self, loc.end(), "}}")?;
+
+        // Write last line of the block:
+        // - as it is from where statements location ends until the end of last line, if format
+        // disabled
+        // - close block if line formatted
+        if is_end_disabled {
+            self.write_raw_src(loc.with_start(statements_loc.end()).with_end(end_of_last_line))?;
+        } else {
+            if end_of_first_line != end_of_last_line {
+                self.write_whitespace_separator(true)?;
+            }
+            write_chunk!(self, loc.end(), "}}")?;
+        }
 
         Ok(false)
     }
@@ -1245,7 +1383,8 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Visit the yul string with an optional identifier.
     /// If the identifier is present, write the value in the format `<val>:<ident>`.
-    /// Ref: https://docs.soliditylang.org/en/v0.8.15/yul.html#variable-declarations
+    ///
+    /// Ref: <https://docs.soliditylang.org/en/v0.8.15/yul.html#variable-declarations>
     fn visit_yul_string_with_ident(
         &mut self,
         loc: Loc,
@@ -1442,7 +1581,8 @@ impl<'a, W: Write> Formatter<'a, W> {
             self.extend_loc_until(&mut loc, ')');
             loc
         };
-        if self.inline_config.is_disabled(params_loc) {
+        let params_disabled = self.inline_config.is_disabled(params_loc);
+        if params_disabled {
             let chunk = self.chunked(func.loc.start(), None, |fmt| fmt.visit_source(params_loc))?;
             params_multiline = chunk.content.contains('\n');
             self.write_chunk(&chunk)?;
@@ -1486,6 +1626,10 @@ impl<'a, W: Write> Formatter<'a, W> {
                             &params,
                             ",",
                         )?;
+                    // Write new line if we have only one parameter and params on multiline set.
+                    if params.len() == 1 && params_multiline {
+                        writeln!(fmt.buf())?;
+                    }
                     fmt.write_chunks_separated(&params, ",", params_multiline)?;
                     Ok(())
                 },
@@ -1502,7 +1646,16 @@ impl<'a, W: Write> Formatter<'a, W> {
                     .loc()
                     .with_end_from(&func.attributes.last().unwrap().loc());
                 if fmt.inline_config.is_disabled(attrs_loc) {
-                    fmt.indented(1, |fmt| fmt.visit_source(attrs_loc))?;
+                    // If params are also disabled then write functions attributes on the same line.
+                    if params_disabled {
+                        fmt.write_whitespace_separator(false)?;
+                        let attrs_src =
+                            String::from_utf8(self.source.as_bytes()[attrs_loc.range()].to_vec())
+                                .map_err(FormatterError::custom)?;
+                        fmt.write_raw(attrs_src)?;
+                    } else {
+                        fmt.indented(1, |fmt| fmt.visit_source(attrs_loc))?;
+                    }
                 } else {
                     fmt.write_postfix_comments_before(attrs_loc.start())?;
                     fmt.write_whitespace_separator(multiline)?;
@@ -1520,7 +1673,11 @@ impl<'a, W: Write> Formatter<'a, W> {
                 let returns_start_loc = func.returns.first().unwrap().0;
                 let returns_loc = returns_start_loc.with_end_from(&func.returns.last().unwrap().0);
                 if fmt.inline_config.is_disabled(returns_loc) {
-                    fmt.indented(1, |fmt| fmt.visit_source(returns_loc))?;
+                    fmt.write_whitespace_separator(false)?;
+                    let returns_src =
+                        String::from_utf8(self.source.as_bytes()[returns_loc.range()].to_vec())
+                            .map_err(FormatterError::custom)?;
+                    fmt.write_raw(format!("returns ({returns_src})"))?;
                 } else {
                     let mut returns = fmt.items_to_chunks(
                         returns_end,
@@ -1599,6 +1756,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 SurroundingChunk::new("if (", Some(loc.start()), Some(cond.loc().start())),
                 SurroundingChunk::new(")", None, Some(if_branch.loc().start())),
                 |fmt, _| {
+                    fmt.write_prefix_comments_before(cond.loc().end())?;
                     cond.visit(fmt)?;
                     fmt.write_postfix_comments_before(if_branch.loc().start())
                 },
@@ -1624,7 +1782,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 self.visit_if(*loc, cond, if_branch, else_branch, false)?;
             } else {
                 let else_branch_is_single_line =
-                    self.visit_stmt_as_block(else_branch, if_branch_is_single_line)?;
+                    self.visit_stmt_as_block(else_branch, attempt_single_line)?;
                 if single_line_stmt_wide && !else_branch_is_single_line {
                     bail!(FormatterError::fmt())
                 }
@@ -3009,6 +3167,22 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             match &mut func.body {
                 Some(body) => {
                     let body_loc = body.loc();
+                    // Handle case where block / statements starts on disabled line.
+                    if fmt.inline_config.is_disabled(body_loc.with_end(body_loc.start())) {
+                        match body {
+                            Statement::Block { statements, .. } if !statements.is_empty() => {
+                                fmt.write_whitespace_separator(false)?;
+                                fmt.visit_block(body_loc, statements, false, false)?;
+                                return Ok(())
+                            }
+                            _ => {
+                                // Attrs should be written on same line if first line is disabled
+                                // and there's no statement.
+                                attrs_multiline = false
+                            }
+                        }
+                    }
+
                     let byte_offset = body_loc.start();
                     let body = fmt.visit_to_chunk(byte_offset, Some(body_loc.end()), body)?;
                     fmt.write_whitespace_separator(
@@ -3018,7 +3192,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 None => fmt.write_semicolon()?,
             }
-
             Ok(())
         })?;
 
@@ -3047,6 +3220,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 self.visit_list("", args, None, Some(loc.end()), false)?
             }
             FunctionAttribute::BaseOrModifier(loc, base) => {
+                // here we need to find out if this attribute belongs to the constructor because the
+                // modifier need to include the trailing parenthesis
+                // This is very ambiguous because the modifier can either by an inherited contract
+                // or a modifier here: e.g.: This is valid constructor:
+                // `constructor() public  Ownable() OnlyOwner {}`
+                let is_constructor = self.context.is_constructor_function();
+                // we can't make any decisions here regarding trailing `()` because we'd need to
+                // find out if the `base` is a solidity modifier or an
+                // interface/contract therefor we we its raw content.
+
+                // we can however check if the contract `is` the `base`, this however also does
+                // not cover all cases
                 let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
                     contract.base.iter().any(|contract_base| {
                         contract_base
@@ -3060,6 +3245,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
                 if is_contract_base {
                     base.visit(self)?;
+                } else if is_constructor {
+                    // This is ambiguous because the modifier can either by an inherited
+                    // contract modifiers with empty parenthesis are
+                    // valid, but not required so we make the assumption
+                    // here that modifiers are lowercase
+                    let mut base_or_modifier =
+                        self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
+                    let is_lowercase =
+                        base_or_modifier.content.chars().next().map_or(false, |c| c.is_lowercase());
+                    if is_lowercase && base_or_modifier.content.ends_with("()") {
+                        base_or_modifier.content.truncate(base_or_modifier.content.len() - 2);
+                    }
+
+                    self.write_chunk(&base_or_modifier)?;
                 } else {
                     let mut base_or_modifier =
                         self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
@@ -3110,6 +3309,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         })?;
 
         if base.args.is_none() || base.args.as_ref().unwrap().is_empty() {
+            // This is ambiguous because the modifier can either by an inherited contract or a
+            // modifier
             if self.context.function.is_some() {
                 name.content.push_str("()");
             }

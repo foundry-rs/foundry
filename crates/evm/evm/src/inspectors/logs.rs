@@ -1,20 +1,22 @@
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Bytes, Log};
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
-use ethers_core::types::Log;
-use foundry_common::{fmt::ConsoleFmt, types::ToEthers, ErrorExt};
+use foundry_common::{fmt::ConsoleFmt, ErrorExt};
 use foundry_evm_core::{
     abi::{patch_hh_console_selector, Console, HardhatConsole},
     constants::HARDHAT_CONSOLE_ADDRESS,
+    InspectorExt,
 };
 use revm::{
-    interpreter::{CallInputs, Gas, InstructionResult},
-    Database, EVMData, Inspector,
+    interpreter::{
+        CallInputs, CallOutcome, Gas, InstructionResult, Interpreter, InterpreterResult,
+    },
+    Database, EvmContext, Inspector,
 };
 
 /// An inspector that collects logs during execution.
 ///
 /// The inspector collects logs from the `LOG` opcodes as well as Hardhat-style logs.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct LogCollector {
     /// The collected logs. Includes both `LOG` opcodes and Hardhat-style logs.
     pub logs: Vec<Log>,
@@ -39,26 +41,40 @@ impl LogCollector {
 }
 
 impl<DB: Database> Inspector<DB> for LogCollector {
-    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[B256], data: &Bytes) {
-        self.logs.push(Log {
-            address: address.to_ethers(),
-            topics: topics.iter().copied().map(|t| t.to_ethers()).collect(),
-            data: data.clone().to_ethers(),
-            ..Default::default()
-        });
+    fn log(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>, log: &Log) {
+        self.logs.push(log.clone());
     }
 
     fn call(
         &mut self,
-        _: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-    ) -> (InstructionResult, Gas, Bytes) {
-        let (status, reason) = if call.contract == HARDHAT_CONSOLE_ADDRESS {
-            self.hardhat_log(call.input.to_vec())
-        } else {
-            (InstructionResult::Continue, Bytes::new())
-        };
-        (status, Gas::new(call.gas_limit), reason)
+        _context: &mut EvmContext<DB>,
+        inputs: &mut CallInputs,
+    ) -> Option<CallOutcome> {
+        if inputs.target_address == HARDHAT_CONSOLE_ADDRESS {
+            let (res, out) = self.hardhat_log(inputs.input.to_vec());
+            if res != InstructionResult::Continue {
+                return Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: res,
+                        output: out,
+                        gas: Gas::new(inputs.gas_limit),
+                    },
+                    memory_offset: inputs.return_memory_offset.clone(),
+                })
+            }
+        }
+
+        None
+    }
+}
+
+impl<DB: Database> InspectorExt<DB> for LogCollector {
+    fn console_log(&mut self, input: String) {
+        self.logs.push(Log::new_unchecked(
+            HARDHAT_CONSOLE_ADDRESS,
+            vec![Console::log::SIGNATURE_HASH],
+            input.abi_encode().into(),
+        ));
     }
 }
 
@@ -66,9 +82,9 @@ impl<DB: Database> Inspector<DB> for LogCollector {
 fn convert_hh_log_to_event(call: HardhatConsole::HardhatConsoleCalls) -> Log {
     // Convert the parameters of the call to their string representation using `ConsoleFmt`.
     let fmt = call.fmt(Default::default());
-    Log {
-        topics: vec![Console::log::SIGNATURE_HASH.to_ethers()],
-        data: fmt.abi_encode().into(),
-        ..Default::default()
-    }
+    Log::new_unchecked(
+        HARDHAT_CONSOLE_ADDRESS,
+        vec![Console::log::SIGNATURE_HASH],
+        fmt.abi_encode().into(),
+    )
 }

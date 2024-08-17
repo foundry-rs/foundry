@@ -1,17 +1,16 @@
 use super::{AddressIdentity, TraceIdentifier};
+use crate::debug::ContractSources;
 use alloy_primitives::Address;
 use foundry_block_explorers::{
     contract::{ContractMetadata, Metadata},
     errors::EtherscanError,
 };
-use foundry_common::compile::{self, ContractSources};
+use foundry_common::compile::etherscan_project;
 use foundry_config::{Chain, Config};
-use foundry_evm_core::utils::RuntimeOrHandle;
 use futures::{
     future::{join_all, Future},
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
-    TryFutureExt,
 };
 use std::{
     borrow::Cow,
@@ -25,10 +24,9 @@ use std::{
 use tokio::time::{Duration, Interval};
 
 /// A trace identifier that tries to identify addresses using Etherscan.
-#[derive(Default)]
 pub struct EtherscanIdentifier {
     /// The Etherscan client
-    client: Option<Arc<foundry_block_explorers::Client>>,
+    client: Arc<foundry_block_explorers::Client>,
     /// Tracks whether the API key provides was marked as invalid
     ///
     /// After the first [EtherscanError::InvalidApiKey] this will get set to true, so we can
@@ -40,54 +38,56 @@ pub struct EtherscanIdentifier {
 
 impl EtherscanIdentifier {
     /// Creates a new Etherscan identifier with the given client
-    pub fn new(config: &Config, chain: Option<Chain>) -> eyre::Result<Self> {
-        if let Some(config) = config.get_etherscan_config_with_chain(chain)? {
-            trace!(target: "etherscanidentifier", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
-            Ok(Self {
-                client: Some(Arc::new(config.into_client()?)),
-                invalid_api_key: Arc::new(Default::default()),
-                contracts: BTreeMap::new(),
-                sources: BTreeMap::new(),
-            })
-        } else {
-            Ok(Default::default())
+    pub fn new(config: &Config, chain: Option<Chain>) -> eyre::Result<Option<Self>> {
+        // In offline mode, don't use Etherscan.
+        if config.offline {
+            return Ok(None);
         }
+        let Some(config) = config.get_etherscan_config_with_chain(chain)? else {
+            return Ok(None);
+        };
+        trace!(target: "traces::etherscan", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
+        Ok(Some(Self {
+            client: Arc::new(config.into_client()?),
+            invalid_api_key: Arc::new(AtomicBool::new(false)),
+            contracts: BTreeMap::new(),
+            sources: BTreeMap::new(),
+        }))
     }
 
     /// Goes over the list of contracts we have pulled from the traces, clones their source from
     /// Etherscan and compiles them locally, for usage in the debugger.
     pub async fn get_compiled_contracts(&self) -> eyre::Result<ContractSources> {
         // TODO: Add caching so we dont double-fetch contracts.
-        let contracts_iter = self
+        let outputs_fut = self
             .contracts
             .iter()
             // filter out vyper files
-            .filter(|(_, metadata)| !metadata.is_vyper());
-
-        let outputs_fut = contracts_iter
-            .clone()
-            .map(|(address, metadata)| {
+            .filter(|(_, metadata)| !metadata.is_vyper())
+            .map(|(address, metadata)| async move {
                 println!("Compiling: {} {address}", metadata.contract_name);
-                let err_msg =
-                    format!("Failed to compile contract {} from {address}", metadata.contract_name);
-                compile::compile_from_source(metadata).map_err(move |err| err.wrap_err(err_msg))
+                let root = tempfile::tempdir()?;
+                let root_path = root.path();
+                let project = etherscan_project(metadata, root_path)?;
+                let output = project.compile()?;
+
+                if output.has_compiler_errors() {
+                    eyre::bail!("{output}")
+                }
+
+                Ok((project, output, root))
             })
             .collect::<Vec<_>>();
 
         // poll all the futures concurrently
-        let artifacts = join_all(outputs_fut).await;
+        let outputs = join_all(outputs_fut).await;
 
         let mut sources: ContractSources = Default::default();
 
         // construct the map
-        for (results, (_, metadata)) in artifacts.into_iter().zip(contracts_iter) {
-            // get the inner type
-            let (artifact_id, file_id, bytecode) = results?;
-            sources
-                .0
-                .entry(artifact_id.clone().name)
-                .or_default()
-                .insert(file_id, (metadata.source_code(), bytecode));
+        for res in outputs {
+            let (project, output, _root) = res?;
+            sources.insert(&output, project.root(), None)?;
         }
 
         Ok(sources)
@@ -99,48 +99,58 @@ impl TraceIdentifier for EtherscanIdentifier {
     where
         A: Iterator<Item = (&'a Address, Option<&'a [u8]>)>,
     {
-        trace!(target: "etherscanidentifier", "identify {:?} addresses", addresses.size_hint().1);
-
-        let Some(client) = self.client.clone() else {
-            // no client was configured
-            return Vec::new()
-        };
+        trace!(target: "evm::traces", "identify {:?} addresses", addresses.size_hint().1);
 
         if self.invalid_api_key.load(Ordering::Relaxed) {
             // api key was marked as invalid
             return Vec::new()
         }
 
+        let mut identities = Vec::new();
         let mut fetcher = EtherscanFetcher::new(
-            client,
+            self.client.clone(),
             Duration::from_secs(1),
             5,
             Arc::clone(&self.invalid_api_key),
         );
 
         for (addr, _) in addresses {
-            if !self.contracts.contains_key(addr) {
-                fetcher.push(*addr);
-            }
-        }
-
-        let fut = fetcher
-            .map(|(address, metadata)| {
+            if let Some(metadata) = self.contracts.get(addr) {
                 let label = metadata.contract_name.clone();
                 let abi = metadata.abi().ok().map(Cow::Owned);
-                self.contracts.insert(address, metadata);
 
-                AddressIdentity {
-                    address,
+                identities.push(AddressIdentity {
+                    address: *addr,
                     label: Some(label.clone()),
                     contract: Some(label),
                     abi,
                     artifact_id: None,
-                }
-            })
-            .collect();
+                });
+            } else {
+                fetcher.push(*addr);
+            }
+        }
 
-        RuntimeOrHandle::new().block_on(fut)
+        let fetched_identities = foundry_common::block_on(
+            fetcher
+                .map(|(address, metadata)| {
+                    let label = metadata.contract_name.clone();
+                    let abi = metadata.abi().ok().map(Cow::Owned);
+                    self.contracts.insert(address, metadata);
+
+                    AddressIdentity {
+                        address,
+                        label: Some(label.clone()),
+                        contract: Some(label),
+                        abi,
+                        artifact_id: None,
+                    }
+                })
+                .collect::<Vec<AddressIdentity<'_>>>(),
+        );
+
+        identities.extend(fetched_identities);
+        identities
     }
 }
 
@@ -191,16 +201,13 @@ impl EtherscanFetcher {
 
     fn queue_next_reqs(&mut self) {
         while self.in_progress.len() < self.concurrency {
-            if let Some(addr) = self.queue.pop() {
-                let client = Arc::clone(&self.client);
-                trace!(target: "etherscanidentifier", "fetching info for {:?}", addr);
-                self.in_progress.push(Box::pin(async move {
-                    let res = client.contract_source_code(addr).await;
-                    (addr, res)
-                }));
-            } else {
-                break
-            }
+            let Some(addr) = self.queue.pop() else { break };
+            let client = Arc::clone(&self.client);
+            self.in_progress.push(Box::pin(async move {
+                trace!(target: "traces::etherscan", ?addr, "fetching info");
+                let res = client.contract_source_code(addr).await;
+                (addr, res)
+            }));
         }
     }
 }
@@ -234,24 +241,24 @@ impl Stream for EtherscanFetcher {
                             }
                         }
                         Err(EtherscanError::RateLimitExceeded) => {
-                            warn!(target: "etherscanidentifier", "rate limit exceeded on attempt");
+                            warn!(target: "traces::etherscan", "rate limit exceeded on attempt");
                             pin.backoff = Some(tokio::time::interval(pin.timeout));
                             pin.queue.push(addr);
                         }
                         Err(EtherscanError::InvalidApiKey) => {
-                            warn!(target: "etherscanidentifier", "invalid api key");
+                            warn!(target: "traces::etherscan", "invalid api key");
                             // mark key as invalid
                             pin.invalid_api_key.store(true, Ordering::Relaxed);
                             return Poll::Ready(None)
                         }
                         Err(EtherscanError::BlockedByCloudflare) => {
-                            warn!(target: "etherscanidentifier", "blocked by cloudflare");
+                            warn!(target: "traces::etherscan", "blocked by cloudflare");
                             // mark key as invalid
                             pin.invalid_api_key.store(true, Ordering::Relaxed);
                             return Poll::Ready(None)
                         }
                         Err(err) => {
-                            warn!(target: "etherscanidentifier", "could not get etherscan info: {:?}", err);
+                            warn!(target: "traces::etherscan", "could not get etherscan info: {:?}", err);
                         }
                     }
                 }

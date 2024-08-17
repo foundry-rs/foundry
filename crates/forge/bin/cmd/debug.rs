@@ -1,5 +1,6 @@
-use super::{build::BuildArgs, retry::RETRY_VERIFY_ON_CREATE, script::ScriptArgs};
 use clap::{Parser, ValueHint};
+use forge_script::ScriptArgs;
+use forge_verify::retry::RETRY_VERIFY_ON_CREATE;
 use foundry_cli::opts::CoreBuildArgs;
 use foundry_common::evm::EvmArgs;
 use std::path::PathBuf;
@@ -8,34 +9,34 @@ use std::path::PathBuf;
 foundry_config::impl_figment_convert!(DebugArgs, opts, evm_opts);
 
 /// CLI arguments for `forge debug`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct DebugArgs {
     /// The contract you want to run. Either the file path or contract name.
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
     /// --target-contract.
-    #[clap(value_hint = ValueHint::FilePath)]
+    #[arg(value_hint = ValueHint::FilePath)]
     pub path: PathBuf,
 
     /// Arguments to pass to the script function.
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
-    #[clap(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
+    #[arg(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(long, short, default_value = "run()", value_name = "SIGNATURE")]
+    #[arg(long, short, default_value = "run()", value_name = "SIGNATURE")]
     pub sig: String,
 
     /// Open the script in the debugger.
-    #[clap(long)]
+    #[arg(long)]
     pub debug: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub opts: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     pub evm_opts: EvmArgs,
 }
 
@@ -47,7 +48,7 @@ impl DebugArgs {
             target_contract: self.target_contract,
             sig: self.sig,
             gas_estimate_multiplier: 130,
-            opts: BuildArgs { args: self.opts, ..Default::default() },
+            opts: self.opts,
             evm_opts: self.evm_opts,
             debug: true,
             retry: RETRY_VERIFY_ON_CREATE,

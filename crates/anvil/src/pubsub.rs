@@ -1,17 +1,11 @@
 use crate::{
     eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
-    StorageInfo, U256,
+    StorageInfo,
 };
-use anvil_core::eth::{
-    block::Block,
-    receipt::{EIP658Receipt, Log, TypedReceipt},
-    subscription::{SubscriptionId, SubscriptionResult},
-};
+use alloy_primitives::{TxHash, B256};
+use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log, Transaction};
+use anvil_core::eth::{block::Block, subscription::SubscriptionId, transaction::TypedReceipt};
 use anvil_rpc::{request::Version, response::ResponseResult};
-use ethers::{
-    prelude::{Log as EthersLog, H256, H256 as TxHash, U64},
-    types::FilteredParams,
-};
 use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
 use serde::Serialize;
 use std::{
@@ -26,11 +20,9 @@ pub struct LogsSubscription {
     pub blocks: NewBlockNotifications,
     pub storage: StorageInfo,
     pub filter: FilteredParams,
-    pub queued: VecDeque<EthersLog>,
+    pub queued: VecDeque<Log>,
     pub id: SubscriptionId,
 }
-
-// === impl LogsSubscription ===
 
 impl LogsSubscription {
     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Option<EthSubscriptionResponse>> {
@@ -40,7 +32,7 @@ impl LogsSubscription {
                     subscription: self.id.clone(),
                     result: to_rpc_result(log),
                 };
-                return Poll::Ready(Some(EthSubscriptionResponse::new(params)))
+                return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
             }
 
             if let Some(block) = ready!(self.blocks.poll_next_unpin(cx)) {
@@ -52,29 +44,27 @@ impl LogsSubscription {
                         // this ensures we poll the receiver until it is pending, in which case the
                         // underlying `UnboundedReceiver` will register the new waker, see
                         // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
-                        continue
+                        continue;
                     }
                     self.queued.extend(logs)
                 }
             } else {
-                return Poll::Ready(None)
+                return Poll::Ready(None);
             }
 
             if self.queued.is_empty() {
-                return Poll::Pending
+                return Poll::Pending;
             }
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct EthSubscriptionResponse {
     jsonrpc: Version,
     method: &'static str,
     params: EthSubscriptionParams,
 }
-
-// === impl EthSubscriptionResponse ===
 
 impl EthSubscriptionResponse {
     pub fn new(params: EthSubscriptionParams) -> Self {
@@ -83,7 +73,7 @@ impl EthSubscriptionResponse {
 }
 
 /// Represents the `params` field of an `eth_subscription` event
-#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct EthSubscriptionParams {
     subscription: SubscriptionId,
     #[serde(flatten)]
@@ -98,13 +88,11 @@ pub enum EthSubscription {
     PendingTransactions(Receiver<TxHash>, SubscriptionId),
 }
 
-// === impl EthSubscription ===
-
 impl EthSubscription {
     fn poll_response(&mut self, cx: &mut Context<'_>) -> Poll<Option<EthSubscriptionResponse>> {
         match self {
-            EthSubscription::Logs(listener) => listener.poll(cx),
-            EthSubscription::Header(blocks, storage, id) => {
+            Self::Logs(listener) => listener.poll(cx),
+            Self::Header(blocks, storage, id) => {
                 // this loop ensures we poll the receiver until it is pending, in which case the
                 // underlying `UnboundedReceiver` will register the new waker, see
                 // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
@@ -115,16 +103,16 @@ impl EthSubscription {
                                 subscription: id.clone(),
                                 result: to_rpc_result(block),
                             };
-                            return Poll::Ready(Some(EthSubscriptionResponse::new(params)))
+                            return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
                         }
                     } else {
-                        return Poll::Ready(None)
+                        return Poll::Ready(None);
                     }
                 }
             }
-            EthSubscription::PendingTransactions(tx, id) => {
+            Self::PendingTransactions(tx, id) => {
                 let res = ready!(tx.poll_next_unpin(cx))
-                    .map(SubscriptionResult::TransactionHash)
+                    .map(SubscriptionResult::<Transaction>::TransactionHash)
                     .map(to_rpc_result)
                     .map(|result| {
                         let params = EthSubscriptionParams { subscription: id.clone(), result };
@@ -149,64 +137,43 @@ impl Stream for EthSubscription {
 }
 
 /// Returns all the logs that match the given filter
-pub fn filter_logs(
-    block: Block,
-    receipts: Vec<TypedReceipt>,
-    filter: &FilteredParams,
-) -> Vec<EthersLog> {
+pub fn filter_logs(block: Block, receipts: Vec<TypedReceipt>, filter: &FilteredParams) -> Vec<Log> {
     /// Determines whether to add this log
-    fn add_log(block_hash: H256, l: &Log, block: &Block, params: &FilteredParams) -> bool {
-        let log = EthersLog {
-            address: l.address,
-            topics: l.topics.clone(),
-            data: l.data.clone(),
-            block_hash: None,
-            block_number: None,
-            transaction_hash: None,
-            transaction_index: None,
-            log_index: None,
-            transaction_log_index: None,
-            log_type: None,
-            removed: Some(false),
-        };
+    fn add_log(
+        block_hash: B256,
+        l: &alloy_primitives::Log,
+        block: &Block,
+        params: &FilteredParams,
+    ) -> bool {
         if params.filter.is_some() {
-            let block_number = block.header.number.as_u64();
+            let block_number = block.header.number;
             if !params.filter_block_range(block_number) ||
                 !params.filter_block_hash(block_hash) ||
-                !params.filter_address(&log) ||
-                !params.filter_topics(&log)
+                !params.filter_address(&l.address) ||
+                !params.filter_topics(l.topics())
             {
-                return false
+                return false;
             }
         }
         true
     }
 
-    let block_hash = block.header.hash();
+    let block_hash = block.header.hash_slow();
     let mut logs = vec![];
     let mut log_index: u32 = 0;
     for (receipt_index, receipt) in receipts.into_iter().enumerate() {
-        let receipt: EIP658Receipt = receipt.into();
-        let receipt_logs = receipt.logs;
-        let transaction_hash: Option<H256> = if !receipt_logs.is_empty() {
-            Some(block.transactions[receipt_index].hash())
-        } else {
-            None
-        };
-        for (transaction_log_index, log) in receipt_logs.into_iter().enumerate() {
-            if add_log(block_hash, &log, &block, filter) {
-                logs.push(EthersLog {
-                    address: log.address,
-                    topics: log.topics,
-                    data: log.data,
+        let transaction_hash = block.transactions[receipt_index].hash();
+        for log in receipt.logs() {
+            if add_log(block_hash, log, &block, filter) {
+                logs.push(Log {
+                    inner: log.clone(),
                     block_hash: Some(block_hash),
-                    block_number: Some(block.header.number.as_u64().into()),
-                    transaction_hash,
-                    transaction_index: Some(U64::from(receipt_index)),
-                    log_index: Some(U256::from(log_index)),
-                    transaction_log_index: Some(U256::from(transaction_log_index)),
-                    log_type: None,
-                    removed: Some(false),
+                    block_number: Some(block.header.number),
+                    transaction_hash: Some(transaction_hash),
+                    transaction_index: Some(receipt_index as u64),
+                    log_index: Some(log_index as u64),
+                    removed: false,
+                    block_timestamp: Some(block.header.timestamp),
                 });
             }
             log_index += 1;

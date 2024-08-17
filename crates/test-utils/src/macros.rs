@@ -63,13 +63,21 @@ macro_rules! forgetest_async {
 
 #[macro_export]
 macro_rules! casttest {
-    ($(#[$attr:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
-        $crate::casttest!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
+    ($(#[$attr:meta])* $test:ident, $($async:ident)? |$prj:ident, $cmd:ident| $e:expr) => {
+        $crate::casttest!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, $($async)? |$prj, $cmd| $e);
     };
     ($(#[$attr:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
         #[test]
         $(#[$attr])*
         fn $test() {
+            let (mut $prj, mut $cmd) = $crate::util::setup_cast(stringify!($test), $style);
+            $e
+        }
+    };
+    ($(#[$attr:meta])* $test:ident, $style:expr, async |$prj:ident, $cmd:ident| $e:expr) => {
+        #[tokio::test(flavor = "multi_thread")]
+        $(#[$attr])*
+        async fn $test() {
             let (mut $prj, mut $cmd) = $crate::util::setup_cast(stringify!($test), $style);
             $e
         }
@@ -93,81 +101,19 @@ macro_rules! forgetest_init {
     };
 }
 
-/// Clones an external repository and makes sure the tests pass.
-/// Can optionally enable fork mode as well if a fork block is passed.
-/// The fork block needs to be greater than 0.
+/// Setup forge soldeer
 #[macro_export]
-macro_rules! forgetest_external {
-    // forgetest_external!(test_name, "owner/repo");
-    ($(#[$attr:meta])* $test:ident, $repo:literal) => {
-        $crate::forgetest_external!($(#[$attr])* $test, $repo, 0, Vec::<String>::new());
+macro_rules! forgesoldeer {
+    ($(#[$attr:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
+        $crate::forgesoldeer!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
     };
-    // forgetest_external!(test_name, "owner/repo", 1234);
-    ($(#[$attr:meta])* $test:ident, $repo:literal, $fork_block:literal) => {
-        $crate::forgetest_external!(
-            $(#[$attr])*
-            $test,
-            $repo,
-            $crate::foundry_compilers::PathStyle::Dapptools,
-            $fork_block,
-            Vec::<String>::new()
-        );
-    };
-    // forgetest_external!(test_name, "owner/repo", &["--extra-opt", "val"]);
-    ($(#[$attr:meta])* $test:ident, $repo:literal, $forge_opts:expr) => {
-        $crate::forgetest_external!($(#[$attr])* $test, $repo, 0, $forge_opts);
-    };
-    // forgetest_external!(test_name, "owner/repo", 1234, &["--extra-opt", "val"]);
-    ($(#[$attr:meta])* $test:ident, $repo:literal, $fork_block:literal, $forge_opts:expr) => {
-        $crate::forgetest_external!(
-            $(#[$attr])*
-            $test,
-            $repo,
-            $crate::foundry_compilers::PathStyle::Dapptools,
-            $fork_block,
-            $forge_opts
-        );
-    };
-    // forgetest_external!(test_name, "owner/repo", PathStyle::Dapptools, 123);
-    ($(#[$attr:meta])* $test:ident, $repo:literal, $style:expr, $fork_block:literal, $forge_opts:expr) => {
+    ($(#[$attr:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
         #[test]
         $(#[$attr])*
         fn $test() {
-            use std::process::{Command, Stdio};
-
-            // Skip fork tests if the RPC url is not set.
-            if $fork_block > 0 && std::env::var("ETH_RPC_URL").is_err() {
-                eprintln!("Skipping test {}. ETH_RPC_URL is not set.", $repo);
-                return
-            };
-
-            let (prj, mut cmd) = $crate::util::setup_forge(stringify!($test), $style);
-
-            // Wipe the default structure
-            prj.wipe();
-
-            // Clone the external repository
-            $crate::util::clone_remote(concat!("https://github.com/", $repo), prj.root().to_str().unwrap());
-
-            // Run common installation commands
-            $crate::util::run_install_commands(prj.root());
-
-            // Run the tests
-            cmd.arg("test").args($forge_opts).args([
-                "--optimize",
-                "--optimizer-runs=20000",
-                "--fuzz-runs=256",
-                "--ffi",
-                "-vvvvv",
-            ]);
-            cmd.set_env("FOUNDRY_FUZZ_RUNS", "1");
-
-            let next_eth_rpc_url = foundry_common::rpc::next_http_archive_rpc_endpoint();
-            if $fork_block > 0 {
-                cmd.set_env("FOUNDRY_ETH_RPC_URL", next_eth_rpc_url);
-                cmd.set_env("FOUNDRY_FORK_BLOCK_NUMBER", stringify!($fork_block));
-            }
-            cmd.assert_non_empty_stdout();
+            let (mut $prj, mut $cmd) = $crate::util::setup_forge(stringify!($test), $style);
+            $crate::util::initialize($prj.root());
+            $e
         }
     };
 }

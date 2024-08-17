@@ -1,7 +1,7 @@
 use chisel::session::ChiselSession;
-use foundry_compilers::EvmVersion;
-use foundry_config::Config;
-use foundry_evm::opts::EvmOpts;
+use foundry_compilers::artifacts::EvmVersion;
+use foundry_config::{Config, SolcReq};
+use semver::Version;
 use serial_test::serial;
 use std::path::Path;
 
@@ -43,12 +43,9 @@ fn test_write_session() {
     // Create a new session
     let mut env = ChiselSession::new(chisel::session_source::SessionSourceConfig {
         foundry_config,
-        evm_opts: EvmOpts::default(),
-        backend: None,
-        traces: false,
-        calldata: None,
+        ..Default::default()
     })
-    .unwrap_or_else(|e| panic!("Failed to create ChiselSession!, {}", e));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession!, {e}"));
 
     // Write the session
     let cached_session_name = env.write().unwrap();
@@ -76,7 +73,7 @@ fn test_write_session_with_name() {
         foundry_config,
         ..Default::default()
     })
-    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {e}"));
     env.id = Some(String::from("test"));
 
     // Write the session
@@ -126,7 +123,7 @@ fn test_list_sessions() {
         foundry_config,
         ..Default::default()
     })
-    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {e}"));
 
     env.write().unwrap();
 
@@ -153,7 +150,7 @@ fn test_load_cache() {
         foundry_config,
         ..Default::default()
     })
-    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {e}"));
     env.write().unwrap();
 
     // Load the session
@@ -163,10 +160,7 @@ fn test_load_cache() {
     assert!(new_env.is_ok());
     let new_env = new_env.unwrap();
     assert_eq!(new_env.id.unwrap(), String::from("0"));
-    assert_eq!(
-        new_env.session_source.unwrap().to_repl_source(),
-        env.session_source.unwrap().to_repl_source()
-    );
+    assert_eq!(new_env.session_source.to_repl_source(), env.session_source.to_repl_source());
 }
 
 #[test]
@@ -184,7 +178,7 @@ fn test_write_same_session_multiple_times() {
         foundry_config,
         ..Default::default()
     })
-    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {e}"));
     env.write().unwrap();
     env.write().unwrap();
     env.write().unwrap();
@@ -207,7 +201,7 @@ fn test_load_latest_cache() {
         foundry_config: foundry_config.clone(),
         ..Default::default()
     })
-    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {e}"));
     env.write().unwrap();
 
     let wait_time = std::time::Duration::from_millis(100);
@@ -217,7 +211,7 @@ fn test_load_latest_cache() {
         foundry_config,
         ..Default::default()
     })
-    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {}", e));
+    .unwrap_or_else(|e| panic!("Failed to create ChiselSession! {e}"));
     env2.write().unwrap();
 
     // Load the latest session
@@ -225,8 +219,29 @@ fn test_load_latest_cache() {
 
     // Validate the session
     assert_eq!(new_env.id.unwrap(), "1");
-    assert_eq!(
-        new_env.session_source.unwrap().to_repl_source(),
-        env.session_source.unwrap().to_repl_source()
-    );
+    assert_eq!(new_env.session_source.to_repl_source(), env.session_source.to_repl_source());
+}
+
+#[test]
+#[serial]
+fn test_solc_evm_configuration_mismatch() {
+    // Create and clear the cache directory
+    ChiselSession::create_cache_dir().unwrap();
+    ChiselSession::clear_cache().unwrap();
+
+    // Force the solc version to be 0.8.13 which does not support Paris
+    let foundry_config = Config {
+        evm_version: EvmVersion::Paris,
+        solc: Some(SolcReq::Version(Version::new(0, 8, 13))),
+        ..Default::default()
+    };
+
+    // Create a new session that is expected to fail
+    let error = ChiselSession::new(chisel::session_source::SessionSourceConfig {
+        foundry_config,
+        ..Default::default()
+    })
+    .unwrap_err();
+
+    assert_eq!(error.to_string(), "The set evm version, paris, is not supported by solc 0.8.13. Upgrade to a newer solc version.");
 }

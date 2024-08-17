@@ -1,8 +1,14 @@
 //! Contains various tests for checking cast commands
 
-use foundry_common::rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint};
-use foundry_test_utils::{casttest, util::OutputExt};
-use std::{io::Write, path::Path};
+use alloy_primitives::{address, b256, Address, B256};
+use anvil::{Hardfork, NodeConfig};
+use foundry_test_utils::{
+    casttest,
+    rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint},
+    str,
+    util::OutputExt,
+};
+use std::{fs, io::Write, path::Path, str::FromStr};
 
 // tests `--help` is printed to std out
 casttest!(print_help, |_prj, cmd| {
@@ -73,15 +79,22 @@ casttest!(wallet_address_keystore_with_password_file, |_prj, cmd| {
 
 // tests that `cast wallet sign message` outputs the expected signature
 casttest!(wallet_sign_message_utf8_data, |_prj, cmd| {
-    cmd.args([
-        "wallet",
-        "sign",
-        "--private-key",
-        "0x0000000000000000000000000000000000000000000000000000000000000001",
-        "test",
-    ]);
+    let pk = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    let address = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf";
+    let msg = "test";
+    let expected = "0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c";
+
+    cmd.args(["wallet", "sign", "--private-key", pk, msg]);
     let output = cmd.stdout_lossy();
-    assert_eq!(output.trim(), "0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c");
+    assert_eq!(output.trim(), expected);
+
+    // Success.
+    cmd.cast_fuse()
+        .args(["wallet", "verify", "-a", address, msg, expected])
+        .assert_non_empty_stdout();
+
+    // Fail.
+    cmd.cast_fuse().args(["wallet", "verify", "-a", address, "other msg", expected]).assert_err();
 });
 
 // tests that `cast wallet sign message` outputs the expected signature, given a 0x-prefixed data
@@ -92,9 +105,10 @@ casttest!(wallet_sign_message_hex_data, |_prj, cmd| {
         "--private-key",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "0x0000000000000000000000000000000000000000000000000000000000000000",
-    ]);
-    let output = cmd.stdout_lossy();
-    assert_eq!(output.trim(), "0x23a42ca5616ee730ff3735890c32fc7b9491a9f633faca9434797f2c845f5abf4d9ba23bd7edb8577acebaa3644dc5a4995296db420522bb40060f1693c33c9b1c");
+    ]).assert_success().stdout_eq(str![[r#"
+0x23a42ca5616ee730ff3735890c32fc7b9491a9f633faca9434797f2c845f5abf4d9ba23bd7edb8577acebaa3644dc5a4995296db420522bb40060f1693c33c9b1c
+
+"#]]);
 });
 
 // tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON string
@@ -106,9 +120,10 @@ casttest!(wallet_sign_typed_data_string, |_prj, cmd| {
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "--data",
         "{\"types\": {\"EIP712Domain\": [{\"name\": \"name\",\"type\": \"string\"},{\"name\": \"version\",\"type\": \"string\"},{\"name\": \"chainId\",\"type\": \"uint256\"},{\"name\": \"verifyingContract\",\"type\": \"address\"}],\"Message\": [{\"name\": \"data\",\"type\": \"string\"}]},\"primaryType\": \"Message\",\"domain\": {\"name\": \"example.metamask.io\",\"version\": \"1\",\"chainId\": \"1\",\"verifyingContract\": \"0x0000000000000000000000000000000000000000\"},\"message\": {\"data\": \"Hello!\"}}",
-    ]);
-    let output = cmd.stdout_lossy();
-    assert_eq!(output.trim(), "0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b");
+    ]).assert_success().stdout_eq(str![[r#"
+0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b
+
+"#]]);
 });
 
 // tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON file
@@ -126,9 +141,151 @@ casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
             .into_string()
             .unwrap()
             .as_str(),
+    ]).assert_success().stdout_eq(str![[r#"
+0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b
+
+"#]]);
+});
+
+// tests that `cast wallet sign-auth message` outputs the expected signature
+casttest!(wallet_sign_auth, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "sign-auth",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--nonce",
+        "100",
+        "--chain",
+        "1",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"]).assert_success().stdout_eq(str![[r#"
+0xf85a01947e5f4552091a69125d5dfcb7b8c2659029395bdf6401a0ad489ee0314497c3f06567f3080a46a63908edc1c7cdf2ac2d609ca911212086a065a6ba951c8748dd8634740fe498efb61770097d99ff5fdcb9a863b62ea899f6
+
+"#]]);
+});
+
+// tests that `cast wallet list` outputs the local accounts
+casttest!(wallet_list_local_accounts, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+    fs::create_dir_all(keystore_path).unwrap();
+    cmd.set_current_dir(prj.root());
+
+    // empty results
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]);
+    let list_output = cmd.stdout_lossy();
+    assert!(list_output.is_empty());
+
+    // create 10 wallets
+    cmd.cast_fuse().args(["wallet", "new", "keystore", "-n", "10", "--unsafe-password", "test"]);
+    cmd.stdout_lossy();
+
+    // test list new wallet
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]);
+    let list_output = cmd.stdout_lossy();
+    assert_eq!(list_output.matches('\n').count(), 10);
+});
+
+// tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic
+casttest!(wallet_mnemonic_from_entropy, |_prj, cmd| {
+    cmd.args(["wallet", "new-mnemonic", "--entropy", "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c"]);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("test test test test test test test test test test test junk"));
+});
+
+// tests that `cast wallet private-key` with arguments outputs the private key
+casttest!(wallet_private_key_from_mnemonic_arg, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "private-key",
+        "test test test test test test test test test test test junk",
+        "1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+
+"#]]);
+});
+
+// tests that `cast wallet private-key` with options outputs the private key
+casttest!(wallet_private_key_from_mnemonic_option, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "private-key",
+        "--mnemonic",
+        "test test test test test test test test test test test junk",
+        "--mnemonic-index",
+        "1",
     ]);
     let output = cmd.stdout_lossy();
-    assert_eq!(output.trim(), "0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b");
+    assert_eq!(output.trim(), "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+});
+
+// tests that `cast wallet private-key` with derivation path outputs the private key
+casttest!(wallet_private_key_with_derivation_path, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "private-key",
+        "--mnemonic",
+        "test test test test test test test test test test test junk",
+        "--mnemonic-derivation-path",
+        "m/44'/60'/0'/0/1",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim(), "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+});
+
+// tests that `cast wallet import` creates a keystore for a private key and that `cast wallet
+// decrypt-keystore` can access it
+casttest!(wallet_import_and_decrypt, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+
+    cmd.set_current_dir(prj.root());
+
+    let account_name = "testAccount";
+
+    // Default Anvil private key
+    let test_private_key =
+        b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+
+    // import private key
+    cmd.cast_fuse().args([
+        "wallet",
+        "import",
+        account_name,
+        "--private-key",
+        &test_private_key.to_string(),
+        "-k",
+        "keystore",
+        "--unsafe-password",
+        "test",
+    ]);
+
+    cmd.assert_non_empty_stdout();
+
+    // check that the keystore file was created
+    let keystore_file = keystore_path.join(account_name);
+
+    assert!(keystore_file.exists());
+
+    // decrypt the keystore file
+    let decrypt_output = cmd.cast_fuse().args([
+        "wallet",
+        "decrypt-keystore",
+        account_name,
+        "-k",
+        "keystore",
+        "--unsafe-password",
+        "test",
+    ]);
+
+    // get the PK out of the output (last word in the output)
+    let decrypt_output = decrypt_output.stdout_lossy();
+    let private_key_string = decrypt_output.split_whitespace().last().unwrap();
+    // check that the decrypted private key matches the imported private key
+    let decrypted_private_key = B256::from_str(private_key_string).unwrap();
+    // the form
+    assert_eq!(decrypted_private_key, test_private_key);
 });
 
 // tests that `cast estimate` is working correctly.
@@ -493,6 +650,89 @@ casttest!(logs_sig_2, |_prj, cmd| {
     );
 });
 
+casttest!(mktx, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--value",
+        "100",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(
+        output.trim(),
+        "0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
+    );
+});
+
+// ensure recipient or code is required
+casttest!(mktx_requires_to, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stderr_lossy();
+    assert_eq!(
+        output.trim(),
+        "Error: \nMust specify a recipient address or contract code to deploy"
+    );
+});
+
+casttest!(mktx_signer_from_mismatch, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--from",
+        "0x0000000000000000000000000000000000000001",
+        "--chain",
+        "1",
+        "0x0000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stderr_lossy();
+    assert!(
+        output.contains("The specified sender via CLI/env vars does not match the sender configured via\nthe hardware wallet's HD Path.")
+    );
+});
+
+casttest!(mktx_signer_from_match, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--from",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+        "--chain",
+        "1",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+    ]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(
+        output.trim(),
+        "0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c001a0cce9a61187b5d18a89ecd27ec675e3b3f10d37f165627ef89a15a7fe76395ce8a07537f5bffb358ffbef22cda84b1c92f7211723f9e09ae037e81686805d3e5505"
+    );
+});
+
 // tests that the raw encoded transaction is returned
 casttest!(tx_raw, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
@@ -555,4 +795,265 @@ casttest!(storage, |_prj, cmd| {
     let six = "0x0000000000000000000000000000000000000000000000000000000000000006";
     cmd.cast_fuse().args(["storage", usdt, decimals_slot, "--rpc-url", &rpc]);
     assert_eq!(cmd.stdout_lossy().trim(), six);
+
+    let rpc = next_http_rpc_endpoint();
+    let total_supply_slot = "0x01";
+    let issued = "0x000000000000000000000000000000000000000000000000000000174876e800";
+    let block_before = "4634747";
+    let block_after = "4634748";
+    cmd.cast_fuse().args([
+        "storage",
+        usdt,
+        total_supply_slot,
+        "--rpc-url",
+        &rpc,
+        "--block",
+        block_before,
+    ]);
+    assert_eq!(cmd.stdout_lossy().trim(), empty);
+    cmd.cast_fuse().args([
+        "storage",
+        usdt,
+        total_supply_slot,
+        "--rpc-url",
+        &rpc,
+        "--block",
+        block_after,
+    ]);
+    assert_eq!(cmd.stdout_lossy().trim(), issued);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/6319>
+casttest!(storage_layout, |_prj, cmd| {
+    cmd.cast_fuse().args([
+        "storage",
+        "--rpc-url",
+        "https://mainnet.optimism.io",
+        "--block",
+        "110000000",
+        "--etherscan-api-key",
+        "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
+        "0xB67c152E69217b5aCB85A2e19dF13423351b0E27",
+    ]);
+    let output = r#"| Name                          | Type                                                            | Slot | Offset | Bytes | Value                                             | Hex Value                                                          | Contract                                           |
+|-------------------------------|-----------------------------------------------------------------|------|--------|-------|---------------------------------------------------|--------------------------------------------------------------------|----------------------------------------------------|
+| gov                           | address                                                         | 0    | 0      | 20    | 1352965747418285184211909460723571462248744342032 | 0x000000000000000000000000ecfd15165d994c2766fbe0d6bacdc2e8dedfd210 | contracts/perp/PositionManager.sol:PositionManager |
+| _status                       | uint256                                                         | 1    | 0      | 32    | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
+| admin                         | address                                                         | 2    | 0      | 20    | 1352965747418285184211909460723571462248744342032 | 0x000000000000000000000000ecfd15165d994c2766fbe0d6bacdc2e8dedfd210 | contracts/perp/PositionManager.sol:PositionManager |
+| feeCalculator                 | address                                                         | 3    | 0      | 20    | 1297482016264593221714872710065075000476194625473 | 0x000000000000000000000000e3451b170806aab3e24b5cd03a331c1ccdb4d7c1 | contracts/perp/PositionManager.sol:PositionManager |
+| oracle                        | address                                                         | 4    | 0      | 20    | 241116142622541106669066767052022920958068430970  | 0x0000000000000000000000002a3c0592dcb58accd346ccee2bb46e3fb744987a | contracts/perp/PositionManager.sol:PositionManager |
+| referralStorage               | address                                                         | 5    | 0      | 20    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| minExecutionFee               | uint256                                                         | 6    | 0      | 32    | 20000                                             | 0x0000000000000000000000000000000000000000000000000000000000004e20 | contracts/perp/PositionManager.sol:PositionManager |
+| minBlockDelayKeeper           | uint256                                                         | 7    | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| minTimeExecuteDelayPublic     | uint256                                                         | 8    | 0      | 32    | 180                                               | 0x00000000000000000000000000000000000000000000000000000000000000b4 | contracts/perp/PositionManager.sol:PositionManager |
+| minTimeCancelDelayPublic      | uint256                                                         | 9    | 0      | 32    | 180                                               | 0x00000000000000000000000000000000000000000000000000000000000000b4 | contracts/perp/PositionManager.sol:PositionManager |
+| maxTimeDelay                  | uint256                                                         | 10   | 0      | 32    | 1800                                              | 0x0000000000000000000000000000000000000000000000000000000000000708 | contracts/perp/PositionManager.sol:PositionManager |
+| isUserExecuteEnabled          | bool                                                            | 11   | 0      | 1     | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
+| isUserCancelEnabled           | bool                                                            | 11   | 1      | 1     | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
+| allowPublicKeeper             | bool                                                            | 11   | 2      | 1     | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| allowUserCloseOnly            | bool                                                            | 11   | 3      | 1     | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
+| openPositionRequestKeys       | bytes32[]                                                       | 12   | 0      | 32    | 9287                                              | 0x0000000000000000000000000000000000000000000000000000000000002447 | contracts/perp/PositionManager.sol:PositionManager |
+| closePositionRequestKeys      | bytes32[]                                                       | 13   | 0      | 32    | 5782                                              | 0x0000000000000000000000000000000000000000000000000000000000001696 | contracts/perp/PositionManager.sol:PositionManager |
+| openPositionRequestKeysStart  | uint256                                                         | 14   | 0      | 32    | 9287                                              | 0x0000000000000000000000000000000000000000000000000000000000002447 | contracts/perp/PositionManager.sol:PositionManager |
+| closePositionRequestKeysStart | uint256                                                         | 15   | 0      | 32    | 5782                                              | 0x0000000000000000000000000000000000000000000000000000000000001696 | contracts/perp/PositionManager.sol:PositionManager |
+| isPositionKeeper              | mapping(address => bool)                                        | 16   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| openPositionsIndex            | mapping(address => uint256)                                     | 17   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| openPositionRequests          | mapping(bytes32 => struct PositionManager.OpenPositionRequest)  | 18   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| closePositionsIndex           | mapping(address => uint256)                                     | 19   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| closePositionRequests         | mapping(bytes32 => struct PositionManager.ClosePositionRequest) | 20   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| managers                      | mapping(address => bool)                                        | 21   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+| approvedManagers              | mapping(address => mapping(address => bool))                    | 22   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
+"#;
+    assert_eq!(cmd.stdout_lossy(), output);
+});
+
+casttest!(balance, |_prj, cmd| {
+    let rpc = next_http_rpc_endpoint();
+    let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+    cmd.cast_fuse().args([
+        "balance",
+        "0x0000000000000000000000000000000000000000",
+        "--erc20",
+        usdt,
+        "--rpc-url",
+        &rpc,
+    ]);
+    cmd.cast_fuse().args([
+        "balance",
+        "0x0000000000000000000000000000000000000000",
+        "--erc721",
+        usdt,
+        "--rpc-url",
+        &rpc,
+    ]);
+
+    let usdt_result = cmd.stdout_lossy();
+    let alias_result = cmd.stdout_lossy();
+
+    assert_ne!(usdt_result, "0x0000000000000000000000000000000000000000000000000000000000000000");
+    assert_eq!(alias_result, usdt_result);
+});
+
+// tests that `cast interface` excludes the constructor
+// <https://github.com/alloy-rs/core/issues/555>
+casttest!(interface_no_constructor, |prj, cmd| {
+    let interface = include_str!("../fixtures/interface.json");
+
+    let path = prj.root().join("interface.json");
+    fs::write(&path, interface).unwrap();
+    // Call `cast find-block`
+    cmd.args(["interface"]).arg(&path);
+    let output = cmd.stdout_lossy();
+
+    let s = r#"// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+interface Interface {
+    type SpendAssetsHandleType is uint8;
+
+    function getIntegrationManager() external view returns (address integrationManager_);
+    function lend(address _vaultProxy, bytes memory, bytes memory _assetData) external;
+    function parseAssetsForAction(address, bytes4 _selector, bytes memory _actionData)
+        external
+        view
+        returns (
+            SpendAssetsHandleType spendAssetsHandleType_,
+            address[] memory spendAssets_,
+            uint256[] memory spendAssetAmounts_,
+            address[] memory incomingAssets_,
+            uint256[] memory minIncomingAssetAmounts_
+        );
+    function redeem(address _vaultProxy, bytes memory, bytes memory _assetData) external;
+}"#;
+    assert_eq!(output.trim(), s);
+});
+
+// tests that fetches WETH interface from etherscan
+// <https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2>
+casttest!(fetch_weth_interface_from_etherscan, |_prj, cmd| {
+    let weth_address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+    let api_key = "ZUB97R31KSYX7NYVW6224Q6EYY6U56H591";
+    cmd.args(["interface", "--etherscan-api-key", api_key, weth_address]);
+    let output = cmd.stdout_lossy();
+
+    let weth_interface = r#"// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+interface WETH9 {
+    event Approval(address indexed src, address indexed guy, uint256 wad);
+    event Deposit(address indexed dst, uint256 wad);
+    event Transfer(address indexed src, address indexed dst, uint256 wad);
+    event Withdrawal(address indexed src, uint256 wad);
+
+    fallback() external payable;
+
+    function allowance(address, address) external view returns (uint256);
+    function approve(address guy, uint256 wad) external returns (bool);
+    function balanceOf(address) external view returns (uint256);
+    function decimals() external view returns (uint8);
+    function deposit() external payable;
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+    function totalSupply() external view returns (uint256);
+    function transfer(address dst, uint256 wad) external returns (bool);
+    function transferFrom(address src, address dst, uint256 wad) external returns (bool);
+    function withdraw(uint256 wad) external;
+}"#;
+    assert_eq!(output.trim(), weth_interface);
+});
+
+const ENS_NAME: &str = "emo.eth";
+const ENS_NAMEHASH: B256 =
+    b256!("0a21aaf2f6414aa664deb341d1114351fdb023cad07bf53b28e57c26db681910");
+const ENS_ADDRESS: Address = address!("28679A1a632125fbBf7A68d850E50623194A709E");
+
+casttest!(ens_namehash, |_prj, cmd| {
+    cmd.args(["namehash", ENS_NAME]);
+    let out = cmd.stdout_lossy().trim().parse::<B256>();
+    assert_eq!(out, Ok(ENS_NAMEHASH));
+});
+
+casttest!(ens_lookup, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args(["lookup-address", &ENS_ADDRESS.to_string(), "--rpc-url", &eth_rpc_url, "--verify"]);
+    let out = cmd.stdout_lossy();
+    assert_eq!(out.trim(), ENS_NAME);
+});
+
+casttest!(ens_resolve, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args(["resolve-name", ENS_NAME, "--rpc-url", &eth_rpc_url, "--verify"]);
+    let out = cmd.stdout_lossy().trim().parse::<Address>();
+    assert_eq!(out, Ok(ENS_ADDRESS));
+});
+
+casttest!(ens_resolve_no_dot_eth, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    let name = ENS_NAME.strip_suffix(".eth").unwrap();
+    cmd.args(["resolve-name", name, "--rpc-url", &eth_rpc_url, "--verify"]);
+    let (_out, err) = cmd.unchecked_output_lossy();
+    assert!(err.contains("not found"), "{err:?}");
+});
+
+casttest!(index7201, |_prj, cmd| {
+    let tests =
+        [("example.main", "0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500")];
+    for (id, expected) in tests {
+        cmd.cast_fuse();
+        assert_eq!(cmd.args(["index-erc7201", id]).stdout_lossy().trim(), expected);
+    }
+});
+
+casttest!(index7201_unknown_formula_id, |_prj, cmd| {
+    cmd.args(["index-7201", "test", "--formula-id", "unknown"]).assert_err();
+});
+
+casttest!(block_number, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    let s = cmd.args(["block-number", "--rpc-url", eth_rpc_url.as_str()]).stdout_lossy();
+    assert!(s.trim().parse::<u64>().unwrap() > 0, "{s}")
+});
+
+casttest!(block_number_latest, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    let s = cmd.args(["block-number", "--rpc-url", eth_rpc_url.as_str(), "latest"]).stdout_lossy();
+    assert!(s.trim().parse::<u64>().unwrap() > 0, "{s}")
+});
+
+casttest!(block_number_hash, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    let s = cmd
+        .args([
+            "block-number",
+            "--rpc-url",
+            eth_rpc_url.as_str(),
+            "0x88e96d4537bea4d9c05d12549907b32561d3bf31f45aae734cdc119f13406cb6",
+        ])
+        .stdout_lossy();
+    assert_eq!(s.trim().parse::<u64>().unwrap(), 1, "{s}")
+});
+
+casttest!(send_eip7702, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(Hardfork::PragueEOF))).await;
+    let endpoint = handle.http_endpoint();
+    cmd.args([
+        "send",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_success();
+
+    cmd.cast_fuse()
+        .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
+
+"#]]);
 });

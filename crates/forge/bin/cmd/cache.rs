@@ -11,7 +11,7 @@ use strum::VariantNames;
 /// CLI arguments for `forge cache`.
 #[derive(Debug, Parser)]
 pub struct CacheArgs {
-    #[clap(subcommand)]
+    #[command(subcommand)]
     pub sub: CacheSubcommands,
 }
 
@@ -26,12 +26,12 @@ pub enum CacheSubcommands {
 
 /// CLI arguments for `forge clean`.
 #[derive(Debug, Parser)]
-#[clap(group = clap::ArgGroup::new("etherscan-blocks").multiple(false))]
+#[command(group = clap::ArgGroup::new("etherscan-blocks").multiple(false))]
 pub struct CleanArgs {
     /// The chains to clean the cache for.
     ///
     /// Can also be "all" to clean all chains.
-    #[clap(
+    #[arg(
         env = "CHAIN",
         default_value = "all",
         value_parser = ChainOrAllValueParser::default(),
@@ -39,24 +39,23 @@ pub struct CleanArgs {
     chains: Vec<ChainOrAll>,
 
     /// The blocks to clean the cache for.
-    #[clap(
+    #[arg(
         short,
         long,
         num_args(1..),
-        use_value_delimiter(true),
         value_delimiter(','),
         group = "etherscan-blocks"
     )]
     blocks: Vec<u64>,
 
     /// Whether to clean the Etherscan cache.
-    #[clap(long, group = "etherscan-blocks")]
+    #[arg(long, group = "etherscan-blocks")]
     etherscan: bool,
 }
 
 impl CleanArgs {
     pub fn run(self) -> Result<()> {
-        let CleanArgs { chains, blocks, etherscan } = self;
+        let Self { chains, blocks, etherscan } = self;
 
         for chain_or_all in chains {
             match chain_or_all {
@@ -82,7 +81,7 @@ pub struct LsArgs {
     /// The chains to list the cache for.
     ///
     /// Can also be "all" to list all chains.
-    #[clap(
+    #[arg(
         env = "CHAIN",
         default_value = "all",
         value_parser = ChainOrAllValueParser::default(),
@@ -92,7 +91,7 @@ pub struct LsArgs {
 
 impl LsArgs {
     pub fn run(self) -> Result<()> {
-        let LsArgs { chains } = self;
+        let Self { chains } = self;
         let mut cache = Cache::default();
         for chain_or_all in chains {
             match chain_or_all {
@@ -107,7 +106,7 @@ impl LsArgs {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum ChainOrAll {
     NamedChain(NamedChain),
     All,
@@ -118,9 +117,9 @@ impl FromStr for ChainOrAll {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Ok(chain) = NamedChain::from_str(s) {
-            Ok(ChainOrAll::NamedChain(chain))
+            Ok(Self::NamedChain(chain))
         } else if s == "all" {
-            Ok(ChainOrAll::All)
+            Ok(Self::All)
         } else {
             Err(format!("Expected known chain or all, found: {s}"))
         }
@@ -151,7 +150,7 @@ pub struct ChainOrAllValueParser {
 
 impl Default for ChainOrAllValueParser {
     fn default() -> Self {
-        ChainOrAllValueParser { inner: possible_chains() }
+        Self { inner: possible_chains() }
     }
 }
 

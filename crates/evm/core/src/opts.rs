@@ -1,16 +1,15 @@
 use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
-use ethers_core::types::{Block, TxHash};
-use ethers_providers::{Middleware, Provider};
+use alloy_provider::Provider;
+use alloy_rpc_types::Block;
 use eyre::WrapErr;
-use foundry_common::{self, ProviderBuilder, RpcUrl, ALCHEMY_FREE_TIER_CUPS};
-use foundry_compilers::utils::RuntimeOrHandle;
+use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::{Chain, Config};
-use revm::primitives::{BlockEnv, CfgEnv, SpecId, TxEnv};
+use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EvmOpts {
     /// The EVM environment configuration.
     #[serde(flatten)]
@@ -18,7 +17,7 @@ pub struct EvmOpts {
 
     /// Fetch state over a remote instead of starting from empty state.
     #[serde(rename = "eth_rpc_url")]
-    pub fork_url: Option<RpcUrl>,
+    pub fork_url: Option<String>,
 
     /// Pins the block number for the state fork.
     pub fork_block_number: Option<u64>,
@@ -49,12 +48,24 @@ pub struct EvmOpts {
     /// Enables the FFI cheatcode.
     pub ffi: bool,
 
+    /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
+    pub always_use_create_2_factory: bool,
+
     /// Verbosity mode of EVM output as number of occurrences.
     pub verbosity: u8,
 
     /// The memory limit per EVM execution in bytes.
     /// If this limit is exceeded, a `MemoryLimitOOG` result is thrown.
     pub memory_limit: u64,
+
+    /// Whether to enable isolation of calls.
+    pub isolate: bool,
+
+    /// Whether to disable block gas limit checks.
+    pub disable_block_gas_limit: bool,
+
+    /// whether to enable Alphanet features.
+    pub alphanet: bool,
 }
 
 impl EvmOpts {
@@ -75,7 +86,7 @@ impl EvmOpts {
     pub async fn fork_evm_env(
         &self,
         fork_url: impl AsRef<str>,
-    ) -> eyre::Result<(revm::primitives::Env, Block<TxHash>)> {
+    ) -> eyre::Result<(revm::primitives::Env, Block)> {
         let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
@@ -83,10 +94,11 @@ impl EvmOpts {
         environment(
             &provider,
             self.memory_limit,
-            self.env.gas_price,
+            self.env.gas_price.map(|v| v as u128),
             self.env.chain_id,
             self.fork_block_number,
             self.sender,
+            self.disable_block_gas_limit,
         )
         .await
         .wrap_err_with(|| {
@@ -98,13 +110,13 @@ impl EvmOpts {
     pub fn local_evm_env(&self) -> revm::primitives::Env {
         let mut cfg = CfgEnv::default();
         cfg.chain_id = self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID);
-        cfg.spec_id = SpecId::MERGE;
         cfg.limit_contract_code_size = self.env.code_size_limit.or(Some(usize::MAX));
         cfg.memory_limit = self.memory_limit;
         // EIP-3607 rejects transactions from senders with deployed code.
         // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
         // caller is a contract. So we disable the check by default.
         cfg.disable_eip3607 = true;
+        cfg.disable_block_gas_limit = self.disable_block_gas_limit;
 
         revm::primitives::Env {
             block: BlockEnv {
@@ -114,13 +126,13 @@ impl EvmOpts {
                 difficulty: U256::from(self.env.block_difficulty),
                 prevrandao: Some(self.env.block_prevrandao),
                 basefee: U256::from(self.env.block_base_fee_per_gas),
-                gas_limit: self.gas_limit(),
+                gas_limit: U256::from(self.gas_limit()),
                 ..Default::default()
             },
             cfg,
             tx: TxEnv {
                 gas_price: U256::from(self.env.gas_price.unwrap_or_default()),
-                gas_limit: self.gas_limit().to(),
+                gas_limit: self.gas_limit(),
                 caller: self.sender,
                 ..Default::default()
             },
@@ -132,14 +144,14 @@ impl EvmOpts {
     /// storage caching for the [CreateFork] will be enabled if
     ///   - `fork_url` is present
     ///   - `fork_block_number` is present
-    ///   - [StorageCachingConfig] allows the `fork_url` +  chain id pair
+    ///   - `StorageCachingConfig` allows the `fork_url` + chain ID pair
     ///   - storage is allowed (`no_storage_caching = false`)
     ///
     /// If all these criteria are met, then storage caching is enabled and storage info will be
-    /// written to [Config::foundry_cache_dir()]/<str(chainid)>/<block>/storage.json
+    /// written to `<Config::foundry_cache_dir()>/<str(chainid)>/<block>/storage.json`.
     ///
     /// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will
-    /// be at `~/.foundry/cache/mainnet/14435000/storage.json`
+    /// be at `~/.foundry/cache/mainnet/14435000/storage.json`.
     pub fn get_fork(&self, config: &Config, env: revm::primitives::Env) -> Option<CreateFork> {
         let url = self.fork_url.clone()?;
         let enable_caching = config.enable_caching(&url, env.cfg.chain_id);
@@ -147,8 +159,8 @@ impl EvmOpts {
     }
 
     /// Returns the gas limit to use
-    pub fn gas_limit(&self) -> U256 {
-        U256::from(self.env.block_gas_limit.unwrap_or(self.env.gas_limit))
+    pub fn gas_limit(&self) -> u64 {
+        self.env.block_gas_limit.unwrap_or(self.env.gas_limit)
     }
 
     /// Returns the configured chain id, which will be
@@ -156,11 +168,11 @@ impl EvmOpts {
     ///   - mainnet if `fork_url` contains "mainnet"
     ///   - the chain if `fork_url` is set and the endpoints returned its chain id successfully
     ///   - mainnet otherwise
-    pub fn get_chain_id(&self) -> u64 {
+    pub async fn get_chain_id(&self) -> u64 {
         if let Some(id) = self.env.chain_id {
-            return id
+            return id;
         }
-        self.get_remote_chain_id().unwrap_or(Chain::mainnet()).id()
+        self.get_remote_chain_id().await.unwrap_or(Chain::mainnet()).id()
     }
 
     /// Returns the available compute units per second, which will be
@@ -171,25 +183,28 @@ impl EvmOpts {
         if self.no_rpc_rate_limit {
             u64::MAX
         } else if let Some(cups) = self.compute_units_per_second {
-            return cups
+            return cups;
         } else {
             ALCHEMY_FREE_TIER_CUPS
         }
     }
 
     /// Returns the chain ID from the RPC, if any.
-    pub fn get_remote_chain_id(&self) -> Option<Chain> {
+    pub async fn get_remote_chain_id(&self) -> Option<Chain> {
         if let Some(ref url) = self.fork_url {
             if url.contains("mainnet") {
                 trace!(?url, "auto detected mainnet chain");
                 return Some(Chain::mainnet());
             }
             trace!(?url, "retrieving chain via eth_chainId");
-            let provider = Provider::try_from(url.as_str())
-                .unwrap_or_else(|_| panic!("Failed to establish provider to {url}"));
+            let provider = ProviderBuilder::new(url.as_str())
+                .compute_units_per_second(self.get_compute_units_per_second())
+                .build()
+                .ok()
+                .unwrap_or_else(|| panic!("Failed to establish provider to {url}"));
 
-            if let Ok(id) = RuntimeOrHandle::new().block_on(provider.get_chainid()) {
-                return Some(Chain::from(id.as_u64()));
+            if let Ok(id) = provider.get_chain_id().await {
+                return Some(Chain::from(id));
             }
         }
 
@@ -197,7 +212,7 @@ impl EvmOpts {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Env {
     /// The block gas limit.
     #[serde(deserialize_with = "string_or_number")]

@@ -1,50 +1,58 @@
 //! The `anvil` cli
+
 use anvil::cmd::NodeArgs;
 use clap::{CommandFactory, Parser, Subcommand};
+use foundry_cli::utils;
+
+#[cfg(all(feature = "jemalloc", unix))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 /// A fast local Ethereum development node.
-#[derive(Debug, Parser)]
-#[clap(name = "anvil", version = anvil::VERSION_MESSAGE, next_display_order = None)]
-pub struct App {
-    #[clap(flatten)]
+#[derive(Parser)]
+#[command(name = "anvil", version = anvil::VERSION_MESSAGE, next_display_order = None)]
+pub struct Anvil {
+    #[command(flatten)]
     pub node: NodeArgs,
 
-    #[clap(subcommand)]
-    pub cmd: Option<Commands>,
+    #[command(subcommand)]
+    pub cmd: Option<AnvilSubcommand>,
 }
 
-#[derive(Clone, Debug, Subcommand, Eq, PartialEq)]
-pub enum Commands {
+#[derive(Subcommand)]
+pub enum AnvilSubcommand {
     /// Generate shell completions script.
-    #[clap(visible_alias = "com")]
+    #[command(visible_alias = "com")]
     Completions {
-        #[clap(value_enum)]
+        #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
 
     /// Generate Fig autocompletion spec.
-    #[clap(visible_alias = "fig")]
+    #[command(visible_alias = "fig")]
     GenerateFigSpec,
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut app = App::parse();
+async fn main() -> eyre::Result<()> {
+    utils::load_dotenv();
+
+    let mut app = Anvil::parse();
     app.node.evm_opts.resolve_rpc_alias();
 
     if let Some(ref cmd) = app.cmd {
         match cmd {
-            Commands::Completions { shell } => {
+            AnvilSubcommand::Completions { shell } => {
                 clap_complete::generate(
                     *shell,
-                    &mut App::command(),
+                    &mut Anvil::command(),
                     "anvil",
                     &mut std::io::stdout(),
                 );
             }
-            Commands::GenerateFigSpec => clap_complete::generate(
+            AnvilSubcommand::GenerateFigSpec => clap_complete::generate(
                 clap_complete_fig::Fig,
-                &mut App::command(),
+                &mut Anvil::command(),
                 "anvil",
                 &mut std::io::stdout(),
             ),
@@ -63,13 +71,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn verify_cli() {
+        Anvil::command().debug_assert();
+    }
+
+    #[test]
     fn can_parse_help() {
-        let _: App = App::parse_from(["anvil", "--help"]);
+        let _: Anvil = Anvil::parse_from(["anvil", "--help"]);
     }
 
     #[test]
     fn can_parse_completions() {
-        let args: App = App::parse_from(["anvil", "completions", "bash"]);
-        assert_eq!(args.cmd, Some(Commands::Completions { shell: clap_complete::Shell::Bash }));
+        let args: Anvil = Anvil::parse_from(["anvil", "completions", "bash"]);
+        assert!(matches!(
+            args.cmd,
+            Some(AnvilSubcommand::Completions { shell: clap_complete::Shell::Bash })
+        ));
     }
 }

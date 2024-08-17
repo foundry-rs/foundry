@@ -1,0 +1,20 @@
+[package]
+name = "foundry-linking"
+description = "Smart contract linking tools"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+foundry-compilers = { workspace = true, features = ["full"] }
+semver.workspace = true
+alloy-primitives = { workspace = true, features = ["rlp"] }
+thiserror.workspace = true

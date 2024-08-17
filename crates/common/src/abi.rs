@@ -1,12 +1,22 @@
 //! ABI related helper functions.
 
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Event, Function};
-use alloy_primitives::{hex, Address, Log};
+use alloy_json_abi::{Event, Function, Param};
+use alloy_primitives::{hex, Address, LogData};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::{contract::ContractMetadata, errors::EtherscanError, Client};
 use foundry_config::Chain;
 use std::{future::Future, pin::Pin};
+
+pub fn encode_args<I, S>(inputs: &[Param], args: I) -> Result<Vec<DynSolValue>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    std::iter::zip(inputs, args)
+        .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
+        .collect()
+}
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
 /// [DynSolValue]s and then ABI encode them.
@@ -15,10 +25,24 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let params = std::iter::zip(&func.inputs, args)
+    Ok(func.abi_encode_input(&encode_args(&func.inputs, args)?)?)
+}
+
+/// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
+/// [DynSolValue]s and encode them using the packed encoding.
+pub fn encode_function_args_packed<I, S>(func: &Function, args: I) -> Result<Vec<u8>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let params: Vec<Vec<u8>> = std::iter::zip(&func.inputs, args)
         .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
-        .collect::<Result<Vec<_>>>()?;
-    func.abi_encode_input(params.as_slice()).map_err(Into::into)
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .map(|v| v.abi_encode_packed())
+        .collect();
+
+    Ok(params.concat())
 }
 
 /// Decodes the calldata of the function
@@ -51,41 +75,6 @@ pub fn abi_decode_calldata(
     Ok(res)
 }
 
-/// Helper trait for converting types to Functions. Helpful for allowing the `call`
-/// function on the EVM to be generic over `String`, `&str` and `Function`.
-pub trait IntoFunction {
-    /// Consumes self and produces a function
-    ///
-    /// # Panics
-    ///
-    /// This function does not return a Result, so it is expected that the consumer
-    /// uses it correctly so that it does not panic.
-    fn into(self) -> Function;
-}
-
-impl IntoFunction for Function {
-    fn into(self) -> Function {
-        self
-    }
-}
-
-impl IntoFunction for String {
-    #[track_caller]
-    fn into(self) -> Function {
-        IntoFunction::into(self.as_str())
-    }
-}
-
-impl<'a> IntoFunction for &'a str {
-    #[track_caller]
-    fn into(self) -> Function {
-        match get_func(self) {
-            Ok(func) => func,
-            Err(e) => panic!("could not parse function: {e}"),
-        }
-    }
-}
-
 /// Given a function signature string, it tries to parse it as a `Function`
 pub fn get_func(sig: &str) -> Result<Function> {
     Function::parse(sig).wrap_err("could not parse function signature")
@@ -98,7 +87,7 @@ pub fn get_event(sig: &str) -> Result<Event> {
 
 /// Given an event without indexed parameters and a rawlog, it tries to return the event with the
 /// proper indexed parameters. Otherwise, it returns the original event.
-pub fn get_indexed_event(mut event: Event, raw_log: &Log) -> Event {
+pub fn get_indexed_event(mut event: Event, raw_log: &LogData) -> Event {
     if !event.anonymous && raw_log.topics().len() > 1 {
         let indexed_params = raw_log.topics().len() - 1;
         let num_inputs = event.inputs.len();
@@ -177,7 +166,7 @@ pub fn find_source(
 }
 
 /// Helper function to coerce a value to a [DynSolValue] given a type string
-fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
+pub fn coerce_value(ty: &str, arg: &str) -> Result<DynSolValue> {
     let ty = DynSolType::parse(ty)?;
     Ok(DynSolType::coerce_str(&ty, arg)?)
 }
@@ -216,7 +205,7 @@ mod tests {
         let param0 = B256::random();
         let param1 = vec![3; 32];
         let param2 = B256::random();
-        let log = Log::new_unchecked(vec![event.selector(), param0, param2], param1.clone().into());
+        let log = LogData::new_unchecked(vec![event.selector(), param0, param2], param1.into());
         let event = get_indexed_event(event, &log);
 
         assert_eq!(event.inputs.len(), 3);
@@ -237,7 +226,7 @@ mod tests {
         let param0 = B256::random();
         let param1 = vec![3; 32];
         let param2 = B256::random();
-        let log = Log::new_unchecked(
+        let log = LogData::new_unchecked(
             vec![event.selector(), param0, B256::from_slice(&param1), param2],
             vec![].into(),
         );

@@ -1,3 +1,4 @@
+use alloy_primitives::hex;
 use clap::Parser;
 use comfy_table::Table;
 use eyre::Result;
@@ -6,60 +7,53 @@ use foundry_cli::{
     utils::FoundryPathExt,
 };
 use foundry_common::{
-    compile,
+    compile::{compile_target, ProjectCompiler},
     selectors::{import_selectors, SelectorImportData},
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use std::fs::canonicalize;
 
 /// CLI arguments for `forge selectors`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub enum SelectorsSubcommands {
     /// Check for selector collisions between contracts
-    #[clap(visible_alias = "co")]
+    #[command(visible_alias = "co")]
     Collision {
-        /// First contract
-        #[clap(
-            help = "The first of the two contracts for which to look selector collisions for, in the form `(<path>:)?<contractname>`",
-            value_name = "FIRST_CONTRACT"
-        )]
+        /// The first of the two contracts for which to look selector collisions for, in the form
+        /// `(<path>:)?<contractname>`.
         first_contract: ContractInfo,
 
-        /// Second contract
-        #[clap(
-            help = "The second of the two contracts for which to look selector collisions for, in the form `(<path>:)?<contractname>`",
-            value_name = "SECOND_CONTRACT"
-        )]
+        /// The second of the two contracts for which to look selector collisions for, in the form
+        /// `(<path>:)?<contractname>`.
         second_contract: ContractInfo,
 
-        /// Support build args
-        #[clap(flatten)]
+        #[command(flatten)]
         build: Box<CoreBuildArgs>,
     },
 
     /// Upload selectors to registry
-    #[clap(visible_alias = "up")]
+    #[command(visible_alias = "up")]
     Upload {
         /// The name of the contract to upload selectors for.
-        #[clap(required_unless_present = "all")]
+        #[arg(required_unless_present = "all")]
         contract: Option<String>,
 
         /// Upload selectors for all contracts in the project.
-        #[clap(long, required_unless_present = "contract")]
+        #[arg(long, required_unless_present = "contract")]
         all: bool,
 
-        #[clap(flatten)]
+        #[command(flatten)]
         project_paths: ProjectPathsArgs,
     },
 
     /// List selectors from current workspace
-    #[clap(visible_alias = "ls")]
+    #[command(visible_alias = "ls")]
     List {
         /// The name of the contract to list selectors for.
-        #[clap(help = "The name of the contract to list selectors for.")]
+        #[arg(help = "The name of the contract to list selectors for.")]
         contract: Option<String>,
 
-        #[clap(flatten)]
+        #[command(flatten)]
         project_paths: ProjectPathsArgs,
     },
 }
@@ -67,7 +61,7 @@ pub enum SelectorsSubcommands {
 impl SelectorsSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            SelectorsSubcommands::Upload { contract, all, project_paths } => {
+            Self::Upload { contract, all, project_paths } => {
                 let build_args = CoreBuildArgs {
                     project_paths: project_paths.clone(),
                     compiler: CompilerArgs {
@@ -78,13 +72,17 @@ impl SelectorsSubcommands {
                 };
 
                 let project = build_args.project()?;
-                let outcome = compile::suppress_compile(&project)?;
+                let output = if let Some(name) = &contract {
+                    let target_path = project.find_contract_path(name)?;
+                    compile_target(&target_path, &project, false)?
+                } else {
+                    ProjectCompiler::new().compile(&project)?
+                };
                 let artifacts = if all {
-                    outcome
+                    output
                         .into_artifacts_with_files()
                         .filter(|(file, _, _)| {
-                            let is_sources_path = file
-                                .starts_with(&project.paths.sources.to_string_lossy().to_string());
+                            let is_sources_path = file.starts_with(&project.paths.sources);
                             let is_test = file.is_sol_test();
 
                             is_sources_path && !is_test
@@ -93,7 +91,7 @@ impl SelectorsSubcommands {
                         .collect()
                 } else {
                     let contract = contract.unwrap();
-                    let found_artifact = outcome.find_first(&contract);
+                    let found_artifact = output.find_first(&contract);
                     let artifact = found_artifact
                         .ok_or_else(|| {
                             eyre::eyre!(
@@ -121,42 +119,35 @@ impl SelectorsSubcommands {
                     }
                 }
             }
-            SelectorsSubcommands::Collision { mut first_contract, mut second_contract, build } => {
-                // Build first project
-                let first_project = build.project()?;
-                let first_outcome = if let Some(ref mut contract_path) = first_contract.path {
+            Self::Collision { mut first_contract, mut second_contract, build } => {
+                // Compile the project with the two contracts included
+                let project = build.project()?;
+                let mut compiler = ProjectCompiler::new().quiet(true);
+
+                if let Some(contract_path) = &mut first_contract.path {
                     let target_path = canonicalize(&*contract_path)?;
                     *contract_path = target_path.to_string_lossy().to_string();
-                    compile::compile_files(&first_project, vec![target_path], true)
-                } else {
-                    compile::suppress_compile(&first_project)
-                }?;
-
-                // Build second project
-                let second_project = build.project()?;
-                let second_outcome = if let Some(ref mut contract_path) = second_contract.path {
+                    compiler = compiler.files([target_path]);
+                }
+                if let Some(contract_path) = &mut second_contract.path {
                     let target_path = canonicalize(&*contract_path)?;
                     *contract_path = target_path.to_string_lossy().to_string();
-                    compile::compile_files(&second_project, vec![target_path], true)
-                } else {
-                    compile::suppress_compile(&second_project)
-                }?;
+                    compiler = compiler.files([target_path]);
+                }
 
-                // Find the artifacts
-                let first_found_artifact = first_outcome.find_contract(&first_contract);
-                let second_found_artifact = second_outcome.find_contract(&second_contract);
-
-                // Unwrap inner artifacts
-                let first_artifact = first_found_artifact.ok_or_else(|| {
-                    eyre::eyre!("Failed to extract first artifact bytecode as a string")
-                })?;
-                let second_artifact = second_found_artifact.ok_or_else(|| {
-                    eyre::eyre!("Failed to extract second artifact bytecode as a string")
-                })?;
+                let output = compiler.compile(&project)?;
 
                 // Check method selectors for collisions
-                let first_method_map = first_artifact.method_identifiers.as_ref().unwrap();
-                let second_method_map = second_artifact.method_identifiers.as_ref().unwrap();
+                let methods = |contract: &ContractInfo| -> eyre::Result<_> {
+                    let artifact = output
+                        .find_contract(contract)
+                        .ok_or_else(|| eyre::eyre!("Could not find artifact for {contract}"))?;
+                    artifact.method_identifiers.as_ref().ok_or_else(|| {
+                        eyre::eyre!("Could not find method identifiers for {contract}")
+                    })
+                };
+                let first_method_map = methods(&first_contract)?;
+                let second_method_map = methods(&second_contract)?;
 
                 let colliding_methods: Vec<(&String, &String, &String)> = first_method_map
                     .iter()
@@ -184,10 +175,10 @@ impl SelectorsSubcommands {
                     println!("{table}");
                 }
             }
-            SelectorsSubcommands::List { contract, project_paths } => {
+            Self::List { contract, project_paths } => {
                 println!("Listing selectors for contracts in the project...");
                 let build_args = CoreBuildArgs {
-                    project_paths: project_paths.clone(),
+                    project_paths,
                     compiler: CompilerArgs {
                         extra_output: vec![ContractOutputSelection::Abi],
                         ..Default::default()
@@ -197,7 +188,7 @@ impl SelectorsSubcommands {
 
                 // compile the project to get the artifacts/abis
                 let project = build_args.project()?;
-                let outcome = compile::suppress_compile(&project)?;
+                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
                 let artifacts = if let Some(contract) = contract {
                     let found_artifact = outcome.find_first(&contract);
                     let artifact = found_artifact
@@ -209,7 +200,7 @@ impl SelectorsSubcommands {
                             let suggestion = if let Some(suggestion) = foundry_cli::utils::did_you_mean(&contract, candidates).pop() {
                                 format!("\nDid you mean `{suggestion}`?")
                             } else {
-                                "".to_string()
+                                String::new()
                             };
                             eyre::eyre!(
                                 "Could not find artifact `{contract}` in the compiled artifacts{suggestion}",
@@ -221,8 +212,7 @@ impl SelectorsSubcommands {
                     outcome
                         .into_artifacts_with_files()
                         .filter(|(file, _, _)| {
-                            let is_sources_path = file
-                                .starts_with(&project.paths.sources.to_string_lossy().to_string());
+                            let is_sources_path = file.starts_with(&project.paths.sources);
                             let is_test = file.is_sol_test();
 
                             is_sources_path && !is_test

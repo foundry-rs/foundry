@@ -36,11 +36,9 @@ use crate::{
     },
     mem::storage::MinedBlockOutcome,
 };
+use alloy_primitives::{Address, TxHash, U64};
+use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
-use ethers::{
-    prelude::TxpoolStatus,
-    types::{TxHash, U64},
-};
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
@@ -77,8 +75,8 @@ impl Pool {
     /// Returns the number of tx that are ready and queued for further execution
     pub fn txpool_status(&self) -> TxpoolStatus {
         // Note: naming differs here compared to geth's `TxpoolStatus`
-        let pending = self.ready_transactions().count().into();
-        let queued = self.inner.read().pending_transactions.len().into();
+        let pending: u64 = self.ready_transactions().count().try_into().unwrap_or(0);
+        let queued: u64 = self.inner.read().pending_transactions.len().try_into().unwrap_or(0);
         TxpoolStatus { pending, queued }
     }
 
@@ -89,7 +87,7 @@ impl Pool {
         let MinedBlockOutcome { block_number, included, invalid } = outcome;
 
         // remove invalid transactions from the pool
-        self.remove_invalid(invalid.into_iter().map(|tx| *tx.hash()).collect());
+        self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
 
         // prune all the markers the mined transactions provide
         let res = self
@@ -143,6 +141,11 @@ impl Pool {
         self.inner.write().remove_invalid(tx_hashes)
     }
 
+    /// Remove transactions by sender
+    pub fn remove_transactions_by_address(&self, sender: Address) -> Vec<Arc<PoolTransaction>> {
+        self.inner.write().remove_transactions_by_address(sender)
+    }
+
     /// Removes a single transaction from the pool
     ///
     /// This is similar to `[Pool::remove_invalid()]` but for a single transaction.
@@ -161,6 +164,12 @@ impl Pool {
             dropped = removed.into_iter().find(|t| *t.pending_transaction.hash() == tx);
         }
         dropped
+    }
+
+    /// Removes all transactions from the pool
+    pub fn clear(&self) {
+        let mut pool = self.inner.write();
+        pool.clear();
     }
 
     /// notifies all listeners about the transaction
@@ -208,6 +217,12 @@ impl PoolInner {
         self.ready_transactions.get_transactions()
     }
 
+    /// Clears
+    fn clear(&mut self) {
+        self.ready_transactions.clear();
+        self.pending_transactions.clear();
+    }
+
     /// checks both pools for the matching transaction
     ///
     /// Returns `None` if the transaction does not exist in the pool
@@ -220,13 +235,31 @@ impl PoolInner {
         )
     }
 
+    /// Returns an iterator over all transactions in the pool filtered by the sender
+    pub fn transactions_by_sender(
+        &self,
+        sender: Address,
+    ) -> impl Iterator<Item = Arc<PoolTransaction>> + '_ {
+        let pending_txs = self
+            .pending_transactions
+            .transactions()
+            .filter(move |tx| tx.pending_transaction.sender().eq(&sender));
+
+        let ready_txs = self
+            .ready_transactions
+            .get_transactions()
+            .filter(move |tx| tx.pending_transaction.sender().eq(&sender));
+
+        pending_txs.chain(ready_txs)
+    }
+
     /// Returns true if this pool already contains the transaction
     fn contains(&self, tx_hash: &TxHash) -> bool {
         self.pending_transactions.contains(tx_hash) || self.ready_transactions.contains(tx_hash)
     }
 
     fn add_transaction(&mut self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
-        if self.contains(tx.hash()) {
+        if self.contains(&tx.hash()) {
             warn!(target: "txpool", "[{:?}] Already imported", tx.hash());
             return Err(PoolError::AlreadyImported(Box::new(tx)))
         }
@@ -236,7 +269,7 @@ impl PoolInner {
 
         // If all markers are not satisfied import to future
         if !tx.is_ready() {
-            let hash = *tx.transaction.hash();
+            let hash = tx.transaction.hash();
             self.pending_transactions.add_transaction(tx)?;
             return Ok(AddedTransaction::Pending { hash })
         }
@@ -248,7 +281,7 @@ impl PoolInner {
         &mut self,
         tx: PendingPoolTransaction,
     ) -> Result<AddedTransaction, PoolError> {
-        let hash = *tx.transaction.hash();
+        let hash = tx.transaction.hash();
         trace!(target: "txpool", "adding ready transaction [{:?}]", hash);
         let mut ready = ReadyTransaction::new(hash);
 
@@ -263,7 +296,7 @@ impl PoolInner {
                 self.pending_transactions.mark_and_unlock(&current_tx.transaction.provides),
             );
 
-            let current_hash = *current_tx.transaction.hash();
+            let current_hash = current_tx.transaction.hash();
             // try to add the transaction to the ready pool
             match self.ready_transactions.add_transaction(current_tx) {
                 Ok(replaced_transactions) => {
@@ -316,7 +349,7 @@ impl PoolInner {
         let mut promoted = vec![];
         let mut failed = vec![];
         for tx in imports {
-            let hash = *tx.transaction.hash();
+            let hash = tx.transaction.hash();
             match self.add_ready_transaction(tx) {
                 Ok(res) => promoted.push(res),
                 Err(e) => {
@@ -341,6 +374,25 @@ impl PoolInner {
         removed.extend(self.pending_transactions.remove(tx_hashes));
 
         trace!(target: "txpool", "Removed invalid transactions: {:?}", removed);
+
+        removed
+    }
+
+    /// Remove transactions by sender address
+    pub fn remove_transactions_by_address(&mut self, sender: Address) -> Vec<Arc<PoolTransaction>> {
+        let tx_hashes =
+            self.transactions_by_sender(sender).map(move |tx| tx.hash()).collect::<Vec<TxHash>>();
+
+        if tx_hashes.is_empty() {
+            return vec![]
+        }
+
+        trace!(target: "txpool", "Removing transactions: {:?}", tx_hashes);
+
+        let mut removed = self.ready_transactions.remove_with_markers(tx_hashes.clone(), None);
+        removed.extend(self.pending_transactions.remove(tx_hashes));
+
+        trace!(target: "txpool", "Removed transactions: {:?}", removed);
 
         removed
     }
@@ -375,7 +427,7 @@ impl fmt::Debug for PruneResult {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ReadyTransaction {
     /// the hash of the submitted transaction
     hash: TxHash,
@@ -398,7 +450,7 @@ impl ReadyTransaction {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum AddedTransaction {
     /// transaction was successfully added and being processed
     Ready(ReadyTransaction),
@@ -412,8 +464,8 @@ pub enum AddedTransaction {
 impl AddedTransaction {
     pub fn hash(&self) -> &TxHash {
         match self {
-            AddedTransaction::Ready(tx) => &tx.hash,
-            AddedTransaction::Pending { hash } => hash,
+            Self::Ready(tx) => &tx.hash,
+            Self::Pending { hash } => hash,
         }
     }
 }

@@ -1,4 +1,5 @@
 {
+  "contracts": {},
   "errors": [
     {
       "sourceLocation": {
@@ -11,10 +12,9 @@
       "severity": "error",
       "errorCode": "7576",
       "message": "Undeclared identifier. Did you mean \"newNumber\"?",
-      "formattedMessage": "DeclarationError: Undeclared identifier. Did you mean \"newNumber\"?\n --> src/dummy.sol:7:18:\n  |\n7 |         number = newnumber; // error here\n  |                  ^^^^^^^^^\n\n"
+      "formattedMessage": "DeclarationError: Undeclared identifier. Did you mean \"newNumber\"?\n --> src/jsonError.sol:7:18:\n  |\n7 |         number = newnumber; // error here\n  |                  ^^^^^^^^^\n\n"
     }
   ],
   "sources": {},
-  "contracts": {},
-  "build_infos": {}
+  "build_infos": ["{...}"]
 }

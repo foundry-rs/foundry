@@ -7,7 +7,7 @@ use crate::{
 use std::fmt::Write;
 
 /// An indent group. The group may optionally skip the first line
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct IndentGroup {
     skip_line: bool,
 }
@@ -22,16 +22,16 @@ enum WriteState {
 impl WriteState {
     fn comment_state(&self) -> CommentState {
         match self {
-            WriteState::LineStart(state) => *state,
-            WriteState::WriteTokens(state) => *state,
-            WriteState::WriteString(_) => CommentState::None,
+            Self::LineStart(state) => *state,
+            Self::WriteTokens(state) => *state,
+            Self::WriteString(_) => CommentState::None,
         }
     }
 }
 
 impl Default for WriteState {
     fn default() -> Self {
-        WriteState::LineStart(CommentState::default())
+        Self::LineStart(CommentState::default())
     }
 }
 

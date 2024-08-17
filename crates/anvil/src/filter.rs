@@ -4,12 +4,10 @@ use crate::{
     pubsub::filter_logs,
     StorageInfo,
 };
+use alloy_primitives::TxHash;
+use alloy_rpc_types::{Filter, FilteredParams, Log};
 use anvil_core::eth::subscription::SubscriptionId;
 use anvil_rpc::response::ResponseResult;
-use ethers::{
-    prelude::{Log as EthersLog, H256 as TxHash},
-    types::{Filter, FilteredParams},
-};
 use futures::{channel::mpsc::Receiver, Stream, StreamExt};
 use std::{
     collections::HashMap,
@@ -27,15 +25,13 @@ type FilterMap = Arc<Mutex<HashMap<String, (EthFilter, Instant)>>>;
 pub const ACTIVE_FILTER_TIMEOUT_SECS: u64 = 60 * 5;
 
 /// Contains all registered filters
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Filters {
     /// all currently active filters
     active_filters: FilterMap,
     /// How long we keep a live the filter after the last poll
     keepalive: Duration,
 }
-
-// === impl Filters ===
 
 impl Filters {
     /// Adds a new `EthFilter` to the set
@@ -125,23 +121,21 @@ pub enum EthFilter {
     PendingTransactions(Receiver<TxHash>),
 }
 
-// === impl EthFilter ===
-
 impl Stream for EthFilter {
     type Item = ResponseResult;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
         match pin {
-            EthFilter::Logs(logs) => Poll::Ready(Some(Ok(logs.poll(cx)).to_rpc_result())),
-            EthFilter::Blocks(blocks) => {
+            Self::Logs(logs) => Poll::Ready(Some(Ok(logs.poll(cx)).to_rpc_result())),
+            Self::Blocks(blocks) => {
                 let mut new_blocks = Vec::new();
                 while let Poll::Ready(Some(block)) = blocks.poll_next_unpin(cx) {
                     new_blocks.push(block.hash);
                 }
                 Poll::Ready(Some(Ok(new_blocks).to_rpc_result()))
             }
-            EthFilter::PendingTransactions(tx) => {
+            Self::PendingTransactions(tx) => {
                 let mut new_txs = Vec::new();
                 while let Poll::Ready(Some(tx_hash)) = tx.poll_next_unpin(cx) {
                     new_txs.push(tx_hash);
@@ -164,14 +158,12 @@ pub struct LogsFilter {
     /// existing logs that matched the filter when the listener was installed
     ///
     /// They'll be returned on the first pill
-    pub historic: Option<Vec<EthersLog>>,
+    pub historic: Option<Vec<Log>>,
 }
-
-// === impl LogsFilter ===
 
 impl LogsFilter {
     /// Returns all the logs since the last time this filter was polled
-    pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<EthersLog> {
+    pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<Log> {
         let mut logs = self.historic.take().unwrap_or_default();
         while let Poll::Ready(Some(block)) = self.blocks.poll_next_unpin(cx) {
             let b = self.storage.block(block.hash);

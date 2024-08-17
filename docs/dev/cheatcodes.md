@@ -113,7 +113,7 @@ The way bindings are generated and extra information can be found in the [`sol!`
 
 We leverage this macro to apply the [`Cheatcode` derive macro](#cheatcode-derive-macro) on the `Vm` interface.
 
-### [`Cheatcode`](../../crates/macros/impl/src/cheatcodes.rs) derive macro
+### [`Cheatcode`](../../crates/macros/src/cheatcodes.rs) derive macro
 
 This is derived once on the `Vm` interface declaration, which recursively applies it to all of the
 interface's items, as well as the `sol!`-generated items, such as the `VmCalls` enum.
@@ -165,11 +165,9 @@ update of the files.
 3. If a struct, enum, error, or event was added to `Vm`, update [`spec::Cheatcodes::new`]
 4. Update the JSON interface by running `cargo cheats` twice. This is expected to fail the first time that this is run after adding a new cheatcode; see [JSON interface](#json-interface)
 5. Write an integration test for the cheatcode in [`testdata/cheats/`]
-6. Submit a PR to [`forge-std`] updating the Solidity interfaces as necessary. Note that this step won't be necessary once the Solidity interfaces are generated using the JSON interface
 
 [`sol!`]: https://docs.rs/alloy-sol-macro/latest/alloy_sol_macro/macro.sol.html
 [`cheatcodes/spec/src/vm.rs`]: ../../crates/cheatcodes/spec/src/vm.rs
 [`cheatcodes`]: ../../crates/cheatcodes/
 [`spec::Cheatcodes::new`]: ../../crates/cheatcodes/spec/src/lib.rs#L74
-[`testdata/cheats/`]: ../../testdata/cheats/
-[`forge-std`]: https://github.com/foundry-rs/forge-std
+[`testdata/cheats/`]: ../../testdata/default/cheats/

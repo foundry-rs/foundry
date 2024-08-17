@@ -4,7 +4,7 @@ use crate::Config;
 use alloy_primitives::U256;
 use eyre::WrapErr;
 use figment::value::Value;
-use foundry_compilers::{
+use foundry_compilers::artifacts::{
     remappings::{Remapping, RemappingError},
     EvmVersion,
 };
@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use toml_edit::{Document, Item};
+use toml_edit::{DocumentMut, Item};
 
 /// Loads the config for the current project workspace
 pub fn load_config() -> Config {
@@ -216,9 +216,9 @@ pub fn get_available_profiles(toml_path: impl AsRef<Path>) -> eyre::Result<Vec<S
 
 /// Returns a [`toml_edit::Document`] loaded from the provided `path`.
 /// Can raise an error in case of I/O or parsing errors.
-fn read_toml(path: impl AsRef<Path>) -> eyre::Result<Document> {
+fn read_toml(path: impl AsRef<Path>) -> eyre::Result<DocumentMut> {
     let path = path.as_ref().to_owned();
-    let doc: Document = std::fs::read_to_string(path)?.parse()?;
+    let doc: DocumentMut = std::fs::read_to_string(path)?.parse()?;
     Ok(doc)
 }
 
@@ -236,35 +236,35 @@ where
     }
 }
 
-/// Deserialize an usize or
-pub(crate) fn deserialize_usize_or_max<'de, D>(deserializer: D) -> Result<usize, D::Error>
+/// Deserialize a `u64` or "max" for `u64::MAX`.
+pub(crate) fn deserialize_u64_or_max<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: Deserializer<'de>,
 {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Val {
-        Number(usize),
-        Text(String),
+        Number(u64),
+        String(String),
     }
 
-    let num = match Val::deserialize(deserializer)? {
-        Val::Number(num) => num,
-        Val::Text(s) => {
-            match s.as_str() {
-                "max" | "MAX" | "Max" => {
-                    // toml limitation
-                    i64::MAX as usize
-                }
-                s => s.parse::<usize>().map_err(D::Error::custom).unwrap(),
-            }
-        }
-    };
-    Ok(num)
+    match Val::deserialize(deserializer)? {
+        Val::Number(num) => Ok(num),
+        Val::String(s) if s.eq_ignore_ascii_case("max") => Ok(u64::MAX),
+        Val::String(s) => s.parse::<u64>().map_err(D::Error::custom),
+    }
+}
+
+/// Deserialize a `usize` or "max" for `usize::MAX`.
+pub(crate) fn deserialize_usize_or_max<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_u64_or_max(deserializer)?.try_into().map_err(D::Error::custom)
 }
 
 /// Helper type to parse both `u64` and `U256`
-#[derive(Copy, Clone, Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(untagged)]
 pub enum Numeric {
     /// A [U256] value.
@@ -274,10 +274,10 @@ pub enum Numeric {
 }
 
 impl From<Numeric> for U256 {
-    fn from(n: Numeric) -> U256 {
+    fn from(n: Numeric) -> Self {
         match n {
             Numeric::U256(n) => n,
-            Numeric::Num(n) => U256::from(n),
+            Numeric::Num(n) => Self::from(n),
         }
     }
 }
@@ -296,7 +296,10 @@ impl FromStr for Numeric {
 
 /// Returns the [SpecId] derived from [EvmVersion]
 #[inline]
-pub fn evm_spec_id(evm_version: &EvmVersion) -> SpecId {
+pub fn evm_spec_id(evm_version: &EvmVersion, alphanet: bool) -> SpecId {
+    if alphanet {
+        return SpecId::PRAGUE_EOF;
+    }
     match evm_version {
         EvmVersion::Homestead => SpecId::HOMESTEAD,
         EvmVersion::TangerineWhistle => SpecId::TANGERINE,
@@ -309,6 +312,8 @@ pub fn evm_spec_id(evm_version: &EvmVersion) -> SpecId {
         EvmVersion::London => SpecId::LONDON,
         EvmVersion::Paris => SpecId::MERGE,
         EvmVersion::Shanghai => SpecId::SHANGHAI,
+        EvmVersion::Cancun => SpecId::CANCUN,
+        EvmVersion::Prague => SpecId::PRAGUE_EOF,
     }
 }
 

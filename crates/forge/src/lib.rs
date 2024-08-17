@@ -1,28 +1,30 @@
+#![doc = include_str!("../README.md")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::B256;
 use foundry_compilers::ProjectCompileOutput;
 use foundry_config::{
     validate_profiles, Config, FuzzConfig, InlineConfig, InlineConfigError, InlineConfigParser,
     InvariantConfig, NatSpec,
 };
-
-use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
+use proptest::test_runner::{
+    FailurePersistence, FileFailurePersistence, RngAlgorithm, TestRng, TestRunner,
+};
 use std::path::Path;
 
 pub mod coverage;
 
 pub mod gas_report;
 
-pub mod link;
-
-mod multi_runner;
+pub mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
 mod runner;
 pub use runner::ContractRunner;
 
+mod progress;
 pub mod result;
 
 // TODO: remove
@@ -30,7 +32,7 @@ pub use foundry_common::traits::TestFilter;
 pub use foundry_evm::*;
 
 /// Metadata on how to run fuzz/invariant tests
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct TestOptions {
     /// The base "fuzz" test configuration. To be used as a fallback in case
     /// no more specific configs are found for a given run.
@@ -58,28 +60,37 @@ impl TestOptions {
         let mut inline_invariant = InlineConfig::<InvariantConfig>::default();
         let mut inline_fuzz = InlineConfig::<FuzzConfig>::default();
 
-        for natspec in natspecs {
-            // Perform general validation
-            validate_profiles(&natspec, &profiles)?;
-            FuzzConfig::validate_configs(&natspec)?;
-            InvariantConfig::validate_configs(&natspec)?;
+        // Validate all natspecs
+        for natspec in &natspecs {
+            validate_profiles(natspec, &profiles)?;
+        }
 
-            // Apply in-line configurations for the current profile
-            let configs: Vec<String> = natspec.current_profile_configs().collect();
-            let c: &str = &natspec.contract;
-            let f: &str = &natspec.function;
-            let line: String = natspec.debug_context();
-
-            match base_fuzz.try_merge(&configs) {
-                Ok(Some(conf)) => inline_fuzz.insert(c, f, conf),
-                Ok(None) => { /* No inline config found, do nothing */ }
-                Err(e) => Err(InlineConfigError { line: line.clone(), source: e })?,
+        // Firstly, apply contract-level configurations
+        for natspec in natspecs.iter().filter(|n| n.function.is_none()) {
+            if let Some(fuzz) = base_fuzz.merge(natspec)? {
+                inline_fuzz.insert_contract(&natspec.contract, fuzz);
             }
 
-            match base_invariant.try_merge(&configs) {
-                Ok(Some(conf)) => inline_invariant.insert(c, f, conf),
-                Ok(None) => { /* No inline config found, do nothing */ }
-                Err(e) => Err(InlineConfigError { line: line.clone(), source: e })?,
+            if let Some(invariant) = base_invariant.merge(natspec)? {
+                inline_invariant.insert_contract(&natspec.contract, invariant);
+            }
+        }
+
+        for (natspec, f) in natspecs.iter().filter_map(|n| n.function.as_ref().map(|f| (n, f))) {
+            // Apply in-line configurations for the current profile
+            let c = &natspec.contract;
+
+            // We might already have inserted contract-level configs above, so respect data already
+            // present in inline configs.
+            let base_fuzz = inline_fuzz.get(c, f).unwrap_or(&base_fuzz);
+            let base_invariant = inline_invariant.get(c, f).unwrap_or(&base_invariant);
+
+            if let Some(fuzz) = base_fuzz.merge(natspec)? {
+                inline_fuzz.insert_fn(c, f, fuzz);
+            }
+
+            if let Some(invariant) = base_invariant.merge(natspec)? {
+                inline_invariant.insert_fn(c, f, invariant);
             }
         }
 
@@ -93,12 +104,19 @@ impl TestOptions {
     /// - `contract_id` is the id of the test contract, expressed as a relative path from the
     ///   project root.
     /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn fuzz_runner<S>(&self, contract_id: S, test_fn: S) -> TestRunner
-    where
-        S: Into<String>,
-    {
-        let fuzz = self.fuzz_config(contract_id, test_fn);
-        self.fuzzer_with_cases(fuzz.runs)
+    pub fn fuzz_runner(&self, contract_id: &str, test_fn: &str) -> TestRunner {
+        let fuzz_config = self.fuzz_config(contract_id, test_fn).clone();
+        let failure_persist_path = fuzz_config
+            .failure_persist_dir
+            .unwrap()
+            .join(fuzz_config.failure_persist_file.unwrap())
+            .into_os_string()
+            .into_string()
+            .unwrap();
+        self.fuzzer_with_cases(
+            fuzz_config.runs,
+            Some(Box::new(FileFailurePersistence::Direct(failure_persist_path.leak()))),
+        )
     }
 
     /// Returns an "invariant" test runner instance. Parameters are used to select tight scoped fuzz
@@ -108,12 +126,9 @@ impl TestOptions {
     /// - `contract_id` is the id of the test contract, expressed as a relative path from the
     ///   project root.
     /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn invariant_runner<S>(&self, contract_id: S, test_fn: S) -> TestRunner
-    where
-        S: Into<String>,
-    {
+    pub fn invariant_runner(&self, contract_id: &str, test_fn: &str) -> TestRunner {
         let invariant = self.invariant_config(contract_id, test_fn);
-        self.fuzzer_with_cases(invariant.runs)
+        self.fuzzer_with_cases(invariant.runs, None)
     }
 
     /// Returns a "fuzz" configuration setup. Parameters are used to select tight scoped fuzz
@@ -123,10 +138,7 @@ impl TestOptions {
     /// - `contract_id` is the id of the test contract, expressed as a relative path from the
     ///   project root.
     /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn fuzz_config<S>(&self, contract_id: S, test_fn: S) -> &FuzzConfig
-    where
-        S: Into<String>,
-    {
+    pub fn fuzz_config(&self, contract_id: &str, test_fn: &str) -> &FuzzConfig {
         self.inline_fuzz.get(contract_id, test_fn).unwrap_or(&self.fuzz)
     }
 
@@ -137,29 +149,32 @@ impl TestOptions {
     /// - `contract_id` is the id of the test contract, expressed as a relative path from the
     ///   project root.
     /// - `test_fn` is the name of the test function declared inside the test contract.
-    pub fn invariant_config<S>(&self, contract_id: S, test_fn: S) -> &InvariantConfig
-    where
-        S: Into<String>,
-    {
+    pub fn invariant_config(&self, contract_id: &str, test_fn: &str) -> &InvariantConfig {
         self.inline_invariant.get(contract_id, test_fn).unwrap_or(&self.invariant)
     }
 
-    pub fn fuzzer_with_cases(&self, cases: u32) -> TestRunner {
-        // TODO: Add Options to modify the persistence
-        let cfg = proptest::test_runner::Config {
-            failure_persistence: None,
+    pub fn fuzzer_with_cases(
+        &self,
+        cases: u32,
+        file_failure_persistence: Option<Box<dyn FailurePersistence>>,
+    ) -> TestRunner {
+        let config = proptest::test_runner::Config {
+            failure_persistence: file_failure_persistence,
             cases,
             max_global_rejects: self.fuzz.max_test_rejects,
+            // Disable proptest shrink: for fuzz tests we provide single counterexample,
+            // for invariant tests we shrink outside proptest.
+            max_shrink_iters: 0,
             ..Default::default()
         };
 
-        if let Some(ref fuzz_seed) = self.fuzz.seed {
-            trace!(target: "forge::test", "building deterministic fuzzer with seed {}", fuzz_seed);
-            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &B256::from(*fuzz_seed).0);
-            TestRunner::new_with_rng(cfg, rng)
+        if let Some(seed) = &self.fuzz.seed {
+            trace!(target: "forge::test", %seed, "building deterministic fuzzer");
+            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>());
+            TestRunner::new_with_rng(config, rng)
         } else {
             trace!(target: "forge::test", "building stochastic fuzzer");
-            TestRunner::new(cfg)
+            TestRunner::new(config)
         }
     }
 }
@@ -211,23 +226,3 @@ impl TestOptionsBuilder {
         TestOptions::new(output, root, profiles, base_fuzz, base_invariant)
     }
 }
-
-mod utils2 {
-    use alloy_primitives::Address;
-    use ethers_core::types::BlockId;
-    use ethers_providers::{Middleware, Provider};
-    use eyre::Context;
-    use foundry_common::types::{ToAlloy, ToEthers};
-
-    pub async fn next_nonce(
-        caller: Address,
-        provider_url: &str,
-        block: Option<BlockId>,
-    ) -> eyre::Result<u64> {
-        let provider = Provider::try_from(provider_url)
-            .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
-        let res = provider.get_transaction_count(caller.to_ethers(), block).await?.to_alloy();
-        res.try_into().map_err(Into::into)
-    }
-}
-pub use utils2::*;

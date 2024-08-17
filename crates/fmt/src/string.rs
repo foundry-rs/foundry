@@ -4,7 +4,7 @@
 /// This is a simplified version of the
 /// [actual parser](https://docs.soliditylang.org/en/v0.8.15/grammar.html#a4.SolidityLexer.EscapeSequence)
 /// as we don't care about hex or other character meanings
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum QuoteState {
     /// Not currently in quoted string
     #[default]
@@ -65,7 +65,7 @@ impl<'a> Iterator for QuoteStateCharIndices<'a> {
     }
 }
 
-/// An iterator over the the indices of quoted string locations
+/// An iterator over the indices of quoted string locations
 pub struct QuotedRanges<'a>(QuoteStateCharIndices<'a>);
 
 impl<'a> QuotedRanges<'a> {
@@ -100,12 +100,14 @@ impl<'a> Iterator for QuotedRanges<'a> {
 
 /// Helpers for iterating over quoted strings
 pub trait QuotedStringExt {
-    /// Get an iterator of characters, indices and their quoted string state
-    fn quote_state_char_indices(&self) -> QuoteStateCharIndices;
-    /// Get an iterator of quoted string ranges
-    fn quoted_ranges(&self) -> QuotedRanges {
+    /// Returns an iterator of characters, indices and their quoted string state.
+    fn quote_state_char_indices(&self) -> QuoteStateCharIndices<'_>;
+
+    /// Returns an iterator of quoted string ranges.
+    fn quoted_ranges(&self) -> QuotedRanges<'_> {
         QuotedRanges(self.quote_state_char_indices())
     }
+
     /// Check to see if a string is quoted. This will return true if the first character
     /// is a quote and the last character is a quote with no non-quoted sections in between.
     fn is_quoted(&self) -> bool {
@@ -126,13 +128,13 @@ impl<T> QuotedStringExt for T
 where
     T: AsRef<str>,
 {
-    fn quote_state_char_indices(&self) -> QuoteStateCharIndices {
+    fn quote_state_char_indices(&self) -> QuoteStateCharIndices<'_> {
         QuoteStateCharIndices::new(self.as_ref())
     }
 }
 
 impl QuotedStringExt for str {
-    fn quote_state_char_indices(&self) -> QuoteStateCharIndices {
+    fn quote_state_char_indices(&self) -> QuoteStateCharIndices<'_> {
         QuoteStateCharIndices::new(self)
     }
 }
@@ -140,7 +142,7 @@ impl QuotedStringExt for str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pretty_assertions::assert_eq;
+    use similar_asserts::assert_eq;
 
     #[test]
     fn quote_state_char_indices() {

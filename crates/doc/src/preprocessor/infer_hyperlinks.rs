@@ -24,7 +24,7 @@ pub const INFER_INLINE_HYPERLINKS_ID: PreprocessorId = PreprocessorId("infer inl
 /// comments for dev comment tags.
 ///
 /// This preprocessor replaces inline links in comments with the links to the referenced items.
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct InferInlineHyperlinks;
 
@@ -179,7 +179,7 @@ impl InferInlineHyperlinks {
                 };
                 if let Some(target) = target {
                     let display_value = link.markdown_link_display_value();
-                    let markdown_link = format!("[{}]({})", display_value, target);
+                    let markdown_link = format!("[{display_value}]({target})");
                     // replace the link with the markdown link
                     comment.value =
                         comment.value.as_str().replacen(link.as_str(), markdown_link.as_str(), 1);

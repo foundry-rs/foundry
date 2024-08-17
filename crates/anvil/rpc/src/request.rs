@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// A JSON-RPC request object, a method call
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RpcMethodCall {
     /// The version of the protocol
@@ -26,7 +26,7 @@ impl RpcMethodCall {
 
 /// Represents a JSON-RPC request which is considered a notification (missing [Id] optional
 /// [Version])
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RpcNotification {
     pub jsonrpc: Option<Version>,
@@ -36,7 +36,7 @@ pub struct RpcNotification {
 }
 
 /// Representation of a single JSON-RPC call
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RpcCall {
     /// the RPC method to invoke
@@ -52,7 +52,7 @@ pub enum RpcCall {
 }
 
 /// Represents a JSON-RPC request.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[serde(untagged)]
 pub enum Request {
@@ -63,7 +63,7 @@ pub enum Request {
 }
 
 /// Request parameters
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum RequestParams {
     /// no parameters provided
@@ -77,7 +77,7 @@ pub enum RequestParams {
 impl From<RequestParams> for serde_json::Value {
     fn from(params: RequestParams) -> Self {
         match params {
-            RequestParams::None => serde_json::Value::Null,
+            RequestParams::None => Self::Null,
             RequestParams::Array(arr) => arr.into(),
             RequestParams::Object(obj) => obj.into(),
         }
@@ -89,13 +89,13 @@ fn no_params() -> RequestParams {
 }
 
 /// Represents the version of the RPC protocol
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Version {
     #[serde(rename = "2.0")]
     V2,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Id {
     String(String),
@@ -106,9 +106,9 @@ pub enum Id {
 impl fmt::Display for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Id::String(s) => s.fmt(f),
-            Id::Number(n) => n.fmt(f),
-            Id::Null => f.write_str("null"),
+            Self::String(s) => s.fmt(f),
+            Self::Number(n) => n.fmt(f),
+            Self::Null => f.write_str("null"),
         }
     }
 }

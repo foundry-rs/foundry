@@ -1,16 +1,20 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::{artifacts::Metadata, remappings::Remapping, ConfigurableContractArtifact};
-use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
+use alloy_primitives::hex;
+use foundry_compilers::artifacts::{remappings::Remapping, ConfigurableContractArtifact, Metadata};
+use foundry_config::{
+    parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,
+};
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
+    rpc::next_etherscan_api_key,
     util::{pretty_err, read_string, OutputExt, TestCommand},
 };
 use semver::Version;
 use std::{
     env, fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
 };
@@ -393,7 +397,7 @@ forgetest!(can_init_vscode, |prj, cmd| {
     let remappings = prj.root().join("remappings.txt");
     assert!(remappings.is_file());
     let content = std::fs::read_to_string(remappings).unwrap();
-    assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/",);
+    assert_eq!(content, "forge-std/=lib/forge-std/src/",);
 });
 
 // checks that forge can init with template
@@ -432,6 +436,97 @@ forgetest!(fail_init_nonexistent_template, |prj, cmd| {
     cmd.assert_non_empty_stderr();
 });
 
+// checks that clone works
+forgetest!(can_clone, |prj, cmd| {
+    prj.wipe();
+
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(!foundry_toml.exists());
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "0x044b75f554b886A065b9567891e45c79542d7357",
+    ])
+    .arg(prj.root());
+    cmd.assert_non_empty_stdout();
+
+    let s = read_string(&foundry_toml);
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
+// Checks that quiet mode does not print anything for clone
+forgetest!(can_clone_quiet, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--quiet",
+        "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec",
+    ])
+    .arg(prj.root());
+    cmd.assert_empty_stdout();
+});
+
+// checks that clone works with --no-remappings-txt
+forgetest!(can_clone_no_remappings_txt, |prj, cmd| {
+    prj.wipe();
+
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(!foundry_toml.exists());
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--no-remappings-txt",
+        "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
+    ])
+    .arg(prj.root());
+    cmd.assert_non_empty_stdout();
+
+    let s = read_string(&foundry_toml);
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
+// checks that clone works with --keep-directory-structure
+forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
+    prj.wipe();
+
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(!foundry_toml.exists());
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--keep-directory-structure",
+        "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
+    ])
+    .arg(prj.root());
+    let out = cmd.unchecked_output();
+    if out.stdout_lossy().contains("502 Bad Gateway") {
+        // etherscan nginx proxy issue, skip this test:
+        //
+        // stdout:
+        // Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from
+        // Etherscan... 2024-07-05T11:40:11.801765Z ERROR etherscan: Failed to deserialize
+        // response: expected value at line 1 column 1 res="<html>\r\n<head><title>502 Bad
+        // Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad
+        // Gateway</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
+
+        eprintln!("Skipping test due to 502 Bad Gateway: {}", cmd.make_error_message(&out, false));
+        return
+    }
+    cmd.ensure_success(&out).unwrap();
+
+    let s = read_string(&foundry_toml);
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
 // checks that `clean` removes dapptools style paths
 forgetest!(can_clean, |prj, cmd| {
     prj.assert_create_dirs_exists();
@@ -466,6 +561,29 @@ forgetest_init!(can_clean_config, |prj, cmd| {
     assert!(!artifact.exists());
 });
 
+// checks that `clean` removes fuzz and invariant cache dirs
+forgetest_init!(can_clean_test_cache, |prj, cmd| {
+    let config = Config {
+        fuzz: FuzzConfig::new("cache/fuzz".into()),
+        invariant: InvariantConfig::new("cache/invariant".into()),
+        ..Default::default()
+    };
+    prj.write_config(config);
+    // default test contract is written in custom out directory
+    let fuzz_cache_dir = prj.root().join("cache/fuzz");
+    let _ = fs::create_dir(fuzz_cache_dir.clone());
+    let invariant_cache_dir = prj.root().join("cache/invariant");
+    let _ = fs::create_dir(invariant_cache_dir.clone());
+
+    assert!(fuzz_cache_dir.exists());
+    assert!(invariant_cache_dir.exists());
+
+    cmd.forge_fuse().arg("clean");
+    cmd.output();
+    assert!(!fuzz_cache_dir.exists());
+    assert!(!invariant_cache_dir.exists());
+});
+
 // checks that extra output works
 forgetest_init!(can_emit_extra_output, |prj, cmd| {
     cmd.args(["build", "--extra-output", "metadata"]);
@@ -473,7 +591,7 @@ forgetest_init!(can_emit_extra_output, |prj, cmd| {
 
     let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
-        foundry_compilers::utils::read_json_file(artifact_path).unwrap();
+        foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
 
     cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
@@ -481,7 +599,7 @@ forgetest_init!(can_emit_extra_output, |prj, cmd| {
 
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
-    let _artifact: Metadata = foundry_compilers::utils::read_json_file(metadata_path).unwrap();
+    let _artifact: Metadata = foundry_compilers::utils::read_json_file(&metadata_path).unwrap();
 });
 
 // checks that extra output works
@@ -491,7 +609,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
 
     let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
-        foundry_compilers::utils::read_json_file(artifact_path).unwrap();
+        foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
     assert!(artifact.ir.is_some());
     assert!(artifact.ir_optimized.is_some());
@@ -510,7 +628,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
 
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
-    let _artifact: Metadata = foundry_compilers::utils::read_json_file(metadata_path).unwrap();
+    let _artifact: Metadata = foundry_compilers::utils::read_json_file(&metadata_path).unwrap();
 
     let iropt = prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.iropt"));
     std::fs::read_to_string(iropt).unwrap();
@@ -536,31 +654,10 @@ contract Greeter {
     cmd.arg("build");
 
     let output = cmd.stdout_lossy();
-    assert!(output.contains(
-        "
-Compiler run successful with warnings:
-Warning (5667): Warning: Unused function parameter. Remove or comment out the variable name to silence this warning.
-",
-    ));
+    assert!(output.contains("Warning"), "{output}");
 });
 
 // Tests that direct import paths are handled correctly
-//
-// NOTE(onbjerg): Disabled for Windows -- for some reason solc fails with a bogus error message
-// here: error[9553]: TypeError: Invalid type for argument in function call. Invalid implicit
-// conversion from struct Bar memory to struct Bar memory requested.   --> src\Foo.sol:12:22:
-//    |
-// 12 |         FooLib.check(b);
-//    |                      ^
-//
-//
-//
-// error[9553]: TypeError: Invalid type for argument in function call. Invalid implicit conversion
-// from contract Foo to contract Foo requested.   --> src\Foo.sol:15:23:
-//    |
-// 15 |         FooLib.check2(this);
-//    |                       ^^^^
-#[cfg(not(target_os = "windows"))]
 forgetest!(can_handle_direct_imports_into_src, |prj, cmd| {
     prj.add_source(
         "Foo",
@@ -635,15 +732,12 @@ contract Foo {
 });
 
 // test that `forge snapshot` commands work
-forgetest!(
-    #[serial_test::serial]
-    can_check_snapshot,
-    |prj, cmd| {
-        prj.insert_ds_test();
+forgetest!(can_check_snapshot, |prj, cmd| {
+    prj.insert_ds_test();
 
-        prj.add_source(
-            "ATest.t.sol",
-            r#"
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
 import "./test.sol";
 contract ATest is DSTest {
     function testExample() public {
@@ -651,20 +745,54 @@ contract ATest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-        cmd.arg("snapshot");
+    cmd.arg("snapshot");
 
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_check_snapshot.stdout"),
-        );
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_check_snapshot.stdout"),
+    );
 
-        cmd.arg("--check");
-        let _ = cmd.output();
-    }
-);
+    cmd.arg("--check");
+    let _ = cmd.output();
+});
+
+// test that `forge build` does not print `(with warnings)` if file path is ignored
+forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {
+    // Ignoring path and setting empty error_codes as default would set would set some error codes
+    prj.write_config(Config {
+        ignored_file_paths: vec![Path::new("src").to_path_buf()],
+        ignored_error_codes: vec![],
+        ..Default::default()
+    });
+
+    prj.add_raw_source(
+        "src/example.sol",
+        r"
+pragma solidity *;
+contract A {
+    function testExample() public {}
+}
+",
+    )
+    .unwrap();
+
+    cmd.args(["build", "--force"]);
+    let out = cmd.stdout_lossy();
+    // expect no warning as path is ignored
+    assert!(out.contains("Compiler run successful!"));
+    assert!(!out.contains("Compiler run successful with warnings:"));
+
+    // Reconfigure without ignored paths or error codes and check for warnings
+    // need to reset empty error codes as default would set some error codes
+    prj.write_config(Config { ignored_error_codes: vec![], ..Default::default() });
+
+    let out = cmd.stdout_lossy();
+    // expect warnings as path is not ignored
+    assert!(out.contains("Compiler run successful with warnings:"), "{out}");
+    assert!(out.contains("Warning") && out.contains("SPDX-License-Identifier"), "{out}");
+});
 
 // test that `forge build` does not print `(with warnings)` if there arent any
 forgetest!(can_compile_without_warnings, |prj, cmd| {
@@ -737,37 +865,6 @@ contract A {
     assert!(out.contains("Compiler run successful!"));
     assert!(!out.contains("Compiler run successful with warnings:"));
 });
-
-// test against a local checkout, useful to debug with local ethers-rs patch
-forgetest!(
-    #[ignore]
-    can_compile_local_spells,
-    |_prj, cmd| {
-        let current_dir = std::env::current_dir().unwrap();
-        let root = current_dir
-            .join("../../foundry-integration-tests/testdata/spells-mainnet")
-            .to_string_lossy()
-            .to_string();
-        println!("project root: \"{root}\"");
-
-        let eth_rpc_url = foundry_common::rpc::next_http_archive_rpc_endpoint();
-        let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
-
-        cmd.args([
-            "test",
-            "--root",
-            root.as_str(),
-            "--fork-url",
-            eth_rpc_url.as_str(),
-            "--fork-block-number",
-            "14435000",
-            "--libraries",
-            dss_exec_lib,
-            "-vvvvv",
-        ]);
-        cmd.assert_non_empty_stdout();
-    }
-);
 
 // test that a failing `forge build` does not impact followup builds
 forgetest!(can_build_after_failure, |prj, cmd| {
@@ -1255,36 +1352,34 @@ contract ContractThreeTest is DSTest {
     .unwrap();
 
     // report for One
-    prj.write_config(Config {
-        gas_reports: (vec!["ContractOne".to_string()]),
-        gas_reports_ignore: (vec![]),
-        ..Default::default()
-    });
+    prj.write_config(Config { gas_reports: vec!["ContractOne".to_string()], ..Default::default() });
     cmd.forge_fuse();
     let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
-    assert!(first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"));
+    assert!(
+        first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"),
+        "foo:\n{first_out}"
+    );
 
     // report for Two
-    cmd.forge_fuse();
-    prj.write_config(Config {
-        gas_reports: (vec!["ContractTwo".to_string()]),
-        ..Default::default()
-    });
+    prj.write_config(Config { gas_reports: vec!["ContractTwo".to_string()], ..Default::default() });
     cmd.forge_fuse();
     let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
     assert!(
-        !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz")
+        !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz"),
+        "bar:\n{second_out}"
     );
 
     // report for Three
-    cmd.forge_fuse();
     prj.write_config(Config {
-        gas_reports: (vec!["ContractThree".to_string()]),
+        gas_reports: vec!["ContractThree".to_string()],
         ..Default::default()
     });
     cmd.forge_fuse();
     let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
-    assert!(!third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"));
+    assert!(
+        !third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"),
+        "baz:\n{third_out}"
+    );
 });
 
 forgetest!(gas_ignore_some_contracts, |prj, cmd| {
@@ -1538,13 +1633,17 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
     cmd.arg("build");
 
     let output = cmd.stdout_lossy();
-    assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
-    assert!(output.contains("No files changed, compilation skipped"), "{}", output);
+    assert!(output.contains("Missing dependencies found. Installing now"), "{output}");
+
+    // re-run
+    let output = cmd.stdout_lossy();
+    assert!(!output.contains("Missing dependencies found. Installing now"), "{output}");
+    assert!(output.contains("No files changed, compilation skipped"), "{output}");
 });
 
 // checks that extra output works
 forgetest_init!(can_build_skip_contracts, |prj, cmd| {
-    prj.clear_cache();
+    prj.clear();
 
     // only builds the single template contract `src/*`
     cmd.args(["build", "--skip", "tests", "--skip", "scripts"]);
@@ -1561,8 +1660,6 @@ forgetest_init!(can_build_skip_contracts, |prj, cmd| {
 });
 
 forgetest_init!(can_build_skip_glob, |prj, cmd| {
-    prj.clear_cache();
-
     prj.add_test(
         "Foo",
         r"
@@ -1573,9 +1670,78 @@ function test_run() external {}
     .unwrap();
 
     // only builds the single template contract `src/*` even if `*.t.sol` or `.s.sol` is absent
-    cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**"]);
+    prj.clear();
+    cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**", "--force"]);
     cmd.unchecked_output().stdout_matches_path(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),
+    );
+
+    cmd.forge_fuse().args(["build", "--skip", "./test/**", "--skip", "./script/**", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),
+    );
+});
+
+forgetest_init!(can_build_specific_paths, |prj, cmd| {
+    prj.wipe();
+    prj.add_source(
+        "Counter.sol",
+        r"
+contract Counter {
+function count() external {}
+}",
+    )
+    .unwrap();
+    prj.add_test(
+        "Foo.sol",
+        r"
+contract Foo {
+function test_foo() external {}
+}",
+    )
+    .unwrap();
+    prj.add_test(
+        "Bar.sol",
+        r"
+contract Bar {
+function test_bar() external {}
+}",
+    )
+    .unwrap();
+
+    // Build 2 files within test dir
+    prj.clear();
+    cmd.args(["build", "test", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_path_with_two_files.stdout"),
+    );
+
+    // Build one file within src dir
+    prj.clear();
+    cmd.forge_fuse();
+    cmd.args(["build", "src", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_path_with_one_file.stdout"),
+    );
+
+    // Build 3 files from test and src dirs
+    prj.clear();
+    cmd.forge_fuse();
+    cmd.args(["build", "src", "test", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_path_with_three_files.stdout"),
+    );
+
+    // Build single test file
+    prj.clear();
+    cmd.forge_fuse();
+    cmd.args(["build", "test/Bar.sol", "--force"]);
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_path_with_one_file.stdout"),
     );
 });
 
@@ -1610,4 +1776,18 @@ forgetest_init!(can_build_names_repeatedly, |prj, cmd| {
 
     let unchanged = cmd.stdout_lossy();
     assert!(unchanged.contains(list), "{}", list);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/6816>
+forgetest_init!(can_inspect_counter_pretty, |prj, cmd| {
+    cmd.args(["inspect", "src/Counter.sol:Counter", "abi", "--pretty"]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(
+        output.trim(),
+        "interface Counter {
+    function increment() external;
+    function number() external view returns (uint256);
+    function setNumber(uint256 newNumber) external;
+}"
+    );
 });

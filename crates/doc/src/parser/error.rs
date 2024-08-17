@@ -2,7 +2,7 @@ use forge_fmt::FormatterError;
 use thiserror::Error;
 
 /// The parser error.
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 #[error(transparent)]
 pub enum ParserError {
     /// Formatter error.

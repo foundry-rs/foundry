@@ -7,22 +7,25 @@
 use eyre::Result;
 use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_compilers::{
-    artifacts::{Source, Sources},
-    CompilerInput, CompilerOutput, EvmVersion, Solc,
+    artifacts::{CompilerOutput, Settings, SolcInput, Source, Sources},
+    compilers::solc::Solc,
 };
 use foundry_config::{Config, SolcReq};
 use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use solang_parser::pt;
+use solang_parser::{diagnostics::Diagnostic, pt};
 use std::{collections::HashMap, fs, path::PathBuf};
 use yansi::Paint;
+
+/// The minimum Solidity version of the `Vm` interface.
+pub const MIN_VM_VERSION: Version = Version::new(0, 6, 2);
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
 static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
 
 /// Intermediate output for the compiled [SessionSource]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntermediateOutput {
     /// All expressions within the REPL contract's run function and top level scope.
     #[serde(skip)]
@@ -34,7 +37,7 @@ pub struct IntermediateOutput {
 
 /// A refined intermediate parse tree for a contract that enables easy lookups
 /// of definitions.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntermediateContract {
     /// All function definitions within the contract
     #[serde(skip)]
@@ -54,7 +57,7 @@ pub struct IntermediateContract {
 type IntermediateContracts = HashMap<String, IntermediateContract>;
 
 /// Full compilation output for the [SessionSource]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GeneratedOutput {
     /// The [IntermediateOutput] component
     pub intermediate: IntermediateOutput,
@@ -63,12 +66,14 @@ pub struct GeneratedOutput {
 }
 
 /// Configuration for the [SessionSource]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SessionSourceConfig {
     /// Foundry configuration
     pub foundry_config: Config,
     /// EVM Options
     pub evm_opts: EvmOpts,
+    /// Disable the default `Vm` import.
+    pub no_vm: bool,
     #[serde(skip)]
     /// In-memory REVM db for the session's runner.
     pub backend: Option<Backend>,
@@ -89,52 +94,43 @@ impl SessionSourceConfig {
         let solc_req = if let Some(solc_req) = self.foundry_config.solc.clone() {
             solc_req
         } else if let Some(version) = Solc::installed_versions().into_iter().max() {
-            SolcReq::Version(version.into())
+            SolcReq::Version(version)
         } else {
             if !self.foundry_config.offline {
-                print!("{}", Paint::green("No solidity versions installed! "));
+                print!("{}", "No solidity versions installed! ".green());
             }
             // use default
-            SolcReq::Version("0.8.19".parse().unwrap())
+            SolcReq::Version(Version::new(0, 8, 19))
         };
 
         match solc_req {
             SolcReq::Version(version) => {
-                // We now need to verify if the solc version provided is supported by the evm
-                // version set. If not, we bail and ask the user to provide a newer version.
-                // 1. Do we need solc 0.8.18 or higher?
-                let evm_version = self.foundry_config.evm_version;
-                let needs_post_merge_solc = evm_version >= EvmVersion::Paris;
-                // 2. Check if the version provided is less than 0.8.18 and bail,
-                // or leave it as-is if we don't need a post merge solc version or the version we
-                // have is good enough.
-                let v = if needs_post_merge_solc && version < Version::new(0, 8, 18) {
-                    eyre::bail!("solc {version} is not supported by the set evm version: {evm_version}. Please install and use a version of solc higher or equal to 0.8.18.
-You can also set the solc version in your foundry.toml.")
+                // Validate that the requested evm version is supported by the solc version
+                let req_evm_version = self.foundry_config.evm_version;
+                if let Some(compat_evm_version) = req_evm_version.normalize_version_solc(&version) {
+                    if req_evm_version > compat_evm_version {
+                        eyre::bail!(
+                            "The set evm version, {req_evm_version}, is not supported by solc {version}. Upgrade to a newer solc version."
+                        );
+                    }
+                }
+
+                let solc = if let Some(solc) = Solc::find_svm_installed_version(&version)? {
+                    solc
                 } else {
-                    version.to_string()
-                };
-
-                let mut solc = Solc::find_svm_installed_version(&v)?;
-
-                if solc.is_none() {
                     if self.foundry_config.offline {
                         eyre::bail!("can't install missing solc {version} in offline mode")
                     }
-                    println!(
-                        "{}",
-                        Paint::green(format!("Installing solidity version {version}..."))
-                    );
-                    Solc::blocking_install(&version)?;
-                    solc = Solc::find_svm_installed_version(&v)?;
-                }
-                solc.ok_or_else(|| eyre::eyre!("Failed to install {version}"))
+                    println!("{}", format!("Installing solidity version {version}...").green());
+                    Solc::blocking_install(&version)?
+                };
+                Ok(solc)
             }
             SolcReq::Local(solc) => {
                 if !solc.is_file() {
                     eyre::bail!("`solc` {} does not exist", solc.display());
                 }
-                Ok(Solc::new(solc))
+                Ok(Solc::new(solc)?)
             }
         }
     }
@@ -143,7 +139,7 @@ You can also set the solc version in your foundry.toml.")
 /// REPL Session Source wrapper
 ///
 /// Heavily based on soli's [`ConstructedSource`](https://github.com/jpopesculian/soli/blob/master/src/main.rs#L166)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionSource {
     /// The file name
     pub file_name: PathBuf,
@@ -184,9 +180,11 @@ impl SessionSource {
     ///
     /// A new instance of [SessionSource]
     #[track_caller]
-    pub fn new(solc: Solc, config: SessionSourceConfig) -> Self {
-        #[cfg(debug_assertions)]
-        let _ = solc.version().unwrap();
+    pub fn new(solc: Solc, mut config: SessionSourceConfig) -> Self {
+        if solc.version < MIN_VM_VERSION && !config.no_vm {
+            tracing::info!(version=%solc.version, minimum=%MIN_VM_VERSION, "Disabling VM injection");
+            config.no_vm = true;
+        }
 
         Self {
             file_name: PathBuf::from("ReplContract.sol".to_string()),
@@ -226,7 +224,7 @@ impl SessionSource {
     ///
     /// Optionally, a shallow-cloned [SessionSource] with the passed content appended to the
     /// source code.
-    pub fn clone_with_new_line(&self, mut content: String) -> Result<(SessionSource, bool)> {
+    pub fn clone_with_new_line(&self, mut content: String) -> Result<(Self, bool)> {
         let new_source = self.shallow_clone();
         if let Some(parsed) = parse_fragment(new_source.solc, new_source.config, &content)
             .or_else(|| {
@@ -285,59 +283,54 @@ impl SessionSource {
 
     /// Clears global code from the source
     pub fn drain_global_code(&mut self) -> &mut Self {
-        self.global_code.clear();
+        String::clear(&mut self.global_code);
         self.generated_output = None;
         self
     }
 
     /// Clears top-level code from the source
     pub fn drain_top_level_code(&mut self) -> &mut Self {
-        self.top_level_code.clear();
+        String::clear(&mut self.top_level_code);
         self.generated_output = None;
         self
     }
 
     /// Clears the "run()" function's code
     pub fn drain_run(&mut self) -> &mut Self {
-        self.run_code.clear();
+        String::clear(&mut self.run_code);
         self.generated_output = None;
         self
     }
 
-    /// Generates and foundry_compilers::CompilerInput from the source
+    /// Generates and [`SolcInput`] from the source.
     ///
     /// ### Returns
     ///
-    /// A [CompilerInput] object containing forge-std's `Vm` interface as well as the REPL contract
+    /// A [`SolcInput`] object containing forge-std's `Vm` interface as well as the REPL contract
     /// source.
-    pub fn compiler_input(&self) -> CompilerInput {
+    pub fn compiler_input(&self) -> SolcInput {
         let mut sources = Sources::new();
         sources.insert(self.file_name.clone(), Source::new(self.to_repl_source()));
 
+        let remappings = self.config.foundry_config.get_all_remappings().collect::<Vec<_>>();
+
         // Include Vm.sol if forge-std remapping is not available
-        if !self
-            .config
-            .foundry_config
-            .get_all_remappings()
-            .into_iter()
-            .any(|r| r.name.starts_with("forge-std"))
-        {
-            sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE.to_owned()));
+        if !self.config.no_vm && !remappings.iter().any(|r| r.name.starts_with("forge-std")) {
+            sources.insert(PathBuf::from("forge-std/Vm.sol"), Source::new(VM_SOURCE));
         }
 
+        let settings = Settings {
+            remappings,
+            evm_version: Some(self.config.foundry_config.evm_version),
+            ..Default::default()
+        };
+
         // we only care about the solidity source, so we can safely unwrap
-        let mut compiler_input = CompilerInput::with_sources(sources)
+        SolcInput::resolve_and_build(sources, settings)
             .into_iter()
             .next()
-            .expect("Solidity source not found");
-
-        // get all remappings from the config
-        compiler_input.settings.remappings = self.config.foundry_config.get_all_remappings();
-
-        // We also need to enforce the EVM version that the user has specified.
-        compiler_input.settings.evm_version = Some(self.config.foundry_config.evm_version);
-
-        compiler_input
+            .map(|i| i.sanitized(&self.solc.version))
+            .expect("Solidity source not found")
     }
 
     /// Compiles the source using [solang_parser]
@@ -445,25 +438,28 @@ impl SessionSource {
     ///
     /// The [SessionSource] represented as a Forge Script contract.
     pub fn to_script_source(&self) -> String {
-        let Version { major, minor, patch, .. } = self.solc.version().unwrap();
+        let Version { major, minor, patch, .. } = self.solc.version;
+        let Self { contract_name, global_code, top_level_code, run_code, config, .. } = self;
+
+        let script_import =
+            if !config.no_vm { "import {Script} from \"forge-std/Script.sol\";\n" } else { "" };
+
         format!(
             r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^{major}.{minor}.{patch};
 
-import {{Script}} from "forge-std/Script.sol";
-{}
+{script_import}
+{global_code}
 
-contract {} is Script {{
-    {}
-    
+contract {contract_name} is Script {{
+    {top_level_code}
+  
     /// @notice Script entry point
     function run() public {{
-        {}
+        {run_code}
     }}
-}}
-            "#,
-            self.global_code, self.contract_name, self.top_level_code, self.run_code,
+}}"#,
         )
     }
 
@@ -473,26 +469,35 @@ contract {} is Script {{
     ///
     /// The [SessionSource] represented as a REPL contract.
     pub fn to_repl_source(&self) -> String {
-        let Version { major, minor, patch, .. } = self.solc.version().unwrap();
+        let Version { major, minor, patch, .. } = self.solc.version;
+        let Self { contract_name, global_code, top_level_code, run_code, config, .. } = self;
+
+        let (vm_import, vm_constant) = if !config.no_vm {
+            (
+                "import {Vm} from \"forge-std/Vm.sol\";\n",
+                "Vm internal constant vm = Vm(address(uint160(uint256(keccak256(\"hevm cheat code\")))));\n"
+            )
+        } else {
+            ("", "")
+        };
+
         format!(
             r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^{major}.{minor}.{patch};
 
-import {{Vm}} from "forge-std/Vm.sol";
-{}
+{vm_import}
+{global_code}
 
-contract {} {{
-    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-    {}
+contract {contract_name} {{
+    {vm_constant}
+    {top_level_code}
   
     /// @notice REPL contract entry point
     function run() public {{
-        {}
+        {run_code}
     }}
-}}
-            "#,
-            self.global_code, self.contract_name, self.top_level_code, self.run_code,
+}}"#,
         )
     }
 
@@ -515,7 +520,7 @@ contract {} {{
                         pt::Import::Rename(s, _, _) |
                         pt::Import::GlobalSymbol(s, _, _) => {
                             let s = match s {
-                                pt::ImportPath::Filename(s) => s.string.clone(),
+                                pt::ImportPath::Filename(s) => s.string,
                                 pt::ImportPath::Path(p) => p.to_string(),
                             };
                             let path = PathBuf::from(s);
@@ -646,15 +651,28 @@ pub fn parse_fragment(
 ) -> Option<ParseTreeFragment> {
     let mut base = SessionSource::new(solc, config);
 
-    if base.clone().with_run_code(buffer).parse().is_ok() {
-        return Some(ParseTreeFragment::Function)
+    match base.clone().with_run_code(buffer).parse() {
+        Ok(_) => return Some(ParseTreeFragment::Function),
+        Err(e) => debug_errors(&e),
     }
-    if base.clone().with_top_level_code(buffer).parse().is_ok() {
-        return Some(ParseTreeFragment::Contract)
+    match base.clone().with_top_level_code(buffer).parse() {
+        Ok(_) => return Some(ParseTreeFragment::Contract),
+        Err(e) => debug_errors(&e),
     }
-    if base.with_global_code(buffer).parse().is_ok() {
-        return Some(ParseTreeFragment::Source)
+    match base.with_global_code(buffer).parse() {
+        Ok(_) => return Some(ParseTreeFragment::Source),
+        Err(e) => debug_errors(&e),
     }
 
     None
+}
+
+fn debug_errors(errors: &[Diagnostic]) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
+    }
+
+    for error in errors {
+        tracing::debug!("error: {}", error.message);
+    }
 }

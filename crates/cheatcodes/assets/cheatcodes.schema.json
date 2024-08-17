@@ -299,6 +299,20 @@
           ]
         },
         {
+          "description": "Utility cheatcodes that deal with parsing values from and converting values to TOML.\n\nExamples: `parseToml`, `writeToml`.\n\nSafety: safe.",
+          "type": "string",
+          "enum": [
+            "toml"
+          ]
+        },
+        {
+          "description": "Cryptography-related cheatcodes.\n\nExamples: `sign*`.\n\nSafety: safe.",
+          "type": "string",
+          "enum": [
+            "crypto"
+          ]
+        },
+        {
           "description": "Generic, uncategorized utilities.\n\nExamples: `toString`, `parse*`, `serialize*`.\n\nSafety: safe.",
           "type": "string",
           "enum": [
@@ -381,6 +395,13 @@
           "type": "string",
           "enum": [
             "removed"
+          ]
+        },
+        {
+          "description": "The cheatcode is only used internally for foundry testing and may be changed or removed at any time.\n\nUse of internal cheatcodes is discouraged and will result in a warning.",
+          "type": "string",
+          "enum": [
+            "internal"
           ]
         }
       ]

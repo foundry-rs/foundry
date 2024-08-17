@@ -35,7 +35,7 @@ const COMMON_ORG_ALIASES: &[(&str, &str); 2] =
 ///
 /// Non Github URLs must be provided with an https:// prefix.
 /// Adding dependencies as local paths is not supported yet.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dependency {
     /// The name of the dependency
     pub name: String,
@@ -120,7 +120,7 @@ impl FromStr for Dependency {
             (None, None, None)
         };
 
-        Ok(Dependency { name: name.or_else(|| alias.clone()).unwrap(), url, tag, alias })
+        Ok(Self { name: name.or_else(|| alias.clone()).unwrap(), url, tag, alias })
     }
 }
 

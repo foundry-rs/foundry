@@ -2,11 +2,12 @@ use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
-use foundry_common::{
-    compile,
-    compile::{ProjectCompiler, SkipBuildFilter},
+use foundry_common::compile::ProjectCompiler;
+use foundry_compilers::{
+    compilers::{multi::MultiCompilerLanguage, Language},
+    utils::source_files_iter,
+    Project, ProjectCompileOutput,
 };
-use foundry_compilers::{Project, ProjectCompileOutput};
 use foundry_config::{
     figment::{
         self,
@@ -17,7 +18,7 @@ use foundry_config::{
     Config,
 };
 use serde::Serialize;
-use watchexec::config::{InitConfig, RuntimeConfig};
+use std::path::PathBuf;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 
@@ -42,37 +43,34 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 ///
 /// Some arguments are marked as `#[serde(skip)]` and require manual processing in
 /// `figment::Provider` implementation
-#[derive(Debug, Clone, Parser, Serialize, Default)]
-#[clap(next_help_heading = "Build options", about = None, long_about = None)] // override doc
+#[derive(Clone, Debug, Default, Serialize, Parser)]
+#[command(next_help_heading = "Build options", about = None, long_about = None)] // override doc
 pub struct BuildArgs {
+    /// Build source files from specified paths.
+    #[serde(skip)]
+    pub paths: Option<Vec<PathBuf>>,
+
     /// Print compiled contract names.
-    #[clap(long)]
+    #[arg(long)]
     #[serde(skip)]
     pub names: bool,
 
     /// Print compiled contract sizes.
-    #[clap(long)]
+    #[arg(long)]
     #[serde(skip)]
     pub sizes: bool,
 
-    /// Skip building files whose names contain the given filter.
-    ///
-    /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
-    #[clap(long, num_args(1..))]
-    #[serde(skip)]
-    pub skip: Option<Vec<SkipBuildFilter>>,
-
-    #[clap(flatten)]
+    #[command(flatten)]
     #[serde(flatten)]
     pub args: CoreBuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     #[serde(skip)]
     pub watch: WatchArgs,
 
     /// Output the compilation errors in the json format.
     /// This is useful when you want to use the output in other tools.
-    #[clap(long, conflicts_with = "silent")]
+    #[arg(long, conflicts_with = "silent")]
     #[serde(skip)]
     pub format_json: bool,
 }
@@ -80,29 +78,40 @@ pub struct BuildArgs {
 impl BuildArgs {
     pub fn run(self) -> Result<ProjectCompileOutput> {
         let mut config = self.try_load_config_emit_warnings()?;
-        let mut project = config.project()?;
 
         if install::install_missing_dependencies(&mut config, self.args.silent) &&
             config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
-            project = config.project()?;
         }
 
-        let filters = self.skip.unwrap_or_default();
+        let project = config.project()?;
+
+        // Collect sources to compile if build subdirectories specified.
+        let mut files = vec![];
+        if let Some(paths) = &self.paths {
+            for path in paths {
+                let joined = project.root().join(path);
+                let path = if joined.exists() { &joined } else { path };
+                files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
+            }
+        }
+
+        let compiler = ProjectCompiler::new()
+            .files(files)
+            .print_names(self.names)
+            .print_sizes(self.sizes)
+            .quiet(self.format_json)
+            .bail(!self.format_json);
+
+        let output = compiler.compile(&project)?;
 
         if self.format_json {
-            let output = compile::suppress_compile_with_filter_json(&project, filters)?;
-            let json = serde_json::to_string_pretty(&output.clone().output())?;
-            println!("{}", json);
-            Ok(output)
-        } else if self.args.silent {
-            compile::suppress_compile_with_filter(&project, filters)
-        } else {
-            let compiler = ProjectCompiler::with_filter(self.names, self.sizes, filters);
-            compiler.compile(&project)
+            println!("{}", serde_json::to_string_pretty(&output.output())?);
         }
+
+        Ok(output)
     }
 
     /// Returns the `Project` for the current workspace
@@ -121,11 +130,11 @@ impl BuildArgs {
 
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
-    pub(crate) fn watchexec_config(&self) -> Result<(InitConfig, RuntimeConfig)> {
+    pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         // use the path arguments or if none where provided the `src` dir
         self.watch.watchexec_config(|| {
             let config = Config::from(self);
-            vec![config.src, config.test, config.script]
+            [config.src, config.test, config.script]
         })
     }
 }
@@ -156,21 +165,22 @@ impl Provider for BuildArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::filter::SkipBuildFilter;
 
     #[test]
     fn can_parse_build_filters() {
         let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests"]);
-        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests]));
+        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests]));
 
         let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "scripts"]);
-        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Scripts]));
+        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Scripts]));
 
         let args: BuildArgs =
             BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "--skip", "scripts"]);
-        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
+        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
 
         let args: BuildArgs = BuildArgs::parse_from(["foundry-cli", "--skip", "tests", "scripts"]);
-        assert_eq!(args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
+        assert_eq!(args.args.skip, Some(vec![SkipBuildFilter::Tests, SkipBuildFilter::Scripts]));
     }
 
     #[test]

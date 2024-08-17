@@ -4,7 +4,7 @@ use solang_parser::pt::*;
 use std::collections::VecDeque;
 
 /// The type of a Comment
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommentType {
     /// A Line comment (e.g. `// ...`)
     Line,
@@ -17,7 +17,7 @@ pub enum CommentType {
 }
 
 /// The comment position
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommentPosition {
     /// Comes before the code it describes
     Prefix,
@@ -26,7 +26,7 @@ pub enum CommentPosition {
 }
 
 /// Comment with additional metadata
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommentWithMetadata {
     pub ty: CommentType,
     pub loc: Loc,
@@ -72,11 +72,7 @@ impl CommentWithMetadata {
     }
 
     /// Construct a comment with metadata by analyzing its surrounding source code
-    fn from_comment_and_src(
-        comment: Comment,
-        src: &str,
-        last_comment: Option<&CommentWithMetadata>,
-    ) -> Self {
+    fn from_comment_and_src(comment: Comment, src: &str, last_comment: Option<&Self>) -> Self {
         let src_before = &src[..comment.loc().start()];
         if src_before.is_empty() {
             return Self::new(comment, CommentPosition::Prefix, false, 0)
@@ -212,7 +208,7 @@ impl CommentWithMetadata {
 }
 
 /// A list of comments
-#[derive(Default, Debug, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct Comments {
     prefixes: VecDeque<CommentWithMetadata>,
     postfixes: VecDeque<CommentWithMetadata>,
@@ -299,7 +295,7 @@ impl Comments {
 }
 
 /// The state of a character in a string with possible comments
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CommentState {
     /// character not in a comment
     #[default]
@@ -398,13 +394,13 @@ impl Iterator for CommentStateCharIndices<'_> {
     }
 
     #[inline]
-    fn count(self) -> usize {
-        self.iter.count()
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
     }
 
     #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.iter.size_hint()
+    fn count(self) -> usize {
+        self.iter.count()
     }
 }
 
@@ -429,10 +425,10 @@ impl<'a> Iterator for NonCommentChars<'a> {
 
 /// Helpers for iterating over comment containing strings
 pub trait CommentStringExt {
-    fn comment_state_char_indices(&self) -> CommentStateCharIndices;
+    fn comment_state_char_indices(&self) -> CommentStateCharIndices<'_>;
 
     #[inline]
-    fn non_comment_chars(&self) -> NonCommentChars {
+    fn non_comment_chars(&self) -> NonCommentChars<'_> {
         NonCommentChars(self.comment_state_char_indices())
     }
 
@@ -447,14 +443,14 @@ where
     T: AsRef<str>,
 {
     #[inline]
-    fn comment_state_char_indices(&self) -> CommentStateCharIndices {
+    fn comment_state_char_indices(&self) -> CommentStateCharIndices<'_> {
         CommentStateCharIndices::new(self.as_ref())
     }
 }
 
 impl CommentStringExt for str {
     #[inline]
-    fn comment_state_char_indices(&self) -> CommentStateCharIndices {
+    fn comment_state_char_indices(&self) -> CommentStateCharIndices<'_> {
         CommentStateCharIndices::new(self)
     }
 }

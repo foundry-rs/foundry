@@ -1,42 +1,30 @@
-//! Utility functions for Ethereum adapted from https://github.dev/rust-blockchain/ethereum/blob/755dffaa4903fbec1269f50cde9863cf86269a14/src/util.rs
-use ethers_core::types::H256;
+//! Utility functions for Ethereum adapted from <https://github.com/rust-blockchain/ethereum/blob/755dffaa4903fbec1269f50cde9863cf86269a14/src/util.rs>
 
-pub use keccak_hasher::KeccakHasher;
-
-// reexport some trie types
-pub use reference_trie::*;
+use alloy_primitives::{fixed_bytes, B256};
+use alloy_trie::{HashBuilder, Nibbles};
+use std::collections::BTreeMap;
 
 /// The KECCAK of the RLP encoding of empty data.
-pub const KECCAK_NULL_RLP: H256 = H256([
-    0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
-    0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
-]);
-
-/// Generates a trie root hash for a vector of key-value tuples
-pub fn trie_root<I, K, V>(input: I) -> H256
-where
-    I: IntoIterator<Item = (K, V)>,
-    K: AsRef<[u8]> + Ord,
-    V: AsRef<[u8]>,
-{
-    H256::from(triehash::trie_root::<KeccakHasher, _, _, _>(input))
-}
-
-/// Generates a key-hashed (secure) trie root hash for a vector of key-value tuples.
-pub fn sec_trie_root<I, K, V>(input: I) -> H256
-where
-    I: IntoIterator<Item = (K, V)>,
-    K: AsRef<[u8]>,
-    V: AsRef<[u8]>,
-{
-    H256::from(triehash::sec_trie_root::<KeccakHasher, _, _, _>(input))
-}
+pub const KECCAK_NULL_RLP: B256 =
+    fixed_bytes!("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421");
 
 /// Generates a trie root hash for a vector of values
-pub fn ordered_trie_root<I, V>(input: I) -> H256
+pub fn ordered_trie_root<I, V>(input: I) -> B256
 where
     I: IntoIterator<Item = V>,
     V: AsRef<[u8]>,
 {
-    H256::from(triehash::ordered_trie_root::<KeccakHasher, I>(input))
+    let mut builder = HashBuilder::default();
+
+    let input = input
+        .into_iter()
+        .enumerate()
+        .map(|(i, v)| (alloy_rlp::encode(i), v))
+        .collect::<BTreeMap<_, _>>();
+
+    for (key, value) in input {
+        builder.add_leaf(Nibbles::unpack(key), value.as_ref());
+    }
+
+    builder.root()
 }

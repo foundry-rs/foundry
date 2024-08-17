@@ -1,91 +1,86 @@
 use alloy_json_abi::{Event, Function};
+use alloy_primitives::hex;
 use foundry_common::{
     abi::{get_event, get_func},
     fs,
-    selectors::{SelectorType, SignEthClient},
+    selectors::{OpenChainClient, SelectorType},
 };
-use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 use tokio::sync::RwLock;
 
 pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
 
-#[derive(Debug, Deserialize, Serialize, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct CachedSignatures {
     events: BTreeMap<String, String>,
     functions: BTreeMap<String, String>,
 }
 
 /// An identifier that tries to identify functions and events using signatures found at
-/// `https://openchain.xyz`.
+/// `https://openchain.xyz` or a local cache.
 #[derive(Debug)]
 pub struct SignaturesIdentifier {
-    /// Cached selectors for functions and events
+    /// Cached selectors for functions and events.
     cached: CachedSignatures,
-    /// Location where to save `CachedSignatures`
+    /// Location where to save `CachedSignatures`.
     cached_path: Option<PathBuf>,
     /// Selectors that were unavailable during the session.
-    unavailable: HashSet<Vec<u8>>,
-    /// The API client to fetch signatures from
-    sign_eth_api: SignEthClient,
-    /// whether traces should be decoded via `sign_eth_api`
-    offline: bool,
+    unavailable: HashSet<String>,
+    /// The OpenChain client to fetch signatures from.
+    client: Option<OpenChainClient>,
 }
 
 impl SignaturesIdentifier {
-    #[instrument(target = "forge::signatures")]
+    #[instrument(target = "evm::traces")]
     pub fn new(
         cache_path: Option<PathBuf>,
         offline: bool,
     ) -> eyre::Result<SingleSignaturesIdentifier> {
-        let sign_eth_api = SignEthClient::new()?;
+        let client = if !offline { Some(OpenChainClient::new()?) } else { None };
 
         let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");
-            trace!(?path, "reading signature cache");
+            trace!(target: "evm::traces", ?path, "reading signature cache");
             let cached = if path.is_file() {
                 fs::read_json_file(&path)
-                    .map_err(|err| warn!(?path, ?err, "failed to read cache file"))
+                    .map_err(|err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"))
                     .unwrap_or_default()
             } else {
                 if let Err(err) = std::fs::create_dir_all(cache_path) {
-                    warn!("could not create signatures cache dir: {:?}", err);
+                    warn!(target: "evm::traces", "could not create signatures cache dir: {:?}", err);
                 }
                 CachedSignatures::default()
             };
-            Self {
-                cached,
-                cached_path: Some(path),
-                unavailable: HashSet::new(),
-                sign_eth_api,
-                offline,
-            }
+            Self { cached, cached_path: Some(path), unavailable: HashSet::new(), client }
         } else {
             Self {
                 cached: Default::default(),
                 cached_path: None,
                 unavailable: HashSet::new(),
-                sign_eth_api,
-                offline,
+                client,
             }
         };
 
         Ok(Arc::new(RwLock::new(identifier)))
     }
 
-    #[instrument(target = "forge::signatures", skip(self))]
+    #[instrument(target = "evm::traces", skip(self))]
     pub fn save(&self) {
         if let Some(cached_path) = &self.cached_path {
             if let Some(parent) = cached_path.parent() {
                 if let Err(err) = std::fs::create_dir_all(parent) {
-                    warn!(?parent, ?err, "failed to create cache");
+                    warn!(target: "evm::traces", ?parent, ?err, "failed to create cache");
                 }
             }
             if let Err(err) = fs::write_json_file(cached_path, &self.cached) {
-                warn!(?cached_path, ?err, "failed to flush signature cache");
+                warn!(target: "evm::traces", ?cached_path, ?err, "failed to flush signature cache");
             } else {
-                trace!(?cached_path, "flushed signature cache")
+                trace!(target: "evm::traces", ?cached_path, "flushed signature cache")
             }
         }
     }
@@ -95,59 +90,67 @@ impl SignaturesIdentifier {
     async fn identify<T>(
         &mut self,
         selector_type: SelectorType,
-        identifier: &[u8],
+        identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
         get_type: impl Fn(&str) -> eyre::Result<T>,
-    ) -> Option<T> {
-        // Exit early if we have unsuccessfully queried it before.
-        if self.unavailable.contains(identifier) {
-            return None
-        }
-
-        let map = match selector_type {
+    ) -> Vec<Option<T>> {
+        let cache = match selector_type {
             SelectorType::Function => &mut self.cached.functions,
             SelectorType::Event => &mut self.cached.events,
         };
 
-        let hex_identifier = hex::encode_prefixed(identifier);
+        let hex_identifiers: Vec<String> =
+            identifiers.into_iter().map(hex::encode_prefixed).collect();
 
-        if !self.offline && !map.contains_key(&hex_identifier) {
-            if let Ok(signatures) =
-                self.sign_eth_api.decode_selector(&hex_identifier, selector_type).await
-            {
-                if let Some(signature) = signatures.into_iter().next() {
-                    map.insert(hex_identifier.clone(), signature);
+        if let Some(client) = &self.client {
+            let query: Vec<_> = hex_identifiers
+                .iter()
+                .filter(|v| !cache.contains_key(v.as_str()))
+                .filter(|v| !self.unavailable.contains(v.as_str()))
+                .collect();
+
+            if let Ok(res) = client.decode_selectors(selector_type, query.clone()).await {
+                for (hex_id, selector_result) in query.into_iter().zip(res.into_iter()) {
+                    let mut found = false;
+                    if let Some(decoded_results) = selector_result {
+                        if let Some(decoded_result) = decoded_results.into_iter().next() {
+                            cache.insert(hex_id.clone(), decoded_result);
+                            found = true;
+                        }
+                    }
+                    if !found {
+                        self.unavailable.insert(hex_id.clone());
+                    }
                 }
             }
         }
 
-        if let Some(signature) = map.get(&hex_identifier) {
-            return get_type(signature).ok()
-        }
-
-        self.unavailable.insert(identifier.to_vec());
-
-        None
+        hex_identifiers.iter().map(|v| cache.get(v).and_then(|v| get_type(v).ok())).collect()
     }
 
-    /// Returns `None` if in offline mode
-    fn ensure_not_offline(&self) -> Option<()> {
-        if self.offline {
-            None
-        } else {
-            Some(())
-        }
+    /// Identifies `Function`s from its cache or `https://api.openchain.xyz`
+    pub async fn identify_functions(
+        &mut self,
+        identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
+    ) -> Vec<Option<Function>> {
+        self.identify(SelectorType::Function, identifiers, get_func).await
     }
 
     /// Identifies `Function` from its cache or `https://api.openchain.xyz`
     pub async fn identify_function(&mut self, identifier: &[u8]) -> Option<Function> {
-        self.ensure_not_offline()?;
-        self.identify(SelectorType::Function, identifier, get_func).await
+        self.identify_functions(&[identifier]).await.pop().unwrap()
+    }
+
+    /// Identifies `Event`s from its cache or `https://api.openchain.xyz`
+    pub async fn identify_events(
+        &mut self,
+        identifiers: impl IntoIterator<Item = impl AsRef<[u8]>>,
+    ) -> Vec<Option<Event>> {
+        self.identify(SelectorType::Event, identifiers, get_event).await
     }
 
     /// Identifies `Event` from its cache or `https://api.openchain.xyz`
     pub async fn identify_event(&mut self, identifier: &[u8]) -> Option<Event> {
-        self.ensure_not_offline()?;
-        self.identify(SelectorType::Event, identifier, get_event).await
+        self.identify_events(&[identifier]).await.pop().unwrap()
     }
 }
 

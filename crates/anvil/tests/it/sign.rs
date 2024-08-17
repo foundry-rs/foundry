@@ -1,9 +1,12 @@
+use crate::utils::http_provider_with_signer;
+use alloy_dyn_abi::TypedData;
+use alloy_network::EthereumWallet;
+use alloy_primitives::{Address, U256};
+use alloy_provider::Provider;
+use alloy_rpc_types::TransactionRequest;
+use alloy_serde::WithOtherFields;
+use alloy_signer::Signer;
 use anvil::{spawn, NodeConfig};
-use ethers::{
-    prelude::{Middleware, SignerMiddleware},
-    signers::Signer,
-    types::{transaction::eip712::TypedData, Address, Chain, TransactionRequest},
-};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_sign_typed_data() {
@@ -281,28 +284,51 @@ async fn can_sign_typed_data_os() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_sign_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    // craft the tx
+    // specify the `from` field so that the client knows which account to use
+    let tx = TransactionRequest::default()
+        .nonce(10)
+        .max_fee_per_gas(100)
+        .max_priority_fee_per_gas(101)
+        .to(to)
+        .value(U256::from(1001u64))
+        .from(from);
+    let tx = WithOtherFields::new(tx);
+    // sign it via the eth_signTransaction API
+    let signed_tx = api.sign_transaction(tx).await.unwrap();
+
+    assert_eq!(signed_tx, "0x02f866827a690a65648252089470997970c51812dc3a010c7d01b50e0d17dc79c88203e980c001a0e4de88aefcf87ccb04466e60de66a83192e46aa26177d5ea35efbfd43fd0ecdca00e3148e0e8e0b9a6f9b329efd6e30c4a461920f3a27497be3dbefaba996601da");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn rejects_different_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let wallet = handle.dev_wallets().next().unwrap().with_chain_id(Some(1));
+    let provider = http_provider_with_signer(&handle.http_endpoint(), EthereumWallet::from(wallet));
 
-    let wallet = handle.dev_wallets().next().unwrap();
-    let client = SignerMiddleware::new(provider, wallet.with_chain_id(Chain::Mainnet));
-
-    let tx = TransactionRequest::new().to(Address::random()).value(100u64);
-
-    let res = client.send_transaction(tx, None).await;
+    let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100));
+    let tx = WithOtherFields::new(tx);
+    let res = provider.send_transaction(tx).await;
     let err = res.unwrap_err();
-    assert!(err.to_string().contains("signed for another chain"));
+    assert!(err.to_string().contains("does not match the signer's"), "{}", err.to_string());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn rejects_invalid_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let wallet = handle.dev_wallets().next().unwrap().with_chain_id(99u64);
-    let provider = handle.http_provider();
-    let client = SignerMiddleware::new(provider, wallet);
-    let tx = TransactionRequest::new().to(Address::random()).value(100u64);
-    let res = client.send_transaction(tx, None).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let wallet = wallet.with_chain_id(Some(99u64));
+    let provider = http_provider_with_signer(&handle.http_endpoint(), EthereumWallet::from(wallet));
+    let tx = TransactionRequest::default().to(Address::random()).value(U256::from(100u64));
+    let tx = WithOtherFields::new(tx);
+    let res = provider.send_transaction(tx).await;
     let _err = res.unwrap_err();
 }
 

@@ -1,28 +1,13 @@
-use alloy_primitives::{Address, U256};
-use ethers_core::{
-    types::transaction::eip2930::AccessListItem,
-    utils::{
-        rlp,
-        rlp::{Encodable, RlpStream},
-    },
-};
-use foundry_common::types::ToAlloy;
+use alloy_primitives::Parity;
 
-pub fn enveloped<T: Encodable>(id: u8, v: &T, s: &mut RlpStream) {
-    let encoded = rlp::encode(v);
-    let mut out = vec![0; 1 + encoded.len()];
-    out[0] = id;
-    out[1..].copy_from_slice(&encoded);
-    out.rlp_append(s)
-}
-
-pub fn to_revm_access_list(list: Vec<AccessListItem>) -> Vec<(Address, Vec<U256>)> {
-    list.into_iter()
-        .map(|item| {
-            (
-                item.address.to_alloy(),
-                item.storage_keys.into_iter().map(|k| k.to_alloy().into()).collect(),
-            )
-        })
-        .collect()
+/// See <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
+/// > If you do, then the v of the signature MUST be set to {0,1} + CHAIN_ID * 2 + 35 where
+/// > {0,1} is the parity of the y value of the curve point for which r is the x-value in the
+/// > secp256k1 signing process.
+pub fn meets_eip155(chain_id: u64, v: Parity) -> bool {
+    let double_chain_id = chain_id.saturating_mul(2);
+    match v {
+        Parity::Eip155(v) => v == double_chain_id + 35 || v == double_chain_id + 36,
+        _ => false,
+    }
 }

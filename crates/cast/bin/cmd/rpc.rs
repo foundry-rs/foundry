@@ -6,7 +6,7 @@ use foundry_config::Config;
 use itertools::Itertools;
 
 /// CLI arguments for `cast rpc`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct RpcArgs {
     /// RPC method name
     method: String,
@@ -26,16 +26,16 @@ pub struct RpcArgs {
     ///
     /// cast rpc eth_getBlockByNumber '["0x123", false]' --raw
     ///     => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }
-    #[clap(long, short = 'w')]
+    #[arg(long, short = 'w')]
     raw: bool,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     rpc: RpcOpts,
 }
 
 impl RpcArgs {
     pub async fn run(self) -> Result<()> {
-        let RpcArgs { raw, method, params, rpc } = self;
+        let Self { raw, method, params, rpc } = self;
 
         let config = Config::from(&rpc);
         let provider = utils::get_provider(&config)?;

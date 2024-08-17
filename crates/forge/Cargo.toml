@@ -10,12 +10,19 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "forge"
 path = "bin/main.rs"
 
 [build-dependencies]
-vergen = { version = "8", default-features = false, features = ["build", "git", "git2"] }
+vergen = { workspace = true, default-features = false, features = [
+    "build",
+    "git",
+    "gitcl",
+] }
 
 [dependencies]
 # lib
@@ -24,61 +31,87 @@ foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["full"] }
 foundry-config.workspace = true
 foundry-evm.workspace = true
+foundry-wallets.workspace = true
+foundry-linking.workspace = true
+
+ethers-contract-abigen = { workspace = true, features = ["providers"] }
+
 foundry-evm-mutator.workspace = true
 
-ethers-contract.workspace = true
-ethers-core.workspace = true
-ethers-middleware.workspace = true
-ethers-providers.workspace = true
-ethers-signers.workspace = true
+revm-inspectors.workspace = true
 
-comfy-table = "7"
+comfy-table.workspace = true
 eyre.workspace = true
-proptest = "1"
-rayon = "1"
+proptest.workspace = true
+rayon.workspace = true
 serde.workspace = true
 tracing.workspace = true
-yansi = "0.5"
+yansi.workspace = true
+humantime-serde = "1.1.1"
 
 # bin
 forge-doc.workspace = true
 forge-fmt.workspace = true
+forge-verify.workspace = true
+forge-script.workspace = true
+forge-sol-macro-gen.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
 
+alloy-chains.workspace = true
+alloy-consensus.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
+alloy-network.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
+alloy-rpc-types.workspace = true
+alloy-serde.workspace = true
+alloy-signer.workspace = true
+alloy-sol-macro-expander = { workspace = true, features = ["json"] }
+alloy-sol-macro-input.workspace = true
+alloy-transport.workspace = true
 
-async-trait = "0.1"
+async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
 clap_complete_fig = "4"
 dialoguer = { version = "0.11", default-features = false }
-dunce = "1"
-futures = "0.3"
-hex.workspace = true
+dunce.workspace = true
+futures.workspace = true
 indicatif = "0.17"
 itertools.workspace = true
-once_cell = "1"
-parking_lot = "0.12"
+once_cell.workspace = true
+parking_lot.workspace = true
 regex = { version = "1", default-features = false }
-reqwest = { version = "0.11", default-features = false, features = ["json"] }
-semver = "1"
+reqwest = { workspace = true, features = ["json"] }
+semver.workspace = true
 serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solang-parser.workspace = true
-strum = { version = "0.25", features = ["derive"] }
-thiserror = "1"
-tokio = { version = "1", features = ["time"] }
-watchexec = "2.3.2"
+strum = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["time"] }
+toml = { version = "0.8", features = ["preserve_order"] }
+toml_edit = "0.22.4"
+watchexec = "4.1"
+watchexec-events = "3.0"
+watchexec-signals = "3.0"
+clearscreen = "3.0"
 evm-disassembler.workspace = true
+rustc-hash.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
 hyper.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
-opener = "0.6"
+opener = "0.7"
+
+# soldeer
+soldeer.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }
 
 # temp file
 tempfile = { version = "3.8.0" }
@@ -87,23 +120,33 @@ tempfile = { version = "3.8.0" }
 anvil.workspace = true
 foundry-test-utils.workspace = true
 
+mockall = "0.12"
 criterion = "0.5"
 globset = "0.4"
 paste = "1.0"
 path-slash = "0.2"
-pretty_assertions.workspace = true
-serial_test = "2"
-svm = { package = "svm-rs", version = "0.3", default-features = false, features = ["rustls"] }
-tempfile = "3"
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+similar-asserts.workspace = true
+svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
+    "rustls",
+] }
+tempfile.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+alloy-signer-local.workspace = true
 
 [features]
-default = ["rustls"]
-rustls = ["foundry-cli/rustls", "reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
+default = ["rustls", "jemalloc"]
+rustls = [
+    "foundry-cli/rustls",
+    "foundry-wallets/rustls",
+    "reqwest/rustls-tls",
+    "reqwest/rustls-tls-native-roots",
+]
 openssl = ["foundry-cli/openssl", "reqwest/default-tls"]
-
-# feature for heavy (long-running) integration tests
-heavy-integration-tests = []
+asm-keccak = ["alloy-primitives/asm-keccak"]
+jemalloc = ["dep:tikv-jemallocator"]
+aws-kms = ["foundry-wallets/aws-kms"]
+isolate-by-default = ["foundry-config/isolate-by-default"]
 
 [[bench]]
 name = "test"

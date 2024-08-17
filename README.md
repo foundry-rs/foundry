@@ -10,6 +10,11 @@
 [tg-support-badge]: https://img.shields.io/endpoint?color=neon&logo=telegram&label=support&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_support
 [tg-support-url]: https://t.me/foundry_support
 
+**[Install](https://book.getfoundry.sh/getting-started/installation)**
+| [User Book](https://book.getfoundry.sh)
+| [Developer Docs](./docs/dev/)
+| [Crate Docs](https://foundry-rs.github.io/foundry)
+
 **Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
 
 Foundry consists of:
@@ -34,7 +39,7 @@ If you're experiencing any issues while installing, check out [Getting Help](#ge
 ### Features
 
 -   **Fast & flexible compilation pipeline**
-    -   Automatic Solidity compiler version detection & installation (under `~/.svm`)
+    -   Automatic Solidity compiler version detection & installation
     -   **Incremental compilation & caching**: Only changed files are re-compiled
     -   Parallel compilation
     -   Non-standard directory structures support (e.g. [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829))
@@ -49,7 +54,7 @@ If you're experiencing any issues while installing, check out [Getting Help](#ge
 
 ### How Fast?
 
-Forge is quite fast at both compiling (leveraging [ethers-solc][ethers-solc]) and testing.
+Forge is quite fast at both compiling (leveraging [ethers-solc]) and testing.
 
 See the benchmarks below. More benchmarks can be found in the [v0.2.0 announcement post][benchmark-post] and in the [Convex Shutdown Simulation][convex] repository.
 
@@ -121,7 +126,7 @@ If you want to contribute, or follow along with contributor discussion, you can 
 ## Acknowledgements
 
 -   Foundry is a clean-room rewrite of the testing framework [DappTools](https://github.com/dapphub/dapptools). None of this would have been possible without the DappHub team's work over the years.
--   [Matthias Seitz](https://twitter.com/mattsse_): Created [ethers-solc](https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/) which is the backbone of our compilation pipeline, as well as countless contributions to ethers, in particular the `abigen` macros.
+-   [Matthias Seitz](https://twitter.com/mattsse_): Created [ethers-solc] which is the backbone of our compilation pipeline, as well as countless contributions to ethers, in particular the `abigen` macros.
 -   [Rohit Narurkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use to auto-detect and manage multiple Solidity versions.
 -   [Brock Elmore](https://twitter.com/brockjelmore): For extending the VM's cheatcodes and implementing [structured call tracing](https://github.com/foundry-rs/foundry/pull/192), a critical feature for debugging smart contract calls.
 -   All the other [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the [ethers-rs](https://github.com/gakonst/ethers-rs) & [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.

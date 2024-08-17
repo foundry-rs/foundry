@@ -1,5 +1,5 @@
-use super::BasicTxDetails;
-use alloy_primitives::{Address, Bytes};
+use super::{BasicTxDetails, CallDetails};
+use alloy_primitives::Address;
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     option::weighted,
@@ -10,14 +10,14 @@ use std::sync::Arc;
 
 /// Given a TestRunner and a strategy, it generates calls. Used inside the Fuzzer inspector to
 /// override external calls to test for potential reentrancy vulnerabilities..
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct RandomCallGenerator {
     /// Address of the test contract.
     pub test_address: Address,
     /// Runner that will generate the call from the strategy.
     pub runner: Arc<Mutex<TestRunner>>,
     /// Strategy to be used to generate calls from `target_reference`.
-    pub strategy: SBoxedStrategy<Option<(Address, Bytes)>>,
+    pub strategy: SBoxedStrategy<Option<CallDetails>>,
     /// Reference to which contract we want a fuzzed calldata from.
     pub target_reference: Arc<RwLock<Address>>,
     /// Flag to know if a call has been overridden. Don't allow nesting for now.
@@ -33,17 +33,15 @@ impl RandomCallGenerator {
     pub fn new(
         test_address: Address,
         runner: TestRunner,
-        strategy: SBoxedStrategy<(Address, Bytes)>,
+        strategy: impl Strategy<Value = CallDetails> + Send + Sync + 'static,
         target_reference: Arc<RwLock<Address>>,
     ) -> Self {
-        let strategy = weighted(0.9, strategy).sboxed();
-
-        RandomCallGenerator {
+        Self {
             test_address,
             runner: Arc::new(Mutex::new(runner)),
-            strategy,
+            strategy: weighted(0.9, strategy).sboxed(),
             target_reference,
-            last_sequence: Arc::new(RwLock::new(vec![])),
+            last_sequence: Arc::default(),
             replay: false,
             used: false,
         }
@@ -71,7 +69,7 @@ impl RandomCallGenerator {
             )
         } else {
             // TODO: Do we want it to be 80% chance only too ?
-            let new_caller = original_target;
+            let sender = original_target;
 
             // Set which contract we mostly (80% chance) want to generate calldata from.
             *self.target_reference.write() = original_caller;
@@ -82,7 +80,7 @@ impl RandomCallGenerator {
                 .new_tree(&mut self.runner.lock())
                 .unwrap()
                 .current()
-                .map(|(new_target, calldata)| (new_caller, (new_target, calldata)));
+                .map(|call_details| BasicTxDetails { sender, call_details });
 
             self.last_sequence.write().push(choice.clone());
             choice

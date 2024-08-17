@@ -1,11 +1,8 @@
-use super::{
-    test,
-    test::{Test, TestOutcome},
-};
+use super::test;
 use alloy_primitives::U256;
 use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
 use eyre::{Context, Result};
-use forge::result::TestKindReport;
+use forge::result::{SuiteTestResult, TestKindReport, TestOutcome};
 use foundry_cli::utils::STATIC_FUZZ_SEED;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -17,7 +14,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
 /// A regex that matches a basic snapshot entry like
@@ -27,12 +23,12 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// CLI arguments for `forge snapshot`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct SnapshotArgs {
     /// Output a diff against a pre-existing snapshot.
     ///
     /// By default, the comparison is done with .gas-snapshot.
-    #[clap(
+    #[arg(
         conflicts_with = "snap",
         long,
         value_hint = ValueHint::FilePath,
@@ -45,7 +41,7 @@ pub struct SnapshotArgs {
     /// Outputs a diff if the snapshots do not match.
     ///
     /// By default, the comparison is done with .gas-snapshot.
-    #[clap(
+    #[arg(
         conflicts_with = "diff",
         long,
         value_hint = ValueHint::FilePath,
@@ -55,11 +51,11 @@ pub struct SnapshotArgs {
 
     // Hidden because there is only one option
     /// How to format the output.
-    #[clap(long, hide(true))]
+    #[arg(long, hide(true))]
     format: Option<Format>,
 
     /// Output file for the snapshot.
-    #[clap(
+    #[arg(
         long,
         default_value = ".gas-snapshot",
         value_hint = ValueHint::FilePath,
@@ -68,7 +64,7 @@ pub struct SnapshotArgs {
     snap: PathBuf,
 
     /// Tolerates gas deviations up to the specified percentage.
-    #[clap(
+    #[arg(
         long,
         value_parser = RangedU64ValueParser::<u32>::new().range(0..100),
         value_name = "SNAPSHOT_THRESHOLD"
@@ -76,11 +72,11 @@ pub struct SnapshotArgs {
     tolerance: Option<u32>,
 
     /// All test arguments are supported
-    #[clap(flatten)]
+    #[command(flatten)]
     pub(crate) test: test::TestArgs,
 
     /// Additional configs for test results
-    #[clap(flatten)]
+    #[command(flatten)]
     config: SnapshotConfig,
 }
 
@@ -92,7 +88,7 @@ impl SnapshotArgs {
 
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
-    pub(crate) fn watchexec_config(&self) -> Result<(InitConfig, RuntimeConfig)> {
+    pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         self.test.watchexec_config()
     }
 
@@ -124,7 +120,7 @@ impl SnapshotArgs {
 }
 
 // TODO implement pretty tables
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Format {
     Table,
 }
@@ -134,29 +130,29 @@ impl FromStr for Format {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "t" | "table" => Ok(Format::Table),
+            "t" | "table" => Ok(Self::Table),
             _ => Err(format!("Unrecognized format `{s}`")),
         }
     }
 }
 
 /// Additional filters that can be applied on the test results
-#[derive(Debug, Clone, Parser, Default)]
+#[derive(Clone, Debug, Default, Parser)]
 struct SnapshotConfig {
     /// Sort results by gas used (ascending).
-    #[clap(long)]
+    #[arg(long)]
     asc: bool,
 
     /// Sort results by gas used (descending).
-    #[clap(conflicts_with = "asc", long)]
+    #[arg(conflicts_with = "asc", long)]
     desc: bool,
 
     /// Only include tests that used more gas that the given amount.
-    #[clap(long, value_name = "MIN_GAS")]
+    #[arg(long, value_name = "MIN_GAS")]
     min: Option<u64>,
 
     /// Only include tests that used less gas that the given amount.
-    #[clap(long, value_name = "MAX_GAS")]
+    #[arg(long, value_name = "MAX_GAS")]
     max: Option<u64>,
 }
 
@@ -175,7 +171,7 @@ impl SnapshotConfig {
         true
     }
 
-    fn apply(&self, outcome: TestOutcome) -> Vec<Test> {
+    fn apply(&self, outcome: TestOutcome) -> Vec<SuiteTestResult> {
         let mut tests = outcome
             .into_tests()
             .filter(|test| self.is_in_gas_range(test.gas_used()))
@@ -197,7 +193,7 @@ impl SnapshotConfig {
 ///   `<signature>(gas:? 40181)` for normal tests
 ///   `<signature>(runs: 256, μ: 40181, ~: 40181)` for fuzz tests
 ///   `<signature>(runs: 256, calls: 40181, reverts: 40181)` for invariant tests
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotEntry {
     pub contract_name: String,
     pub signature: String,
@@ -214,17 +210,17 @@ impl FromStr for SnapshotEntry {
                 cap.name("file").and_then(|file| {
                     cap.name("sig").and_then(|sig| {
                         if let Some(gas) = cap.name("gas") {
-                            Some(SnapshotEntry {
+                            Some(Self {
                                 contract_name: file.as_str().to_string(),
                                 signature: sig.as_str().to_string(),
-                                gas_used: TestKindReport::Standard {
+                                gas_used: TestKindReport::Unit {
                                     gas: gas.as_str().parse().unwrap(),
                                 },
                             })
                         } else if let Some(runs) = cap.name("runs") {
                             cap.name("avg")
                                 .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
-                                .map(|(runs, avg, med)| SnapshotEntry {
+                                .map(|(runs, avg, med)| Self {
                                     contract_name: file.as_str().to_string(),
                                     signature: sig.as_str().to_string(),
                                     gas_used: TestKindReport::Fuzz {
@@ -240,7 +236,7 @@ impl FromStr for SnapshotEntry {
                                         cap.name("reverts").map(|med| (runs, avg, med))
                                     })
                                 })
-                                .map(|(runs, calls, reverts)| SnapshotEntry {
+                                .map(|(runs, calls, reverts)| Self {
                                     contract_name: file.as_str().to_string(),
                                     signature: sig.as_str().to_string(),
                                     gas_used: TestKindReport::Invariant {
@@ -274,7 +270,7 @@ fn read_snapshot(path: impl AsRef<Path>) -> Result<Vec<SnapshotEntry>> {
 
 /// Writes a series of tests to a snapshot file after sorting them
 fn write_to_snapshot_file(
-    tests: &[Test],
+    tests: &[SuiteTestResult],
     path: impl AsRef<Path>,
     _format: Option<Format>,
 ) -> Result<()> {
@@ -293,7 +289,7 @@ fn write_to_snapshot_file(
 }
 
 /// A Snapshot entry diff
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotDiff {
     pub signature: String,
     pub source_gas_used: TestKindReport,
@@ -318,7 +314,7 @@ impl SnapshotDiff {
 /// Compares the set of tests with an existing snapshot
 ///
 /// Returns true all tests match
-fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) -> bool {
+fn check(tests: Vec<SuiteTestResult>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) -> bool {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
@@ -352,7 +348,7 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) ->
 }
 
 /// Compare the set of tests with an existing snapshot
-fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> Result<()> {
+fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<SnapshotEntry>) -> Result<()> {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
@@ -401,21 +397,21 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> Result<()> {
 fn fmt_pct_change(change: f64) -> String {
     let change_pct = change * 100.0;
     match change.partial_cmp(&0.0).unwrap_or(Ordering::Equal) {
-        Ordering::Less => Paint::green(format!("{change_pct:.3}%")).to_string(),
+        Ordering::Less => format!("{change_pct:.3}%").green().to_string(),
         Ordering::Equal => {
             format!("{change_pct:.3}%")
         }
-        Ordering::Greater => Paint::red(format!("{change_pct:.3}%")).to_string(),
+        Ordering::Greater => format!("{change_pct:.3}%").red().to_string(),
     }
 }
 
 fn fmt_change(change: i128) -> String {
     match change.cmp(&0) {
-        Ordering::Less => Paint::green(format!("{change}")).to_string(),
+        Ordering::Less => format!("{change}").green().to_string(),
         Ordering::Equal => {
             format!("{change}")
         }
-        Ordering::Greater => Paint::red(format!("{change}")).to_string(),
+        Ordering::Greater => format!("{change}").red().to_string(),
     }
 }
 
@@ -458,7 +454,7 @@ mod tests {
             SnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindReport::Standard { gas: 7222 }
+                gas_used: TestKindReport::Unit { gas: 7222 }
             }
         );
     }

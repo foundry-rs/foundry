@@ -21,7 +21,7 @@ pub struct Deployments {
 }
 
 /// A contract deployment.
-#[derive(serde::Deserialize, Debug, Clone)]
+#[derive(Clone, Debug, serde::Deserialize)]
 pub struct Deployment {
     /// The contract address
     pub address: Address,

@@ -1,14 +1,8 @@
 use super::opts::EvmOpts;
 use revm::primitives::Env;
 
-mod backend;
-pub use backend::{BackendHandler, SharedBackend};
-
 mod init;
 pub use init::environment;
-
-mod cache;
-pub use cache::{BlockchainDb, BlockchainDbMeta, JsonBlockCacheDB, MemDb};
 
 pub mod database;
 
@@ -16,7 +10,7 @@ mod multi;
 pub use multi::{ForkId, MultiFork, MultiForkHandler};
 
 /// Represents a _fork_ of a remote chain whose data is available only via the `url` endpoint.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct CreateFork {
     /// Whether to enable rpc storage caching for this fork
     pub enable_caching: bool,

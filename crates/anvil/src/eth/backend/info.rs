@@ -1,8 +1,9 @@
 //! Handler that can get current storage related data
 
 use crate::mem::Backend;
-use anvil_core::eth::{block::Block, receipt::TypedReceipt};
-use ethers::types::{Block as EthersBlock, TxHash, H256};
+use alloy_primitives::B256;
+use alloy_rpc_types::Block as AlloyBlock;
+use anvil_core::eth::{block::Block, transaction::TypedReceipt};
 use std::{fmt, sync::Arc};
 
 /// A type that can fetch data related to the ethereum storage.
@@ -14,8 +15,6 @@ use std::{fmt, sync::Arc};
 pub struct StorageInfo {
     backend: Arc<Backend>,
 }
-
-// === impl StorageInfo ===
 
 impl StorageInfo {
     pub(crate) fn new(backend: Arc<Backend>) -> Self {
@@ -33,17 +32,17 @@ impl StorageInfo {
     }
 
     /// Returns the receipts of the block with the given hash
-    pub fn receipts(&self, hash: H256) -> Option<Vec<TypedReceipt>> {
+    pub fn receipts(&self, hash: B256) -> Option<Vec<TypedReceipt>> {
         self.backend.mined_receipts(hash)
     }
 
     /// Returns the block with the given hash
-    pub fn block(&self, hash: H256) -> Option<Block> {
+    pub fn block(&self, hash: B256) -> Option<Block> {
         self.backend.get_block_by_hash(hash)
     }
 
     /// Returns the block with the given hash in the format of the ethereum API
-    pub fn eth_block(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
+    pub fn eth_block(&self, hash: B256) -> Option<AlloyBlock> {
         let block = self.block(hash)?;
         Some(self.backend.convert_block(block))
     }

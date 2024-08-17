@@ -8,25 +8,25 @@ use foundry_config::fix::fix_tomls;
 foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
 
 /// CLI arguments for `forge config`.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct ConfigArgs {
     /// Print only a basic set of the currently set config values.
-    #[clap(long)]
+    #[arg(long)]
     basic: bool,
 
     /// Print currently set config values as JSON.
-    #[clap(long)]
+    #[arg(long)]
     json: bool,
 
     /// Attempt to fix any configuration warnings.
-    #[clap(long)]
+    #[arg(long)]
     fix: bool,
 
     // support nested build arguments
-    #[clap(flatten)]
+    #[command(flatten)]
     opts: BuildArgs,
 
-    #[clap(flatten)]
+    #[command(flatten)]
     evm_opts: EvmArgs,
 }
 
@@ -39,7 +39,10 @@ impl ConfigArgs {
             return Ok(())
         }
 
-        let config = self.try_load_config_unsanitized_emit_warnings()?;
+        let config = self
+            .try_load_config_unsanitized_emit_warnings()?
+            // we explicitly normalize the version, so mimic the behavior when invoking solc
+            .normalized_evm_version();
 
         let s = if self.basic {
             let config = config.into_basic();

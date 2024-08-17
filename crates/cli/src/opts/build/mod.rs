@@ -1,5 +1,5 @@
 use clap::Parser;
-use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
+use foundry_compilers::artifacts::{output_selection::ContractOutputSelection, EvmVersion};
 use serde::Serialize;
 
 mod core;
@@ -12,21 +12,26 @@ pub use self::paths::ProjectPathsArgs;
 // to be merged into an existing `foundry_config::Config`.
 //
 // See also `BuildArgs`.
-#[derive(Default, Debug, Clone, Parser, Serialize)]
-#[clap(next_help_heading = "Compiler options")]
+#[derive(Clone, Debug, Default, Serialize, Parser)]
+#[command(next_help_heading = "Compiler options")]
 pub struct CompilerArgs {
+    /// Includes the AST as JSON in the compiler output.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub ast: bool,
+
     /// The target EVM version.
-    #[clap(long, value_name = "VERSION")]
+    #[arg(long, value_name = "VERSION")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evm_version: Option<EvmVersion>,
 
     /// Activate the Solidity optimizer.
-    #[clap(long)]
+    #[arg(long)]
     #[serde(skip)]
     pub optimize: bool,
 
     /// The number of optimizer runs.
-    #[clap(long, value_name = "RUNS")]
+    #[arg(long, value_name = "RUNS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optimizer_runs: Option<usize>,
 
@@ -34,15 +39,15 @@ pub struct CompilerArgs {
     ///
     /// Example keys: evm.assembly, ewasm, ir, irOptimized, metadata
     ///
-    /// For a full description, see https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description
-    #[clap(long, num_args(1..), value_name = "SELECTOR")]
+    /// For a full description, see <https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description>
+    #[arg(long, num_args(1..), value_name = "SELECTOR")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_output: Vec<ContractOutputSelection>,
 
     /// Extra output to write to separate files.
     ///
     /// Valid values: metadata, ir, irOptimized, ewasm, evm.assembly
-    #[clap(long, num_args(1..), value_name = "SELECTOR")]
+    #[arg(long, num_args(1..), value_name = "SELECTOR")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_output_files: Vec<ContractOutputSelection>,
 }

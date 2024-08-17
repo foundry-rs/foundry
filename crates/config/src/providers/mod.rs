@@ -1,8 +1,11 @@
+//! Config providers.
+
 use crate::{Config, Warning, DEPRECATIONS};
 use figment::{
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
+use std::collections::BTreeMap;
 
 /// Remappings provider
 pub mod remappings;
@@ -43,15 +46,15 @@ impl<P> WarningsProvider<P> {
 impl<P: Provider> WarningsProvider<P> {
     /// Collects all warnings.
     pub fn collect_warnings(&self) -> Result<Vec<Warning>, Error> {
+        let data = self.provider.data().unwrap_or_default();
+
         let mut out = self.old_warnings.clone()?;
-        // add warning for unknown sections
+
+        // Add warning for unknown sections.
         out.extend(
-            self.provider
-                .data()
-                .unwrap_or_default()
-                .keys()
+            data.keys()
                 .filter(|k| {
-                    k != &Config::PROFILE_SECTION &&
+                    **k != Config::PROFILE_SECTION &&
                         !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
                 })
                 .map(|unknown_section| {
@@ -59,19 +62,33 @@ impl<P: Provider> WarningsProvider<P> {
                     Warning::UnknownSection { unknown_section: unknown_section.clone(), source }
                 }),
         );
-        // add warning for deprecated keys
+
+        // Add warning for deprecated keys.
+        let deprecated_key_warning = |key| {
+            DEPRECATIONS.iter().find_map(|(deprecated_key, new_value)| {
+                if key == *deprecated_key {
+                    Some(Warning::DeprecatedKey {
+                        old: deprecated_key.to_string(),
+                        new: new_value.to_string(),
+                    })
+                } else {
+                    None
+                }
+            })
+        };
+        let profiles = data
+            .iter()
+            .filter(|(profile, _)| **profile == Config::PROFILE_SECTION)
+            .map(|(_, dict)| dict);
+        out.extend(profiles.clone().flat_map(BTreeMap::keys).filter_map(deprecated_key_warning));
         out.extend(
-            self.provider
-                .data()
-                .unwrap_or_default()
-                .iter()
-                .flat_map(|(profile, dict)| dict.keys().map(move |key| format!("{profile}.{key}")))
-                .filter(|k| DEPRECATIONS.contains_key(k))
-                .map(|deprecated_key| Warning::DeprecatedKey {
-                    old: deprecated_key.clone(),
-                    new: DEPRECATIONS.get(&deprecated_key).unwrap().to_string(),
-                }),
+            profiles
+                .filter_map(|dict| dict.get(self.profile.as_str().as_str()))
+                .filter_map(Value::as_dict)
+                .flat_map(BTreeMap::keys)
+                .filter_map(deprecated_key_warning),
         );
+
         Ok(out)
     }
 }
@@ -84,6 +101,7 @@ impl<P: Provider> Provider for WarningsProvider<P> {
             Metadata::named("Warnings")
         }
     }
+
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         Ok(Map::from([(
             self.profile.clone(),
@@ -93,6 +111,7 @@ impl<P: Provider> Provider for WarningsProvider<P> {
             )]),
         )]))
     }
+
     fn profile(&self) -> Option<Profile> {
         Some(self.profile.clone())
     }
@@ -109,7 +128,7 @@ pub struct FallbackProfileProvider<P> {
 impl<P> FallbackProfileProvider<P> {
     /// Creates a new fallback profile provider.
     pub fn new(provider: P, profile: impl Into<Profile>, fallback: impl Into<Profile>) -> Self {
-        FallbackProfileProvider { provider, profile: profile.into(), fallback: fallback.into() }
+        Self { provider, profile: profile.into(), fallback: fallback.into() }
     }
 }
 

@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
-#![warn(missing_docs, unreachable_pub, unused_crate_dependencies, rust_2018_idioms)]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt};
@@ -83,15 +84,17 @@ impl Cheatcodes<'static> {
                 Vm::ChainInfo::STRUCT.clone(),
                 Vm::AccountAccess::STRUCT.clone(),
                 Vm::StorageAccess::STRUCT.clone(),
+                Vm::Gas::STRUCT.clone(),
             ]),
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),
                 Vm::AccountAccessKind::ENUM.clone(),
+                Vm::ForgeContext::ENUM.clone(),
             ]),
-            errors: Vm::VM_ERRORS.iter().map(|&x| x.clone()).collect(),
+            errors: Vm::VM_ERRORS.iter().copied().cloned().collect(),
             events: Cow::Borrowed(&[]),
-            // events: Vm::VM_EVENTS.iter().map(|&x| x.clone()).collect(),
-            cheatcodes: Vm::CHEATCODES.iter().map(|&x| x.clone()).collect(),
+            // events: Vm::VM_EVENTS.iter().copied().cloned().collect(),
+            cheatcodes: Vm::CHEATCODES.iter().copied().cloned().collect(),
         }
     }
 }
@@ -120,14 +123,17 @@ mod tests {
     }
 
     fn sol_iface() -> String {
-        let cheats = Cheatcodes::new().to_string().trim().replace('\n', "\n    ");
+        let mut cheats = Cheatcodes::new();
+        cheats.errors = Default::default(); // Skip errors to allow <0.8.4.
+        let cheats = cheats.to_string().trim().replace('\n', "\n    ");
         format!(
             "\
 // Automatically generated from `foundry-cheatcodes` Vm definitions. Do not modify manually.
 // This interface is just for internal testing purposes. Use `forge-std` instead.
 
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity ^0.8.4;
+pragma solidity >=0.6.2 <0.9.0;
+pragma experimental ABIEncoderV2;
 
 interface Vm {{
     {cheats}

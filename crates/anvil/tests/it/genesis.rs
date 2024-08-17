@@ -1,7 +1,10 @@
 //! genesis.json tests
 
-use anvil::{genesis::Genesis, spawn, NodeConfig};
-use ethers::{abi::Address, prelude::Middleware, types::U256};
+use alloy_genesis::Genesis;
+use alloy_primitives::{Address, U256};
+use alloy_provider::Provider;
+use anvil::{spawn, NodeConfig};
+use std::str::FromStr;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_apply_genesis() {
@@ -37,11 +40,11 @@ async fn can_apply_genesis() {
 
     let provider = handle.http_provider();
 
-    assert_eq!(provider.get_chainid().await.unwrap(), 19763u64.into());
+    assert_eq!(provider.get_chain_id().await.unwrap(), 19763u64);
 
-    let addr: Address = "71562b71999873db5b286df957af199ec94617f7".parse().unwrap();
-    let balance = provider.get_balance(addr, None).await.unwrap();
+    let addr: Address = Address::from_str("71562b71999873db5b286df957af199ec94617f7").unwrap();
+    let balance = provider.get_balance(addr).await.unwrap();
 
-    let expected: U256 = "ffffffffffffffffffffffffff".parse().unwrap();
+    let expected: U256 = U256::from_str_radix("ffffffffffffffffffffffffff", 16).unwrap();
     assert_eq!(balance, expected);
 }

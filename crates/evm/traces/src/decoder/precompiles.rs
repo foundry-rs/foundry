@@ -1,7 +1,12 @@
-use crate::{CallTrace, TraceCallData};
-use alloy_primitives::{B256, U256};
+use crate::{CallTrace, DecodedCallData};
+use alloy_primitives::{hex, B256, U256};
 use alloy_sol_types::{abi, sol, SolCall};
+use foundry_evm_core::precompiles::{
+    BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
+    RIPEMD_160, SHA_256,
+};
 use itertools::Itertools;
+use revm_inspectors::tracing::types::DecodedCallTrace;
 
 sol! {
 /// EVM precompiles interface. For illustration purposes only, as precompiles don't follow the
@@ -36,51 +41,48 @@ macro_rules! tri {
     ($e:expr) => {
         match $e {
             Ok(x) => x,
-            Err(_) => return false,
+            Err(_) => return None,
         }
     };
 }
 
-/// Tries to decode a precompile call. Returns `true` if successful.
-pub(super) fn decode(trace: &mut CallTrace, _chain_id: u64) -> bool {
-    let [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, x @ 0x01..=0x0a] =
-        trace.address.0 .0
-    else {
-        return false
-    };
+/// Tries to decode a precompile call. Returns `Some` if successful.
+pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTrace> {
+    if !trace.address[..19].iter().all(|&x| x == 0) {
+        return None;
+    }
 
-    let TraceCallData::Raw(data) = &trace.data else { return false };
+    let data = &trace.data;
 
-    let (signature, args) = match x {
-        0x01 => {
+    let (signature, args) = match trace.address {
+        EC_RECOVER => {
             let (sig, ecrecoverCall { hash, v, r, s }) = tri!(abi_decode_call(data));
             (sig, vec![hash.to_string(), v.to_string(), r.to_string(), s.to_string()])
         }
-        0x02 => (sha256Call::SIGNATURE, vec![data.to_string()]),
-        0x03 => (ripemdCall::SIGNATURE, vec![data.to_string()]),
-        0x04 => (identityCall::SIGNATURE, vec![data.to_string()]),
-        0x05 => (modexpCall::SIGNATURE, tri!(decode_modexp(data))),
-        0x06 => {
+        SHA_256 => (sha256Call::SIGNATURE, vec![data.to_string()]),
+        RIPEMD_160 => (ripemdCall::SIGNATURE, vec![data.to_string()]),
+        IDENTITY => (identityCall::SIGNATURE, vec![data.to_string()]),
+        MOD_EXP => (modexpCall::SIGNATURE, tri!(decode_modexp(data))),
+        EC_ADD => {
             let (sig, ecaddCall { x1, y1, x2, y2 }) = tri!(abi_decode_call(data));
             (sig, vec![x1.to_string(), y1.to_string(), x2.to_string(), y2.to_string()])
         }
-        0x07 => {
+        EC_MUL => {
             let (sig, ecmulCall { x1, y1, s }) = tri!(abi_decode_call(data));
             (sig, vec![x1.to_string(), y1.to_string(), s.to_string()])
         }
-        0x08 => (ecpairingCall::SIGNATURE, tri!(decode_ecpairing(data))),
-        0x09 => (blake2fCall::SIGNATURE, tri!(decode_blake2f(data))),
-        0x0a => (pointEvaluationCall::SIGNATURE, tri!(decode_kzg(data))),
-        0x00 | 0x0b.. => unreachable!(),
+        EC_PAIRING => (ecpairingCall::SIGNATURE, tri!(decode_ecpairing(data))),
+        BLAKE_2F => (blake2fCall::SIGNATURE, tri!(decode_blake2f(data))),
+        POINT_EVALUATION => (pointEvaluationCall::SIGNATURE, tri!(decode_kzg(data))),
+        _ => return None,
     };
 
-    // TODO: Other chain precompiles
-
-    trace!(?signature, ?args, "decoded precompile call");
-    trace.data = TraceCallData::Decoded { signature: signature.to_string(), args };
-    trace.label = Some("PRECOMPILES".into());
-
-    true
+    Some(DecodedCallTrace {
+        label: Some("PRECOMPILES".to_string()),
+        call_data: Some(DecodedCallData { signature: signature.to_string(), args }),
+        // TODO: Decode return data too.
+        return_data: None,
+    })
 }
 
 // Note: we use the ABI decoder, but this is not necessarily ABI-encoded data. It's just a

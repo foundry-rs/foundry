@@ -4,7 +4,7 @@ use alloy_primitives::U256;
 use std::{collections::HashMap, ops::Add};
 
 /// Represents all snapshots
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Snapshots<T> {
     id: U256,
     snapshots: HashMap<U256, T>,
