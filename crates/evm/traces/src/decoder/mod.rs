@@ -17,7 +17,7 @@ use foundry_evm_core::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
         TEST_CONTRACT_ADDRESS,
     },
-    decode::RevertDecoder,
+    decode::{RevertDecoder, VmErr},
     precompiles::{
         BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
         RIPEMD_160, SHA_256,
@@ -327,6 +327,13 @@ impl CallTraceDecoder {
     pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
             node.trace.decoded = self.decode_function(&node.trace).await;
+
+            if let VmErr::UnemittedEventError(error_index) =
+                self.revert_decoder.decode_structured(&node.trace.output, Some(node.trace.status))
+            {
+                node.logs[error_index as usize].unmatched = true;
+            }
+
             for log in node.logs.iter_mut() {
                 log.decoded = self.decode_event(&log.raw_log).await;
             }

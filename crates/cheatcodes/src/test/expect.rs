@@ -102,6 +102,8 @@ pub struct ExpectedEmit {
     pub anonymous: bool,
     /// Whether the log was actually found in the subcalls
     pub found: bool,
+    /// the order in which the log was expected
+    pub sequence: u16,
 }
 
 impl Cheatcode for expectCall_0Call {
@@ -464,7 +466,9 @@ fn expect_emit(
     address: Option<Address>,
     anonymous: bool,
 ) -> Result {
-    let expected_emit = ExpectedEmit { depth, checks, address, found: false, log: None, anonymous };
+    let expected_emit = ExpectedEmit { depth, checks, address, found: false, log: None, anonymous,
+    sequence: tracer.traces().nodes().last().expect("no traces").logs.len() as u16
+    };
     if let Some(found_emit_pos) = state.expected_emits.iter().position(|emit| emit.found) {
         // The order of emits already found (back of queue) should not be modified, hence push any
         // new emit before first found emit.
