@@ -10,8 +10,13 @@ extern crate tracing;
 
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use revm::interpreter::OpCode;
-use revm_inspectors::tracing::OpcodeFilter;
+use revm_inspectors::tracing::{types::TraceMemberOrder, OpcodeFilter};
 use serde::{Deserialize, Serialize};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+};
 
 pub use revm_inspectors::tracing::{
     types::{
@@ -34,7 +39,88 @@ pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 pub mod debug;
 pub use debug::DebugTraceIdentifier;
 
-pub type Traces = Vec<(TraceKind, CallTraceArena)>;
+pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
+
+/// Trace arena keeping track of ignored trace items.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SparsedTraceArena {
+    #[serde(flatten)]
+    pub arena: CallTraceArena,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub ignored: HashMap<(usize, usize), (usize, usize)>,
+}
+
+impl SparsedTraceArena {
+    /// Goes over entire trace arena and removes ignored trace items.
+    fn resolve_arena<'a>(&'a self) -> Cow<'a, CallTraceArena> {
+        if self.ignored.is_empty() {
+            Cow::Borrowed(&self.arena)
+        } else {
+            let mut arena = self.arena.clone();
+
+            fn clear_node(
+                nodes: &mut [CallTraceNode],
+                node_idx: usize,
+                ignored: &HashMap<(usize, usize), (usize, usize)>,
+                cur_ignore_end: &mut Option<(usize, usize)>,
+            ) {
+                // Prepend an additional None item to the ordering to handle the beginning of the
+                // trace.
+                let steps = std::iter::once(None)
+                    .chain(nodes[node_idx].ordering.clone().into_iter().map(Some))
+                    .enumerate();
+
+                let mut offset = 0;
+                for (item_idx, item) in steps {
+                    if let Some(end_node) = ignored.get(&(node_idx, item_idx)) {
+                        *cur_ignore_end = Some(*end_node);
+                    }
+
+                    let ignored_before = cur_ignore_end.is_some();
+
+                    if let Some(TraceMemberOrder::Call(child_idx)) = item {
+                        clear_node(
+                            nodes,
+                            nodes[node_idx].children[child_idx],
+                            ignored,
+                            cur_ignore_end,
+                        );
+                    }
+
+                    // Do not remove trace items which started trace ignoring
+                    if ignored_before && cur_ignore_end.is_some() && item.is_some() {
+                        nodes[node_idx].ordering.remove(item_idx - 1 - offset);
+                        offset += 1;
+                    }
+
+                    if let Some((end_node, end_step_idx)) = cur_ignore_end {
+                        if node_idx == *end_node && item_idx == *end_step_idx {
+                            *cur_ignore_end = None;
+                        }
+                    }
+                }
+            }
+
+            clear_node(arena.nodes_mut(), 0, &self.ignored, &mut None);
+
+            Cow::Owned(arena)
+        }
+    }
+}
+
+impl Deref for SparsedTraceArena {
+    type Target = CallTraceArena;
+
+    fn deref(&self) -> &Self::Target {
+        &self.arena
+    }
+}
+
+impl DerefMut for SparsedTraceArena {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.arena
+    }
+}
 
 /// Decode a collection of call traces.
 ///
@@ -50,9 +136,9 @@ pub async fn decode_trace_arena(
 }
 
 /// Render a collection of call traces to a string.
-pub fn render_trace_arena(arena: &CallTraceArena) -> String {
+pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
     let mut w = TraceWriter::new(Vec::<u8>::new());
-    w.write_arena(arena).expect("Failed to write traces");
+    w.write_arena(&arena.resolve_arena()).expect("Failed to write traces");
     String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
 }
 

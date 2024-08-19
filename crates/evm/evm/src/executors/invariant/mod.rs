@@ -21,7 +21,7 @@ use foundry_evm_fuzz::{
     strategies::{invariant_strat, override_call_strat, EvmFuzzState},
     FuzzCase, FuzzFixtures, FuzzedCases,
 };
-use foundry_evm_traces::CallTraceArena;
+use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{
@@ -199,7 +199,9 @@ impl InvariantTest {
 
         let mut invariant_data = self.execution_data.borrow_mut();
         if invariant_data.gas_report_traces.len() < gas_samples {
-            invariant_data.gas_report_traces.push(run.run_traces);
+            invariant_data
+                .gas_report_traces
+                .push(run.run_traces.into_iter().map(|arena| arena.arena).collect());
         }
         invariant_data.fuzz_cases.push(FuzzedCases::new(run.fuzz_runs));
 
@@ -219,7 +221,7 @@ pub struct InvariantTestRun {
     // Contracts created during current invariant run.
     pub created_contracts: Vec<Address>,
     // Traces of each call of the invariant run call sequence.
-    pub run_traces: Vec<CallTraceArena>,
+    pub run_traces: Vec<SparsedTraceArena>,
     // Current depth of invariant run.
     pub depth: u32,
     // Current assume rejects of the invariant run.

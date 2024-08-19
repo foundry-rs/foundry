@@ -23,7 +23,7 @@ use foundry_evm_core::{
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_traces::{CallTraceArena, TraceMode};
+use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, InstructionResult},
@@ -424,9 +424,13 @@ impl Executor {
         if let Some(cheats) = self.inspector_mut().cheatcodes.as_mut() {
             // Clear broadcastable transactions
             cheats.broadcastable_transactions.clear();
+            cheats.ignored_traces.ignored.clear();
 
-            // corrected_nonce value is needed outside of this context (setUp), so we don't
-            // reset it.
+            // if tracing was paused but never unpaused, we should begin next frame with tracing
+            // still paused
+            if let Some(last_pause_call) = cheats.ignored_traces.last_pause_call.as_mut() {
+                *last_pause_call = (0, 0);
+            }
         }
 
         // Persist the changed environment.
@@ -721,7 +725,7 @@ pub struct RawCallResult {
     /// The labels assigned to addresses during the call
     pub labels: HashMap<Address, String>,
     /// The traces of the call
-    pub traces: Option<CallTraceArena>,
+    pub traces: Option<SparsedTraceArena>,
     /// The coverage info collected during the call
     pub coverage: Option<HitMaps>,
     /// Scripted transactions generated from this call

@@ -31,7 +31,7 @@ impl DebuggerBuilder {
     #[inline]
     pub fn traces(mut self, traces: Traces) -> Self {
         for (_, arena) in traces {
-            self = self.trace_arena(arena);
+            self = self.trace_arena(arena.arena);
         }
         self
     }

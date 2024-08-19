@@ -2282,6 +2282,15 @@ interface Vm {
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
     function randomAddress() external returns (address);
+
+    /// Pauses collection of call traces. Useful in cases when you want to skip tracing of
+    /// complex calls which are not useful for debugging.
+    #[cheatcode(group = Utilities)]
+    function pauseTracing() external view;
+
+    /// Unpauses collection of call traces.
+    #[cheatcode(group = Utilities)]
+    function resumeTracing() external view;
 }
 }
 

@@ -560,9 +560,7 @@ impl TestArgs {
                 }
 
                 if let Some(gas_report) = &mut gas_report {
-                    gas_report
-                        .analyze(result.traces.iter().map(|(_, arena)| arena), &decoder)
-                        .await;
+                    gas_report.analyze(result.traces.iter().map(|(_, a)| &a.arena), &decoder).await;
 
                     for trace in result.gas_report_traces.iter() {
                         decoder.clear_addresses();
