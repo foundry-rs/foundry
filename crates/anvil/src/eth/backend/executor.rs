@@ -81,7 +81,7 @@ impl ExecutedTransaction {
 pub struct ExecutedTransactions {
     /// The block created after executing the `included` transactions
     pub block: BlockInfo,
-    /// All transactions included in the
+    /// All transactions included in the block
     pub included: Vec<Arc<PoolTransaction>>,
     /// All transactions that were invalid at the point of their execution and were not included in
     /// the block
