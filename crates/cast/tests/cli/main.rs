@@ -1,6 +1,7 @@
 //! Contains various tests for checking cast commands
 
 use alloy_primitives::{address, b256, Address, B256};
+use anvil::{Hardfork, NodeConfig};
 use foundry_test_utils::{
     casttest,
     rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint},
@@ -142,6 +143,23 @@ casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
             .as_str(),
     ]).assert_success().stdout_eq(str![[r#"
 0x06c18bdc8163219fddc9afaf5a0550e381326474bb757c86dc32317040cf384e07a2c72ce66c1a0626b6750ca9b6c035bf6f03e7ed67ae2d1134171e9085c0b51b
+
+"#]]);
+});
+
+// tests that `cast wallet sign-auth message` outputs the expected signature
+casttest!(wallet_sign_auth, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "sign-auth",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--nonce",
+        "100",
+        "--chain",
+        "1",
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"]).assert_success().stdout_eq(str![[r#"
+0xf85a01947e5f4552091a69125d5dfcb7b8c2659029395bdf6401a0ad489ee0314497c3f06567f3080a46a63908edc1c7cdf2ac2d609ca911212086a065a6ba951c8748dd8634740fe498efb61770097d99ff5fdcb9a863b62ea899f6
 
 "#]]);
 });
@@ -1013,4 +1031,29 @@ casttest!(block_number_hash, |_prj, cmd| {
         ])
         .stdout_lossy();
     assert_eq!(s.trim().parse::<u64>().unwrap(), 1, "{s}")
+});
+
+casttest!(send_eip7702, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(Hardfork::PragueEOF))).await;
+    let endpoint = handle.http_endpoint();
+    cmd.args([
+        "send",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_success();
+
+    cmd.cast_fuse()
+        .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
+
+"#]]);
 });

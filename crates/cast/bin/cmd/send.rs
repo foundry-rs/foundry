@@ -164,12 +164,12 @@ impl SendTxArgs {
 
             tx::validate_from_address(eth.wallet.from, from)?;
 
+            let (tx, _) = builder.build(&signer).await?;
+
             let wallet = EthereumWallet::from(signer);
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(wallet)
                 .on_provider(&provider);
-
-            let (tx, _) = builder.build(from).await?;
 
             cast_send(provider, tx, cast_async, confirmations, to_json).await
         }
