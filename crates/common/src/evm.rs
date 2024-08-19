@@ -85,7 +85,7 @@ pub struct EvmArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_balance: Option<U256>,
 
-    /// The address which will be executing tests.
+    /// The address which will be executing tests/scripts.
     #[arg(long, value_name = "ADDRESS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender: Option<Address>,
