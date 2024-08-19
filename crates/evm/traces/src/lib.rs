@@ -52,7 +52,7 @@ pub struct SparsedTraceArena {
 
 impl SparsedTraceArena {
     /// Goes over entire trace arena and removes ignored trace items.
-    fn resolve_arena<'a>(&'a self) -> Cow<'a, CallTraceArena> {
+    fn resolve_arena(&self) -> Cow<'_, CallTraceArena> {
         if self.ignored.is_empty() {
             Cow::Borrowed(&self.arena)
         } else {
