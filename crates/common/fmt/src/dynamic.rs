@@ -38,7 +38,7 @@ impl DynValueFormatter {
             DynSolValue::Tuple(values) => self.tuple(values, f),
             DynSolValue::String(inner) => {
                 if self.raw {
-                    write!(f, "{inner}")
+                    write!(f, "{}", inner.escape_debug())
                 } else {
                     write!(f, "{inner:?}") // escape strings
                 }
