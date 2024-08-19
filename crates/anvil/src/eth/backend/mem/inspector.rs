@@ -50,7 +50,7 @@ impl Inspector {
 
     /// Enables steps recording for `Tracer`.
     pub fn with_steps_tracing(mut self) -> Self {
-        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all()));
+        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
     }
 
