@@ -2581,7 +2581,7 @@ impl TransactionValidator for Backend {
                 // 2. increment account balance by deposited amount before checking for sufficient
                 //    funds `tx.value <= existing account value + deposited value`
                 if value > account.balance + deposit_tx.mint {
-                    warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, value, *pending.sender());
+                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + deposit_tx.mint, value, *pending.sender());
                     return Err(InvalidTransactionError::InsufficientFunds);
                 }
             }
