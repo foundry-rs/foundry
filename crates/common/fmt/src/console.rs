@@ -25,7 +25,7 @@ impl FormatSpec {
     where
         I: Iterator<Item = char>,
     {
-        match iter.next().ok_or_else(|| String::new())? {
+        match iter.next().ok_or_else(String::new)? {
             's' => Ok(Self::String),
             'd' => Ok(Self::Number),
             'i' => Ok(Self::Integer),
@@ -44,13 +44,9 @@ impl FormatSpec {
                 }
                 if let Some(&ch) = iter.peek() {
                     if ch == 'e' {
-                        if let Ok(num) = num.parse() {
-                            // consume 'e'
-                            iter.next();
-                            Ok(Self::Exponential(Some(num)))
-                        } else {
-                            Err(num)
-                        }
+                        let num = num.parse().map_err(|_| num)?;
+                        iter.next();
+                        Ok(Self::Exponential(Some(num)))
                     } else {
                         Err(num)
                     }
@@ -58,7 +54,7 @@ impl FormatSpec {
                     Err(num)
                 }
             }
-            ch @ _ => Err(String::from(ch)),
+            ch => Err(String::from(ch)),
         }
     }
 }
