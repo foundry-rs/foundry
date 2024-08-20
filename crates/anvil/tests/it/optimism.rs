@@ -186,8 +186,6 @@ async fn test_deposit_tx_checks_sufficient_funds_after_applying_deposited_value(
 
     let provider = http_provider(&handle.http_endpoint());
 
-    // let accounts: Vec<_> = handle.dev_wallets().collect();
-
     let sender = Address::random();
     let recipient = Address::random();
     let send_value = 1_000_000_000_u128;
