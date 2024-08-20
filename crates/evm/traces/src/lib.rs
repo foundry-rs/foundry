@@ -44,8 +44,11 @@ pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 /// Trace arena keeping track of ignored trace items.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparsedTraceArena {
+    /// Full trace arena.
     #[serde(flatten)]
     pub arena: CallTraceArena,
+    /// Ranges of trace steps to ignore in format (start_node, start_step) -> (end_node, end_step).
+    /// See `foundry_cheatcodes::utils::IgnoredTraces` for more information.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub ignored: HashMap<(usize, usize), (usize, usize)>,
 }

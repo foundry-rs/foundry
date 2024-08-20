@@ -120,7 +120,7 @@ impl Cheatcode for pauseTracingCall {
             return Ok(Default::default())
         }
 
-        let cur_node = &tracer.traces().nodes()[tracer.traces().nodes().len() - 1];
+        let cur_node = &tracer.traces().nodes().last().expect("no trace nodes");
         ccx.state.ignored_traces.last_pause_call = Some((cur_node.idx, cur_node.ordering.len()));
 
         Ok(Default::default())
@@ -143,7 +143,7 @@ impl Cheatcode for resumeTracingCall {
             return Ok(Default::default())
         };
 
-        let node = &tracer.traces().nodes()[tracer.traces().nodes().len() - 1];
+        let node = &tracer.traces().nodes().last().expect("no trace nodes");
         ccx.state.ignored_traces.ignored.insert(start, (node.idx, node.ordering.len()));
 
         Ok(Default::default())
