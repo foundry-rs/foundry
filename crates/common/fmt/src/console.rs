@@ -285,8 +285,7 @@ fn format_spec<'a>(
     let mut expect_fmt = false;
     let mut chars = s.chars().peekable();
 
-    while let Some(ch) = chars.peek() {
-        let ch = *ch;
+    while chars.peek().is_some() {
         if expect_fmt {
             expect_fmt = false;
             match FormatSpec::from_chars(&mut chars) {
@@ -301,24 +300,25 @@ fn format_spec<'a>(
                     result.push_str(&consumed);
                 }
             }
-        } else if ch == '%' {
-            chars.next();
-            if let Some(&next_ch) = chars.peek() {
-                if next_ch == '%' {
-                    result.push('%');
-                    chars.next();
-                } else if values.peek().is_some() {
-                    // only try formatting if there are values to format
-                    expect_fmt = true;
+        } else {
+            let ch = chars.next().unwrap();
+            if ch == '%' {
+                if let Some(&next_ch) = chars.peek() {
+                    if next_ch == '%' {
+                        result.push('%');
+                        chars.next();
+                    } else if values.peek().is_some() {
+                        // only try formatting if there are values to format
+                        expect_fmt = true;
+                    } else {
+                        result.push(ch);
+                    }
                 } else {
                     result.push(ch);
                 }
             } else {
                 result.push(ch);
             }
-        } else {
-            chars.next();
-            result.push(ch);
         }
     }
 }
