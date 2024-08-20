@@ -1,4 +1,4 @@
-use crate::tx::CastTxBuilder;
+use crate::tx::{CastTxBuilder, SenderKind};
 use alloy_primitives::TxKind;
 use alloy_rpc_types::BlockId;
 use cast::Cast;
@@ -53,7 +53,7 @@ impl AccessListArgs {
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
-        let sender = eth.wallet.sender().await;
+        let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
 
         let tx_kind = if let Some(to) = to {
             TxKind::Call(to.resolve(&provider).await?)

@@ -580,7 +580,9 @@ impl ScriptConfig {
         // We need to enable tracing to decode contract names: local or external.
         let mut builder = ExecutorBuilder::new()
             .inspectors(|stack| {
-                stack.trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
+                stack
+                    .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
+                    .alphanet(self.evm_opts.alphanet)
             })
             .spec(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit())

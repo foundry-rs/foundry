@@ -316,10 +316,17 @@ pub async fn get_tracing_executor(
     fork_config.fork_block_number = Some(fork_blk_num);
     fork_config.evm_version = evm_version;
 
-    let (env, fork, _chain) = TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
+    let (env, fork, _chain, is_alphanet) =
+        TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
 
-    let executor =
-        TracingExecutor::new(env.clone(), fork, Some(fork_config.evm_version), false, false);
+    let executor = TracingExecutor::new(
+        env.clone(),
+        fork,
+        Some(fork_config.evm_version),
+        false,
+        false,
+        is_alphanet,
+    );
 
     Ok((env, executor))
 }
