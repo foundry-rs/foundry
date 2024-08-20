@@ -21,17 +21,17 @@ pub enum FormatSpec {
 }
 
 impl FormatSpec {
-    fn from_chars<I>(iter: &mut Peekable<I>) -> Option<Self>
+    fn from_chars<I>(iter: &mut Peekable<I>) -> Result<Self, String>
     where
         I: Iterator<Item = char>,
     {
-        match iter.next()? {
-            's' => Some(Self::String),
-            'd' => Some(Self::Number),
-            'i' => Some(Self::Integer),
-            'o' => Some(Self::Object),
-            'e' => Some(Self::Exponential(None)),
-            'x' => Some(Self::Hexadecimal),
+        match iter.next().ok_or_else(String::new)? {
+            's' => Ok(Self::String),
+            'd' => Ok(Self::Number),
+            'i' => Ok(Self::Integer),
+            'o' => Ok(Self::Object),
+            'e' => Ok(Self::Exponential(None)),
+            'x' => Ok(Self::Hexadecimal),
             ch if ch.is_ascii_digit() => {
                 let mut num = ch.to_string();
                 while let Some(&ch) = iter.peek() {
@@ -44,16 +44,17 @@ impl FormatSpec {
                 }
                 if let Some(&ch) = iter.peek() {
                     if ch == 'e' {
+                        let num = num.parse().map_err(|_| num)?;
                         iter.next();
-                        Some(Self::Exponential(Some(num.parse().ok()?)))
+                        Ok(Self::Exponential(Some(num)))
                     } else {
-                        None
+                        Err(num)
                     }
                 } else {
-                    None
+                    Err(num)
                 }
             }
-            _ => None,
+            ch => Err(String::from(ch)),
         }
     }
 }
@@ -248,29 +249,25 @@ impl ConsoleFmt for [u8] {
 /// assert_eq!(formatted, "foo has 3 characters");
 /// ```
 pub fn console_format(spec: &str, values: &[&dyn ConsoleFmt]) -> String {
-    let mut values = values.iter().copied();
+    let mut values = values.iter().copied().peekable();
     let mut result = String::with_capacity(spec.len());
 
     // for the first space
-    let mut write_space = true;
-    let last_value = if spec.is_empty() {
-        // we still want to print any remaining values
-        write_space = false;
-        values.next()
+    let mut write_space = if spec.is_empty() {
+        false
     } else {
-        format_spec(spec, &mut values, &mut result)
+        format_spec(spec, &mut values, &mut result);
+        true
     };
 
     // append any remaining values with the standard format
-    if let Some(v) = last_value {
-        for v in std::iter::once(v).chain(values) {
-            let fmt = v.fmt(FormatSpec::String);
-            if write_space {
-                result.push(' ');
-            }
-            result.push_str(&fmt);
-            write_space = true;
+    for v in values {
+        let fmt = v.fmt(FormatSpec::String);
+        if write_space {
+            result.push(' ');
         }
+        result.push_str(&fmt);
+        write_space = true;
     }
 
     result
@@ -278,46 +275,48 @@ pub fn console_format(spec: &str, values: &[&dyn ConsoleFmt]) -> String {
 
 fn format_spec<'a>(
     s: &str,
-    values: &mut impl Iterator<Item = &'a dyn ConsoleFmt>,
+    values: &mut Peekable<impl Iterator<Item = &'a dyn ConsoleFmt>>,
     result: &mut String,
-) -> Option<&'a dyn ConsoleFmt> {
+) {
     let mut expect_fmt = false;
-    let mut current_value = values.next();
     let mut chars = s.chars().peekable();
 
-    while let Some(ch) = chars.next() {
+    while chars.peek().is_some() {
         if expect_fmt {
             expect_fmt = false;
-            let mut iter = std::iter::once(ch).chain(chars.by_ref()).peekable();
-            if let Some(spec) = FormatSpec::from_chars(&mut iter) {
-                // format and write the value
-                if let Some(value) = current_value {
-                    let string = value.fmt(spec);
-                    result.push_str(&string);
-                    current_value = values.next();
+            match FormatSpec::from_chars(&mut chars) {
+                Ok(spec) => {
+                    let value = values.next().expect("value existence is checked");
+                    // format and write the value
+                    result.push_str(&value.fmt(spec));
                 }
-            } else {
-                // invalid specifier or a second `%`, in both cases we ignore
-                result.push('%');
-                result.push(ch);
-            }
-        } else if ch == '%' {
-            if let Some(&next_ch) = chars.peek() {
-                if next_ch == '%' {
+                Err(consumed) => {
+                    // on parser failure, write '%' and consumed characters
                     result.push('%');
-                    chars.next();
-                } else {
-                    expect_fmt = true;
+                    result.push_str(&consumed);
                 }
-            } else {
-                result.push(ch);
             }
         } else {
-            result.push(ch);
+            let ch = chars.next().unwrap();
+            if ch == '%' {
+                if let Some(&next_ch) = chars.peek() {
+                    if next_ch == '%' {
+                        result.push('%');
+                        chars.next();
+                    } else if values.peek().is_some() {
+                        // only try formatting if there are values to format
+                        expect_fmt = true;
+                    } else {
+                        result.push(ch);
+                    }
+                } else {
+                    result.push(ch);
+                }
+            } else {
+                result.push(ch);
+            }
         }
     }
-
-    current_value
 }
 
 #[cfg(test)]
@@ -468,6 +467,13 @@ mod tests {
             fmt_1("%x", &I256::try_from(-100000000000i64).unwrap())
         );
         assert_eq!("100", fmt_1("%o", &I256::try_from(100).unwrap()));
+
+        // make sure that %byte values are not consumed when there are no values
+        assert_eq!("%333d%3e%5F", console_format("%333d%3e%5F", &[]));
+        assert_eq!(
+            "%5d123456.789%2f%3f%e1",
+            console_format("%5d%3e%2f%3f%e1", &[&U256::from(123456789)])
+        );
     }
 
     #[test]
