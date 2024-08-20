@@ -168,7 +168,7 @@ where
 
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
-            format!("{res}\n")
+            res.to_string()
         } else if json {
             let tokens = decoded.iter().map(format_token_raw).collect::<Vec<_>>();
             serde_json::to_string_pretty(&tokens).unwrap()
@@ -1503,7 +1503,7 @@ impl SimpleCast {
     ///         decoded[1].as_address().unwrap().to_string().to_lowercase(),
     ///         decoded[2].as_uint().unwrap().0.to_string(),
     ///         decoded[3].as_uint().unwrap().0.to_string(),
-    ///         hex::encode(decoded[4].as_bytes().unwrap())    
+    ///         hex::encode(decoded[4].as_bytes().unwrap())
     ///     ]
     ///     .into_iter()
     ///     .collect::<Vec<_>>();

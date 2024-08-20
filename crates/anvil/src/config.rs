@@ -183,6 +183,8 @@ pub struct NodeConfig {
     pub memory_limit: Option<u64>,
     /// Factory used by `anvil` to extend the EVM's precompiles.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
+    /// Enable Alphanet features.
+    pub alphanet: bool,
 }
 
 impl NodeConfig {
@@ -437,6 +439,7 @@ impl Default for NodeConfig {
             slots_in_an_epoch: 32,
             memory_limit: None,
             precompile_factory: None,
+            alphanet: false,
         }
     }
 }
@@ -471,8 +474,11 @@ impl NodeConfig {
         }
     }
 
-    /// Returns the base fee to use
+    /// Returns the hardfork to use
     pub fn get_hardfork(&self) -> Hardfork {
+        if self.alphanet {
+            return Hardfork::PragueEOF;
+        }
         self.hardfork.unwrap_or_default()
     }
 
@@ -918,6 +924,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to enable Alphanet support
+    #[must_use]
+    pub fn with_alphanet(mut self, alphanet: bool) -> Self {
+        self.alphanet = alphanet;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -994,6 +1007,7 @@ impl NodeConfig {
             Arc::new(RwLock::new(fork)),
             self.enable_steps_tracing,
             self.print_logs,
+            self.alphanet,
             self.prune_history,
             self.max_persisted_states,
             self.transaction_block_keeper,

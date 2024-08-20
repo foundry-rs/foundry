@@ -15,7 +15,9 @@ impl DynValueFormatter {
             DynSolValue::Address(inner) => write!(f, "{inner}"),
             DynSolValue::Function(inner) => write!(f, "{inner}"),
             DynSolValue::Bytes(inner) => f.write_str(&hex::encode_prefixed(inner)),
-            DynSolValue::FixedBytes(inner, _) => write!(f, "{inner}"),
+            DynSolValue::FixedBytes(word, size) => {
+                f.write_str(&hex::encode_prefixed(&word[..*size]))
+            }
             DynSolValue::Uint(inner, _) => {
                 if self.raw {
                     write!(f, "{inner}")

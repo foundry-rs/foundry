@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::ToAscii { hexdata } => {
             let value = stdin::unwrap(hexdata, false)?;
-            println!("{}", SimpleCast::to_ascii(&value)?);
+            println!("{}", SimpleCast::to_ascii(value.trim())?);
         }
         CastSubcommand::ToUtf8 { hexdata } => {
             let value = stdin::unwrap(hexdata, false)?;
