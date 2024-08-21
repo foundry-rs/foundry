@@ -268,7 +268,7 @@ impl DepositTransaction {
         None
     }
 
-    pub(crate) fn encode_2718(&self, out: &mut dyn alloy_rlp::BufMut) {
+    pub fn encode_2718(&self, out: &mut dyn alloy_rlp::BufMut) {
         out.put_u8(DEPOSIT_TX_TYPE_ID);
         self.encode(out);
     }
