@@ -259,9 +259,7 @@ pub async fn watch_snapshot(args: SnapshotArgs) -> Result<()> {
 pub async fn watch_test(args: TestArgs) -> Result<()> {
     let config: Config = args.build_args().into();
     let filter = args.filter(&config);
-    
-    // Check if any of the filters are present
-    let path_pattern_exists = filter.args().path_pattern.is_some();
+
 
     // Marker to check whether to override the command.
     let _no_reconfigure = filter.args().test_pattern.is_some() ||
@@ -308,7 +306,7 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
             trace!(?file, "reconfigure test command");
             
             // Before appending `--match-path`, check if it already exists
-            if !path_pattern_exists {
+            if !_no_reconfigure {
                 command.arg("--match-path").arg(file);
             }
         },
