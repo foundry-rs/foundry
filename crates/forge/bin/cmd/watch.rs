@@ -302,7 +302,7 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
             }
 
             trace!(?file, "reconfigure test command");
-            
+
             // Before appending `--match-path`, check if it already exists
             if !no_reconfigure {
                 command.arg("--match-path").arg(file);
