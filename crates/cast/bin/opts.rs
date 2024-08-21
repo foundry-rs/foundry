@@ -757,7 +757,7 @@ pub enum CastSubcommand {
     /// Hash a message according to EIP-191.
     #[command(visible_aliases = &["--hash-message", "hm"])]
     HashMessage {
-        /// the message to hash.
+        /// The message to hash.
         message: Option<String>,
     },
 
