@@ -754,6 +754,13 @@ pub enum CastSubcommand {
         data: Option<String>,
     },
 
+    /// Hash a message according to EIP-191.
+    #[command(visible_aliases = &["--hash-message", "hm"])]
+    HashMessage {
+        /// The message to hash.
+        message: Option<String>,
+    },
+
     /// Perform an ENS lookup.
     #[command(visible_alias = "rn")]
     ResolveName {
