@@ -54,8 +54,6 @@ fn test_verify_bytecode(
 
     let output = cmd.forge_fuse().args(args).assert_success().get_output().stdout_lossy();
 
-    println!("{:#?}", output);
-
     assert!(output
         .contains(format!("Creation code matched with status {}", expected_matches.0).as_str()));
     assert!(output
