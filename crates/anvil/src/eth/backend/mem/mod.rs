@@ -2577,7 +2577,7 @@ impl TransactionValidator for Backend {
         match &tx.transaction {
             TypedTransaction::Deposit(deposit_tx) => {
                 // Deposit transactions
-                // See https://specs.optimism.io/protocol/deposits.html#execution
+                // https://specs.optimism.io/protocol/deposits.html#execution
                 // 1. no gas cost check required since already have prepaid gas from L1
                 // 2. increment account balance by deposited amount before checking for sufficient
                 //    funds `tx.value <= existing account value + deposited value`
