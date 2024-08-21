@@ -13,6 +13,7 @@ fn test_verify_bytecode(
     mut cmd: TestCommand,
     addr: &str,
     contract_name: &str,
+    constructor_args: Option<Vec<&str>>,
     config: Config,
     verifier: &str,
     verifier_url: &str,
@@ -32,24 +33,28 @@ fn test_verify_bytecode(
     prj.add_source(contract_name, &source_code).unwrap();
     prj.write_config(config);
 
-    let output = cmd
-        .forge_fuse()
-        .args([
-            "verify-bytecode",
-            addr,
-            contract_name,
-            "--etherscan-api-key",
-            &etherscan_key,
-            "--verifier",
-            verifier,
-            "--verifier-url",
-            verifier_url,
-            "--rpc-url",
-            &rpc_url,
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let mut args = vec![
+        "verify-bytecode",
+        addr,
+        contract_name,
+        "--etherscan-api-key",
+        &etherscan_key,
+        "--verifier",
+        verifier,
+        "--verifier-url",
+        verifier_url,
+        "--rpc-url",
+        &rpc_url,
+    ];
+
+    if let Some(constructor_args) = constructor_args {
+        args.push("--constructor-args");
+        args.extend(constructor_args.iter());
+    }
+
+    let output = cmd.forge_fuse().args(args).assert_success().get_output().stdout_lossy();
+
+    println!("{:#?}", output);
 
     assert!(output
         .contains(format!("Creation code matched with status {}", expected_matches.0).as_str()));
@@ -137,6 +142,7 @@ forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {
         cmd,
         "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
         "SystemConfig",
+        None,
         Config {
             evm_version: EvmVersion::London,
             optimizer_runs: 999999,
@@ -157,6 +163,7 @@ forgetest_async!(can_verify_bytecode_with_metadata, |prj, cmd| {
         cmd,
         "0xb8901acb165ed027e32754e0ffe830802919727f",
         "L1_ETH_Bridge",
+        None,
         Config {
             evm_version: EvmVersion::Paris,
             optimizer_runs: 50000,
@@ -176,6 +183,7 @@ forgetest_async!(can_verify_bytecode_with_blockscout, |prj, cmd| {
         cmd,
         "0x70f44C13944d49a236E3cD7a94f48f5daB6C619b",
         "StrategyManager",
+        None,
         Config {
             evm_version: EvmVersion::London,
             optimizer: true,
@@ -195,6 +203,7 @@ forgetest_async!(can_vb_create2_with_blockscout, |prj, cmd| {
         cmd,
         "0xba2492e52F45651B60B8B38d4Ea5E2390C64Ffb1",
         "SystemConfig",
+        None,
         Config {
             evm_version: EvmVersion::London,
             optimizer_runs: 999999,
@@ -205,6 +214,31 @@ forgetest_async!(can_vb_create2_with_blockscout, |prj, cmd| {
         },
         "blockscout",
         "https://eth.blockscout.com/api",
+        ("partial", "partial"),
+    );
+});
+
+// Test `--constructor-args`
+forgetest_async!(can_verify_bytecode_with_constructor_args, |prj, cmd| {
+    let constructor_args = vec![
+        "0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A",
+        "0x91E677b07F7AF907ec9a428aafA9fc14a0d3A338",
+        "0xD92145c07f8Ed1D392c1B88017934E301CC1c3Cd",
+    ];
+    test_verify_bytecode(
+        prj,
+        cmd,
+        "0x70f44C13944d49a236E3cD7a94f48f5daB6C619b",
+        "StrategyManager",
+        Some(constructor_args),
+        Config {
+            evm_version: EvmVersion::London,
+            optimizer: true,
+            optimizer_runs: 200,
+            ..Default::default()
+        },
+        "etherscan",
+        "https://api.etherscan.io/api",
         ("partial", "partial"),
     );
 });
