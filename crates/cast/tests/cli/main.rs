@@ -1057,3 +1057,14 @@ casttest!(send_eip7702, async |_prj, cmd| {
 
 "#]]);
 });
+
+casttest!(hash_message, |_prj, cmd| {
+    let tests = [
+        ("hello", "0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750"),
+        ("0x68656c6c6f", "0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750"),
+    ];
+    for (message, expected) in tests {
+        cmd.cast_fuse();
+        assert_eq!(cmd.args(["hash-message", message]).stdout_lossy().trim(), expected);
+    }
+});

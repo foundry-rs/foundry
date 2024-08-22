@@ -1,8 +1,0 @@
-Error: 
-Compiler run failed:
-Error (6553): The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction.
- --> src/Foo.sol:6:8:
-  |
-6 |        assembly {
-  |        ^ (Relevant source part starts here and spans across multiple lines).
-
