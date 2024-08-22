@@ -235,8 +235,7 @@ forgetest!(can_detect_dirty_git_status_on_init, |prj, cmd| {
 
     cmd.current_dir(&nested);
     cmd.arg("init").assert_failure().stderr_eq(str![[r#"
-...
-Error:[..]
+Error: 
 The target directory is a part of or on its own an already initialized git repository,
 and it requires clean working and staging areas, including no untracked files.
 
@@ -246,7 +245,7 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
 
 If none of the previous steps worked, please open an issue at:
 https://github.com/foundry-rs/foundry/issues/new/choose
-...
+
 "#]]);
 
     // ensure nothing was emitted, dir is empty
@@ -398,7 +397,7 @@ forgetest!(can_init_vscode, |prj, cmd| {
     assert_eq!(
         settings,
         serde_json::json!({
-             "solidity.packageDefaultDependenciesContractsDirectory": "src",
+            "solidity.packageDefaultDependenciesContractsDirectory": "src",
             "solidity.packageDefaultDependenciesDirectory": "lib"
         })
     );
@@ -758,11 +757,16 @@ contract ATest is DSTest {
     .unwrap();
 
     cmd.args(["snapshot"]).assert_success().stdout_eq(str![[r#"
-...
+Compiling 2 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
 Ran 1 test for src/ATest.t.sol:ATest
-[PASS] testExample() (gas: 168)
-Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in [..]
-...
+[PASS] testExample() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
 
     cmd.arg("--check");
@@ -1689,22 +1693,20 @@ function test_run() external {}
     cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**", "--force"])
         .assert_success()
         .stdout_eq(str![[r#"
-...
-Compiling 1 files [..]
-[..]
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-...
+
 "#]]);
 
     cmd.forge_fuse()
         .args(["build", "--skip", "./test/**", "--skip", "./script/**", "--force"])
         .assert_success()
         .stdout_eq(str![[r#"
-...
-Compiling 1 files [..]
-[..]
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-...
+
 "#]]);
 });
 
@@ -1738,44 +1740,40 @@ function test_bar() external {}
     // Build 2 files within test dir
     prj.clear();
     cmd.args(["build", "test", "--force"]).assert_success().stdout_eq(str![[r#"
-...
-Compiling 2 files with Solc 0.8.23
-[..]
+Compiling 2 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-...
+
 "#]]);
 
     // Build one file within src dir
     prj.clear();
     cmd.forge_fuse();
     cmd.args(["build", "src", "--force"]).assert_success().stdout_eq(str![[r#"
-...
-Compiling 1 files with Solc 0.8.23
-[..]
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-...
+
 "#]]);
 
     // Build 3 files from test and src dirs
     prj.clear();
     cmd.forge_fuse();
     cmd.args(["build", "src", "test", "--force"]).assert_success().stdout_eq(str![[r#"
-...
-Compiling 3 files with Solc 0.8.23
-[..]
+Compiling 3 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-...
+
 "#]]);
 
     // Build single test file
     prj.clear();
     cmd.forge_fuse();
     cmd.args(["build", "test/Bar.sol", "--force"]).assert_success().stdout_eq(str![[r#"
-...
-Compiling 1 files with Solc 0.8.23
-[..]
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-...
+
 "#]]);
 });
 

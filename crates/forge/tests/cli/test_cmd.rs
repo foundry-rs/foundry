@@ -52,7 +52,6 @@ contract Dummy {}
 
     // run command and assert
     cmd.assert_failure().stdout_eq(str![[r#"
-...
 No tests found in project! Forge looks for functions that starts with `test`.
 
 "#]]);
@@ -75,7 +74,6 @@ contract Dummy {}
 
     // run command and assert
     cmd.assert_failure().stdout_eq(str![[r#"
-...
 No tests match the provided pattern:
 	match-test: `testA.*`
 	no-match-test: `testB.*`
@@ -108,7 +106,6 @@ contract TestC {
 
     // run command and assert
     cmd.assert_failure().stdout_eq(str![[r#"
-...
 No tests match the provided pattern:
 	match-test: `testA.*`
 	no-match-test: `testB.*`
@@ -197,12 +194,16 @@ contract FailTest is DSTest {
     .unwrap();
 
     cmd.args(["test", "--match-path", "*src/ATest.t.sol"]).assert_success().stdout_eq(str![[r#"
-...
+Compiling 3 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
 Ran 1 test for src/ATest.t.sol:ATest
-[PASS] testPass() (gas: 190)
-...
-Ran 1 test suite in [..] 1 tests passed, 0 failed, 0 skipped (1 total tests)
-...
+[PASS] testPass() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
 });
 
@@ -240,12 +241,16 @@ contract FailTest is DSTest {
     let test_path = test_path.to_string_lossy();
 
     cmd.args(["test", "--match-path", test_path.as_ref()]).assert_success().stdout_eq(str![[r#"
-...
+Compiling 3 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
 Ran 1 test for src/ATest.t.sol:ATest
-[PASS] testPass() (gas: 190)
-...
-Ran 1 test suite in [..] 1 tests passed, 0 failed, 0 skipped (1 total tests)
-...
+[PASS] testPass() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
 });
 
@@ -273,10 +278,16 @@ contract MyTest is DSTest {
     .unwrap();
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-...
+Compiling 2 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
 Ran 1 test for src/nested/forge-tests/MyTest.t.sol:MyTest
-[PASS] testTrue() (gas: 168)
-...
+[PASS] testTrue() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
 });
 
@@ -288,13 +299,14 @@ forgetest_init!(can_test_repeatedly, |_prj, cmd| {
 
     for _ in 0..5 {
         cmd.assert_success().stdout_eq(str![[r#"
-...
-Ran 2 tests for test/Counter.t.sol:CounterTest
-[PASS] testFuzz_SetNumber(uint256) (runs: 256, μ: [..], ~: [..])
-[PASS] test_Increment() (gas: 31303)
-Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in [..] ([..] CPU time)
+No files changed, compilation skipped
 
-Ran 1 test suite in [..] ([..] CPU time): 2 tests passed, 0 failed, 0 skipped (2 total tests)
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
+[PASS] test_Increment() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
     }
@@ -327,17 +339,16 @@ contract ContractTest is DSTest {
     prj.write_config(config);
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-...
-Compiling 2 files with Solc 0.8.23
-Solc 0.8.23 finished in [..]
+Compiling 2 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 Ran 1 test for src/Contract.t.sol:ContractTest
-[PASS] testExample() (gas: 190)
-Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in [..]
+[PASS] testExample() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite in [..] 1 tests passed, 0 failed, 0 skipped (1 total tests)
-...
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
 
     // pin version
@@ -345,17 +356,16 @@ Ran 1 test suite in [..] 1 tests passed, 0 failed, 0 skipped (1 total tests)
     prj.write_config(config);
 
     cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
-...
-Compiling 2 files with Solc 0.8.22
-Solc 0.8.22 finished in [..]
+Compiling 2 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 Ran 1 test for src/Contract.t.sol:ContractTest
-[PASS] testExample() (gas: 190)
-Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in [..]
+[PASS] testExample() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite in [..] 1 tests passed, 0 failed, 0 skipped (1 total tests)
-...
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
 });
 
@@ -407,10 +417,16 @@ contract ContractTest is Test {
     .unwrap();
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-...
+Compiling 2 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
 Ran 1 test for test/Contract.t.sol:ContractTest
-[PASS] test() (gas: 70360)
-...
+[PASS] test() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
 });
 
@@ -473,19 +489,24 @@ contract USDTCallingTest is Test {
     .unwrap();
 
     cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
-...
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 Ran 1 test for test/Contract.t.sol:USDTCallingTest
-[PASS] test() (gas: 9537)
+[PASS] test() ([GAS])
 Traces:
   [9537] USDTCallingTest::test()
     ├─ [0] VM::createSelectFork("[..]")
     │   └─ ← [Return] 0
     ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
     │   └─ ← [Return] "Tether USD"
-    └─ ← [Stop][..]
-...
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
 });
 
@@ -514,19 +535,32 @@ contract CustomTypesTest is Test {
     .unwrap();
 
     cmd.args(["test", "-vvvv"]).assert_failure().stdout_eq(str![[r#"
-...
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
 Ran 2 tests for test/Contract.t.sol:CustomTypesTest
-[FAIL. Reason: PoolNotInitialized()] testErr() (gas: 254)
+[FAIL. Reason: PoolNotInitialized()] testErr() ([GAS])
 Traces:
   [254] CustomTypesTest::testErr()
     └─ ← [Revert] PoolNotInitialized()
 
-[PASS] testEvent() (gas: 1268)
+[PASS] testEvent() ([GAS])
 Traces:
   [1268] CustomTypesTest::testEvent()
     ├─ emit MyEvent(a: 100)
-    └─ ← [Stop][..]
-...
+    └─ ← [Stop] 
+
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Contract.t.sol:CustomTypesTest
+[FAIL. Reason: PoolNotInitialized()] testErr() ([GAS])
+
+Encountered a total of 1 failing tests, 1 tests succeeded
+
 "#]]);
 });
 
@@ -704,9 +738,22 @@ contract CounterTest is Test {
 
     // make sure there are only 61 runs (with proptest shrinking same test results in 298 runs)
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
-...
-[..]testAddOne(uint256) (runs: 61, μ: [..], ~: [..])
-...
+Compiling 23 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/CounterFuzz.t.sol:CounterTest
+[FAIL. Reason: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 61, [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
+[FAIL. Reason: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 61, [AVG_GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
 "#]]);
 });
 
@@ -742,9 +789,22 @@ contract CounterTest is Test {
 
     // make sure invariant test exit early with 0 runs
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
-...
-[..]invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
-...
+Compiling 23 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/CounterInvariant.t.sol:CounterTest
+[FAIL. Reason: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/CounterInvariant.t.sol:CounterTest
+[FAIL. Reason: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
 "#]]);
 });
 
@@ -783,11 +843,22 @@ contract ReplayFailuresTest is Test {
 
     // Perform only the 2 failing tests from last run.
     cmd.forge_fuse().args(["test", "--rerun"]).assert_failure().stdout_eq(str![[r#"
-...
+No files changed, compilation skipped
+
 Ran 2 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL. Reason: revert: testB failed] testB() (gas: 303)
-[FAIL. Reason: revert: testD failed] testD() (gas: 314)
-...
+[FAIL. Reason: revert: testB failed] testB() ([GAS])
+[FAIL. Reason: revert: testD failed] testD() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
+[FAIL. Reason: revert: testB failed] testB() ([GAS])
+[FAIL. Reason: revert: testD failed] testD() ([GAS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+
 "#]]);
 });
 
@@ -1013,7 +1084,12 @@ contract SimpleContractTest is Test {
     )
     .unwrap();
     cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
-...
+Compiling 24 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Simple.sol:SimpleContractTest
+[PASS] test() ([GAS])
 Traces:
   [250463] SimpleContractTest::test()
     ├─ [171014] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
@@ -1029,7 +1105,11 @@ Traces:
     │   │   └─ ← 0x0000000000000000000000000000000000000000
     │   └─ ← [Stop] 
     └─ ← [Stop] 
-...
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
 });
 

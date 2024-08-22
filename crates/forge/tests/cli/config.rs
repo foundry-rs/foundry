@@ -401,15 +401,15 @@ contract Foo {
     .unwrap();
 
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
-...
-Error:[..]
+Error: 
 Compiler run failed:
 Error (6553): The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction.
- --> src/foo.sol:6:8:
+ [FILE]:6:8:
   |
 6 |        assembly {
   |        ^ (Relevant source part starts here and spans across multiple lines).
-...
+
+
 "#]]);
 
     // disable yul optimizer explicitly

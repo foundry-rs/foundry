@@ -7981,6 +7981,7 @@ dependencies = [
  "anstream",
  "anstyle",
  "normalize-line-endings",
+ "regex",
  "serde",
  "serde_json",
  "similar",
