@@ -33,7 +33,7 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 walkdir.workspace = true
 rand.workspace = true
-snapbox = { version = "0.6.9", features = ["json"] }
+snapbox = { version = "0.6.9", features = ["json", "regex"] }
 
 [features]
 # feature for integration tests that test external projects

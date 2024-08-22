@@ -42,6 +42,7 @@ use std::{
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
 };
 use tokio::signal::ctrl_c;
 
@@ -690,7 +691,7 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, false, false).await?;
+    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false, false).await?;
     /// println!("{}", receipt);
     /// # Ok(())
     /// # }
@@ -700,6 +701,7 @@ where
         tx_hash: String,
         field: Option<String>,
         confs: u64,
+        timeout: Option<u64>,
         cast_async: bool,
         to_json: bool,
     ) -> Result<String> {
@@ -716,6 +718,7 @@ where
                     } else {
                         PendingTransactionBuilder::new(self.provider.root(), tx_hash)
                             .with_required_confirmations(confs)
+                            .with_timeout(timeout.map(Duration::from_secs))
                             .get_receipt()
                             .await?
                     }

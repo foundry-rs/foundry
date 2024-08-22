@@ -396,7 +396,7 @@ async fn main() -> Result<()> {
             println!(
                 "{}",
                 Cast::new(provider)
-                    .receipt(tx_hash, field, confirmations, cast_async, json)
+                    .receipt(tx_hash, field, confirmations, None, cast_async, json)
                     .await?
             );
         }

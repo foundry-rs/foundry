@@ -450,6 +450,9 @@ pub struct Config {
     /// Whether to enable Alphanet features.
     pub alphanet: bool,
 
+    /// Timeout for transactions in seconds.
+    pub transaction_timeout: u64,
+
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
@@ -2143,6 +2146,7 @@ impl Default for Config {
             extra_args: vec![],
             eof_version: None,
             alphanet: false,
+            transaction_timeout: 120,
             _non_exhaustive: (),
         }
     }

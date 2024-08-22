@@ -920,18 +920,6 @@ impl TestCommand {
         output
     }
 
-    /// Runs the command and asserts that it resulted in success
-    #[track_caller]
-    pub fn assert_success(&mut self) -> OutputAssert {
-        self.assert().success()
-    }
-
-    /// Runs the command and asserts that it failed.
-    #[track_caller]
-    pub fn assert_failure(&mut self) -> OutputAssert {
-        self.assert().failure()
-    }
-
     /// Executes command, applies stdin function and returns output
     #[track_caller]
     pub fn execute(&mut self) -> Output {
@@ -1063,9 +1051,49 @@ stderr:
         )
     }
 
+    /// Runs the command, returning a [`snapbox`] object to assert the command output.
+    #[track_caller]
     pub fn assert(&mut self) -> OutputAssert {
-        OutputAssert::new(self.execute())
+        OutputAssert::new(self.execute()).with_assert(test_assert())
     }
+
+    /// Runs the command and asserts that it resulted in success.
+    #[track_caller]
+    pub fn assert_success(&mut self) -> OutputAssert {
+        self.assert().success()
+    }
+
+    /// Runs the command and asserts that it failed.
+    #[track_caller]
+    pub fn assert_failure(&mut self) -> OutputAssert {
+        self.assert().failure()
+    }
+}
+
+fn test_assert() -> snapbox::Assert {
+    snapbox::Assert::new()
+        .action_env(snapbox::assert::DEFAULT_ACTION_ENV)
+        .redact_with(test_redactions())
+}
+
+fn test_redactions() -> snapbox::Redactions {
+    static REDACTIONS: Lazy<snapbox::Redactions> = Lazy::new(|| {
+        let mut r = snapbox::Redactions::new();
+        let redactions = [
+            ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
+            ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
+            ("[GAS]", r"[Gg]as( used)?: \d+"),
+            ("[AVG_GAS]", r"μ: \d+, ~: \d+"),
+            ("[FILE]", r"-->.*\.sol"),
+            ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
+            ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
+        ];
+        for (placeholder, re) in redactions {
+            r.insert(placeholder, Regex::new(re).expect(re)).expect(re);
+        }
+        r
+    });
+    REDACTIONS.clone()
 }
 
 /// Extension trait for [`Output`].
