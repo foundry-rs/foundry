@@ -33,6 +33,15 @@ pub struct DebugArgs {
     #[arg(long)]
     pub debug: bool,
 
+    /// File path to dump execution details as JSON.
+    #[arg(
+        long,
+        requires = "debug",
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
+    pub dump: Option<PathBuf>,
+
     #[command(flatten)]
     pub opts: CoreBuildArgs,
 
@@ -51,6 +60,7 @@ impl DebugArgs {
             opts: self.opts,
             evm_opts: self.evm_opts,
             debug: true,
+            dump: self.dump,
             retry: RETRY_VERIFY_ON_CREATE,
             ..Default::default()
         };
