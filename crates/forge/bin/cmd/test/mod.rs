@@ -99,6 +99,14 @@ pub struct TestArgs {
     #[arg(long, value_name = "DEPRECATED_TEST_FUNCTION_REGEX")]
     decode_internal: Option<Option<Regex>>,
 
+    /// Dumps all debugger steps to file.
+    #[arg(
+    long,
+    requires = "debug",
+    value_hint = ValueHint::FilePath,
+    )]
+    dump: Option<PathBuf>,
+
     /// Print a gas report.
     #[arg(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
@@ -453,7 +461,11 @@ impl TestArgs {
             }
 
             let mut debugger = builder.build();
-            debugger.try_run()?;
+            if let Some(dump_path) = self.dump {
+                debugger.dump_to_file(&dump_path)?;
+            } else {
+                debugger.try_run_tui()?;
+            }
         }
 
         Ok(outcome)
