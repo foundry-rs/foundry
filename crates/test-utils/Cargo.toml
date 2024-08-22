@@ -24,7 +24,6 @@ alloy-provider.workspace = true
 
 eyre.workspace = true
 fd-lock = "4.0.0"
-once_cell.workspace = true
 parking_lot.workspace = true
 similar-asserts.workspace = true
 regex = "1"

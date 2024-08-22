@@ -9,7 +9,6 @@ use foundry_compilers::{
     ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use regex::Regex;
 use snapbox::cmd::OutputAssert;
@@ -22,27 +21,27 @@ use std::{
     process::{ChildStdin, Command, Output, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, LazyLock,
     },
 };
 
-static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static CURRENT_DIR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// The commit of forge-std to use.
 const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
 
 /// Stores whether `stdout` is a tty / terminal.
-pub static IS_TTY: Lazy<bool> = Lazy::new(|| std::io::stdout().is_terminal());
+pub static IS_TTY: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
 
 /// Global default template path. Contains the global template project from which all other
 /// temp projects are initialized. See [`initialize()`] for more info.
-static TEMPLATE_PATH: Lazy<PathBuf> =
-    Lazy::new(|| env::temp_dir().join("foundry-forge-test-template"));
+static TEMPLATE_PATH: LazyLock<PathBuf> =
+    LazyLock::new(|| env::temp_dir().join("foundry-forge-test-template"));
 
 /// Global default template lock. If its contents are not exactly `"1"`, the global template will
 /// be re-initialized. See [`initialize()`] for more info.
-static TEMPLATE_LOCK: Lazy<PathBuf> =
-    Lazy::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
+static TEMPLATE_LOCK: LazyLock<PathBuf> =
+    LazyLock::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
 
 /// Global test identifier.
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -219,7 +218,7 @@ impl ExtTester {
 /// This doesn't always run `forge init`, instead opting to copy an already-initialized template
 /// project from a global template path. This is done to speed up tests.
 ///
-/// This used to use a `static` [`Lazy`], but this approach does not with `cargo-nextest` because it
+/// This used to use a `static` `Lazy`, but this approach does not with `cargo-nextest` because it
 /// runs each test in a separate process. Instead, we use a global lock file to ensure that only one
 /// test can initialize the template at a time.
 pub fn initialize(target: &Path) {
@@ -1077,7 +1076,7 @@ fn test_assert() -> snapbox::Assert {
 }
 
 fn test_redactions() -> snapbox::Redactions {
-    static REDACTIONS: Lazy<snapbox::Redactions> = Lazy::new(|| {
+    static REDACTIONS: LazyLock<snapbox::Redactions> = LazyLock::new(|| {
         let mut r = snapbox::Redactions::new();
         let redactions = [
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
@@ -1121,7 +1120,7 @@ pub trait OutputExt {
 /// Patterns to remove from fixtures before comparing output
 ///
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
-static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
+static IGNORE_IN_FIXTURES: LazyLock<Regex> = LazyLock::new(|| {
     let re = &[
         // solc version
         r" ?Solc(?: version)? \d+.\d+.\d+",

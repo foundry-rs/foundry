@@ -22,7 +22,6 @@ use foundry_evm::{
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -33,6 +32,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::Command,
+    sync::LazyLock,
 };
 use strum::IntoEnumIterator;
 use tracing::debug;
@@ -48,11 +48,11 @@ pub static COMMAND_LEADER: char = '!';
 pub static CHISEL_CHAR: &str = "⚒️";
 
 /// Matches Solidity comments
-static COMMENT_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*(?://.*\s*$)|(/*[\s\S]*?\*/\s*$)").unwrap());
+static COMMENT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?://.*\s*$)|(/*[\s\S]*?\*/\s*$)").unwrap());
 
 /// Matches Ethereum addresses that are not strings
-static ADDRESS_RE: Lazy<Regex> = Lazy::new(|| {
+static ADDRESS_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)(([^"']\s*)|^)(?P<address>0x[a-fA-F0-9]{40})((\s*[^"'\w])|$)"#).unwrap()
 });
 
