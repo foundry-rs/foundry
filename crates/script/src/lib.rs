@@ -181,6 +181,10 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
+    /// Timeout to use for broadcasting transactions.
+    #[arg(long, env = "ETH_TIMEOUT")]
+    pub timeout: Option<u64>,
+
     #[command(flatten)]
     pub opts: CoreBuildArgs,
 
@@ -452,6 +456,9 @@ impl Provider for ScriptArgs {
                 "etherscan_api_key".to_string(),
                 figment::value::Value::from(etherscan_api_key.to_string()),
             );
+        }
+        if let Some(timeout) = self.timeout {
+            dict.insert("transaction_timeout".to_string(), timeout.into());
         }
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
