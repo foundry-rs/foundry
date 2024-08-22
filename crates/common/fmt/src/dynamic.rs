@@ -38,7 +38,13 @@ impl DynValueFormatter {
                 f.write_str("]")
             }
             DynSolValue::Tuple(values) => self.tuple(values, f),
-            DynSolValue::String(inner) => write!(f, "{inner:?}"), // escape strings
+            DynSolValue::String(inner) => {
+                if self.raw {
+                    write!(f, "{}", inner.escape_debug())
+                } else {
+                    write!(f, "{inner:?}") // escape strings
+                }
+            }
             DynSolValue::Bool(inner) => write!(f, "{inner}"),
             DynSolValue::CustomStruct { name, prop_names, tuple } => {
                 if self.raw {
