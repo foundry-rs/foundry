@@ -1185,6 +1185,13 @@ contract ATest is Test {
         vm.pauseGasMetering();
         vm.resumeGasMetering();
     }
+
+    function testWithAssembly() public {
+        vm.pauseGasMetering();
+        assembly {
+            return(0, 0)
+        }
+    }
 }
    "#,
     )
@@ -1192,10 +1199,10 @@ contract ATest is Test {
 
     cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/ATest.t.sol:ATest
 [PASS] testNormalGas() (gas: 3202)
 [PASS] testWeirdGas1() (gas: 3040)
 [PASS] testWeirdGas2() (gas: 3148)
+[PASS] testWithAssembly() (gas: 3083)
 ...
 "#]]);
 });
