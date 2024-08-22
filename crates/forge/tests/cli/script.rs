@@ -82,7 +82,8 @@ contract Demo {
         )
         .unwrap();
 
-    cmd.arg("script").arg(format!("{}:Demo", script.display())).assert_success().stdout_eq(str![[r#"
+    cmd.arg("script").arg(format!("{}:Demo", script.display())).assert_success().stdout_eq(str![[
+        r#"
 ...
 Script ran successfully.
 [GAS]
@@ -90,7 +91,8 @@ Script ran successfully.
 == Logs ==
   script ran
 ...
-"#]]);
+"#
+    ]]);
 });
 
 // Tests that the run command can run arbitrary functions
@@ -109,12 +111,8 @@ contract Demo {
         )
         .unwrap();
 
-    cmd.arg("script")
-        .arg(script)
-        .arg("--sig")
-        .arg("myFunction()")
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.arg("script").arg(script).arg("--sig").arg("myFunction()").assert_success().stdout_eq(
+        str![[r#"
 Compiling 1 files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -124,7 +122,8 @@ Script ran successfully.
 == Logs ==
   script ran
 
-"#]]);
+"#]],
+    );
 });
 
 static FAILING_SCRIPT: &str = r#"
