@@ -81,7 +81,7 @@ impl ExecutedTransaction {
 pub struct ExecutedTransactions {
     /// The block created after executing the `included` transactions
     pub block: BlockInfo,
-    /// All transactions included in the
+    /// All transactions included in the block
     pub included: Vec<Arc<PoolTransaction>>,
     /// All transactions that were invalid at the point of their execution and were not included in
     /// the block
@@ -105,6 +105,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     /// Cumulative blob gas used by all executed transactions
     pub blob_gas_used: u128,
     pub enable_steps_tracing: bool,
+    pub alphanet: bool,
     pub print_logs: bool,
     /// Precompiles to inject to the EVM.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
@@ -302,7 +303,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         let nonce = account.nonce;
 
         // records all call and step traces
-        let mut inspector = Inspector::default().with_tracing();
+        let mut inspector = Inspector::default().with_tracing().with_alphanet(self.alphanet);
         if self.enable_steps_tracing {
             inspector = inspector.with_steps_tracing();
         }

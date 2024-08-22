@@ -15,7 +15,9 @@ impl DynValueFormatter {
             DynSolValue::Address(inner) => write!(f, "{inner}"),
             DynSolValue::Function(inner) => write!(f, "{inner}"),
             DynSolValue::Bytes(inner) => f.write_str(&hex::encode_prefixed(inner)),
-            DynSolValue::FixedBytes(inner, _) => write!(f, "{inner}"),
+            DynSolValue::FixedBytes(word, size) => {
+                f.write_str(&hex::encode_prefixed(&word[..*size]))
+            }
             DynSolValue::Uint(inner, _) => {
                 if self.raw {
                     write!(f, "{inner}")
@@ -36,7 +38,13 @@ impl DynValueFormatter {
                 f.write_str("]")
             }
             DynSolValue::Tuple(values) => self.tuple(values, f),
-            DynSolValue::String(inner) => write!(f, "{inner:?}"), // escape strings
+            DynSolValue::String(inner) => {
+                if self.raw {
+                    write!(f, "{}", inner.escape_debug())
+                } else {
+                    write!(f, "{inner:?}") // escape strings
+                }
+            }
             DynSolValue::Bool(inner) => write!(f, "{inner}"),
             DynSolValue::CustomStruct { name, prop_names, tuple } => {
                 if self.raw {

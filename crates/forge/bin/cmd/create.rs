@@ -3,7 +3,7 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes};
-use alloy_provider::{Provider, ProviderBuilder};
+use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder};
 use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
@@ -202,7 +202,7 @@ impl CreateArgs {
 
         let context = verify.resolve_context().await?;
 
-        verify.verification_provider()?.preflight_check(verify, context).await?;
+        verify.verification_provider()?.preflight_verify_check(verify, context).await?;
         Ok(())
     }
 
@@ -584,6 +584,12 @@ pub enum ContractDeploymentError {
     ContractNotDeployed,
     #[error(transparent)]
     RpcError(#[from] TransportError),
+}
+
+impl From<PendingTransactionError> for ContractDeploymentError {
+    fn from(_err: PendingTransactionError) -> Self {
+        Self::ContractNotDeployed
+    }
 }
 
 #[cfg(test)]

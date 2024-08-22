@@ -101,7 +101,7 @@ impl MakeTxArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .with_blob_data(blob_data)?
-            .build(from)
+            .build(&signer)
             .await?;
 
         let tx = tx.build(&EthereumWallet::new(signer)).await?;

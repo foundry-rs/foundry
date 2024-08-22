@@ -301,6 +301,8 @@ async fn check_shrink_sequence(test_pattern: &str, expected_len: usize) {
         Filter::new(test_pattern, ".*", ".*fuzz/invariant/common/InvariantShrinkWithAssert.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
     runner.test_options.fuzz.seed = Some(U256::from(100u32));
+    runner.test_options.invariant.runs = 1;
+    runner.test_options.invariant.depth = 15;
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),

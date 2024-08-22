@@ -106,3 +106,42 @@ contract TestContract {
         return true;
     }
 }
+
+// https://github.com/foundry-rs/foundry/issues/5825
+library MyLib {
+    bytes32 private constant TYPE_HASH = keccak256(
+        // forgefmt: disable-start
+        "MyStruct("
+            "uint8 myEnum,"
+                "address myAddress"
+                    ")"
+        // forgefmt: disable-end
+    );
+
+    bytes32 private constant TYPE_HASH_1 = keccak256(
+        "MyStruct("    "uint8 myEnum,"    "address myAddress"    ")" // forgefmt: disable-line
+    );
+
+    // forgefmt: disable-start
+    bytes32 private constant TYPE_HASH_2 = keccak256(
+        "MyStruct("
+            "uint8 myEnum,"
+            "address myAddress"
+        ")"
+    );
+    // forgefmt: disable-end
+}
+
+contract IfElseTest {
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+        if (newNumber = 1) {
+            number = 1;
+        } else if (newNumber = 2) {
+            //            number = 2;
+        }
+        else {
+            newNumber = 3;
+        }
+    }
+}

@@ -1,5 +1,5 @@
 use foundry_config::Config;
-use foundry_test_utils::{file, forgetest, str};
+use foundry_test_utils::{forgetest, str};
 use globset::Glob;
 
 // tests that json is printed when --json is passed
@@ -18,9 +18,32 @@ contract Dummy {
     .unwrap();
 
     // set up command
-    cmd.args(["compile", "--format-json"])
-        .assert()
-        .stdout_eq(file!["../fixtures/compile_json.stdout": Json]);
+    cmd.args(["compile", "--format-json"]).assert_success().stdout_eq(str![[r#"
+...
+{
+  "errors": [
+    {
+      "sourceLocation": {
+        "file": "src/jsonError.sol",
+        "start": 184,
+        "end": 193
+      },
+      "type": "DeclarationError",
+      "component": "general",
+      "severity": "error",
+      "errorCode": "7576",
+      "message": "Undeclared identifier. Did you mean /"newNumber/"?",
+      "formattedMessage": "DeclarationError: Undeclared identifier. Did you mean /"newNumber/"?/n --> src/jsonError.sol:7:18:/n  |/n7 |         number = newnumber; // error here/n  |                  ^^^^^^^^^/n/n"
+    }
+  ],
+  "sources": {},
+  "contracts": {},
+  "build_infos": [
+    {
+...
+}
+...
+"#]]);
 });
 
 // tests build output is as expected

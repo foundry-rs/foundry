@@ -6633,6 +6633,26 @@
     },
     {
       "func": {
+        "id": "publicKeyP256",
+        "description": "Derives secp256r1 public key from the provided `privateKey`.",
+        "declaration": "function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "publicKeyP256(uint256)",
+        "selector": "0xc453949e",
+        "selectorBytes": [
+          196,
+          83,
+          148,
+          158
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "randomAddress",
         "description": "Returns a random `address`.",
         "declaration": "function randomAddress() external returns (address);",

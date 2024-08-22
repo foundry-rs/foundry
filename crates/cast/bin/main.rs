@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{hex, keccak256, Address, B256};
+use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use cast::{Cast, SimpleCast};
@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::ToAscii { hexdata } => {
             let value = stdin::unwrap(hexdata, false)?;
-            println!("{}", SimpleCast::to_ascii(&value)?);
+            println!("{}", SimpleCast::to_ascii(value.trim())?);
         }
         CastSubcommand::ToUtf8 { hexdata } => {
             let value = stdin::unwrap(hexdata, false)?;
@@ -514,6 +514,14 @@ async fn main() -> Result<()> {
                     println!("0x{s}");
                 }
             };
+        }
+        CastSubcommand::HashMessage { message } => {
+            let message = stdin::unwrap_line(message)?;
+            let input = match message.strip_prefix("0x") {
+                Some(hex_str) => hex::decode(hex_str)?,
+                None => message.as_bytes().to_vec(),
+            };
+            println!("{}", eip191_hash_message(input));
         }
         CastSubcommand::SigEvent { event_string } => {
             let event_string = stdin::unwrap_line(event_string)?;
