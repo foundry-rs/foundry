@@ -4,7 +4,7 @@ use alloy_primitives::U256;
 use foundry_config::{Config, FuzzConfig};
 use foundry_test_utils::{
     rpc, str,
-    util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
+    util::{OTHER_SOLC_VERSION, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
 use std::{path::PathBuf, str::FromStr};
@@ -272,11 +272,12 @@ contract MyTest is DSTest {
     )
     .unwrap();
 
-    cmd.arg("test");
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_run_test_in_custom_test_folder.stdout"),
-    );
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/nested/forge-tests/MyTest.t.sol:MyTest
+[PASS] testTrue() (gas: 168)
+...
+"#]]);
 });
 
 // checks that forge test repeatedly produces the same output
@@ -325,20 +326,37 @@ contract ContractTest is DSTest {
     let config = Config { solc: Some(SOLC_VERSION.into()), ..Default::default() };
     prj.write_config(config);
 
-    cmd.arg("test");
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.1.stdout"),
-    );
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+Compiling 2 files with Solc 0.8.23
+Solc 0.8.23 finished in [..]
+Compiler run successful!
+
+Ran 1 test for src/Contract.t.sol:ContractTest
+[PASS] testExample() (gas: 190)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in [..]
+
+Ran 1 test suite in [..] 1 tests passed, 0 failed, 0 skipped (1 total tests)
+...
+"#]]);
 
     // pin version
     let config = Config { solc: Some(OTHER_SOLC_VERSION.into()), ..Default::default() };
     prj.write_config(config);
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/runs_tests_exactly_once_with_changed_versions.2.stdout"),
-    );
+    cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
+...
+Compiling 2 files with Solc 0.8.22
+Solc 0.8.22 finished in [..]
+Compiler run successful!
+
+Ran 1 test for src/Contract.t.sol:ContractTest
+[PASS] testExample() (gas: 190)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in [..]
+
+Ran 1 test suite in [..] 1 tests passed, 0 failed, 0 skipped (1 total tests)
+...
+"#]]);
 });
 
 // tests that libraries are handled correctly in multiforking mode
@@ -388,11 +406,12 @@ contract ContractTest is Test {
     )
     .unwrap();
 
-    cmd.arg("test");
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_use_libs_in_multi_fork.stdout"),
-    );
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Contract.t.sol:ContractTest
+[PASS] test() (gas: 70360)
+...
+"#]]);
 });
 
 static FAILING_TEST: &str = r#"
@@ -453,13 +472,21 @@ contract USDTCallingTest is Test {
     )
     .unwrap();
 
-    let expected = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/repro_6531.stdout"),
-    )
-    .unwrap()
-    .replace("<url>", &endpoint);
+    cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+...
+Compiler run successful!
 
-    cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_content(&expected);
+Ran 1 test for test/Contract.t.sol:USDTCallingTest
+[PASS] test() (gas: 9537)
+Traces:
+  [9537] USDTCallingTest::test()
+    ├─ [0] VM::createSelectFork("[..]")
+    │   └─ ← [Return] 0
+    ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
+    │   └─ ← [Return] "Tether USD"
+    └─ ← [Stop][..]
+...
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6579>
@@ -486,10 +513,21 @@ contract CustomTypesTest is Test {
     )
     .unwrap();
 
-    cmd.args(["test", "-vvvv"]).unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/include_custom_types_in_traces.stdout"),
-    );
+    cmd.args(["test", "-vvvv"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/Contract.t.sol:CustomTypesTest
+[FAIL. Reason: PoolNotInitialized()] testErr() (gas: 254)
+Traces:
+  [254] CustomTypesTest::testErr()
+    └─ ← [Revert] PoolNotInitialized()
+
+[PASS] testEvent() (gas: 1268)
+Traces:
+  [1268] CustomTypesTest::testEvent()
+    ├─ emit MyEvent(a: 100)
+    └─ ← [Stop][..]
+...
+"#]]);
 });
 
 forgetest_init!(can_test_selfdestruct_with_isolation, |prj, cmd| {
@@ -664,10 +702,12 @@ contract CounterTest is Test {
     )
     .unwrap();
 
-    cmd.args(["test"]);
-    let (stderr, _) = cmd.unchecked_output_lossy();
     // make sure there are only 61 runs (with proptest shrinking same test results in 298 runs)
-    assert_eq!(extract_number_of_runs(stderr), 61);
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[..]testAddOne(uint256) (runs: 61, μ: [..], ~: [..])
+...
+"#]]);
 });
 
 forgetest_init!(should_exit_early_on_invariant_failure, |prj, cmd| {
@@ -700,19 +740,13 @@ contract CounterTest is Test {
     )
     .unwrap();
 
-    cmd.args(["test"]);
-    let (stderr, _) = cmd.unchecked_output_lossy();
     // make sure invariant test exit early with 0 runs
-    assert_eq!(extract_number_of_runs(stderr), 0);
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[..]invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
 });
-
-fn extract_number_of_runs(stderr: String) -> usize {
-    let runs = stderr.find("runs:").and_then(|start_runs| {
-        let runs_split = &stderr[start_runs + 6..];
-        runs_split.find(',').map(|end_runs| &runs_split[..end_runs])
-    });
-    runs.unwrap().parse::<usize>().unwrap()
-}
 
 forgetest_init!(should_replay_failures_only, |prj, cmd| {
     prj.wipe_contracts();
@@ -748,11 +782,13 @@ contract ReplayFailuresTest is Test {
     assert!(prj.root().join("cache/test-failures").exists());
 
     // Perform only the 2 failing tests from last run.
-    cmd.forge_fuse();
-    cmd.args(["test", "--rerun"]).unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/replay_last_run_failures.stdout"),
-    );
+    cmd.forge_fuse().args(["test", "--rerun"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
+[FAIL. Reason: revert: testB failed] testB() (gas: 303)
+[FAIL. Reason: revert: testD failed] testD() (gas: 314)
+...
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/7530>
