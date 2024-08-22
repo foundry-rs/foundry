@@ -1,9 +1,8 @@
 //! CLI dependency parsing
 
 use eyre::Result;
-use std::sync::LazyLock;
 use regex::Regex;
-use std::str::FromStr;
+use std::{str::FromStr, sync::LazyLock};
 
 static GH_REPO_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\w-]+/[\w.-]+").unwrap());
 

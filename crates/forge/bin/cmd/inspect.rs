@@ -16,9 +16,8 @@ use foundry_compilers::{
     info::ContractInfo,
     utils::canonicalize,
 };
-use std::sync::LazyLock;
 use regex::Regex;
-use std::fmt;
+use std::{fmt, sync::LazyLock};
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]

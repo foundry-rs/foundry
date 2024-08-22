@@ -9,7 +9,6 @@ use foundry_compilers::{
     ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
-use std::sync::LazyLock;
 use parking_lot::Mutex;
 use regex::Regex;
 use snapbox::cmd::OutputAssert;
@@ -22,7 +21,7 @@ use std::{
     process::{ChildStdin, Command, Output, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, LazyLock,
     },
 };
 

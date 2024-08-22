@@ -7,13 +7,13 @@ use foundry_cli::{
 };
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
-use std::sync::LazyLock;
 use regex::Regex;
 use semver::Version;
 use std::{
     io::IsTerminal,
     path::{Path, PathBuf},
     str,
+    sync::LazyLock,
 };
 use yansi::Paint;
 

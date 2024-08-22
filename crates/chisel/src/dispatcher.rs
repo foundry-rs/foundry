@@ -22,7 +22,6 @@ use foundry_evm::{
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use std::sync::LazyLock;
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -33,6 +32,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::Command,
+    sync::LazyLock,
 };
 use strum::IntoEnumIterator;
 use tracing::debug;

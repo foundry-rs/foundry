@@ -2,8 +2,8 @@ use alloy_primitives::Selector;
 use alloy_sol_types::sol;
 use foundry_common_fmt::*;
 use foundry_macros::ConsoleFmt;
-use std::sync::LazyLock;
 use rustc_hash::FxHashMap;
+use std::sync::LazyLock;
 
 sol!(
     #[sol(abi)]

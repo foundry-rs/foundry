@@ -1,9 +1,11 @@
 //! RPC API keys utilities.
 
 use foundry_config::NamedChain;
-use std::sync::LazyLock;
 use rand::seq::SliceRandom;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    LazyLock,
+};
 
 // List of general purpose infura keys to rotate through
 static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {

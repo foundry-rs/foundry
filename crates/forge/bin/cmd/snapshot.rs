@@ -4,7 +4,6 @@ use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
 use eyre::{Context, Result};
 use forge::result::{SuiteTestResult, TestKindReport, TestOutcome};
 use foundry_cli::utils::STATIC_FUZZ_SEED;
-use std::sync::LazyLock;
 use regex::Regex;
 use std::{
     cmp::Ordering,
@@ -13,6 +12,7 @@ use std::{
     io::{self, BufRead},
     path::{Path, PathBuf},
     str::FromStr,
+    sync::LazyLock,
 };
 use yansi::Paint;
 
