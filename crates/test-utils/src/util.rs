@@ -218,7 +218,7 @@ impl ExtTester {
 /// This doesn't always run `forge init`, instead opting to copy an already-initialized template
 /// project from a global template path. This is done to speed up tests.
 ///
-/// This used to use a `static` [`Lazy`], but this approach does not with `cargo-nextest` because it
+/// This used to use a `static` `Lazy`, but this approach does not with `cargo-nextest` because it
 /// runs each test in a separate process. Instead, we use a global lock file to ensure that only one
 /// test can initialize the template at a time.
 pub fn initialize(target: &Path) {
