@@ -211,7 +211,7 @@ impl Highlighter for SolidityHelper {
         Self::highlight(line)
     }
 
-    fn highlight_char(&self, line: &str, pos: usize) -> bool {
+    fn highlight_char(&self, line: &str, pos: usize, _forced: bool) -> bool {
         pos == line.len()
     }
 
