@@ -1238,3 +1238,51 @@ contract DeterministicRandomnessTest is Test {
     assert_ne!(res4, res1);
     assert_ne!(res4, res3);
 });
+
+// tests that `pauseGasMetering` used at the end of test does not produce meaningless values
+// see https://github.com/foundry-rs/foundry/issues/5491
+forgetest_init!(repro_5491, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "ATest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ATest is Test {
+    function testWeirdGas1() public {
+        vm.pauseGasMetering();
+    }
+
+    function testWeirdGas2() public {
+        uint256 a = 1;
+        uint256 b = a + 1;
+        require(b == 2, "b is not 2");
+        vm.pauseGasMetering();
+    }
+
+    function testNormalGas() public {
+        vm.pauseGasMetering();
+        vm.resumeGasMetering();
+    }
+
+    function testWithAssembly() public {
+        vm.pauseGasMetering();
+        assembly {
+            return(0, 0)
+        }
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+[PASS] testNormalGas() (gas: 3202)
+[PASS] testWeirdGas1() (gas: 3040)
+[PASS] testWeirdGas2() (gas: 3148)
+[PASS] testWithAssembly() (gas: 3083)
+...
+"#]]);
+});
