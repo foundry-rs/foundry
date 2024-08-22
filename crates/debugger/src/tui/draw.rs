@@ -1,6 +1,6 @@
 //! TUI draw implementation.
 
-use super::context::DebuggerContext;
+use super::context::TUIContext;
 use crate::op::OpcodeParam;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{get_buffer_accesses, BufferKind};
@@ -15,7 +15,7 @@ use ratatui::{
 use revm_inspectors::tracing::types::CallKind;
 use std::{collections::VecDeque, fmt::Write, io};
 
-impl DebuggerContext<'_> {
+impl TUIContext<'_> {
     /// Draws the TUI layout and subcomponents to the given terminal.
     pub(crate) fn draw(&self, terminal: &mut super::DebuggerTerminal) -> io::Result<()> {
         terminal.draw(|f| self.draw_layout(f)).map(drop)
@@ -343,11 +343,11 @@ impl DebuggerContext<'_> {
     /// Returns source map, source code and source name of the current line.
     fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
         let address = self.address();
-        let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
+        let Some(contract_name) = self.debugger_context.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
         };
 
-        self.debugger
+        self.debugger_context
             .contracts_sources
             .find_source_mapping(
                 contract_name,
