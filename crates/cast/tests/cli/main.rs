@@ -1,10 +1,11 @@
 //! Contains various tests for checking cast commands
 
+use alloy_chains::NamedChain;
 use alloy_primitives::{address, b256, Address, B256};
 use anvil::{Hardfork, NodeConfig};
 use foundry_test_utils::{
     casttest,
-    rpc::{next_http_rpc_endpoint, next_ws_rpc_endpoint},
+    rpc::{next_http_rpc_endpoint, next_rpc_endpoint, next_ws_rpc_endpoint},
     str,
     util::OutputExt,
 };
@@ -825,17 +826,20 @@ casttest!(storage, |_prj, cmd| {
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
 casttest!(storage_layout, |_prj, cmd| {
-    cmd.cast_fuse().args([
-        "storage",
-        "--rpc-url",
-        "https://mainnet.optimism.io",
-        "--block",
-        "110000000",
-        "--etherscan-api-key",
-        "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
-        "0xB67c152E69217b5aCB85A2e19dF13423351b0E27",
-    ]);
-    let output = r#"| Name                          | Type                                                            | Slot | Offset | Bytes | Value                                             | Hex Value                                                          | Contract                                           |
+    cmd.cast_fuse()
+        .args([
+            "storage",
+            "--rpc-url",
+            next_rpc_endpoint(NamedChain::Optimism).as_str(),
+            "--block",
+            "110000000",
+            "--etherscan-api-key",
+            "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
+            "0xB67c152E69217b5aCB85A2e19dF13423351b0E27",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+| Name                          | Type                                                            | Slot | Offset | Bytes | Value                                             | Hex Value                                                          | Contract                                           |
 |-------------------------------|-----------------------------------------------------------------|------|--------|-------|---------------------------------------------------|--------------------------------------------------------------------|----------------------------------------------------|
 | gov                           | address                                                         | 0    | 0      | 20    | 1352965747418285184211909460723571462248744342032 | 0x000000000000000000000000ecfd15165d994c2766fbe0d6bacdc2e8dedfd210 | contracts/perp/PositionManager.sol:PositionManager |
 | _status                       | uint256                                                         | 1    | 0      | 32    | 1                                                 | 0x0000000000000000000000000000000000000000000000000000000000000001 | contracts/perp/PositionManager.sol:PositionManager |
@@ -863,8 +867,8 @@ casttest!(storage_layout, |_prj, cmd| {
 | closePositionRequests         | mapping(bytes32 => struct PositionManager.ClosePositionRequest) | 20   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
 | managers                      | mapping(address => bool)                                        | 21   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
 | approvedManagers              | mapping(address => mapping(address => bool))                    | 22   | 0      | 32    | 0                                                 | 0x0000000000000000000000000000000000000000000000000000000000000000 | contracts/perp/PositionManager.sol:PositionManager |
-"#;
-    assert_eq!(cmd.stdout_lossy(), output);
+
+"#]]);
 });
 
 casttest!(balance, |_prj, cmd| {
