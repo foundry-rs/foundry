@@ -1,6 +1,5 @@
 use crate::Config;
-use once_cell::sync::Lazy;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::LazyLock};
 
 mod conf_parser;
 pub use conf_parser::*;
@@ -15,7 +14,7 @@ pub const INLINE_CONFIG_FUZZ_KEY: &str = "fuzz";
 pub const INLINE_CONFIG_INVARIANT_KEY: &str = "invariant";
 const INLINE_CONFIG_PREFIX: &str = "forge-config";
 
-static INLINE_CONFIG_PREFIX_SELECTED_PROFILE: Lazy<String> = Lazy::new(|| {
+static INLINE_CONFIG_PREFIX_SELECTED_PROFILE: LazyLock<String> = LazyLock::new(|| {
     let selected_profile = Config::selected_profile().to_string();
     format!("{INLINE_CONFIG_PREFIX}:{selected_profile}.")
 });

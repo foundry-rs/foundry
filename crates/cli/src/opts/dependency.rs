@@ -1,14 +1,14 @@
 //! CLI dependency parsing
 
 use eyre::Result;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use regex::Regex;
 use std::str::FromStr;
 
-static GH_REPO_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\w-]+/[\w.-]+").unwrap());
+static GH_REPO_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\w-]+/[\w.-]+").unwrap());
 
 /// Git repo prefix regex
-pub static GH_REPO_PREFIX_REGEX: Lazy<Regex> = Lazy::new(|| {
+pub static GH_REPO_PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"((git@)|(git\+https://)|(https://)|(org-([A-Za-z0-9-])+@))?(?P<brand>[A-Za-z0-9-]+)\.(?P<tld>[A-Za-z0-9-]+)(/|:)")
         .unwrap()
 });

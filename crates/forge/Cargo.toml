@@ -79,7 +79,6 @@ dunce.workspace = true
 futures.workspace = true
 indicatif = "0.17"
 itertools.workspace = true
-once_cell.workspace = true
 parking_lot.workspace = true
 regex = { version = "1", default-features = false }
 reqwest = { workspace = true, features = ["json"] }

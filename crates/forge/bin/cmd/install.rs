@@ -7,7 +7,7 @@ use foundry_cli::{
 };
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use regex::Regex;
 use semver::Version;
 use std::{
@@ -17,8 +17,8 @@ use std::{
 };
 use yansi::Paint;
 
-static DEPENDENCY_VERSION_TAG_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
+static DEPENDENCY_VERSION_TAG_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
 
 /// CLI arguments for `forge install`.
 #[derive(Clone, Debug, Parser)]

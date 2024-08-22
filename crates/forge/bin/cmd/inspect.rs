@@ -16,7 +16,7 @@ use foundry_compilers::{
     info::ContractInfo,
     utils::canonicalize,
 };
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use regex::Regex;
 use std::fmt;
 
@@ -398,8 +398,8 @@ fn print_yul(yul: Option<&str>, pretty: bool) -> Result<()> {
         eyre::bail!("Could not get IR output");
     };
 
-    static YUL_COMMENTS: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*\*/)").unwrap());
+    static YUL_COMMENTS: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*\*/)").unwrap());
 
     if pretty {
         println!("{}", YUL_COMMENTS.replace_all(yul, ""));
