@@ -1082,8 +1082,8 @@ fn test_redactions() -> snapbox::Redactions {
         let redactions = [
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
             ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
-            ("[RUNS]", r"runs: \d+, μ: \d+, ~: \d+"),
             ("[GAS]", r"[Gg]as( used)?: \d+"),
+            ("[AVG_GAS]", r"μ: \d+, ~: \d+"),
             ("[FILE]", r"-->.*\.sol"),
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
             ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
