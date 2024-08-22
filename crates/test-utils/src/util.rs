@@ -625,6 +625,7 @@ impl TestProject {
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
             stdin_fun: None,
+            redact_output: true,
         }
     }
 
@@ -639,6 +640,7 @@ impl TestProject {
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
             stdin_fun: None,
+            redact_output: true,
         }
     }
 
@@ -736,6 +738,8 @@ pub struct TestCommand {
     // initial: Command,
     current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
     stdin_fun: Option<Box<dyn FnOnce(ChildStdin)>>,
+    /// If true, command output is redacted.
+    redact_output: bool,
 }
 
 impl TestCommand {
@@ -823,6 +827,12 @@ impl TestCommand {
     /// test's directory automatically.
     pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
         self.cmd.current_dir(dir);
+        self
+    }
+
+    /// Does not apply [`snapbox`] redactions to the command output.
+    pub fn with_no_redact(&mut self) -> &mut Self {
+        self.redact_output = false;
         self
     }
 
@@ -1054,7 +1064,11 @@ stderr:
     /// Runs the command, returning a [`snapbox`] object to assert the command output.
     #[track_caller]
     pub fn assert(&mut self) -> OutputAssert {
-        OutputAssert::new(self.execute()).with_assert(test_assert())
+        let assert = OutputAssert::new(self.execute());
+        if self.redact_output {
+            return assert.with_assert(test_assert());
+        };
+        assert
     }
 
     /// Runs the command and asserts that it resulted in success.

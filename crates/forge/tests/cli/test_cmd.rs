@@ -1277,7 +1277,7 @@ contract ATest is Test {
     )
     .unwrap();
 
-    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 [PASS] testNormalGas() (gas: 3202)
 [PASS] testWeirdGas1() (gas: 3040)
