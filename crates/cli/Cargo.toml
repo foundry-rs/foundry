@@ -35,7 +35,6 @@ dotenvy = "0.15"
 eyre.workspace = true
 futures.workspace = true
 indicatif = "0.17"
-once_cell.workspace = true
 regex = { version = "1", default-features = false }
 serde.workspace = true
 strsim = "0.11"

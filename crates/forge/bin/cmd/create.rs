@@ -20,8 +20,18 @@ use foundry_common::{
     fmt::parse_tokens,
 };
 use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize};
+use foundry_config::{
+    figment::{
+        self,
+        value::{Dict, Map},
+        Metadata, Profile,
+    },
+    merge_impl_figment_convert, Config,
+};
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc};
+
+merge_impl_figment_convert!(CreateArgs, opts, eth);
 
 /// CLI arguments for `forge create`.
 #[derive(Clone, Debug, Parser)]
@@ -65,6 +75,10 @@ pub struct CreateArgs {
     #[arg(long, requires = "verify")]
     show_standard_json_input: bool,
 
+    /// Timeout to use for broadcasting transactions.
+    #[arg(long, env = "ETH_TIMEOUT")]
+    pub timeout: Option<u64>,
+
     #[command(flatten)]
     opts: CoreBuildArgs,
 
@@ -84,8 +98,9 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
+        let config = self.try_load_config_emit_warnings()?;
         // Find Project & Compile
-        let project = self.opts.project()?;
+        let project = config.project()?;
 
         let target_path = if let Some(ref mut path) = self.contract.path {
             canonicalize(project.root().join(path))?
@@ -114,7 +129,6 @@ impl CreateArgs {
         };
 
         // Add arguments to constructor
-        let config = self.eth.try_load_config_emit_warnings()?;
         let provider = utils::get_provider(&config)?;
         let params = match abi.constructor {
             Some(ref v) => {
@@ -138,7 +152,8 @@ impl CreateArgs {
         if self.unlocked {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
-            self.deploy(abi, bin, params, provider, chain_id, sender).await
+            self.deploy(abi, bin, params, provider, chain_id, sender, config.transaction_timeout)
+                .await
         } else {
             // Deploy with signer
             let signer = self.eth.wallet.signer().await?;
@@ -146,7 +161,8 @@ impl CreateArgs {
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(EthereumWallet::new(signer))
                 .on_provider(provider);
-            self.deploy(abi, bin, params, provider, chain_id, deployer).await
+            self.deploy(abi, bin, params, provider, chain_id, deployer, config.transaction_timeout)
+                .await
         }
     }
 
@@ -207,6 +223,7 @@ impl CreateArgs {
     }
 
     /// Deploys the contract
+    #[allow(clippy::too_many_arguments)]
     async fn deploy<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
         self,
         abi: JsonAbi,
@@ -215,12 +232,13 @@ impl CreateArgs {
         provider: P,
         chain: u64,
         deployer_address: Address,
+        timeout: u64,
     ) -> Result<()> {
         let bin = bin.into_bytes().unwrap_or_else(|| {
             panic!("no bytecode found in bin object for {}", self.contract.name)
         });
         let provider = Arc::new(provider);
-        let factory = ContractFactory::new(abi.clone(), bin.clone(), provider.clone());
+        let factory = ContractFactory::new(abi.clone(), bin.clone(), provider.clone(), timeout);
 
         let is_args_empty = args.is_empty();
         let mut deployer =
@@ -367,6 +385,20 @@ impl CreateArgs {
     }
 }
 
+impl figment::Provider for CreateArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Create Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let mut dict = Dict::default();
+        if let Some(timeout) = self.timeout {
+            dict.insert("transaction_timeout".to_string(), timeout.into());
+        }
+        Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
 /// `ContractFactory` is a [`DeploymentTxFactory`] object with an
 /// [`Arc`] middleware. This type alias exists to preserve backwards
 /// compatibility with less-abstract Contracts.
@@ -414,6 +446,7 @@ pub struct Deployer<B, P, T> {
     abi: JsonAbi,
     client: B,
     confs: usize,
+    timeout: u64,
     _p: PhantomData<P>,
     _t: PhantomData<T>,
 }
@@ -428,6 +461,7 @@ where
             abi: self.abi.clone(),
             client: self.client.clone(),
             confs: self.confs,
+            timeout: self.timeout,
             _p: PhantomData,
             _t: PhantomData,
         }
@@ -504,6 +538,7 @@ pub struct DeploymentTxFactory<B, P, T> {
     client: B,
     abi: JsonAbi,
     bytecode: Bytes,
+    timeout: u64,
     _p: PhantomData<P>,
     _t: PhantomData<T>,
 }
@@ -517,6 +552,7 @@ where
             client: self.client.clone(),
             abi: self.abi.clone(),
             bytecode: self.bytecode.clone(),
+            timeout: self.timeout,
             _p: PhantomData,
             _t: PhantomData,
         }
@@ -532,8 +568,8 @@ where
     /// Creates a factory for deployment of the Contract with bytecode, and the
     /// constructor defined in the abi. The client will be used to send any deployment
     /// transaction.
-    pub fn new(abi: JsonAbi, bytecode: Bytes, client: B) -> Self {
-        Self { client, abi, bytecode, _p: PhantomData, _t: PhantomData }
+    pub fn new(abi: JsonAbi, bytecode: Bytes, client: B, timeout: u64) -> Self {
+        Self { client, abi, bytecode, timeout, _p: PhantomData, _t: PhantomData }
     }
 
     /// Create a deployment tx using the provided tokens as constructor
@@ -567,6 +603,7 @@ where
             abi: self.abi,
             tx,
             confs: 1,
+            timeout: self.timeout,
             _p: PhantomData,
             _t: PhantomData,
         })

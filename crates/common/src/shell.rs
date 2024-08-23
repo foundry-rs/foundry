@@ -1,16 +1,15 @@
 //! Helpers for printing to output
 
-use once_cell::sync::OnceCell;
 use serde::Serialize;
 use std::{
     error::Error,
     fmt, io,
     io::Write,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 /// Stores the configured shell for the duration of the program
-static SHELL: OnceCell<Shell> = OnceCell::new();
+static SHELL: OnceLock<Shell> = OnceLock::new();
 
 /// Error indicating that `set_hook` was unable to install the provided ErrorHook
 #[derive(Clone, Copy, Debug)]

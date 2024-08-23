@@ -1354,7 +1354,13 @@ impl Cheatcodes {
                         // inside it.
                         self.gas_metering_create = Some(None)
                     }
-                    opcode::STOP | opcode::RETURN | opcode::SELFDESTRUCT | opcode::REVERT => {
+                    opcode::STOP => {
+                        // Reset gas to value recorded when paused.
+                        interpreter.gas = *gas;
+                        self.gas_metering = None;
+                        self.gas_metering_create = None;
+                    }
+                    opcode::RETURN | opcode::SELFDESTRUCT | opcode::REVERT => {
                         match &self.gas_metering_create {
                             None | Some(None) => {
                                 // If we are ending current execution frame, we want to reset

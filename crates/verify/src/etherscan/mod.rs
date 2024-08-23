@@ -23,17 +23,16 @@ use foundry_compilers::{artifacts::BytecodeObject, Artifact};
 use foundry_config::{Chain, Config};
 use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use futures::FutureExt;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::{BuildMetadata, Version};
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::LazyLock};
 
 mod flatten;
 
 mod standard_json;
 
-pub static RE_BUILD_COMMIT: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?P<commit>commit\.[0-9,a-f]{8})").unwrap());
+pub static RE_BUILD_COMMIT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?P<commit>commit\.[0-9,a-f]{8})").unwrap());
 
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]

@@ -54,13 +54,15 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
-...
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 Script ran successfully.
-Gas used: 22815
+[GAS]
 
 == Logs ==
   script ran
-...
+
 "#]]);
 });
 
@@ -84,7 +86,7 @@ contract Demo {
         r#"
 ...
 Script ran successfully.
-Gas used: 22815
+[GAS]
 
 == Logs ==
   script ran
@@ -111,13 +113,15 @@ contract Demo {
 
     cmd.arg("script").arg(script).arg("--sig").arg("myFunction()").assert_success().stdout_eq(
         str![[r#"
-...
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 Script ran successfully.
-Gas used: 22815
+[GAS]
 
 == Logs ==
   script ran
-...
+
 "#]],
     );
 });
@@ -298,15 +302,17 @@ contract Demo {
         .arg("2")
         .assert_success()
         .stdout_eq(str![[r#"
-...
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 Script ran successfully.
-Gas used: 25301
+[GAS]
 
 == Logs ==
   script ran
   1
   2
-...
+
 "#]]);
 });
 
@@ -327,9 +333,11 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
-...
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 Script ran successfully.
-Gas used: 22900
+[GAS]
 
 == Return ==
 result: uint256 255
@@ -337,7 +345,7 @@ result: uint256 255
 
 == Logs ==
   script ran
-...
+
 "#]]);
 });
 
@@ -975,9 +983,11 @@ contract Demo {
         .args(["--skip", "tests", "--skip", TEMPLATE_CONTRACT])
         .assert_success()
         .stdout_eq(str![[r#"
-...
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 Script ran successfully.
-Gas used: 22900
+[GAS]
 
 == Return ==
 result: uint256 255
@@ -985,7 +995,7 @@ result: uint256 255
 
 == Logs ==
   script ran
-...
+
 "#]]);
 });
 
