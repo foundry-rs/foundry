@@ -51,7 +51,6 @@ comfy-table.workspace = true
 dunce.workspace = true
 eyre.workspace = true
 num-format.workspace = true
-once_cell.workspace = true
 reqwest.workspace = true
 rustc-hash.workspace = true
 semver.workspace = true

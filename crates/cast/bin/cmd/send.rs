@@ -50,6 +50,10 @@ pub struct SendTxArgs {
     #[arg(long, requires = "from")]
     unlocked: bool,
 
+    /// Timeout for sending the transaction.
+    #[arg(long, env = "ETH_TIMEOUT")]
+    pub timeout: Option<u64>,
+
     #[command(flatten)]
     tx: TransactionOpts,
 
@@ -98,6 +102,7 @@ impl SendTxArgs {
             command,
             unlocked,
             path,
+            timeout,
         } = self;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
@@ -126,6 +131,8 @@ impl SendTxArgs {
             .await?
             .with_blob_data(blob_data)?;
 
+        let timeout = timeout.unwrap_or(config.transaction_timeout);
+
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
@@ -152,7 +159,7 @@ impl SendTxArgs {
 
             let (tx, _) = builder.build(config.sender).await?;
 
-            cast_send(provider, tx, cast_async, confirmations, to_json).await
+            cast_send(provider, tx, cast_async, confirmations, timeout, to_json).await
         // Case 2:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -171,7 +178,7 @@ impl SendTxArgs {
                 .wallet(wallet)
                 .on_provider(&provider);
 
-            cast_send(provider, tx, cast_async, confirmations, to_json).await
+            cast_send(provider, tx, cast_async, confirmations, timeout, to_json).await
         }
     }
 }
@@ -181,6 +188,7 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     tx: WithOtherFields<TransactionRequest>,
     cast_async: bool,
     confs: u64,
+    timeout: u64,
     to_json: bool,
 ) -> Result<()> {
     let cast = Cast::new(provider);
@@ -191,7 +199,9 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     if cast_async {
         println!("{tx_hash:#x}");
     } else {
-        let receipt = cast.receipt(format!("{tx_hash:#x}"), None, confs, false, to_json).await?;
+        let receipt = cast
+            .receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false, to_json)
+            .await?;
         println!("{receipt}");
     }
 

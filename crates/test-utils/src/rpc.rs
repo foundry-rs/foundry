@@ -1,12 +1,14 @@
 //! RPC API keys utilities.
 
 use foundry_config::NamedChain;
-use once_cell::sync::Lazy;
 use rand::seq::SliceRandom;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    LazyLock,
+};
 
 // List of general purpose infura keys to rotate through
-static INFURA_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
+static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
         // "16a8be88795540b9b3903d8de0f7baa5",
         // "f4a0bdad42674adab5fc0ac077ffab2b",
@@ -19,7 +21,7 @@ static INFURA_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
 });
 
 // List of alchemy keys for mainnet
-static ALCHEMY_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
+static ALCHEMY_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
         "ib1f4u1ojm-9lJJypwkeZeG-75TJRB7O",
         "7mTtk6IW4DwroGnKmG_bOWri2hyaGYhX",
@@ -56,7 +58,7 @@ static ALCHEMY_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
 });
 
 // List of etherscan keys for mainnet
-static ETHERSCAN_MAINNET_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
+static ETHERSCAN_MAINNET_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
         "MCAUM7WPE9XP5UQMZPCKIBUJHPM1C24FP6",
         "JW6RWCG2C5QF8TANH4KC7AYIF1CX7RB5D1",

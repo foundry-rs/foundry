@@ -9,7 +9,6 @@ use foundry_compilers::{
     ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use regex::Regex;
 use snapbox::cmd::OutputAssert;
@@ -22,27 +21,27 @@ use std::{
     process::{ChildStdin, Command, Output, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, LazyLock,
     },
 };
 
-static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static CURRENT_DIR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// The commit of forge-std to use.
 const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
 
 /// Stores whether `stdout` is a tty / terminal.
-pub static IS_TTY: Lazy<bool> = Lazy::new(|| std::io::stdout().is_terminal());
+pub static IS_TTY: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
 
 /// Global default template path. Contains the global template project from which all other
 /// temp projects are initialized. See [`initialize()`] for more info.
-static TEMPLATE_PATH: Lazy<PathBuf> =
-    Lazy::new(|| env::temp_dir().join("foundry-forge-test-template"));
+static TEMPLATE_PATH: LazyLock<PathBuf> =
+    LazyLock::new(|| env::temp_dir().join("foundry-forge-test-template"));
 
 /// Global default template lock. If its contents are not exactly `"1"`, the global template will
 /// be re-initialized. See [`initialize()`] for more info.
-static TEMPLATE_LOCK: Lazy<PathBuf> =
-    Lazy::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
+static TEMPLATE_LOCK: LazyLock<PathBuf> =
+    LazyLock::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
 
 /// Global test identifier.
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -219,7 +218,7 @@ impl ExtTester {
 /// This doesn't always run `forge init`, instead opting to copy an already-initialized template
 /// project from a global template path. This is done to speed up tests.
 ///
-/// This used to use a `static` [`Lazy`], but this approach does not with `cargo-nextest` because it
+/// This used to use a `static` `Lazy`, but this approach does not with `cargo-nextest` because it
 /// runs each test in a separate process. Instead, we use a global lock file to ensure that only one
 /// test can initialize the template at a time.
 pub fn initialize(target: &Path) {
@@ -625,6 +624,7 @@ impl TestProject {
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
             stdin_fun: None,
+            redact_output: true,
         }
     }
 
@@ -639,6 +639,7 @@ impl TestProject {
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
             stdin_fun: None,
+            redact_output: true,
         }
     }
 
@@ -736,6 +737,8 @@ pub struct TestCommand {
     // initial: Command,
     current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
     stdin_fun: Option<Box<dyn FnOnce(ChildStdin)>>,
+    /// If true, command output is redacted.
+    redact_output: bool,
 }
 
 impl TestCommand {
@@ -823,6 +826,12 @@ impl TestCommand {
     /// test's directory automatically.
     pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
         self.cmd.current_dir(dir);
+        self
+    }
+
+    /// Does not apply [`snapbox`] redactions to the command output.
+    pub fn with_no_redact(&mut self) -> &mut Self {
+        self.redact_output = false;
         self
     }
 
@@ -918,18 +927,6 @@ impl TestCommand {
         let output = self.execute();
         self.ensure_success(&output).unwrap();
         output
-    }
-
-    /// Runs the command and asserts that it resulted in success
-    #[track_caller]
-    pub fn assert_success(&mut self) -> OutputAssert {
-        self.assert().success()
-    }
-
-    /// Runs the command and asserts that it failed.
-    #[track_caller]
-    pub fn assert_failure(&mut self) -> OutputAssert {
-        self.assert().failure()
     }
 
     /// Executes command, applies stdin function and returns output
@@ -1063,9 +1060,53 @@ stderr:
         )
     }
 
+    /// Runs the command, returning a [`snapbox`] object to assert the command output.
+    #[track_caller]
     pub fn assert(&mut self) -> OutputAssert {
-        OutputAssert::new(self.execute())
+        let assert = OutputAssert::new(self.execute());
+        if self.redact_output {
+            return assert.with_assert(test_assert());
+        };
+        assert
     }
+
+    /// Runs the command and asserts that it resulted in success.
+    #[track_caller]
+    pub fn assert_success(&mut self) -> OutputAssert {
+        self.assert().success()
+    }
+
+    /// Runs the command and asserts that it failed.
+    #[track_caller]
+    pub fn assert_failure(&mut self) -> OutputAssert {
+        self.assert().failure()
+    }
+}
+
+fn test_assert() -> snapbox::Assert {
+    snapbox::Assert::new()
+        .action_env(snapbox::assert::DEFAULT_ACTION_ENV)
+        .redact_with(test_redactions())
+}
+
+fn test_redactions() -> snapbox::Redactions {
+    static REDACTIONS: LazyLock<snapbox::Redactions> = LazyLock::new(|| {
+        let mut r = snapbox::Redactions::new();
+        let redactions = [
+            ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
+            ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
+            ("[GAS]", r"[Gg]as( used)?: \d+"),
+            ("[AVG_GAS]", r"μ: \d+, ~: \d+"),
+            ("[FILE]", r"-->.*\.sol"),
+            ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
+            ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
+        ];
+        for (placeholder, re) in redactions {
+            r.insert(placeholder, Regex::new(re).expect(re)).expect(re);
+        }
+        r
+    });
+    REDACTIONS.clone()
 }
 
 /// Extension trait for [`Output`].
@@ -1093,7 +1134,7 @@ pub trait OutputExt {
 /// Patterns to remove from fixtures before comparing output
 ///
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
-static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
+static IGNORE_IN_FIXTURES: LazyLock<Regex> = LazyLock::new(|| {
     let re = &[
         // solc version
         r" ?Solc(?: version)? \d+.\d+.\d+",

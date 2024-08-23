@@ -1,5 +1,7 @@
-use super::{provider::VerificationProvider, VerifyArgs, VerifyCheckArgs};
-use crate::provider::VerificationContext;
+use crate::{
+    provider::{VerificationContext, VerificationProvider},
+    verify::{VerifyArgs, VerifyCheckArgs},
+};
 use async_trait::async_trait;
 use eyre::Result;
 use foundry_common::{fs, retry::Retry};
@@ -17,7 +19,7 @@ pub struct SourcifyVerificationProvider;
 
 #[async_trait]
 impl VerificationProvider for SourcifyVerificationProvider {
-    async fn preflight_check(
+    async fn preflight_verify_check(
         &mut self,
         args: VerifyArgs,
         context: VerificationContext,

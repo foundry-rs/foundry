@@ -575,11 +575,9 @@ pub fn find_main_contract<'a>(
     rv.ok_or_else(|| eyre::eyre!("contract not found"))
 }
 
-#[cfg(test)]
-use mockall::automock;
 /// EtherscanClient is a trait that defines the methods to interact with Etherscan.
 /// It is defined as a wrapper of the `foundry_block_explorers::Client` to allow mocking.
-#[cfg_attr(test, automock)]
+#[cfg_attr(test, mockall::automock)]
 pub(crate) trait EtherscanClient {
     async fn contract_source_code(
         &self,

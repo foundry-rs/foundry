@@ -2,8 +2,8 @@ use alloy_primitives::Selector;
 use alloy_sol_types::sol;
 use foundry_common_fmt::*;
 use foundry_macros::ConsoleFmt;
-use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
+use std::sync::LazyLock;
 
 sol!(
     #[sol(abi)]
@@ -39,8 +39,8 @@ pub fn hh_console_selector(input: &[u8]) -> Option<&'static Selector> {
 /// `hardhat/console.log` logs its events manually, and in functions that accept integers they're
 /// encoded as `abi.encodeWithSignature("log(int)", p0)`, which is not the canonical ABI encoding
 /// for `int` that Solidity and [`sol!`] use.
-pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<FxHashMap<[u8; 4], [u8; 4]>> =
-    Lazy::new(|| FxHashMap::from_iter(include!("./patches.rs")));
+pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: LazyLock<FxHashMap<[u8; 4], [u8; 4]>> =
+    LazyLock::new(|| FxHashMap::from_iter(include!("./patches.rs")));
 
 #[cfg(test)]
 mod tests {
