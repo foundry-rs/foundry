@@ -17,6 +17,7 @@ use rand::Rng;
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
+    interpreter::InstructionResult,
 };
 use revm_inspectors::tracing::types::CallTraceStep;
 use std::{
@@ -677,13 +678,19 @@ impl Cheatcode for stopDebugTraceRecordingCall {
                 step.memory.clone().unwrap_or_default().as_ref()
             );
 
+            let is_out_of_gas = step.status == InstructionResult::OutOfGas
+                || step.status == InstructionResult::MemoryOOG
+                || step.status == InstructionResult::MemoryLimitOOG
+                || step.status == InstructionResult::PrecompileOOG
+                || step.status == InstructionResult::InvalidOperandOOG;
+
             InspectorDebugStep{
                 step: DebugStep {
                     stack: stack,
                     memoryData: memory,
                     opcode: step.op.get(),
                     depth: step.depth,
-                    instructionResult: step.status as u8,
+                    isOutOfGas: is_out_of_gas,
                     contractAddr: step.contract,
                 }
             }

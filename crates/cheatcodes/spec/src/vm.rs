@@ -261,19 +261,22 @@ interface Vm {
         uint64 depth;
     }
 
-    /// The result of the `stopAndReturnDebugTraceRecording` call
+    /// The result of the `stopDebugTraceRecording` call
     struct DebugStep {
-        /// The stack on the step of the run.
+        /// The stack before executing the step of the run.
+        /// stack[0] represents the top of the stack.
+        /// and only stack data revelant to the opcode execution is contained.
         uint256[] stack;
-        /// The memory data on the step of the run.
+        /// The memory data before executing the step of the run.
+        /// only data revelant to the opcode execution is contained.
+        /// e.g. for MLOAD, it will have 32 bytes of the memory data here.
         uint8[] memoryData;
         /// The opcode that was accessed.
         uint8 opcode;
         /// The call depth of the step.
         uint64 depth;
-        /// The instruction result.
-        /// see: https://github.com/bluealloy/revm/blob/5a47ae0d2bb0909cc70d1b8ae2b6fc721ab1ca7d/crates/interpreter/src/instruction_result.rs#L6-L50.
-        uint8 instructionResult;
+        /// Whether the call end up with out of gas error.
+        bool isOutOfGas;
         /// The contract address where the opcode is running
         address contractAddr;
     }

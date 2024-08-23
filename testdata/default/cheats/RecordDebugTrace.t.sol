@@ -131,10 +131,10 @@ contract RecordDebugTraceTest is DSTest {
 
 
     /**
-     * The goal of this test is to ensure it can return expected "instruction result".
+     * The goal of this test is to ensure it can return expected `isOutOfGas` flag.
      * It is tested with out of gas result here.
      */
-    function testDebugTraceCanRecordInstructionResult() public {
+    function testDebugTraceCanRecordOutOfGas() public {
         OutOfGas testContract = new OutOfGas();
 
         cheats.startDebugTraceRecording();
@@ -148,7 +148,7 @@ contract RecordDebugTraceTest is DSTest {
             Vm.DebugStep memory step = cheats.getDebugTraceByIndex(i);
 
             // https://github.com/bluealloy/revm/blob/5a47ae0d2bb0909cc70d1b8ae2b6fc721ab1ca7d/crates/interpreter/src/instruction_result.rs#L23
-            if (step.instructionResult == 0x50) {
+            if (step.isOutOfGas) {
                 isOOG = true;
             }
         }

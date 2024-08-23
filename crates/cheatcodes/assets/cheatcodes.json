@@ -491,17 +491,17 @@
     },
     {
       "name": "DebugStep",
-      "description": "The result of the `stopAndReturnDebugTraceRecording` call",
+      "description": "The result of the `stopDebugTraceRecording` call",
       "fields": [
         {
           "name": "stack",
           "ty": "uint256[]",
-          "description": "The stack on the step of the run."
+          "description": "The stack before executing the step of the run.\n stack[0] represents the top of the stack.\n and only stack data revelant to the opcode execution is contained."
         },
         {
           "name": "memoryData",
           "ty": "uint8[]",
-          "description": "The memory data on the step of the run."
+          "description": "The memory data before executing the step of the run.\n only data revelant to the opcode execution is contained.\n e.g. for MLOAD, it will have 32 bytes of the memory data here."
         },
         {
           "name": "opcode",
@@ -514,9 +514,9 @@
           "description": "The call depth of the step."
         },
         {
-          "name": "instructionResult",
-          "ty": "uint8",
-          "description": "The instruction result.\n see: https://github.com/bluealloy/revm/blob/5a47ae0d2bb0909cc70d1b8ae2b6fc721ab1ca7d/crates/interpreter/src/instruction_result.rs#L6-L50."
+          "name": "isOutOfGas",
+          "ty": "bool",
+          "description": "Whether the call end up with out of gas error"
         },
         {
           "name": "contractAddr",
@@ -8440,7 +8440,7 @@
     {
       "func": {
         "id": "signP256",
-        "description": "Signs `digest` with `privateKey` using the secps256r1 curve.",
+        "description": "Signs `digest` with `privateKey` using the secp256r1 curve.",
         "declaration": "function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);",
         "visibility": "external",
         "mutability": "pure",

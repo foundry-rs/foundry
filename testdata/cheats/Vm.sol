@@ -20,7 +20,7 @@ interface Vm {
     struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; }
     struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
     struct Gas { uint64 gasLimit; uint64 gasTotalUsed; uint64 gasMemoryUsed; int64 gasRefunded; uint64 gasRemaining; }
-    struct DebugStep { uint256[] stack; uint8[] memoryData; uint8 opcode; uint64 depth; uint8 instructionResult; address contractAddr; }
+    struct DebugStep { uint256[] stack; uint8[] memoryData; uint8 opcode; uint64 depth; bool isOutOfGas; address contractAddr; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
