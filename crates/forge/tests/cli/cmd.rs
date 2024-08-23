@@ -1566,9 +1566,12 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     )
     .unwrap();
 
-    cmd.arg("build");
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiler run successful"));
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+Compiling 3 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/3440>
@@ -1609,9 +1612,12 @@ contract MyTest is IMyTest {}
     )
     .unwrap();
 
-    cmd.arg("build");
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiler run successful"), "{stdout}");
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+Compiling 4 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 // checks `forge inspect <contract> irOptimized works
@@ -1645,37 +1651,43 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
     let forge_std_dir = prj.root().join("lib/forge-std");
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
 
-    cmd.arg("build");
+    // Build the project
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+Missing dependencies found. Installing now...
 
-    let output = cmd.stdout_lossy();
-    assert!(output.contains("Missing dependencies found. Installing now"), "{output}");
+Updating dependencies in [LIB_DIR]
+Compiling 26 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    // re-run
-    let output = cmd.stdout_lossy();
-    assert!(!output.contains("Missing dependencies found. Installing now"), "{output}");
-    assert!(output.contains("No files changed, compilation skipped"), "{output}");
+"#]]);
+
+    // Expect compilation to be skipped as no files have changed
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
 });
 
 // checks that extra output works
 forgetest_init!(can_build_skip_contracts, |prj, cmd| {
     prj.clear();
 
-    // only builds the single template contract `src/*`
+    // Only builds the single template contract `src/*`
     cmd.args(["build", "--skip", "tests", "--skip", "scripts"]).assert_success().stdout_eq(str![[
         r#"
-...
-Compiling 1 files [..]
-[..]
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-...
+
 "#
     ]]);
 
-    // re-run command
-    let out = cmd.stdout_lossy();
+    // Expect compilation to be skipped as no files have changed
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
 
-    // unchanged
-    assert!(out.contains("No files changed, compilation skipped"), "{}", out);
+"#]]);
 });
 
 forgetest_init!(can_build_skip_glob, |prj, cmd| {
