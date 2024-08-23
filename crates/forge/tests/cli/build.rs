@@ -60,6 +60,7 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 ...
 | Contract | Size (B) | Margin (B) |
 |----------|----------|------------|
+| Counter  | [..]
 ...
 "#
     ]);

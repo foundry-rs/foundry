@@ -1199,7 +1199,7 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
         .collect()
 }
 
-pub fn lossy_string(bytes: &[u8]) -> String {
+fn lossy_string(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).replace("\r\n", "\n")
 }
 
