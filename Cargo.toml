@@ -261,6 +261,5 @@ tower = "0.4"
 tower-http = "0.5"
 # soldeer
 soldeer = "0.3.0"
-
 proptest = "1"
 comfy-table = "7"

@@ -40,16 +40,58 @@ pub enum SoldeerDependencyValue {
     Str(String),
 }
 
+/// Location where to store the remappings, either in `remappings.txt` or the config file
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RemappingsLocation {
+    #[default]
+    Txt,
+    Config,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// Type for Soldeer configs, under soldeer tag in the foundry.toml
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SoldeerConfig(BTreeMap<String, SoldeerConfigValue>);
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SoldeerConfig {
+    #[serde(default = "default_true")]
+    pub remappings_generate: bool,
+
+    #[serde(default)]
+    pub remappings_regenerate: bool,
+
+    #[serde(default = "default_true")]
+    pub remappings_version: bool,
+
+    #[serde(default)]
+    pub remappings_prefix: String,
+
+    #[serde(default)]
+    pub remappings_location: RemappingsLocation,
+
+    #[serde(default)]
+    pub recursive_deps: bool,
+}
 
 impl AsRef<Self> for SoldeerConfig {
     fn as_ref(&self) -> &Self {
         self
     }
 }
-
+impl Default for SoldeerConfig {
+    fn default() -> Self {
+        SoldeerConfig {
+            remappings_generate: true,
+            remappings_regenerate: false,
+            remappings_version: true,
+            remappings_prefix: String::new(),
+            remappings_location: Default::default(),
+            recursive_deps: false,
+        }
+    }
+}
 /// Values inside Soldeer Config can be both string or bool
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]

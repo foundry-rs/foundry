@@ -2810,6 +2810,7 @@ mod tests {
         vyper::VyperOptimizationMode, ModelCheckerEngine, YulDetails,
     };
     use similar_asserts::assert_eq;
+    use soldeer::{RemappingsLocation, SoldeerConfigValue};
     use std::{collections::BTreeMap, fs::File, io::Write};
     use tempfile::tempdir;
     use NamedChain::Moonbeam;
@@ -5035,4 +5036,51 @@ mod tests {
             Ok(())
         });
     }
+
+    #[test]
+    fn test_parse_soldeer() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [soldeer]
+                remappings_generate = true
+                remappings_regenerate = false
+                remappings_version = true
+                remappings_prefix = "@"
+                remappings_location = "txt"
+                recursive_deps = true
+            "#,
+            )?;
+
+            let config = Config::load();
+            let mut config_values:BTreeMap<String, SoldeerConfigValue> = BTreeMap::new(); 
+            config_values.insert("remappings_generate".to_string(), SoldeerConfigValue::Bool(true));
+            config_values.insert("remappings_regenerate".to_string(), SoldeerConfigValue::Bool(false));
+            config_values.insert("remappings_version".to_string(), SoldeerConfigValue::Bool(true));
+            config_values.insert("remappings_prefix".to_string(), SoldeerConfigValue::Str("@".to_string()));
+            config_values.insert("remappings_location".to_string(), SoldeerConfigValue::Str("txt".to_string()));
+            config_values.insert("recursive_deps".to_string(), SoldeerConfigValue::Bool(true));
+
+            // let soldeer_config = SoldeerConfig::new();
+            assert_eq!(
+                config.soldeer,
+                Some(SoldeerConfig{
+                    remappings_generate: true,
+                    remappings_regenerate: false,
+                    remappings_version: true,
+                    remappings_prefix: "@".to_string(),
+                    remappings_location: RemappingsLocation::Txt,
+                    recursive_deps: true,
+                }
+            )
+                
+            );
+
+            Ok(())
+        });
+    }
+
+    
+    
 }
