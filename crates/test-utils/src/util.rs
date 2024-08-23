@@ -1092,6 +1092,7 @@ fn test_redactions() -> snapbox::Redactions {
             ("[FILE]", r"-->.*\.sol"),
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
             ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
+            ("[ADDRESS]", r"Address: 0x[0-9A-Fa-f]{40}"),
             ("[LIB_DIR]", r"/tmp/[^/]+-[^/]+/lib"),
         ];
         for (placeholder, re) in redactions {

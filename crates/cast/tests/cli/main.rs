@@ -48,23 +48,24 @@ casttest!(finds_block, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // Call `cast find-block`
-    cmd.args(["find-block", "--rpc-url", eth_rpc_url.as_str(), &timestamp]);
-    let output = cmd.stdout_lossy();
-    println!("{output}");
+    // <https://etherscan.io/block/14428082>
+    cmd.args(["find-block", "--rpc-url", eth_rpc_url.as_str(), &timestamp])
+        .assert_success()
+        .stdout_eq(str![[r#"
+14428082
 
-    // Expect successful block query
-    // Query: 1647843609, Mar 21 2022 06:20:09 UTC
-    // Output block: https://etherscan.io/block/14428082
-    // Output block time: Mar 21 2022 06:20:09 UTC
-    assert!(output.contains("14428082"), "{}", output);
+"#]]);
 });
 
 // tests that we can create a new wallet with keystore
 casttest!(new_wallet_keystore_with_password, |_prj, cmd| {
-    cmd.args(["wallet", "new", ".", "--unsafe-password", "test"]);
-    let out = cmd.stdout_lossy();
-    assert!(out.contains("Created new encrypted keystore file"));
-    assert!(out.contains("Address"));
+    cmd.args(["wallet", "new", ".", "--unsafe-password", "test"]).assert_success().stdout_eq(str![
+        [r#"
+Created new encrypted keystore file: [..]
+[ADDRESS]
+
+"#]
+    ]);
 });
 
 // tests that we can get the address of a keystore file
@@ -81,9 +82,12 @@ casttest!(wallet_address_keystore_with_password_file, |_prj, cmd| {
             .unwrap(),
         "--password-file",
         keystore_dir.join("password-ec554").to_str().unwrap(),
-    ]);
-    let out = cmd.stdout_lossy();
-    assert!(out.contains("0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2"));
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2
+
+"#]]);
 });
 
 // tests that `cast wallet sign message` outputs the expected signature
@@ -93,17 +97,29 @@ casttest!(wallet_sign_message_utf8_data, |_prj, cmd| {
     let msg = "test";
     let expected = "0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c";
 
-    cmd.args(["wallet", "sign", "--private-key", pk, msg]);
-    let output = cmd.stdout_lossy();
-    assert_eq!(output.trim(), expected);
+    cmd.args(["wallet", "sign", "--private-key", pk, msg]).assert_success().stdout_eq(str![[r#"
+0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c
+
+"#]]);
 
     // Success.
     cmd.cast_fuse()
         .args(["wallet", "verify", "-a", address, msg, expected])
-        .assert_non_empty_stdout();
+        .assert_success()
+        .stdout_eq(str![[r#"
+Validation succeeded. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf signed this message.
+
+"#]]);
 
     // Fail.
-    cmd.cast_fuse().args(["wallet", "verify", "-a", address, "other msg", expected]).assert_err();
+    cmd.cast_fuse()
+        .args(["wallet", "verify", "-a", address, "other msg", expected])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: 
+Validation failed. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf did not sign this message.
+
+"#]]);
 });
 
 // tests that `cast wallet sign message` outputs the expected signature, given a 0x-prefixed data
@@ -225,9 +241,12 @@ casttest!(wallet_private_key_from_mnemonic_option, |_prj, cmd| {
         "test test test test test test test test test test test junk",
         "--mnemonic-index",
         "1",
-    ]);
-    let output = cmd.stdout_lossy();
-    assert_eq!(output.trim(), "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+
+"#]]);
 });
 
 // tests that `cast wallet private-key` with derivation path outputs the private key
@@ -239,9 +258,12 @@ casttest!(wallet_private_key_with_derivation_path, |_prj, cmd| {
         "test test test test test test test test test test test junk",
         "--mnemonic-derivation-path",
         "m/44'/60'/0'/0/1",
-    ]);
-    let output = cmd.stdout_lossy();
-    assert_eq!(output.trim(), "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+
+"#]]);
 });
 
 // tests that `cast wallet import` creates a keystore for a private key and that `cast wallet
