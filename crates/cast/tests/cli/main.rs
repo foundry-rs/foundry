@@ -580,10 +580,14 @@ casttest!(run_succeeds, |_prj, cmd| {
         "--quick",
         "--rpc-url",
         rpc.as_str(),
-    ]);
-    let output = cmd.stdout_lossy();
-    assert!(output.contains("Transaction successfully executed"));
-    assert!(!output.contains("Revert"));
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+[GAS]
+
+"#]]);
 });
 
 // tests that `cast --to-base` commands are working correctly.
