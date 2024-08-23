@@ -2,7 +2,7 @@
 pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
-import "./Vm.sol";
+import "cheats/Vm.sol";
 
 
 contract MStoreAndMLoadCaller {
@@ -57,7 +57,7 @@ contract OutOfGas {
     }
 }
 
-contract DebugTraceTest is DSTest {
+contract RecordDebugTraceTest is DSTest {
     Vm constant cheats = Vm(HEVM_ADDRESS);
     /**
      * The goal of this test is to ensure the debug steps provide the correct OPCODE with its stack
@@ -71,21 +71,22 @@ contract DebugTraceTest is DSTest {
 
         testContract.storeAndLoadValueFromMemory();
 
-        Vm.DebugStep[] memory steps = cheats.stopAndReturnDebugTraceRecording();
+        uint256 stepsLen = cheats.stopDebugTraceRecording();
 
         bool mstoreCalled = false;
         bool mloadCalled = false;
 
-        for (uint i = 0 ; i < steps.length ; i++) {
-            if (steps[i].opcode == 0x52 /*MSTORE*/
-                && steps[i].stack[0] == testContract.memPtr() // MSTORE offset
-                && steps[i].stack[1] == testContract.expectedValueInMemory() // MSTORE val
+        for (uint i = 0 ; i < stepsLen ; i++) {
+            Vm.DebugStep memory step = cheats.getDebugTraceByIndex(i);
+            if (step.opcode == 0x52 /*MSTORE*/
+                && step.stack[0] == testContract.memPtr() // MSTORE offset
+                && step.stack[1] == testContract.expectedValueInMemory() // MSTORE val
             ) {
                 mstoreCalled = true;
             }
 
-            if (steps[i].opcode == 0x51 /*MLOAD*/
-                && steps[i].stack[0] == testContract.memPtr() // MLOAD offset
+            if (step.opcode == 0x51 /*MLOAD*/
+                && step.stack[0] == testContract.memPtr() // MLOAD offset
             ) {
                 mloadCalled = true;
             }
@@ -108,18 +109,20 @@ contract DebugTraceTest is DSTest {
 
         first.callSecondLayer();
 
-        Vm.DebugStep[] memory steps = cheats.stopAndReturnDebugTraceRecording();
+        uint256 stepsLen = cheats.stopDebugTraceRecording();
 
         bool goToDepthTwo = false;
         bool goToDepthThree = false;
-        for (uint i = 0 ; i < steps.length ; i++) {
-            if (steps[i].depth == 2) {
-                assertTrue(steps[i].contractAddr == address(first), "must be first layer on depth 2");
+        for (uint i = 0 ; i < stepsLen ; i++) {
+            Vm.DebugStep memory step = cheats.getDebugTraceByIndex(i);
+
+            if (step.depth == 2) {
+                assertTrue(step.contractAddr == address(first), "must be first layer on depth 2");
                 goToDepthTwo = true;
             }
 
-            if (steps[i].depth == 3) {
-                assertTrue(steps[i].contractAddr == address(second), "must be second layer on depth 3");
+            if (step.depth == 3) {
+                assertTrue(step.contractAddr == address(second), "must be second layer on depth 3");
                 goToDepthThree = true;
             }
         }
@@ -138,12 +141,14 @@ contract DebugTraceTest is DSTest {
 
         testContract.triggerOOG();
 
-        Vm.DebugStep[] memory steps = cheats.stopAndReturnDebugTraceRecording();
+        uint256 stepsLen = cheats.stopDebugTraceRecording();
 
         bool isOOG = false;
-        for (uint i = 0 ; i < steps.length ; i++) {
+        for (uint i = 0 ; i < stepsLen ; i++) {
+            Vm.DebugStep memory step = cheats.getDebugTraceByIndex(i);
+
             // https://github.com/bluealloy/revm/blob/5a47ae0d2bb0909cc70d1b8ae2b6fc721ab1ca7d/crates/interpreter/src/instruction_result.rs#L23
-            if (steps[i].instructionResult == 0x50) {
+            if (step.instructionResult == 0x50) {
                 isOOG = true;
             }
         }

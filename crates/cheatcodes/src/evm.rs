@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, Uint, B256, U256};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
@@ -18,15 +18,21 @@ use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
 };
+use revm_inspectors::tracing::types::CallTraceStep;
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
 };
 
+mod opcode_utils;
+use opcode_utils::{get_stack_inputs_for_opcode, get_memory_input_for_opcode};
+
 mod fork;
 pub(crate) mod mapping;
 pub(crate) mod mock;
 pub(crate) mod prank;
+
+use crate::inspector::DebugStep as InspectorDebugStep;
 
 /// Records storage slots reads and writes.
 #[derive(Clone, Debug, Default)]
@@ -640,27 +646,75 @@ impl Cheatcode for setBlockhashCall {
 
 
 impl Cheatcode for startDebugTraceRecordingCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        state.recorded_debug_steps = Some(Default::default());
+
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
+        executor.start_steps_recording(ccx.state);
         Ok(Default::default())
     }
 }
 
-impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
+impl Cheatcode for stopDebugTraceRecordingCall {
+
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
+        // Function to convert CallTraceStep to InspectorDebugStep
+        fn convert_step(step: &&CallTraceStep) -> InspectorDebugStep {
+            let opcode = step.op.get();
+            let stack = get_stack_inputs_for_opcode(
+                opcode, step.stack.clone().unwrap_or_default(),
+            );
+
+            let memory = get_memory_input_for_opcode(
+                opcode,
+                stack.clone(),
+                step.memory.clone().unwrap_or_default().as_ref()
+            );
+
+            InspectorDebugStep{
+                step: DebugStep {
+                    stack: stack,
+                    memoryData: memory,
+                    opcode: step.op.get(),
+                    depth: step.depth,
+                    instructionResult: step.status as u8,
+                    contractAddr: step.contract,
+                }
+            }
+        }
+
+        let steps = executor.stop_and_get_recorded_step(ccx.state);
+        let debug_steps: Vec<InspectorDebugStep> = steps.iter().map(convert_step).collect();
+
+        // store the recorded debug steps
+        ccx.state.recorded_debug_steps = Some(debug_steps);
+
+        let length = ccx.state.recorded_debug_steps.as_ref().map_or(0, |v| v.len());
+        let length_uint = Uint::<256, 4>::from(length);
+        Ok(length_uint.abi_encode())
+    }
+}
+
+impl Cheatcode for getDebugTraceByIndexCall {
+
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        // Ok(Default::default())
-        let res = state
-            .recorded_debug_steps
-            .replace(Default::default())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|record| record.step)
-            .collect::<Vec<_>>();
-        state.recorded_debug_steps = None;
-        Ok(res.abi_encode())
-        // Ok(state.recorded_opcodes.replace(Default::default()).unwrap_or_default())
+
+        let Self { index } = self;
+        let idx: usize = index.to::<u64>() as usize;
+
+        if let Some(debug_steps) = state.recorded_debug_steps.as_ref() {
+            if let Some(debug_step) = debug_steps.get(idx) {
+                return Ok(debug_step.step.abi_encode())
+            }
+        }
+
+        Ok(Default::default())
     }
 }
 

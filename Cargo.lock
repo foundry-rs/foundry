@@ -3588,6 +3588,7 @@ dependencies = [
  "proptest",
  "rand",
  "revm",
+ "revm-inspectors",
  "rustc-hash",
  "semver 1.0.23",
  "serde_json",

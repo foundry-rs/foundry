@@ -356,7 +356,7 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
 
-    /// Signs `digest` with `privateKey` using the secp256r1 curve.
+    /// Signs `digest` with `privateKey` using the secps256r1 curve.
     #[cheatcode(group = Evm, safety = Safe)]
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
 
@@ -366,9 +366,14 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function startDebugTraceRecording() external;
 
-    /// Returns the recorded debug trace during the run and stop recording.
+    /// Stop debug trace recording and returns the total size of the recorded debug trace.
     #[cheatcode(group = Evm, safety = Safe)]
-    function stopAndReturnDebugTraceRecording() external returns (DebugStep[] memory steps);
+    function stopDebugTraceRecording() external returns (uint256 size);
+
+
+    /// Get the recorded debug trace by step index.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getDebugTraceByIndex(uint256 index) external returns (DebugStep memory step);
 
 
     // -------- Record Storage --------

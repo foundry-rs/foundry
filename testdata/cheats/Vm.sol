@@ -20,10 +20,10 @@ interface Vm {
     struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; }
     struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
     struct Gas { uint64 gasLimit; uint64 gasTotalUsed; uint64 gasMemoryUsed; int64 gasRefunded; uint64 gasRemaining; }
+    struct DebugStep { uint256[] stack; uint8[] memoryData; uint8 opcode; uint64 depth; uint8 instructionResult; address contractAddr; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
-    struct DebugStep { uint256[] stack; uint8[] memoryData; uint8 opcode; uint64 depth; uint8 instructionResult; address contractAddr; }
     function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
     function activeFork() external view returns (uint256 forkId);
     function addr(uint256 privateKey) external pure returns (address keyAddr);
@@ -256,6 +256,7 @@ interface Vm {
     function getBlockNumber() external view returns (uint256 height);
     function getBlockTimestamp() external view returns (uint256 timestamp);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
+    function getDebugTraceByIndex(uint256 index) external returns (DebugStep memory step);
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
     function getFoundryVersion() external view returns (string memory version);
     function getLabel(address account) external view returns (string memory currentLabel);
@@ -434,9 +435,9 @@ interface Vm {
     function startPrank(address msgSender) external;
     function startPrank(address msgSender, address txOrigin) external;
     function startStateDiffRecording() external;
-    function stopAndReturnDebugTraceRecording() external returns (DebugStep[] memory steps);
     function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
     function stopBroadcast() external;
+    function stopDebugTraceRecording() external returns (uint256 size);
     function stopExpectSafeMemory() external;
     function stopMappingRecording() external;
     function stopPrank() external;

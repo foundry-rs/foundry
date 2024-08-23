@@ -1,8 +1,5 @@
 //! Cheatcode EVM inspector.
 
-mod opcode_utils;
-use opcode_utils::{get_stack_inputs_for_opcode, get_memory_input_for_opcode};
-
 use crate::{
     evm::{
         mapping::{self, MappingSlots},
@@ -52,6 +49,7 @@ use revm::{
     primitives::{BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SpecId, EOF_MAGIC_BYTES},
     EvmContext, InnerEvmContext, Inspector,
 };
+use revm_inspectors::tracing::types::CallTraceStep;
 use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::{
@@ -77,6 +75,12 @@ pub trait CheatcodesExecutor {
         &'a mut self,
         cheats: &'a mut Cheatcodes,
     ) -> impl InspectorExt<DB> + 'a;
+
+    fn start_steps_recording(&mut self, _cheats: &mut Cheatcodes) {}
+
+    fn stop_and_get_recorded_step(&mut self, _cheats: &mut Cheatcodes) -> Vec<&CallTraceStep> {
+        Vec::new()
+    }
 
     /// Constructs [revm::Evm] and runs a given closure with it.
     fn with_evm<DB: DatabaseExt, F, O>(
@@ -405,6 +409,8 @@ pub struct Cheatcodes {
     /// It is empty if nothing were recorded.
     pub recorded_debug_steps: Option<Vec<DebugStep>>,
 
+    /// The tracing node index where we start to record the debug trace steps.
+    pub record_debug_steps_start_index: Option<usize>,
 
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
@@ -499,6 +505,7 @@ impl Cheatcodes {
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
             recorded_debug_steps: Default::default(),
+            record_debug_steps_start_index: Default::default(),
             mocked_calls: Default::default(),
             mocked_functions: Default::default(),
             expected_calls: Default::default(),
@@ -1168,11 +1175,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             self.record_state_diffs(interpreter, ecx);
         }
 
-        // `starRecordtDebugTrace`: record the debug trace data
-        if self.recorded_debug_steps.is_some() {
-            self.record_debug_trace(interpreter, ecx);
-        }
-
         // `expectSafeMemory`: check if the current opcode is allowed to interact with memory.
         if !self.allowed_mem_writes.is_empty() {
             self.check_mem_opcodes(interpreter, ecx.journaled_state.depth());
@@ -1827,33 +1829,6 @@ impl Cheatcodes {
         }
     }
 
-
-    /// Records debug trace data
-    #[cold]
-    fn record_debug_trace<DB: DatabaseExt>(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
-        let Some(recorded_debug_steps) = &mut self.recorded_debug_steps  else { return };
-
-        // Record opcodes if `startDebugTraceRecording` has been called
-        let current_opcode = interpreter.current_opcode();
-        let instruction_result = interpreter.instruction_result as u8;
-        let stack_inputs = try_or_return!(
-            get_stack_inputs_for_opcode(
-                current_opcode, interpreter.stack(),
-            )
-        );
-        let mem_inputs = get_memory_input_for_opcode(
-            current_opcode, &stack_inputs, &interpreter.shared_memory
-        );
-        let step = crate::Vm::DebugStep {
-            opcode: current_opcode,
-            stack: stack_inputs,
-            memoryData: mem_inputs,
-            depth: ecx.journaled_state.depth(),
-            instructionResult: instruction_result, // note: will set again in step_end,
-            contractAddr: interpreter.contract().target_address
-        };
-        recorded_debug_steps.push(DebugStep{step});
-    }
 
     /// Checks to see if the current opcode can either mutate directly or expand memory.
     ///
