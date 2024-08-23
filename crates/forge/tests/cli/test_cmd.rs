@@ -181,7 +181,6 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-    // cmd.stdout_lossy().contains("[PASS]");
 });
 
 // tests that using the --match-path option only runs files matching the path
@@ -958,9 +957,23 @@ forgetest_init!(should_show_logs_when_fuzz_test, |prj, cmd| {
      "#,
     )
     .unwrap();
-    cmd.args(["test", "-vv"]);
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+Compiling 23 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
+[PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
+Logs:
+  inside fuzz test, x is: [..]
+  inside fuzz test, x is: [..]
+  inside fuzz test, x is: [..]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests that `forge test` with inline config `show_logs = true` for fuzz tests will
@@ -989,9 +1002,23 @@ forgetest_init!(should_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
      "#,
     )
     .unwrap();
-    cmd.args(["test", "-vv"]);
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+Compiling 23 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
+[PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
+Logs:
+  inside fuzz test, x is: [..]
+  inside fuzz test, x is: [..]
+  inside fuzz test, x is: [..]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests that `forge test` with config `show_logs: false` for fuzz tests will not display
@@ -1021,9 +1048,18 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
      "#,
     )
     .unwrap();
-    cmd.args(["test", "-vv"]);
-    let stdout = cmd.stdout_lossy();
-    assert!(!stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+Compiling 23 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
+[PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests that `forge test` with inline config `show_logs = false` for fuzz tests will not
@@ -1052,9 +1088,18 @@ forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
      "#,
     )
     .unwrap();
-    cmd.args(["test", "-vv"]);
-    let stdout = cmd.stdout_lossy();
-    assert!(!stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+Compiling 23 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
+[PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests internal functions trace

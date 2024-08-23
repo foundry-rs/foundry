@@ -196,25 +196,74 @@ casttest!(wallet_list_local_accounts, |prj, cmd| {
     cmd.set_current_dir(prj.root());
 
     // empty results
-    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]);
-    let list_output = cmd.stdout_lossy();
-    assert!(list_output.is_empty());
+    cmd.cast_fuse()
+        .args(["wallet", "list", "--dir", "keystore"])
+        .assert_success()
+        .stdout_eq(str![""]);
 
     // create 10 wallets
-    cmd.cast_fuse().args(["wallet", "new", "keystore", "-n", "10", "--unsafe-password", "test"]);
-    cmd.stdout_lossy();
+    cmd.cast_fuse()
+        .args(["wallet", "new", "keystore", "-n", "10", "--unsafe-password", "test"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Created new encrypted keystore file: [..]
+[ADDRESS]
+Created new encrypted keystore file: [..]
+[ADDRESS]
+Created new encrypted keystore file: [..]
+[ADDRESS]
+Created new encrypted keystore file: [..]
+[ADDRESS]
+Created new encrypted keystore file: [..]
+[ADDRESS]
+Created new encrypted keystore file: [..]
+[ADDRESS]
+Created new encrypted keystore file: [..]
+[ADDRESS]
+Created new encrypted keystore file: [..]
+[ADDRESS]
+Created new encrypted keystore file: [..]
+[ADDRESS]
+Created new encrypted keystore file: [..]
+[ADDRESS]
+
+"#]]);
 
     // test list new wallet
-    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]);
-    let list_output = cmd.stdout_lossy();
-    assert_eq!(list_output.matches('\n').count(), 10);
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]).assert_success().stdout_eq(str![
+        [r#"
+[..] (Local)
+[..] (Local)
+[..] (Local)
+[..] (Local)
+[..] (Local)
+[..] (Local)
+[..] (Local)
+[..] (Local)
+[..] (Local)
+[..] (Local)
+
+"#]
+    ]);
 });
 
 // tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic
 casttest!(wallet_mnemonic_from_entropy, |_prj, cmd| {
-    cmd.args(["wallet", "new-mnemonic", "--entropy", "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c"]);
-    let output = cmd.stdout_lossy();
-    assert!(output.contains("test test test test test test test test test test test junk"));
+    cmd.args(["wallet", "new-mnemonic", "--entropy", "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Generating mnemonic from provided entropy...
+Successfully generated a new mnemonic.
+Phrase:
+test test test test test test test test test test test junk
+
+Accounts:
+- Account 0:
+Address:     0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Private key: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+
+
+"#]]);
 });
 
 // tests that `cast wallet private-key` with arguments outputs the private key
