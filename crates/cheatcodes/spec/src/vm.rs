@@ -304,62 +304,6 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function loadAllocs(string calldata pathToAllocsJson) external;
 
-    /// Signs `digest` with `privateKey` using the secp256k1 curve.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
-
-    /// Signs `digest` with `privateKey` using the secp256k1 curve.
-    ///
-    /// Returns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the
-    /// signature's `s` value, and the recovery id `v` in a single bytes32.
-    /// This format reduces the signature size from 65 to 64 bytes.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function signCompact(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
-
-    /// Signs `digest` with signer provided to script using the secp256k1 curve.
-    ///
-    /// If `--sender` is provided, the signer with provided address is used, otherwise,
-    /// if exactly one signer is provided to the script, that signer is used.
-    ///
-    /// Raises error if signer passed through `--sender` does not match any unlocked signers or
-    /// if `--sender` is not provided and not exactly one signer is passed to the script.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function sign(bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
-
-    /// Signs `digest` with signer provided to script using the secp256k1 curve.
-    ///
-    /// Returns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the
-    /// signature's `s` value, and the recovery id `v` in a single bytes32.
-    /// This format reduces the signature size from 65 to 64 bytes.
-    ///
-    /// If `--sender` is provided, the signer with provided address is used, otherwise,
-    /// if exactly one signer is provided to the script, that signer is used.
-    ///
-    /// Raises error if signer passed through `--sender` does not match any unlocked signers or
-    /// if `--sender` is not provided and not exactly one signer is passed to the script.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function signCompact(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
-
-    /// Signs `digest` with signer provided to script using the secp256k1 curve.
-    ///
-    /// Raises error if none of the signers passed into the script have provided address.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
-
-    /// Signs `digest` with signer provided to script using the secp256k1 curve.
-    ///
-    /// Returns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the
-    /// signature's `s` value, and the recovery id `v` in a single bytes32.
-    /// This format reduces the signature size from 65 to 64 bytes.
-    ///
-    /// Raises error if none of the signers passed into the script have provided address.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
-
-    /// Signs `digest` with `privateKey` using the secps256r1 curve.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
-
     // -------- Record Debug Traces --------
 
     /// Records the debug trace during the run.
