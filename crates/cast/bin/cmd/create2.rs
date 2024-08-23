@@ -48,7 +48,8 @@ pub struct Create2Args {
     )]
     deployer: Address,
 
-    /// Salt to be used for the contract deployment.
+    /// Salt to be used for the contract deployment. This option separate from the default salt
+    /// mining with filters.
     #[arg(
         long,
         conflicts_with_all = [
