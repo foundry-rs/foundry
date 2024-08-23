@@ -2651,7 +2651,7 @@ impl EthApi {
 
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
-                if fork.predates_fork_inclusive(number) {
+                if fork.predates_fork(number) {
                     return Ok(fork.get_nonce(address, number).await?)
                 }
             }

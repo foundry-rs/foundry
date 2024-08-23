@@ -1,6 +1,5 @@
 use crate::{raw_wallet::RawWalletOpts, utils, wallet_signer::WalletSigner};
 use alloy_primitives::Address;
-use alloy_signer::Signer;
 use clap::Parser;
 use eyre::Result;
 use serde::Serialize;
@@ -140,21 +139,6 @@ of the unlocked account you want to use, or provide the --from flag with the add
 
         Ok(signer)
     }
-
-    /// This function prefers the `from` field and may return a different address from the
-    /// configured signer
-    /// If from is specified, returns it
-    /// If from is not specified, but there is a signer configured, returns the signer's address
-    /// If from is not specified and there is no signer configured, returns zero address
-    pub async fn sender(&self) -> Address {
-        if let Some(from) = self.from {
-            from
-        } else if let Ok(signer) = self.signer().await {
-            signer.address()
-        } else {
-            Address::ZERO
-        }
-    }
 }
 
 impl From<RawWalletOpts> for WalletOpts {
@@ -165,6 +149,7 @@ impl From<RawWalletOpts> for WalletOpts {
 
 #[cfg(test)]
 mod tests {
+    use alloy_signer::Signer;
     use std::{path::Path, str::FromStr};
 
     use super::*;

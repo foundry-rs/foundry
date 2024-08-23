@@ -1071,6 +1071,28 @@ impl TryFrom<RpcTransaction> for TypedTransaction {
                     tx.hash,
                 )))
             }
+            TxType::Eip7702 => {
+                let eip7702 = TxEip7702 {
+                    chain_id: tx.chain_id.ok_or(ConversionError::MissingChainId)?,
+                    nonce: tx.nonce,
+                    gas_limit: tx.gas,
+                    max_fee_per_gas: tx.gas_price.ok_or(ConversionError::MissingGasPrice)?,
+                    max_priority_fee_per_gas: tx
+                        .max_priority_fee_per_gas
+                        .ok_or(ConversionError::MissingMaxPriorityFeePerGas)?,
+                    to: tx.to.map_or(TxKind::Create, TxKind::Call),
+                    value: tx.value,
+                    access_list: tx.access_list.ok_or(ConversionError::MissingAccessList)?,
+                    input: tx.input,
+                    authorization_list: tx.authorization_list.unwrap_or_default(),
+                };
+                let signature = tx
+                    .signature
+                    .ok_or(ConversionError::MissingSignature)?
+                    .try_into()
+                    .map_err(ConversionError::SignatureError)?;
+                Ok(Self::EIP7702(Signed::new_unchecked(eip7702, signature, tx.hash)))
+            }
         }
     }
 }

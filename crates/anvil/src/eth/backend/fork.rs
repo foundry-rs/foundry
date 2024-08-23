@@ -417,7 +417,7 @@ impl ClientFork {
         // Since alloy doesn't indicate in the result whether the block exists,
         // this is being temporarily implemented in anvil.
         if self.predates_fork_inclusive(number) {
-            let receipts = self.provider().get_block_receipts(BlockNumber::Number(number)).await?;
+            let receipts = self.provider().get_block_receipts(BlockId::from(number)).await?;
             let receipts = receipts
                 .map(|r| {
                     r.into_iter()

@@ -85,6 +85,7 @@ evmole = "0.3.1"
 tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
+anvil.workspace = true
 foundry-test-utils.workspace = true
 async-trait.workspace = true
 criterion = "0.5"

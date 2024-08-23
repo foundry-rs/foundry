@@ -92,7 +92,6 @@ pub trait CheatcodesExecutor {
             db: &mut ccx.ecx.db as &mut dyn DatabaseExt,
             error,
             l1_block_info,
-            valid_authorizations: std::mem::take(&mut ccx.ecx.valid_authorizations),
         };
 
         let mut evm = new_evm_with_existing_context(inner, &mut inspector as _);
@@ -103,7 +102,6 @@ pub trait CheatcodesExecutor {
         ccx.ecx.env = evm.context.evm.inner.env;
         ccx.ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
         ccx.ecx.error = evm.context.evm.inner.error;
-        ccx.ecx.valid_authorizations = evm.context.evm.inner.valid_authorizations;
 
         Ok(res)
     }
@@ -647,7 +645,7 @@ impl Cheatcodes {
                         crate::Vm::AccountAccessKind::Create as u8
                     );
                     if let Some(address) = outcome.address {
-                        if let Ok((created_acc, _)) =
+                        if let Ok(created_acc) =
                             ecx.journaled_state.load_account(address, &mut ecx.db)
                         {
                             create_access.newBalance = created_acc.info.balance;
@@ -888,7 +886,7 @@ impl Cheatcodes {
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
             let initialized;
             let old_balance;
-            if let Ok((acc, _)) = ecx.load_account(call.target_address) {
+            if let Ok(acc) = ecx.load_account(call.target_address) {
                 initialized = acc.info.exists();
                 old_balance = acc.info.balance;
             } else {
@@ -1130,7 +1128,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                 // Depending on the depth the cheat was called at, there may not be any pending
                 // calls to update if execution has percolated up to a higher depth.
                 if call_access.depth == ecx.journaled_state.depth() {
-                    if let Ok((acc, _)) = ecx.load_account(call.target_address) {
+                    if let Ok(acc) = ecx.load_account(call.target_address) {
                         debug_assert!(access_is_call(call_access.kind));
                         call_access.newBalance = acc.info.balance;
                     }
@@ -1438,13 +1436,13 @@ impl Cheatcodes {
                 let target = Address::from_word(B256::from(target));
                 let (initialized, old_balance) = ecx
                     .load_account(target)
-                    .map(|(account, _)| (account.info.exists(), account.info.balance))
+                    .map(|account| (account.info.exists(), account.info.balance))
                     .unwrap_or_default();
 
                 // load balance of this account
                 let value = ecx
                     .balance(interpreter.contract().target_address)
-                    .map(|(b, _)| b)
+                    .map(|b| b.data)
                     .unwrap_or(U256::ZERO);
 
                 // register access for the target account
@@ -1479,8 +1477,8 @@ impl Cheatcodes {
                 let mut present_value = U256::ZERO;
                 // Try to load the account and the slot's present value
                 if ecx.load_account(address).is_ok() {
-                    if let Ok((previous, _)) = ecx.sload(address, key) {
-                        present_value = previous;
+                    if let Ok(previous) = ecx.sload(address, key) {
+                        present_value = previous.data;
                     }
                 }
                 let access = crate::Vm::StorageAccess {
@@ -1503,8 +1501,8 @@ impl Cheatcodes {
                 // not set (zero value)
                 let mut previous_value = U256::ZERO;
                 if ecx.load_account(address).is_ok() {
-                    if let Ok((previous, _)) = ecx.sload(address, key) {
-                        previous_value = previous;
+                    if let Ok(previous) = ecx.sload(address, key) {
+                        previous_value = previous.data;
                     }
                 }
 
@@ -1532,7 +1530,7 @@ impl Cheatcodes {
                     Address::from_word(B256::from(try_or_return!(interpreter.stack().peek(0))));
                 let initialized;
                 let balance;
-                if let Ok((acc, _)) = ecx.load_account(address) {
+                if let Ok(acc) = ecx.load_account(address) {
                     initialized = acc.info.exists();
                     balance = acc.info.balance;
                 } else {

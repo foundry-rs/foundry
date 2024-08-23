@@ -47,6 +47,10 @@ pub trait InspectorExt<DB: Database>: Inspector<DB> {
 
     // Simulates `console.log` invocation.
     fn console_log(&mut self, _input: String) {}
+
+    fn is_alphanet(&self) -> bool {
+        false
+    }
 }
 
 impl<DB: Database> InspectorExt<DB> for NoOpInspector {}

@@ -1381,7 +1381,7 @@ impl DatabaseExt for Backend {
         for (addr, acc) in allocs.iter() {
             // Fetch the account from the journaled state. Will create a new account if it does
             // not already exist.
-            let (state_acc, _) = journaled_state.load_account(*addr, self)?;
+            let mut state_acc = journaled_state.load_account(*addr, self)?;
 
             // Set the account's bytecode and code hash, if the `bytecode` field is present.
             if let Some(bytecode) = acc.code.as_ref() {
