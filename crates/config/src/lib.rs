@@ -5058,27 +5058,30 @@ mod tests {
             )?;
 
             let config = Config::load();
-            let mut config_values:BTreeMap<String, SoldeerConfigValue> = BTreeMap::new(); 
+            let mut config_values: BTreeMap<String, SoldeerConfigValue> = BTreeMap::new();
             config_values.insert("remappings_generate".to_string(), SoldeerConfigValue::Bool(true));
-            config_values.insert("remappings_regenerate".to_string(), SoldeerConfigValue::Bool(false));
+            config_values
+                .insert("remappings_regenerate".to_string(), SoldeerConfigValue::Bool(false));
             config_values.insert("remappings_version".to_string(), SoldeerConfigValue::Bool(true));
-            config_values.insert("remappings_prefix".to_string(), SoldeerConfigValue::Str("@".to_string()));
-            config_values.insert("remappings_location".to_string(), SoldeerConfigValue::Str("txt".to_string()));
+            config_values
+                .insert("remappings_prefix".to_string(), SoldeerConfigValue::Str("@".to_string()));
+            config_values.insert(
+                "remappings_location".to_string(),
+                SoldeerConfigValue::Str("txt".to_string()),
+            );
             config_values.insert("recursive_deps".to_string(), SoldeerConfigValue::Bool(true));
 
             // let soldeer_config = SoldeerConfig::new();
             assert_eq!(
                 config.soldeer,
-                Some(SoldeerConfig{
+                Some(SoldeerConfig {
                     remappings_generate: true,
                     remappings_regenerate: false,
                     remappings_version: true,
                     remappings_prefix: "@".to_string(),
                     remappings_location: RemappingsLocation::Txt,
                     recursive_deps: true,
-                }
-            )
-                
+                })
             );
 
             Ok(())

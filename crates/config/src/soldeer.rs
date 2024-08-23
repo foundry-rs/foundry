@@ -40,7 +40,7 @@ pub enum SoldeerDependencyValue {
     Str(String),
 }
 
-/// Location where to store the remappings, either in `remappings.txt` or the config file
+/// Location where to store the remappings, either in `remappings.txt` or in the `foundry.toml`
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RemappingsLocation {
@@ -91,11 +91,4 @@ impl Default for SoldeerConfig {
             recursive_deps: false,
         }
     }
-}
-/// Values inside Soldeer Config can be both string or bool
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum SoldeerConfigValue {
-    Bool(bool),
-    Str(String),
 }
