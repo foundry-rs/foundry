@@ -128,7 +128,7 @@ forgetest!(can_fuzz_array_params, |prj, cmd| {
         r#"
 import "./test.sol";
 contract ATest is DSTest {
-    function testArray(uint64[2] calldata values) external {
+    function testArray(uint64[2] calldata) external {
         assertTrue(true);
     }
 }
@@ -136,8 +136,18 @@ contract ATest is DSTest {
     )
     .unwrap();
 
-    cmd.arg("test");
-    cmd.stdout_lossy().contains("[PASS]");
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+Compiling 2 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/ATest.t.sol:ATest
+[PASS] testArray(uint64[2]) (runs: 256, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests that `bytecode_hash` will be sanitized
@@ -151,7 +161,7 @@ forgetest!(can_test_pre_bytecode_hash, |prj, cmd| {
 pragma solidity 0.5.17;
 import "./test.sol";
 contract ATest is DSTest {
-    function testArray(uint64[2] calldata values) external {
+    function testArray(uint64[2] calldata) external {
         assertTrue(true);
     }
 }
@@ -159,8 +169,19 @@ contract ATest is DSTest {
     )
     .unwrap();
 
-    cmd.arg("test");
-    cmd.stdout_lossy().contains("[PASS]");
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+Compiling 2 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/ATest.t.sol:ATest
+[PASS] testArray(uint64[2]) (runs: 256, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    // cmd.stdout_lossy().contains("[PASS]");
 });
 
 // tests that using the --match-path option only runs files matching the path
