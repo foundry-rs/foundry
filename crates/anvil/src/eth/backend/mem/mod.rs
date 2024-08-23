@@ -2573,16 +2573,32 @@ impl TransactionValidator for Backend {
 
         let max_cost = tx.max_cost();
         let value = tx.value();
-        // check sufficient funds: `gas * price + value`
-        let req_funds = max_cost.checked_add(value.to()).ok_or_else(|| {
-            warn!(target: "backend", "[{:?}] cost too high",
-            tx.hash());
-            InvalidTransactionError::InsufficientFunds
-        })?;
-        if account.balance < U256::from(req_funds) {
-            warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
-            return Err(InvalidTransactionError::InsufficientFunds);
+
+        match &tx.transaction {
+            TypedTransaction::Deposit(deposit_tx) => {
+                // Deposit transactions
+                // https://specs.optimism.io/protocol/deposits.html#execution
+                // 1. no gas cost check required since already have prepaid gas from L1
+                // 2. increment account balance by deposited amount before checking for sufficient
+                //    funds `tx.value <= existing account value + deposited value`
+                if value > account.balance + deposit_tx.mint {
+                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + deposit_tx.mint, value, *pending.sender());
+                    return Err(InvalidTransactionError::InsufficientFunds);
+                }
+            }
+            _ => {
+                // check sufficient funds: `gas * price + value`
+                let req_funds = max_cost.checked_add(value.to()).ok_or_else(|| {
+                    warn!(target: "backend", "[{:?}] cost too high", tx.hash());
+                    InvalidTransactionError::InsufficientFunds
+                })?;
+                if account.balance < U256::from(req_funds) {
+                    warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
+                    return Err(InvalidTransactionError::InsufficientFunds);
+                }
+            }
         }
+
         Ok(())
     }
 

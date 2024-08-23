@@ -1,12 +1,12 @@
 use chisel::session_source::{SessionSource, SessionSourceConfig};
 use criterion::{criterion_group, Criterion};
 use foundry_compilers::solc::Solc;
-use once_cell::sync::Lazy;
 use semver::Version;
-use std::hint::black_box;
+use std::{hint::black_box, sync::LazyLock};
 use tokio::runtime::Runtime;
 
-static SOLC: Lazy<Solc> = Lazy::new(|| Solc::find_or_install(&Version::new(0, 8, 19)).unwrap());
+static SOLC: LazyLock<Solc> =
+    LazyLock::new(|| Solc::find_or_install(&Version::new(0, 8, 19)).unwrap());
 
 /// Benchmark for the `clone_with_new_line` function in [SessionSource]
 fn clone_with_new_line(c: &mut Criterion) {
@@ -74,7 +74,7 @@ fn rt() -> Runtime {
 
 fn main() {
     // Install before benches if not present
-    let _ = Lazy::force(&SOLC);
+    let _ = LazyLock::force(&SOLC);
 
     session_source_benches();
 

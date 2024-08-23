@@ -6,7 +6,7 @@ use crate::cmd::{
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
-use forge_verify::{bytecode::VerifyBytecodeArgs, VerifyArgs, VerifyCheckArgs};
+use forge_verify::{VerifyArgs, VerifyBytecodeArgs, VerifyCheckArgs};
 use std::path::PathBuf;
 
 const VERSION_MESSAGE: &str = concat!(
@@ -87,6 +87,10 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "vc")]
     VerifyCheck(VerifyCheckArgs),
 
+    /// Verify the deployed bytecode against its source on Etherscan.
+    #[clap(visible_alias = "vb")]
+    VerifyBytecode(VerifyBytecodeArgs),
+
     /// Deploy a smart contract.
     #[command(visible_alias = "c")]
     Create(CreateArgs),
@@ -157,10 +161,6 @@ pub enum ForgeSubcommand {
 
     /// Generate scaffold files.
     Generate(generate::GenerateArgs),
-
-    /// Verify the deployed bytecode against its source.
-    #[clap(visible_alias = "vb")]
-    VerifyBytecode(VerifyBytecodeArgs),
 
     /// Soldeer dependency manager.
     Soldeer(soldeer::SoldeerArgs),
