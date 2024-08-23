@@ -1109,65 +1109,11 @@ fn test_redactions() -> snapbox::Redactions {
 /// fixture. Since `forge` commands may emit colorized output depending on whether the current
 /// terminal is tty, the path argument can be wrapped in [tty_fixture_path()]
 pub trait OutputExt {
-    /// Ensure the command wrote the expected data to `stdout`.
-    fn stdout_matches_content(&self, expected: &str);
-
-    /// Ensure the command wrote the expected data to `stdout`.
-    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>);
-
-    /// Ensure the command wrote the expected data to `stderr`.
-    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>);
-
     /// Returns the stdout as lossy string
     fn stdout_lossy(&self) -> String;
 }
 
-/// Patterns to remove from fixtures before comparing output
-///
-/// This should strip everything that can vary from run to run, like elapsed time, file paths
-static IGNORE_IN_FIXTURES: LazyLock<Regex> = LazyLock::new(|| {
-    let re = &[
-        // solc version
-        r" ?Solc(?: version)? \d+.\d+.\d+",
-        r" with(?: Solc)? \d+.\d+.\d+",
-        // solc runs
-        r"runs: \d+, μ: \d+, ~: \d+",
-        // elapsed time
-        r"(?:finished)? ?in .*?s(?: \(.*?s CPU time\))?",
-        // file paths
-        r"-->.*\.sol",
-        r"Location(.|\n)*\.rs(.|\n)*Backtrace",
-        // other
-        r"Transaction hash: 0x[0-9A-Fa-f]{64}",
-    ];
-    Regex::new(&format!("({})", re.join("|"))).unwrap()
-});
-
-pub fn normalize_output(s: &str) -> String {
-    let s = s.replace("\r\n", "\n").replace('\\', "/");
-    IGNORE_IN_FIXTURES.replace_all(&s, "").into_owned()
-}
-
 impl OutputExt for Output {
-    #[track_caller]
-    fn stdout_matches_content(&self, expected: &str) {
-        let out = lossy_string(&self.stdout);
-        similar_asserts::assert_eq!(normalize_output(&out), normalize_output(expected));
-    }
-
-    #[track_caller]
-    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) {
-        let expected = fs::read_to_string(expected_path).unwrap();
-        self.stdout_matches_content(&expected);
-    }
-
-    #[track_caller]
-    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) {
-        let expected = fs::read_to_string(expected_path).unwrap();
-        let err = lossy_string(&self.stderr);
-        similar_asserts::assert_eq!(normalize_output(&err), normalize_output(&expected));
-    }
-
     fn stdout_lossy(&self) -> String {
         lossy_string(&self.stdout)
     }
@@ -1201,31 +1147,4 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
 
 fn lossy_string(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).replace("\r\n", "\n")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tty_path_works() {
-        let path = "tests/fixture/test.stdout";
-        if *IS_TTY {
-            assert_eq!(tty_fixture_path(path), PathBuf::from("tests/fixture/test.tty.stdout"));
-        } else {
-            assert_eq!(tty_fixture_path(path), PathBuf::from(path));
-        }
-    }
-
-    #[test]
-    fn fixture_regex_matches() {
-        assert!(IGNORE_IN_FIXTURES.is_match(
-            r"
-Location:
-   [35mcli/src/compile.rs[0m:[35m151[0m
-
-Backtrace omitted.
-        "
-        ));
-    }
 }

@@ -7,7 +7,6 @@ use foundry_test_utils::{
     casttest,
     rpc::{next_http_rpc_endpoint, next_rpc_endpoint, next_ws_rpc_endpoint},
     str,
-    util::OutputExt,
 };
 use std::{fs, io::Write, path::Path, str::FromStr};
 
@@ -685,11 +684,24 @@ casttest!(logs_topics, |_prj, cmd| {
         "12421182",
         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
         "0x000000000000000000000000ab5801a7d398351b8be11c439e05c5b3259aec9b",
-    ]);
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+- address: 0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE
+  blockHash: 0x439b61565dacbc09a6d54378dff60d9b0400496d7a5a060cfdfdd899262f466c
+  blockNumber: 12421182
+  data: 0x000000000000000000000000000000000000027fd7b375dda5ef932dac18d302
+  logIndex: 15
+  removed: false
+  topics: [
+  	0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+  	0x000000000000000000000000ab5801a7d398351b8be11c439e05c5b3259aec9b
+  	0x00000000000000000000000068a99f89e475a078645f4bac491360afe255dff1
+  ]
+  transactionHash: 0xb65bcbb85c1633b0ab4e4886c3cd8eeaeb63edbb39cacdb9223fdcf4454fd2c7
+  transactionIndex: 8
 
-    cmd.unchecked_output().stdout_matches_path(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
-    );
+"#]]);
 });
 
 casttest!(logs_topic_2, |_prj, cmd| {
@@ -706,11 +718,24 @@ casttest!(logs_topic_2, |_prj, cmd| {
         "",
         "0x00000000000000000000000068a99f89e475a078645f4bac491360afe255dff1", /* Filter on the
                                                                                * `to` address */
-    ]);
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+- address: 0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE
+  blockHash: 0x439b61565dacbc09a6d54378dff60d9b0400496d7a5a060cfdfdd899262f466c
+  blockNumber: 12421182
+  data: 0x000000000000000000000000000000000000027fd7b375dda5ef932dac18d302
+  logIndex: 15
+  removed: false
+  topics: [
+  	0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+  	0x000000000000000000000000ab5801a7d398351b8be11c439e05c5b3259aec9b
+  	0x00000000000000000000000068a99f89e475a078645f4bac491360afe255dff1
+  ]
+  transactionHash: 0xb65bcbb85c1633b0ab4e4886c3cd8eeaeb63edbb39cacdb9223fdcf4454fd2c7
+  transactionIndex: 8
 
-    cmd.unchecked_output().stdout_matches_path(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
-    );
+"#]]);
 });
 
 casttest!(logs_sig, |_prj, cmd| {
@@ -725,11 +750,24 @@ casttest!(logs_sig, |_prj, cmd| {
         "12421182",
         "Transfer(address indexed from, address indexed to, uint256 value)",
         "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
-    ]);
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+- address: 0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE
+  blockHash: 0x439b61565dacbc09a6d54378dff60d9b0400496d7a5a060cfdfdd899262f466c
+  blockNumber: 12421182
+  data: 0x000000000000000000000000000000000000027fd7b375dda5ef932dac18d302
+  logIndex: 15
+  removed: false
+  topics: [
+  	0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+  	0x000000000000000000000000ab5801a7d398351b8be11c439e05c5b3259aec9b
+  	0x00000000000000000000000068a99f89e475a078645f4bac491360afe255dff1
+  ]
+  transactionHash: 0xb65bcbb85c1633b0ab4e4886c3cd8eeaeb63edbb39cacdb9223fdcf4454fd2c7
+  transactionIndex: 8
 
-    cmd.unchecked_output().stdout_matches_path(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
-    );
+"#]]);
 });
 
 casttest!(logs_sig_2, |_prj, cmd| {
@@ -745,11 +783,24 @@ casttest!(logs_sig_2, |_prj, cmd| {
         "Transfer(address indexed from, address indexed to, uint256 value)",
         "",
         "0x68A99f89E475a078645f4BAC491360aFe255Dff1",
-    ]);
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+- address: 0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE
+  blockHash: 0x439b61565dacbc09a6d54378dff60d9b0400496d7a5a060cfdfdd899262f466c
+  blockNumber: 12421182
+  data: 0x000000000000000000000000000000000000027fd7b375dda5ef932dac18d302
+  logIndex: 15
+  removed: false
+  topics: [
+  	0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+  	0x000000000000000000000000ab5801a7d398351b8be11c439e05c5b3259aec9b
+  	0x00000000000000000000000068a99f89e475a078645f4bac491360afe255dff1
+  ]
+  transactionHash: 0xb65bcbb85c1633b0ab4e4886c3cd8eeaeb63edbb39cacdb9223fdcf4454fd2c7
+  transactionIndex: 8
 
-    cmd.unchecked_output().stdout_matches_path(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cast_logs.stdout"),
-    );
+"#]]);
 });
 
 casttest!(mktx, |_prj, cmd| {
