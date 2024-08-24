@@ -425,13 +425,13 @@ impl TestArgs {
             let svg_data = String::from_utf8(data)?;
             let svg_data = svg_data.replace("samples", "gas");
 
-            // Write to temp file and open it in default program.
+            // Write file to temporary location and open it in default program.
             let file_name = format!(
-                "tmp/flamegraph_{contract}_{test_name}.svg",
+                "{tmp_dir}/flamegraph_{contract}_{test_name}.svg",
+                tmp_dir = std::env::temp_dir().display(),
                 contract = suite_name.split(':').last().unwrap(),
                 test_name = test_name.trim_end_matches("()")
             );
-            let _ = std::fs::create_dir("tmp");
             let mut file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
             file.write_all(svg_data.as_bytes()).wrap_err("failed to save flamegraph")?;
             opener::open(&file_name).wrap_err("failed to open flamergpah")?;
