@@ -259,7 +259,7 @@ impl TestArgs {
     /// configured filter will be executed
     ///
     /// Returns the test results for all matching tests.
-    pub async fn execute_tests(self) -> Result<TestOutcome> {
+    pub async fn execute_tests(mut self) -> Result<TestOutcome> {
         // Merge all configs.
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -327,6 +327,11 @@ impl TestArgs {
         }
 
         let env = evm_opts.evm_env().await?;
+
+        // Enable internal tracing for more informative flamegraph.
+        if self.flamegraph.is_some() {
+            self.decode_internal = Some(None);
+        }
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
         let decode_internal = if let Some(maybe_fn) = self.decode_internal.as_ref() {
