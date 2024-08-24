@@ -89,7 +89,7 @@ impl Cheatcode for loadCall {
         let Self { target, slot } = *self;
         ensure_not_precompile!(&target, ccx);
         ccx.ecx.load_account(target)?;
-        let (val, _) = ccx.ecx.sload(target, slot.into())?;
+        let val = ccx.ecx.sload(target, slot.into())?;
         Ok(val.abi_encode())
     }
 }
@@ -590,7 +590,7 @@ impl Cheatcode for setBlockhashCall {
 }
 
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
-    let (account, _) = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
+    let account = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
     Ok(account.info.nonce.abi_encode())
 }
 

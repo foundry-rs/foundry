@@ -23,6 +23,8 @@ pub struct Inspector {
     pub tracer: Option<TracingInspector>,
     /// collects all `console.sol` logs
     pub log_collector: Option<LogCollector>,
+    /// Whether to enable Alphanet support
+    pub alphanet: bool,
 }
 
 impl Inspector {
@@ -41,7 +43,7 @@ impl Inspector {
         self
     }
 
-    pub fn with_config(mut self, config: TracingInspectorConfig) -> Self {
+    pub fn with_tracing_config(mut self, config: TracingInspectorConfig) -> Self {
         self.tracer = Some(TracingInspector::new(config));
         self
     }
@@ -55,6 +57,12 @@ impl Inspector {
     /// Configures the `Tracer` [`revm::Inspector`]
     pub fn with_log_collector(mut self) -> Self {
         self.log_collector = Some(Default::default());
+        self
+    }
+
+    /// Enables Alphanet features
+    pub fn with_alphanet(mut self, yes: bool) -> Self {
+        self.alphanet = yes;
         self
     }
 }
@@ -168,7 +176,11 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     }
 }
 
-impl<DB: Database> InspectorExt<DB> for Inspector {}
+impl<DB: Database> InspectorExt<DB> for Inspector {
+    fn is_alphanet(&self) -> bool {
+        self.alphanet
+    }
+}
 
 /// Prints all the logs
 pub fn print_logs(logs: &[Log]) {

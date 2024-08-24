@@ -54,6 +54,7 @@ jsonpath_lib.workspace = true
 k256.workspace = true
 memchr = "2.7"
 p256 = "0.13.2"
+ecdsa = "0.16"
 rand = "0.8"
 revm.workspace = true
 rustc-hash.workspace = true

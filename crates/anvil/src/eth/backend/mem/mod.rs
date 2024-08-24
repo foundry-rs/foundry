@@ -174,6 +174,7 @@ pub struct Backend {
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
+    alphanet: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
@@ -198,6 +199,7 @@ impl Backend {
         fork: Arc<RwLock<Option<ClientFork>>>,
         enable_steps_tracing: bool,
         print_logs: bool,
+        alphanet: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         max_persisted_states: Option<usize>,
         transaction_block_keeper: Option<usize>,
@@ -256,6 +258,7 @@ impl Backend {
             active_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
             print_logs,
+            alphanet,
             prune_state_history_config,
             transaction_block_keeper,
             node_config,
@@ -851,7 +854,7 @@ impl Backend {
         }
 
         let db = self.db.read().await;
-        let mut inspector = Inspector::default();
+        let mut inspector = self.build_inspector();
         let mut evm = self.new_evm_with_inspector_ref(&**db, env, &mut inspector);
         let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out, logs) = match result {
@@ -908,6 +911,7 @@ impl Backend {
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
             precompile_factory: self.precompile_factory.clone(),
+            alphanet: self.alphanet,
         };
 
         // create a new pending block
@@ -980,6 +984,7 @@ impl Backend {
                     blob_gas_used: 0,
                     enable_steps_tracing: self.enable_steps_tracing,
                     print_logs: self.print_logs,
+                    alphanet: self.alphanet,
                     precompile_factory: self.precompile_factory.clone(),
                 };
                 let executed_tx = executor.execute();
@@ -1137,6 +1142,7 @@ impl Backend {
                     nonce,
                     access_list,
                     blob_versioned_hashes,
+                    authorization_list,
                     sidecar: _,
                     chain_id: _,
                     transaction_type: _,
@@ -1188,7 +1194,7 @@ impl Backend {
             access_list: access_list.unwrap_or_default().into(),
             blob_hashes: blob_versioned_hashes.unwrap_or_default(),
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
-            authorization_list: None,
+            authorization_list: authorization_list.map(Into::into),
         };
 
         if env.block.basefee.is_zero() {
@@ -1198,6 +1204,17 @@ impl Backend {
         }
 
         env
+    }
+
+    /// Builds [`Inspector`] with the configured options
+    fn build_inspector(&self) -> Inspector {
+        let mut inspector = Inspector::default().with_alphanet(self.alphanet);
+
+        if self.print_logs {
+            inspector = inspector.with_log_collector();
+        }
+
+        inspector
     }
 
     pub fn call_with_state<D>(
@@ -1210,7 +1227,7 @@ impl Backend {
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
-        let mut inspector = Inspector::default();
+        let mut inspector = self.build_inspector();
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
@@ -1251,7 +1268,7 @@ impl Backend {
                                 .into_call_config()
                                 .map_err(|e| (RpcError::invalid_params(e.to_string())))?;
 
-                            let mut inspector = Inspector::default().with_config(
+                            let mut inspector = self.build_inspector().with_tracing_config(
                                 TracingInspectorConfig::from_geth_call_config(&call_config),
                             );
 
@@ -1283,8 +1300,9 @@ impl Backend {
             }
 
             // defaults to StructLog tracer used since no tracer is specified
-            let mut inspector =
-                Inspector::default().with_config(TracingInspectorConfig::from_geth_config(&config));
+            let mut inspector = self
+                .build_inspector()
+                .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
             let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);

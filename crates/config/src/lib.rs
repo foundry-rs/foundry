@@ -447,6 +447,9 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eof_version: Option<EofVersion>,
 
+    /// Whether to enable Alphanet features.
+    pub alphanet: bool,
+
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
@@ -910,7 +913,7 @@ impl Config {
     /// Returns the [SpecId] derived from the configured [EvmVersion]
     #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
-        evm_spec_id(&self.evm_version)
+        evm_spec_id(&self.evm_version, self.alphanet)
     }
 
     /// Returns whether the compiler version should be auto-detected
@@ -2139,6 +2142,7 @@ impl Default for Config {
             warnings: vec![],
             extra_args: vec![],
             eof_version: None,
+            alphanet: false,
             _non_exhaustive: (),
         }
     }

@@ -63,13 +63,21 @@ macro_rules! forgetest_async {
 
 #[macro_export]
 macro_rules! casttest {
-    ($(#[$attr:meta])* $test:ident, |$prj:ident, $cmd:ident| $e:expr) => {
-        $crate::casttest!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, |$prj, $cmd| $e);
+    ($(#[$attr:meta])* $test:ident, $($async:ident)? |$prj:ident, $cmd:ident| $e:expr) => {
+        $crate::casttest!($(#[$attr])* $test, $crate::foundry_compilers::PathStyle::Dapptools, $($async)? |$prj, $cmd| $e);
     };
     ($(#[$attr:meta])* $test:ident, $style:expr, |$prj:ident, $cmd:ident| $e:expr) => {
         #[test]
         $(#[$attr])*
         fn $test() {
+            let (mut $prj, mut $cmd) = $crate::util::setup_cast(stringify!($test), $style);
+            $e
+        }
+    };
+    ($(#[$attr:meta])* $test:ident, $style:expr, async |$prj:ident, $cmd:ident| $e:expr) => {
+        #[tokio::test(flavor = "multi_thread")]
+        $(#[$attr])*
+        async fn $test() {
             let (mut $prj, mut $cmd) = $crate::util::setup_cast(stringify!($test), $style);
             $e
         }
