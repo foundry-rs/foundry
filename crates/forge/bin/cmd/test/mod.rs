@@ -1,7 +1,7 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
 use clap::{Parser, ValueHint};
-use eyre::Result;
+use eyre::{Context, Result};
 use forge::{
     decode::decode_console_logs,
     gas_report::GasReport,
@@ -40,7 +40,7 @@ use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::Read,
+    io::Write,
     path::PathBuf,
     sync::{mpsc::channel, Arc},
     time::Instant,
@@ -381,11 +381,11 @@ impl TestArgs {
         let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
 
         if should_flamegraph {
-            let test_result = outcome
+            let (suite_name, (test_name, test_result)) = outcome
                 .results
                 .iter_mut()
                 .find(|(_, r)| !r.test_results.is_empty())
-                .map(|(_, r)| (r.test_results.values_mut().next().unwrap()))
+                .map(|(suite_name, r)| (suite_name, r.test_results.iter_mut().next().unwrap()))
                 .unwrap();
 
             let arena = test_result
@@ -408,20 +408,28 @@ impl TestArgs {
             let mut fst = folded_stack_trace::build(arena);
             fst.reverse();
 
-            let file_name = "flamegraph.svg";
-            let writer = std::fs::File::create(file_name).unwrap();
-
+            // Generate SVG.
+            let mut data = Vec::new();
             let mut options = inferno::flamegraph::Options::default();
             options.flame_chart = true;
+            inferno::flamegraph::from_lines(
+                &mut options,
+                fst.iter().map(|s| s.as_str()),
+                &mut data,
+            )?;
+            let svg_data = String::from_utf8(data)?;
+            let svg_data = svg_data.replace("samples", "gas");
 
-            inferno::flamegraph::from_lines(&mut options, fst.iter().map(|s| s.as_str()), writer)
-                .unwrap();
-
-            let mut buf = String::new();
-            let mut file = std::fs::File::open(file_name).unwrap();
-            file.read_to_string(&mut buf).expect("failed to read flamegraph file");
-            let buf = buf.replace("samples", "gas");
-            std::fs::write(file_name, buf).expect("failed to write flamegraph file");
+            // Write to temp file and open it in default program.
+            let file_name = format!(
+                "tmp/flamegraph_{contract}_{test_name}.svg",
+                contract = suite_name.split(':').last().unwrap(),
+                test_name = test_name.trim_end_matches("()")
+            );
+            let _ = std::fs::create_dir("tmp");
+            let mut file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
+            file.write_all(svg_data.as_bytes()).wrap_err("failed to save flamegraph")?;
+            opener::open(&file_name).wrap_err("failed to open flamergpah")?;
         } else if should_debug {
             // Get first non-empty suite result. We will have only one such entry.
             let Some((_, test_result)) = outcome
