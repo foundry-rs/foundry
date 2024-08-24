@@ -1,6 +1,6 @@
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Fuzzer, LogCollector,
-    TracingInspector, TracingInspectorConfig
+    TracingInspector, TracingInspectorConfig,
 };
 use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, TxKind, U256};
 use foundry_cheatcodes::CheatcodesExecutor;
@@ -331,12 +331,11 @@ impl CheatcodesExecutor for InspectorStackInner {
     }
 
     fn stop_and_get_recorded_step(&mut self, cheats: &mut Cheatcodes) -> Vec<&CallTraceStep> {
-
         // a depth first traverse to flatten the recorded steps.
         fn flatten_call_trace(
             root: usize,
             arena: &CallTraceArena,
-            record_debug_steps_start_index: Option<usize>
+            record_debug_steps_start_index: Option<usize>,
         ) -> Vec<&CallTraceStep> {
             let Some(node_start_idx) = record_debug_steps_start_index else {
                 return Default::default();
@@ -346,14 +345,16 @@ impl CheatcodesExecutor for InspectorStackInner {
             let mut nodes = Vec::new(); // Use a Vec as a stack
             nodes.push(root);
 
-            while let Some(node_idx) = nodes.pop() { // Pop from the end of the stack
+            while let Some(node_idx) = nodes.pop() {
+                // Pop from the end of the stack
                 let node = &arena.nodes()[node_idx];
                 if node_idx >= node_start_idx {
                     for step in &node.trace.steps {
                         out.push(step);
                     }
                 }
-                // Push children onto the stack in reverse order so that the first child is processed first
+                // Push children onto the stack in reverse order so that the first child is
+                // processed first
                 for &child_idx in node.children.iter().rev() {
                     nodes.push(child_idx);
                 }
@@ -368,7 +369,7 @@ impl CheatcodesExecutor for InspectorStackInner {
 
             // Use the trace nodes to flatten the call trace
             let root = tracer.traces();
-            return flatten_call_trace(0, &root, cheats.record_debug_steps_start_index);
+            return flatten_call_trace(0, root, cheats.record_debug_steps_start_index);
         }
 
         Vec::new()

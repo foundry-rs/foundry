@@ -264,7 +264,7 @@ interface Vm {
     /// The result of the `stopDebugTraceRecording` call
     struct DebugStep {
         /// The stack before executing the step of the run.
-        /// stack[0] represents the top of the stack.
+        /// stack\[0\] represents the top of the stack.
         /// and only stack data revelant to the opcode execution is contained.
         uint256[] stack;
         /// The memory data before executing the step of the run.

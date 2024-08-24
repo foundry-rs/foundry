@@ -15,9 +15,9 @@ use foundry_evm_core::{
 };
 use rand::Rng;
 use revm::{
+    interpreter::InstructionResult,
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
-    interpreter::InstructionResult,
 };
 use revm_inspectors::tracing::types::CallTraceStep;
 use std::{
@@ -26,7 +26,7 @@ use std::{
 };
 
 mod opcode_utils;
-use opcode_utils::{get_stack_inputs_for_opcode, get_memory_input_for_opcode};
+use opcode_utils::{get_memory_input_for_opcode, get_stack_inputs_for_opcode};
 
 mod fork;
 pub(crate) mod mapping;
@@ -645,9 +645,7 @@ impl Cheatcode for setBlockhashCall {
     }
 }
 
-
 impl Cheatcode for startDebugTraceRecordingCall {
-
     fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
         &self,
         ccx: &mut CheatsCtxt<DB>,
@@ -659,7 +657,6 @@ impl Cheatcode for startDebugTraceRecordingCall {
 }
 
 impl Cheatcode for stopDebugTraceRecordingCall {
-
     fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
         &self,
         ccx: &mut CheatsCtxt<DB>,
@@ -668,31 +665,29 @@ impl Cheatcode for stopDebugTraceRecordingCall {
         // Function to convert CallTraceStep to InspectorDebugStep
         fn convert_step(step: &&CallTraceStep) -> InspectorDebugStep {
             let opcode = step.op.get();
-            let stack = get_stack_inputs_for_opcode(
-                opcode, step.stack.clone().unwrap_or_default(),
-            );
+            let stack = get_stack_inputs_for_opcode(opcode, step.stack.clone().unwrap_or_default());
 
             let memory = get_memory_input_for_opcode(
                 opcode,
                 stack.clone(),
-                step.memory.clone().unwrap_or_default().as_ref()
+                step.memory.clone().unwrap_or_default().as_ref(),
             );
 
-            let is_out_of_gas = step.status == InstructionResult::OutOfGas
-                || step.status == InstructionResult::MemoryOOG
-                || step.status == InstructionResult::MemoryLimitOOG
-                || step.status == InstructionResult::PrecompileOOG
-                || step.status == InstructionResult::InvalidOperandOOG;
+            let is_out_of_gas = step.status == InstructionResult::OutOfGas ||
+                step.status == InstructionResult::MemoryOOG ||
+                step.status == InstructionResult::MemoryLimitOOG ||
+                step.status == InstructionResult::PrecompileOOG ||
+                step.status == InstructionResult::InvalidOperandOOG;
 
-            InspectorDebugStep{
+            InspectorDebugStep {
                 step: DebugStep {
-                    stack: stack,
+                    stack,
                     memoryData: memory,
                     opcode: step.op.get(),
                     depth: step.depth,
                     isOutOfGas: is_out_of_gas,
                     contractAddr: step.contract,
-                }
+                },
             }
         }
 
@@ -709,22 +704,19 @@ impl Cheatcode for stopDebugTraceRecordingCall {
 }
 
 impl Cheatcode for getDebugTraceByIndexCall {
-
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-
         let Self { index } = self;
         let idx: usize = index.to::<u64>() as usize;
 
         if let Some(debug_steps) = state.recorded_debug_steps.as_ref() {
             if let Some(debug_step) = debug_steps.get(idx) {
-                return Ok(debug_step.step.abi_encode())
+                return Ok(debug_step.step.abi_encode());
             }
         }
 
         Ok(Default::default())
     }
 }
-
 
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
     let account = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;

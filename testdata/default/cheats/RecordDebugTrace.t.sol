@@ -4,19 +4,26 @@ pragma solidity 0.8.18;
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
-
 contract MStoreAndMLoadCaller {
-    uint256 public constant memPtr = 0x80; // Memory location to use
-    uint256 public constant expectedValueInMemory = 42;
+    uint256 public constant expectedValueInMemory = 999;
 
-    function storeAndLoadValueFromMemory() public pure returns (uint256) {
+    uint256 public memPtr; // the memory pointer being used
+
+    function storeAndLoadValueFromMemory() public returns (uint256) {
+        uint256 mPtr;
         assembly {
-            mstore(memPtr, expectedValueInMemory)
+            mPtr := mload(0x40) // load free pointer
+            mstore(mPtr, expectedValueInMemory)
+            mstore(0x40, add(mPtr, 0x20))
         }
 
-        uint256 result;
+        // record & expose the memory pointer location
+        memPtr = mPtr;
+
+        uint256 result = 123;
         assembly {
-            result := mload(memPtr)
+            // override with `expectedValueInMemory`
+            result := mload(mPtr)
         }
         return result;
     }
@@ -51,8 +58,8 @@ contract OutOfGas {
 
     function triggerOOG() public {
         bytes memory encodedFunctionCall = abi.encodeWithSignature("consumeGas()", "");
-        uint notEnoughGas = 50;
-        (bool success, ) = address(this).call{gas: notEnoughGas}(encodedFunctionCall);
+        uint256 notEnoughGas = 50;
+        (bool success,) = address(this).call{gas: notEnoughGas}(encodedFunctionCall);
         require(!success, "it should error out of gas");
     }
 }
@@ -64,29 +71,31 @@ contract RecordDebugTraceTest is DSTest {
      * and memory input used. The test checke MSTORE and MLOAD and ensure it records the expected
      * stack and memory inputs.
      */
+
     function testDebugTraceCanRecordOpcodeWithStackAndMemoryData() public {
         MStoreAndMLoadCaller testContract = new MStoreAndMLoadCaller();
 
         cheats.startDebugTraceRecording();
 
-        testContract.storeAndLoadValueFromMemory();
+        uint256 val = testContract.storeAndLoadValueFromMemory();
+        assertTrue(val == testContract.expectedValueInMemory());
 
         uint256 stepsLen = cheats.stopDebugTraceRecording();
 
         bool mstoreCalled = false;
         bool mloadCalled = false;
 
-        for (uint i = 0 ; i < stepsLen ; i++) {
+        for (uint256 i = 0; i < stepsLen; i++) {
             Vm.DebugStep memory step = cheats.getDebugTraceByIndex(i);
-            if (step.opcode == 0x52 /*MSTORE*/
-                && step.stack[0] == testContract.memPtr() // MSTORE offset
-                && step.stack[1] == testContract.expectedValueInMemory() // MSTORE val
+            if (
+                step.opcode == 0x52 /*MSTORE*/ && step.stack[0] == testContract.memPtr() // MSTORE offset
+                    && step.stack[1] == testContract.expectedValueInMemory() // MSTORE val
             ) {
                 mstoreCalled = true;
             }
 
-            if (step.opcode == 0x51 /*MLOAD*/
-                && step.stack[0] == testContract.memPtr() // MLOAD offset
+            if (
+                step.opcode == 0x51 /*MLOAD*/ && step.stack[0] == testContract.memPtr() // MLOAD offset
             ) {
                 mloadCalled = true;
             }
@@ -113,7 +122,7 @@ contract RecordDebugTraceTest is DSTest {
 
         bool goToDepthTwo = false;
         bool goToDepthThree = false;
-        for (uint i = 0 ; i < stepsLen ; i++) {
+        for (uint256 i = 0; i < stepsLen; i++) {
             Vm.DebugStep memory step = cheats.getDebugTraceByIndex(i);
 
             if (step.depth == 2) {
@@ -129,7 +138,6 @@ contract RecordDebugTraceTest is DSTest {
         assertTrue(goToDepthTwo && goToDepthThree, "must have been to both first and second layer");
     }
 
-
     /**
      * The goal of this test is to ensure it can return expected `isOutOfGas` flag.
      * It is tested with out of gas result here.
@@ -144,7 +152,7 @@ contract RecordDebugTraceTest is DSTest {
         uint256 stepsLen = cheats.stopDebugTraceRecording();
 
         bool isOOG = false;
-        for (uint i = 0 ; i < stepsLen ; i++) {
+        for (uint256 i = 0; i < stepsLen; i++) {
             Vm.DebugStep memory step = cheats.getDebugTraceByIndex(i);
 
             // https://github.com/bluealloy/revm/blob/5a47ae0d2bb0909cc70d1b8ae2b6fc721ab1ca7d/crates/interpreter/src/instruction_result.rs#L23
@@ -154,5 +162,4 @@ contract RecordDebugTraceTest is DSTest {
         }
         assertTrue(isOOG, "should have OOG instruction result");
     }
-
 }

@@ -496,7 +496,7 @@
         {
           "name": "stack",
           "ty": "uint256[]",
-          "description": "The stack before executing the step of the run.\n stack[0] represents the top of the stack.\n and only stack data revelant to the opcode execution is contained."
+          "description": "The stack before executing the step of the run.\n stack\\[0\\] represents the top of the stack.\n and only stack data revelant to the opcode execution is contained."
         },
         {
           "name": "memoryData",
@@ -516,7 +516,7 @@
         {
           "name": "isOutOfGas",
           "ty": "bool",
-          "description": "Whether the call end up with out of gas error"
+          "description": "Whether the call end up with out of gas error."
         },
         {
           "name": "contractAddr",

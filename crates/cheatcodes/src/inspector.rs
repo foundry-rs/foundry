@@ -1829,7 +1829,6 @@ impl Cheatcodes {
         }
     }
 
-
     /// Checks to see if the current opcode can either mutate directly or expand memory.
     ///
     /// If the opcode at the current program counter is a match, check if the modified memory lies
