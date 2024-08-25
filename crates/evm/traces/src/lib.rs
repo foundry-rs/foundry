@@ -10,11 +10,14 @@ extern crate tracing;
 
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use revm::interpreter::OpCode;
-use revm_inspectors::tracing::{types::TraceMemberOrder, OpcodeFilter};
+use revm_inspectors::tracing::{
+    types::{DecodedTraceStep, TraceMemberOrder},
+    OpcodeFilter,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     ops::{Deref, DerefMut},
 };
 
@@ -69,31 +72,60 @@ impl SparsedTraceArena {
             ) {
                 // Prepend an additional None item to the ordering to handle the beginning of the
                 // trace.
-                let steps = std::iter::once(None)
+                let items = std::iter::once(None)
                     .chain(nodes[node_idx].ordering.clone().into_iter().map(Some))
                     .enumerate();
 
-                let mut offset = 0;
-                for (item_idx, item) in steps {
+                let mut iternal_calls = Vec::new();
+                let mut items_to_remove = BTreeSet::new();
+                for (item_idx, item) in items {
                     if let Some(end_node) = ignored.get(&(node_idx, item_idx)) {
                         *cur_ignore_end = Some(*end_node);
                     }
 
-                    let ignored_before = cur_ignore_end.is_some();
+                    let mut remove = cur_ignore_end.is_some() & item.is_some();
 
-                    if let Some(TraceMemberOrder::Call(child_idx)) = item {
-                        clear_node(
-                            nodes,
-                            nodes[node_idx].children[child_idx],
-                            ignored,
-                            cur_ignore_end,
-                        );
+                    match item {
+                        // we only remove calls if they did not start/pause tracing
+                        Some(TraceMemberOrder::Call(child_idx)) => {
+                            clear_node(
+                                nodes,
+                                nodes[node_idx].children[child_idx],
+                                ignored,
+                                cur_ignore_end,
+                            );
+                            remove &= cur_ignore_end.is_some();
+                        }
+                        // we only remove decoded internal calls if they did not start/pause tracing
+                        Some(TraceMemberOrder::Step(step_idx)) => {
+                            // If this is an internal call beginning, track it in `iternal_calls`
+                            if let Some(DecodedTraceStep::InternalCall(_, end_step_idx)) =
+                                &nodes[node_idx].trace.steps[step_idx].decoded
+                            {
+                                iternal_calls.push((item_idx, remove, *end_step_idx));
+                                // we decide if we should remove it later
+                                remove = false;
+                            }
+                            // Handle ends of internal calls
+                            iternal_calls.retain(|(start_item_idx, remove_start, end_step_idx)| {
+                                if *end_step_idx != step_idx {
+                                    return true;
+                                }
+                                // only remove start if end should be removed as well
+                                if *remove_start && remove {
+                                    items_to_remove.insert(*start_item_idx);
+                                } else {
+                                    remove = false;
+                                }
+
+                                return false;
+                            });
+                        }
+                        _ => {}
                     }
 
-                    // Do not remove trace items which started trace ignoring
-                    if ignored_before && cur_ignore_end.is_some() && item.is_some() {
-                        nodes[node_idx].ordering.remove(item_idx - 1 - offset);
-                        offset += 1;
+                    if remove {
+                        items_to_remove.insert(item_idx);
                     }
 
                     if let Some((end_node, end_step_idx)) = cur_ignore_end {
@@ -101,6 +133,12 @@ impl SparsedTraceArena {
                             *cur_ignore_end = None;
                         }
                     }
+                }
+
+                let mut offset = 0;
+                for item_idx in items_to_remove {
+                    nodes[node_idx].ordering.remove(item_idx - offset - 1);
+                    offset += 1;
                 }
             }
 
