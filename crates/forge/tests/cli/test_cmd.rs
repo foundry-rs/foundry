@@ -1366,3 +1366,90 @@ Logs:
 ...
 "#]]);
 });
+
+// tests `pauseTracing` and `resumeTracing` functions
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(pause_tracing, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    prj.add_source(
+        "Pause.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+contract TraceGenerator is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    event DummyEvent(uint256 i);
+    function call(uint256 i) public {
+        emit DummyEvent(i);
+    }
+    function generate() public {
+        for (uint256 i = 0; i < 10; i++) {
+            if (i == 3) {
+                vm.pauseTracing();
+            }
+            this.call(i);
+            if (i == 7) {
+                vm.resumeTracing();
+            }
+        }
+    }
+}
+contract PauseTracingTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    event DummyEvent(uint256 i);
+    function setUp() public {
+        emit DummyEvent(1);
+        vm.pauseTracing();
+        emit DummyEvent(2);
+    }
+    function test() public {
+        emit DummyEvent(3);
+        TraceGenerator t = new TraceGenerator();
+        vm.resumeTracing();
+        t.generate();
+    }
+}
+     "#,
+    )
+    .unwrap();
+    cmd.args(["test", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+...
+Traces:
+  [7285] PauseTracingTest::setUp()
+    ├─ emit DummyEvent(i: 1)
+    ├─ [0] VM::pauseTracing() [staticcall]
+    │   └─ ← [Return] 
+    └─ ← [Stop] 
+
+  [294725] PauseTracingTest::test()
+    ├─ [0] VM::resumeTracing() [staticcall]
+    │   └─ ← [Return] 
+    ├─ [18373] TraceGenerator::generate()
+    │   ├─ [1280] TraceGenerator::call(0)
+    │   │   ├─ emit DummyEvent(i: 0)
+    │   │   └─ ← [Stop] 
+    │   ├─ [1280] TraceGenerator::call(1)
+    │   │   ├─ emit DummyEvent(i: 1)
+    │   │   └─ ← [Stop] 
+    │   ├─ [1280] TraceGenerator::call(2)
+    │   │   ├─ emit DummyEvent(i: 2)
+    │   │   └─ ← [Stop] 
+    │   ├─ [0] VM::pauseTracing() [staticcall]
+    │   │   └─ ← [Return] 
+    │   ├─ [0] VM::resumeTracing() [staticcall]
+    │   │   └─ ← [Return] 
+    │   ├─ [1280] TraceGenerator::call(8)
+    │   │   ├─ emit DummyEvent(i: 8)
+    │   │   └─ ← [Stop] 
+    │   ├─ [1280] TraceGenerator::call(9)
+    │   │   ├─ emit DummyEvent(i: 9)
+    │   │   └─ ← [Stop] 
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
+...
+"#]]);
+});

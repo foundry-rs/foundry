@@ -596,6 +596,12 @@ impl TestProject {
         self.add_source("console.sol", s).unwrap()
     }
 
+    /// Adds `Vm.sol` as a source under "Vm.sol"
+    pub fn insert_vm(&self) -> PathBuf {
+        let s = include_str!("../../../testdata/cheats/Vm.sol");
+        self.add_source("Vm.sol", s).unwrap()
+    }
+
     /// Asserts all project paths exist. These are:
     /// - sources
     /// - artifacts
