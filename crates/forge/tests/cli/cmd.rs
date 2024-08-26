@@ -659,10 +659,30 @@ contract Greeter {
     )
     .unwrap();
 
-    cmd.arg("build");
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (5667): Unused function parameter. Remove or comment out the variable name to silence this warning.
+ [FILE]:5:18:
+  |
+5 |     function foo(uint256 a) public {
+  |                  ^^^^^^^^^
 
-    let output = cmd.stdout_lossy();
-    assert!(output.contains("Warning"), "{output}");
+Warning (2072): Unused local variable.
+ [FILE]:6:9:
+  |
+6 |         uint256 x = 1;
+  |         ^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:5:5:
+  |
+5 |     function foo(uint256 a) public {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
+
+
+"#]]);
 });
 
 // Tests that direct import paths are handled correctly
@@ -700,13 +720,12 @@ library FooLib {
     )
     .unwrap();
 
-    cmd.arg("build");
-
-    assert!(cmd.stdout_lossy().ends_with(
-        "
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+Compiling 2 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-"
-    ));
+
+"#]]);
 });
 
 // tests that the `inspect` command works correctly
@@ -726,17 +745,18 @@ contract Foo {
         )
         .unwrap();
 
-    let check_output = |output: String| {
-        let output = output.trim();
-        assert!(output.starts_with("0x") && hex::decode(output).is_ok(), "{output}");
-    };
+    cmd.arg("inspect").arg(contract_name).arg("bytecode").assert_success().stdout_eq(str![[r#"
+0x60806040[..]
 
-    cmd.arg("inspect").arg(contract_name).arg("bytecode");
-    check_output(cmd.stdout_lossy());
+"#]]);
 
     let info = format!("src/{}:{}", path.file_name().unwrap().to_string_lossy(), contract_name);
-    cmd.forge_fuse().arg("inspect").arg(info).arg("bytecode");
-    check_output(cmd.stdout_lossy());
+    cmd.forge_fuse().arg("inspect").arg(info).arg("bytecode").assert_success().stdout_eq(str![[
+        r#"
+0x60806040[..]
+
+"#
+    ]]);
 });
 
 // test that `forge snapshot` commands work
@@ -1808,45 +1828,44 @@ Compiler run successful!
 forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
     prj.clear_cache();
 
-    cmd.args(["build", "--sizes"]);
-    let out = cmd.stdout_lossy();
+    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
+Compiling 27 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+| Contract | Size (B) | Margin (B) |
+|----------|----------|------------|
+| Counter  |      247 |     24,329 |
 
-    // contains: Counter    ┆ 0.247     ┆ 24.329
-    assert!(out.contains(TEMPLATE_CONTRACT));
 
-    // get the entire table
-    let table = out.split("Compiler run successful!").nth(1).unwrap().trim();
-
-    let unchanged = cmd.stdout_lossy();
-    assert!(unchanged.contains(table), "{}", table);
+"#]]);
 });
 
 // checks that build --names includes all contracts even if unchanged
 forgetest_init!(can_build_names_repeatedly, |prj, cmd| {
     prj.clear_cache();
 
-    cmd.args(["build", "--names"]);
-    let out = cmd.stdout_lossy();
+    cmd.args(["build", "--names"]).assert_success().stdout_eq(str![[r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+  compiler version: [..]
+    - [..]
+...
 
-    assert!(out.contains(TEMPLATE_CONTRACT));
-
-    // get the entire list
-    let list = out.split("Compiler run successful!").nth(1).unwrap().trim();
-
-    let unchanged = cmd.stdout_lossy();
-    assert!(unchanged.contains(list), "{}", list);
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6816>
 forgetest_init!(can_inspect_counter_pretty, |prj, cmd| {
-    cmd.args(["inspect", "src/Counter.sol:Counter", "abi", "--pretty"]);
-    let output = cmd.stdout_lossy();
-    assert_eq!(
-        output.trim(),
-        "interface Counter {
+    cmd.args(["inspect", "src/Counter.sol:Counter", "abi", "--pretty"]).assert_success().stdout_eq(
+        str![[r#"
+interface Counter {
     function increment() external;
     function number() external view returns (uint256);
     function setNumber(uint256 newNumber) external;
-}"
+}
+
+
+"#]],
     );
 });

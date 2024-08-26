@@ -54,13 +54,12 @@ Compiler run successful!
 
 // tests build output is as expected
 forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
-    cmd.args(["build", "--sizes"]);
-    cmd.assert_success().stdout_eq(str![
+    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![
         r#"
 ...
 | Contract | Size (B) | Margin (B) |
 |----------|----------|------------|
-| Counter  | [..]
+| Counter  |      247 |     24,329 |
 ...
 "#
     ]);
