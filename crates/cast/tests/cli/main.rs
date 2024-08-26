@@ -7,6 +7,7 @@ use foundry_test_utils::{
     casttest,
     rpc::{next_http_rpc_endpoint, next_rpc_endpoint, next_ws_rpc_endpoint},
     str,
+    util::OutputExt,
 };
 use std::{fs, io::Write, path::Path, str::FromStr};
 
@@ -627,9 +628,29 @@ casttest!(receipt_revert_reason, |_prj, cmd| {
         "--rpc-url",
         rpc.as_str(),
     ])
-    .assert_success();
-    let output = cmd.stdout_lossy();
-    assert!(!output.contains("revertReason"));
+    .assert_success()
+    .stdout_eq(str![[r#"
+
+blockHash               0x2cfe65be49863676b6dbc04d58176a14f39b123f1e2f4fea0383a2d82c2c50d0
+blockNumber             16239315
+contractAddress         
+cumulativeGasUsed       10743428
+effectiveGasPrice       10539984136
+from                    0x199D5ED7F45F4eE35960cF22EAde2076e95B253F
+gasUsed                 21000
+logs                    []
+logsBloom               0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+root                    
+status                  1 (success)
+transactionHash         0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e
+transactionIndex        116
+type                    0
+blobGasPrice            
+blobGasUsed             
+authorizationList       
+to                      0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
+
+"#]]);
 
     // <https://etherscan.io/tx/0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c>
     cmd.cast_fuse()
@@ -641,10 +662,26 @@ casttest!(receipt_revert_reason, |_prj, cmd| {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-...
+
+blockHash               0x883f974b17ca7b28cb970798d1c80f4d4bb427473dc6d39b2a7fe24edc02902d
+blockNumber             14839405
+contractAddress         
+cumulativeGasUsed       20273649
+effectiveGasPrice       21491736378
+from                    0x3cF412d970474804623bb4e3a42dE13F9bCa5436
+gasUsed                 24952
+logs                    []
+logsBloom               0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+root                    
 status                  0 (failed)
-...
-revertReason            Transaction too old, data: [..]
+transactionHash         0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c
+transactionIndex        173
+type                    2
+blobGasPrice            
+blobGasUsed             
+authorizationList       
+to                      0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45
+revertReason            Transaction too old, data: "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000135472616e73616374696f6e20746f6f206f6c6400000000000000000000000000"
 
 "#]]);
 });
@@ -1052,26 +1089,32 @@ casttest!(balance, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
 
-    cmd.args([
-        "balance",
-        "0x0000000000000000000000000000000000000000",
-        "--erc20",
-        usdt,
-        "--rpc-url",
-        &rpc,
-    ]);
+    let usdt_result = cmd
+        .args([
+            "balance",
+            "0x0000000000000000000000000000000000000000",
+            "--erc20",
+            usdt,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
 
-    cmd.cast_fuse().args([
-        "balance",
-        "0x0000000000000000000000000000000000000000",
-        "--erc721",
-        usdt,
-        "--rpc-url",
-        &rpc,
-    ]);
-
-    let usdt_result = cmd.stdout_lossy();
-    let alias_result = cmd.stdout_lossy();
+    let alias_result = cmd
+        .cast_fuse()
+        .args([
+            "balance",
+            "0x0000000000000000000000000000000000000000",
+            "--erc721",
+            usdt,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
 
     assert_ne!(usdt_result, "0x0000000000000000000000000000000000000000000000000000000000000000");
     assert_eq!(alias_result, usdt_result);
