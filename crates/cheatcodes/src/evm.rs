@@ -209,7 +209,7 @@ impl Cheatcode for getRecordedLogsCall {
 impl Cheatcode for pauseGasMeteringCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        state.pause_gas_metering = true;
+        state.gas_metering.paused = true;
         Ok(Default::default())
     }
 }
@@ -217,8 +217,7 @@ impl Cheatcode for pauseGasMeteringCall {
 impl Cheatcode for resumeGasMeteringCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        state.pause_gas_metering = false;
-        state.paused_frame_gas = vec![];
+        state.gas_metering.resume();
         Ok(Default::default())
     }
 }

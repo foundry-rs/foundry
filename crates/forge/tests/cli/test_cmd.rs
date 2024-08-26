@@ -462,8 +462,8 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     cmd.assert_err();
 });
 
-// <https://github.com/foundry-rs/foundry/issues/6531>
-forgetest_init!(repro_6531, |prj, cmd| {
+// https://github.com/foundry-rs/foundry/pull/6531
+forgetest_init!(fork_traces, |prj, cmd| {
     prj.wipe_contracts();
 
     let endpoint = rpc::next_http_archive_rpc_endpoint();
@@ -510,7 +510,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
-// <https://github.com/foundry-rs/foundry/issues/6579>
+// https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
     prj.wipe_contracts();
 
@@ -862,7 +862,7 @@ Encountered a total of 2 failing tests, 0 tests succeeded
 "#]]);
 });
 
-// <https://github.com/foundry-rs/foundry/issues/7530>
+// https://github.com/foundry-rs/foundry/issues/7530
 forgetest_init!(should_show_precompile_labels, |prj, cmd| {
     prj.wipe_contracts();
 
@@ -1239,9 +1239,9 @@ contract DeterministicRandomnessTest is Test {
     assert_ne!(res4, res3);
 });
 
-// tests that `pauseGasMetering` used at the end of test does not produce meaningless values
-// see https://github.com/foundry-rs/foundry/issues/5491
-forgetest_init!(repro_5491, |prj, cmd| {
+// Tests that `pauseGasMetering` used at the end of test does not produce meaningless values.
+// https://github.com/foundry-rs/foundry/issues/5491
+forgetest_init!(gas_metering_pause_last_call, |prj, cmd| {
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1287,8 +1287,8 @@ contract ATest is Test {
 "#]]);
 });
 
-// see https://github.com/foundry-rs/foundry/issues/5564
-forgetest_init!(repro_5564, |prj, cmd| {
+// https://github.com/foundry-rs/foundry/issues/5564
+forgetest_init!(gas_metering_expect_revert, |prj, cmd| {
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1318,51 +1318,79 @@ contract ATest is Test {
 "#]]);
 });
 
-// see https://github.com/foundry-rs/foundry/issues/4523
-forgetest_init!(repro_4523, |prj, cmd| {
+// https://github.com/foundry-rs/foundry/issues/4523
+forgetest_init!(gas_metering_gasleft, |prj, cmd| {
     prj.wipe_contracts();
 
     prj.add_test(
         "ATest.t.sol",
         r#"
 import "forge-std/Test.sol";
-contract ATest is Test {
-    mapping(uint => bytes32) map;
 
-    function test_GasMeter () public {
+contract ATest is Test {
+    mapping(uint256 => bytes32) map;
+
+    function test_GasMeter() public {
         vm.pauseGasMetering();
-        for (uint i = 0; i < 10000; i++) {
-            map[i] = keccak256(abi.encode(i));
-        }
+        consumeGas();
         vm.resumeGasMetering();
 
-        for (uint i = 0; i < 10000; i++) {
-            map[i] = keccak256(abi.encode(i));
-        }
+        consumeGas();
     }
 
-    function test_GasLeft () public {
-        for (uint i = 0; i < 10000; i++) {
-            map[i] = keccak256(abi.encode(i));
-        }
+    function test_GasLeft() public {
+        consumeGas();
 
-        uint start = gasleft();
-        for (uint i = 0; i < 10000; i++) {
+        uint256 start = gasleft();
+        consumeGas();
+        console.log("Gas cost:", start - gasleft());
+    }
+
+    function consumeGas() private {
+        for (uint256 i = 0; i < 100; i++) {
             map[i] = keccak256(abi.encode(i));
         }
-        console2.log("Gas cost:", start - gasleft());
     }
 }
    "#,
     )
     .unwrap();
 
+    // Log and test gas cost should be similar.
     cmd.args(["test", "-vvvv"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Logs:
-  Gas cost: 5754479
+  Gas cost: 34468
 ...
-[PASS] test_GasMeter() (gas: 5757137)
+[PASS] test_GasMeter() (gas: 37512)
+...
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/4370
+forgetest_init!(repro_4370, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "ATest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+contract ATest is Test {
+    uint a;
+    function test_negativeGas () public {
+        vm.pauseGasMetering();
+        a = 100;
+        vm.resumeGasMetering();
+        delete a;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+[PASS] test_negativeGas() (gas: 3252)
 ...
 "#]]);
 });

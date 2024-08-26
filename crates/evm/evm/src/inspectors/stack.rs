@@ -686,7 +686,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         call_inspectors_adjust_depth!(
-            [&mut self.tracer, &mut self.chisel_state, &mut self.printer],
+            [&mut self.tracer, &mut self.cheatcodes, &mut self.chisel_state, &mut self.printer],
             |inspector| inspector.step_end(interpreter, ecx),
             self,
             ecx
