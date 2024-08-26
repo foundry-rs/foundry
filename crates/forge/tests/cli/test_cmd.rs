@@ -1425,10 +1425,10 @@ Traces:
     │   └─ ← [Return] 
     └─ ← [Stop] 
 
-  [390805] PauseTracingTest::test()
+  [294725] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return] 
-    ├─ [43937] TraceGenerator::generate()
+    ├─ [18373] TraceGenerator::generate()
     │   ├─ [1280] TraceGenerator::call(0)
     │   │   ├─ emit DummyEvent(i: 0)
     │   │   └─ ← [Stop] 
