@@ -1,7 +1,6 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use alloy_primitives::hex;
 use foundry_compilers::artifacts::{remappings::Remapping, ConfigurableContractArtifact, Metadata};
 use foundry_config::{
     parse_with_profile, BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode,
@@ -1151,8 +1150,9 @@ forgetest!(
         let package_mod = git_mod.join("forge-5980-test");
 
         // install main dependency
-        cmd.forge_fuse().args(["install", "evalir/forge-5980-test", "--no-commit"]);
-        cmd.assert_non_empty_stdout();
+        cmd.forge_fuse()
+            .args(["install", "evalir/forge-5980-test", "--no-commit"])
+            .assert_non_empty_stdout();
 
         // assert paths exist
         assert!(package.exists());
@@ -1164,8 +1164,7 @@ forgetest!(
         // try to update the top-level dependency; there should be no update for this dependency,
         // but its sub-dependency has upstream (breaking) changes; forge should not attempt to
         // update the sub-dependency
-        cmd.forge_fuse().args(["update", "lib/forge-5980-test"]);
-        cmd.stdout_lossy();
+        cmd.forge_fuse().args(["update", "lib/forge-5980-test"]).assert_empty_stdout();
 
         // add explicit remappings for test file
         let config = Config {
@@ -1195,9 +1194,12 @@ contract CounterCopy is Counter {
         .unwrap();
 
         // build and check output
-        cmd.forge_fuse().arg("build");
-        let output = cmd.stdout_lossy();
-        assert!(output.contains("Compiler run successful",));
+        cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
+Compiling 3 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
     }
 );
 
@@ -1298,23 +1300,36 @@ contract ContractThreeTest is DSTest {
         gas_reports_ignore: (vec![]),
         ..Default::default()
     });
-    cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+
+    let first_out = cmd
+        .forge_fuse()
+        .arg("test")
+        .arg("--gas-report")
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
 
-    cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
-    cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let second_out = cmd
+        .forge_fuse()
+        .arg("test")
+        .arg("--gas-report")
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
 
-    cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
-    cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let third_out = cmd
+        .forge_fuse()
+        .arg("test")
+        .arg("--gas-report")
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
 
-    cmd.forge_fuse();
     prj.write_config(Config {
         gas_reports: (vec![
             "ContractOne".to_string(),
@@ -1323,8 +1338,13 @@ contract ContractThreeTest is DSTest {
         ]),
         ..Default::default()
     });
-    cmd.forge_fuse();
-    let fourth_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let fourth_out = cmd
+        .forge_fuse()
+        .arg("test")
+        .arg("--gas-report")
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
 });
 
@@ -1422,7 +1442,8 @@ contract ContractThreeTest is DSTest {
     // report for One
     prj.write_config(Config { gas_reports: vec!["ContractOne".to_string()], ..Default::default() });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let first_out =
+        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
     assert!(
         first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"),
         "foo:\n{first_out}"
@@ -1431,7 +1452,8 @@ contract ContractThreeTest is DSTest {
     // report for Two
     prj.write_config(Config { gas_reports: vec!["ContractTwo".to_string()], ..Default::default() });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let second_out =
+        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
     assert!(
         !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz"),
         "bar:\n{second_out}"
@@ -1443,7 +1465,8 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let third_out =
+        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
     assert!(
         !third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"),
         "baz:\n{third_out}"

@@ -14,7 +14,7 @@ use foundry_config::{
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
     foundry_compilers::artifacts::{remappings::Remapping, EvmVersion},
-    util::{pretty_err, TestCommand, OTHER_SOLC_VERSION},
+    util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
 };
 use path_slash::PathBufExt;
 use similar_asserts::assert_eq;
@@ -159,10 +159,10 @@ forgetest!(can_extract_config_values, |prj, cmd| {
 
 // tests config gets printed to std out
 forgetest!(can_show_config, |prj, cmd| {
-    cmd.arg("config");
     let expected =
         Config::load_with_root(prj.root()).to_string_pretty().unwrap().trim().to_string();
-    assert_eq!(expected, cmd.stdout_lossy().trim().to_string());
+    let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
+    assert_eq!(expected, output);
 });
 
 // checks that config works
@@ -187,9 +187,9 @@ forgetest_init!(can_override_config, |prj, cmd| {
         Remapping::from(profile.remappings[0].clone()).to_string()
     );
 
-    cmd.arg("config");
-    let expected = profile.to_string_pretty().unwrap();
-    assert_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
+    let expected = profile.to_string_pretty().unwrap().trim().to_string();
+    let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
+    assert_eq!(expected, output);
 
     // remappings work
     let remappings_txt =
@@ -235,9 +235,16 @@ forgetest_init!(can_override_config, |prj, cmd| {
     std::env::remove_var("DAPP_REMAPPINGS");
     pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
 
-    cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
-    let expected = profile.into_basic().to_string_pretty().unwrap();
-    assert_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
+    let expected = profile.into_basic().to_string_pretty().unwrap().trim().to_string();
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--basic"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+    assert_eq!(expected, output);
 });
 
 forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
@@ -254,9 +261,9 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
     // the loaded config has resolved, absolute paths
     assert_eq!("forge-std/=lib/forge-std/src/", Remapping::from(r.clone()).to_string());
 
-    cmd.arg("config");
-    let expected = profile.to_string_pretty().unwrap();
-    assert_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
+    let expected = profile.to_string_pretty().unwrap().trim().to_string();
+    let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
+    assert_eq!(expected, output);
 
     let install = |cmd: &mut TestCommand, dep: &str| {
         cmd.forge_fuse().args(["install", dep, "--no-commit"]);
@@ -287,9 +294,16 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
     );
     pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
 
-    cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
-    let expected = profile.into_basic().to_string_pretty().unwrap();
-    assert_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
+    let expected = profile.into_basic().to_string_pretty().unwrap().trim().to_string();
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--basic"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+    assert_eq!(expected, output);
 });
 
 forgetest_init!(can_detect_config_vals, |prj, _cmd| {
