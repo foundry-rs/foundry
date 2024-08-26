@@ -4,8 +4,23 @@ use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
-use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
+use foundry_evm_core::{backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER};
 use rand::Rng;
+use std::collections::HashMap;
+
+/// Contains locations of traces ignored via cheatcodes.
+///
+/// The way we identify location in traces is by (node_idx, item_idx) tuple where node_idx is an
+/// index of a call trace node, and item_idx is a value between 0 and `node.ordering.len()` where i
+/// represents point after ith item, and 0 represents the beginning of the node trace.
+#[derive(Debug, Default, Clone)]
+pub struct IgnoredTraces {
+    /// Mapping from (start_node_idx, start_item_idx) to (end_node_idx, end_item_idx) representing
+    /// ranges of trace nodes to ignore.
+    pub ignored: HashMap<(usize, usize), (usize, usize)>,
+    /// Keeps track of (start_node_idx, start_item_idx) of the last `vm.pauseTracing` call.
+    pub last_pause_call: Option<(usize, usize)>,
+}
 
 impl Cheatcode for labelCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
@@ -55,22 +70,21 @@ impl Cheatcode for ensNamehashCall {
 }
 
 impl Cheatcode for randomUint_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        // Use thread_rng to get a random number
-        let mut rng = rand::thread_rng();
+        let rng = state.rng();
         let random_number: U256 = rng.gen();
         Ok(random_number.abi_encode())
     }
 }
 
 impl Cheatcode for randomUint_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { min, max } = *self;
         ensure!(min <= max, "min must be less than or equal to max");
         // Generate random between range min..=max
-        let mut rng = rand::thread_rng();
         let exclusive_modulo = max - min;
+        let rng = state.rng();
         let mut random_number = rng.gen::<U256>();
         if exclusive_modulo != U256::MAX {
             let inclusive_modulo = exclusive_modulo + U256::from(1);
@@ -82,9 +96,56 @@ impl Cheatcode for randomUint_1Call {
 }
 
 impl Cheatcode for randomAddressCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        let addr = Address::random();
+        let rng = state.rng();
+        let addr = Address::random_with(rng);
         Ok(addr.abi_encode())
+    }
+}
+
+impl Cheatcode for pauseTracingCall {
+    fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+        &self,
+        ccx: &mut crate::CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+            // No tracer -> nothing to pause
+            return Ok(Default::default())
+        };
+
+        // If paused earlier, ignore the call
+        if ccx.state.ignored_traces.last_pause_call.is_some() {
+            return Ok(Default::default())
+        }
+
+        let cur_node = &tracer.traces().nodes().last().expect("no trace nodes");
+        ccx.state.ignored_traces.last_pause_call = Some((cur_node.idx, cur_node.ordering.len()));
+
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for resumeTracingCall {
+    fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+        &self,
+        ccx: &mut crate::CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+            // No tracer -> nothing to unpause
+            return Ok(Default::default())
+        };
+
+        let Some(start) = ccx.state.ignored_traces.last_pause_call.take() else {
+            // Nothing to unpause
+            return Ok(Default::default())
+        };
+
+        let node = &tracer.traces().nodes().last().expect("no trace nodes");
+        ccx.state.ignored_traces.ignored.insert(start, (node.idx, node.ordering.len()));
+
+        Ok(Default::default())
     }
 }

@@ -181,6 +181,10 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
+    /// Timeout to use for broadcasting transactions.
+    #[arg(long, env = "ETH_TIMEOUT")]
+    pub timeout: Option<u64>,
+
     #[command(flatten)]
     pub opts: CoreBuildArgs,
 
@@ -453,20 +457,26 @@ impl Provider for ScriptArgs {
                 figment::value::Value::from(etherscan_api_key.to_string()),
             );
         }
+        if let Some(timeout) = self.timeout {
+            dict.insert("transaction_timeout".to_string(), timeout.into());
+        }
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub struct ScriptResult {
     pub success: bool,
+    #[serde(rename = "raw_logs")]
     pub logs: Vec<Log>,
     pub traces: Traces,
     pub gas_used: u64,
     pub labeled_addresses: HashMap<Address, String>,
+    #[serde(skip)]
     pub transactions: Option<BroadcastableTransactions>,
     pub returned: Bytes,
     pub address: Option<Address>,
+    #[serde(skip)]
     pub breakpoints: Breakpoints,
 }
 
@@ -490,11 +500,12 @@ impl ScriptResult {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-struct JsonResult {
+#[derive(Serialize)]
+struct JsonResult<'a> {
     logs: Vec<String>,
-    gas_used: u64,
-    returns: HashMap<String, NestedValue>,
+    returns: &'a HashMap<String, NestedValue>,
+    #[serde(flatten)]
+    result: &'a ScriptResult,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -576,7 +587,9 @@ impl ScriptConfig {
         // We need to enable tracing to decode contract names: local or external.
         let mut builder = ExecutorBuilder::new()
             .inspectors(|stack| {
-                stack.trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
+                stack
+                    .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
+                    .alphanet(self.evm_opts.alphanet)
             })
             .spec(self.config.evm_spec_id())
             .gas_limit(self.evm_opts.gas_limit())

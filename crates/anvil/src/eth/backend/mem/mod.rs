@@ -174,6 +174,7 @@ pub struct Backend {
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
+    alphanet: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
@@ -198,6 +199,7 @@ impl Backend {
         fork: Arc<RwLock<Option<ClientFork>>>,
         enable_steps_tracing: bool,
         print_logs: bool,
+        alphanet: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         max_persisted_states: Option<usize>,
         transaction_block_keeper: Option<usize>,
@@ -256,6 +258,7 @@ impl Backend {
             active_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
             print_logs,
+            alphanet,
             prune_state_history_config,
             transaction_block_keeper,
             node_config,
@@ -851,7 +854,7 @@ impl Backend {
         }
 
         let db = self.db.read().await;
-        let mut inspector = Inspector::default();
+        let mut inspector = self.build_inspector();
         let mut evm = self.new_evm_with_inspector_ref(&**db, env, &mut inspector);
         let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out, logs) = match result {
@@ -908,6 +911,7 @@ impl Backend {
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
             precompile_factory: self.precompile_factory.clone(),
+            alphanet: self.alphanet,
         };
 
         // create a new pending block
@@ -980,6 +984,7 @@ impl Backend {
                     blob_gas_used: 0,
                     enable_steps_tracing: self.enable_steps_tracing,
                     print_logs: self.print_logs,
+                    alphanet: self.alphanet,
                     precompile_factory: self.precompile_factory.clone(),
                 };
                 let executed_tx = executor.execute();
@@ -1137,6 +1142,7 @@ impl Backend {
                     nonce,
                     access_list,
                     blob_versioned_hashes,
+                    authorization_list,
                     sidecar: _,
                     chain_id: _,
                     transaction_type: _,
@@ -1188,7 +1194,7 @@ impl Backend {
             access_list: access_list.unwrap_or_default().into(),
             blob_hashes: blob_versioned_hashes.unwrap_or_default(),
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
-            authorization_list: None,
+            authorization_list: authorization_list.map(Into::into),
         };
 
         if env.block.basefee.is_zero() {
@@ -1198,6 +1204,17 @@ impl Backend {
         }
 
         env
+    }
+
+    /// Builds [`Inspector`] with the configured options
+    fn build_inspector(&self) -> Inspector {
+        let mut inspector = Inspector::default().with_alphanet(self.alphanet);
+
+        if self.print_logs {
+            inspector = inspector.with_log_collector();
+        }
+
+        inspector
     }
 
     pub fn call_with_state<D>(
@@ -1210,7 +1227,7 @@ impl Backend {
     where
         D: DatabaseRef<Error = DatabaseError>,
     {
-        let mut inspector = Inspector::default();
+        let mut inspector = self.build_inspector();
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
@@ -1251,7 +1268,7 @@ impl Backend {
                                 .into_call_config()
                                 .map_err(|e| (RpcError::invalid_params(e.to_string())))?;
 
-                            let mut inspector = Inspector::default().with_config(
+                            let mut inspector = self.build_inspector().with_tracing_config(
                                 TracingInspectorConfig::from_geth_call_config(&call_config),
                             );
 
@@ -1283,8 +1300,9 @@ impl Backend {
             }
 
             // defaults to StructLog tracer used since no tracer is specified
-            let mut inspector =
-                Inspector::default().with_config(TracingInspectorConfig::from_geth_config(&config));
+            let mut inspector = self
+                .build_inspector()
+                .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
             let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
@@ -2236,14 +2254,17 @@ impl Backend {
     /// Returns the blocks receipts for the given number
     pub async fn block_receipts(
         &self,
-        number: BlockNumber,
+        number: BlockId,
     ) -> Result<Option<Vec<ReceiptResponse>>, BlockchainError> {
         if let Some(receipts) = self.mined_block_receipts(number) {
             return Ok(Some(receipts));
         }
 
         if let Some(fork) = self.get_fork() {
-            let number = self.convert_block_number(Some(number));
+            let number = match self.ensure_block_number(Some(number)).await {
+                Err(_) => return Ok(None),
+                Ok(n) => n,
+            };
 
             if fork.predates_fork_inclusive(number) {
                 let receipts = fork.block_receipts(number).await?;
@@ -2552,16 +2573,32 @@ impl TransactionValidator for Backend {
 
         let max_cost = tx.max_cost();
         let value = tx.value();
-        // check sufficient funds: `gas * price + value`
-        let req_funds = max_cost.checked_add(value.to()).ok_or_else(|| {
-            warn!(target: "backend", "[{:?}] cost too high",
-            tx.hash());
-            InvalidTransactionError::InsufficientFunds
-        })?;
-        if account.balance < U256::from(req_funds) {
-            warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
-            return Err(InvalidTransactionError::InsufficientFunds);
+
+        match &tx.transaction {
+            TypedTransaction::Deposit(deposit_tx) => {
+                // Deposit transactions
+                // https://specs.optimism.io/protocol/deposits.html#execution
+                // 1. no gas cost check required since already have prepaid gas from L1
+                // 2. increment account balance by deposited amount before checking for sufficient
+                //    funds `tx.value <= existing account value + deposited value`
+                if value > account.balance + deposit_tx.mint {
+                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + deposit_tx.mint, value, *pending.sender());
+                    return Err(InvalidTransactionError::InsufficientFunds);
+                }
+            }
+            _ => {
+                // check sufficient funds: `gas * price + value`
+                let req_funds = max_cost.checked_add(value.to()).ok_or_else(|| {
+                    warn!(target: "backend", "[{:?}] cost too high", tx.hash());
+                    InvalidTransactionError::InsufficientFunds
+                })?;
+                if account.balance < U256::from(req_funds) {
+                    warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
+                    return Err(InvalidTransactionError::InsufficientFunds);
+                }
+            }
         }
+
         Ok(())
     }
 
@@ -2639,8 +2676,8 @@ pub fn transaction_build(
     WithOtherFields::new(transaction)
 }
 
-/// Prove a storage key's existence or nonexistence in the account's storage
-/// trie.
+/// Prove a storage key's existence or nonexistence in the account's storage trie.
+///
 /// `storage_key` is the hash of the desired storage key, meaning
 /// this will only work correctly under a secure trie.
 /// `storage_key` == keccak(key)

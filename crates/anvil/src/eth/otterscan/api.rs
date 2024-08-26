@@ -39,8 +39,9 @@ pub fn mentions_address(trace: LocalizedTransactionTrace, address: Address) -> O
     }
 }
 
-/// Converts the list of traces for a transaction into the expected Otterscan format, as
-/// specified in the [`ots_traceTransaction`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_tracetransaction) spec
+/// Converts the list of traces for a transaction into the expected Otterscan format.
+///
+/// Follows format specified in the [`ots_traceTransaction`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_tracetransaction) spec.
 pub fn batch_build_ots_traces(traces: Vec<LocalizedTransactionTrace>) -> Vec<TraceEntry> {
     traces
         .into_iter()

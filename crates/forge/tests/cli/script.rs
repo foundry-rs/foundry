@@ -3,7 +3,7 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
-use foundry_test_utils::{rpc, util::OutputExt, ScriptOutcome, ScriptTester};
+use foundry_test_utils::{rpc, ScriptOutcome, ScriptTester};
 use regex::Regex;
 use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
@@ -53,11 +53,17 @@ contract Demo {
         )
         .unwrap();
 
-    cmd.arg("script").arg(script);
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_execute_script_command.stdout"),
-    );
+    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  script ran
+
+"#]]);
 });
 
 // Tests that the `run` command works correctly when path *and* script name is specified
@@ -76,11 +82,17 @@ contract Demo {
         )
         .unwrap();
 
-    cmd.arg("script").arg(format!("{}:Demo", script.display()));
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_execute_script_command_fqn.stdout"),
-    );
+    cmd.arg("script").arg(format!("{}:Demo", script.display())).assert_success().stdout_eq(str![[
+        r#"
+...
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  script ran
+...
+"#
+    ]]);
 });
 
 // Tests that the run command can run arbitrary functions
@@ -99,10 +111,18 @@ contract Demo {
         )
         .unwrap();
 
-    cmd.arg("script").arg(script).arg("--sig").arg("myFunction()");
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_execute_script_command_with_sig.stdout"),
+    cmd.arg("script").arg(script).arg("--sig").arg("myFunction()").assert_success().stdout_eq(
+        str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  script ran
+
+"#]],
     );
 });
 
@@ -272,11 +292,26 @@ contract Demo {
         )
         .unwrap();
 
-    cmd.arg("script").arg(script).arg("--sig").arg("run(uint256,uint256)").arg("1").arg("2");
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_execute_script_command_with_args.stdout"),
-    );
+    cmd.arg("script")
+        .arg(script)
+        .arg("--sig")
+        .arg("run(uint256,uint256)")
+        .arg("1")
+        .arg("2")
+        .assert_success()
+        .stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  script ran
+  1
+  2
+
+"#]]);
 });
 
 // Tests that the run command can run functions with return values
@@ -294,11 +329,22 @@ contract Demo {
 }"#,
         )
         .unwrap();
-    cmd.arg("script").arg(script);
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_execute_script_command_with_returned.stdout"),
-    );
+
+    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Return ==
+result: uint256 255
+1: uint8 3
+
+== Logs ==
+  script ran
+
+"#]]);
 });
 
 forgetest_async!(can_broadcast_script_skipping_simulation, |prj, cmd| {
@@ -827,7 +873,7 @@ contract Script0 is Script {
             "true".to_string(),
             "0x616263646566".to_string(),
             "(10, 99)".to_string(),
-            "\"hello\"".to_string(),
+            "hello".to_string(),
         ]
     );
 });
@@ -910,7 +956,7 @@ contract Script0 is Script {
             "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6".to_string(),
             "true".to_string(),
             "0x616263646566".to_string(),
-            "\"hello\"".to_string(),
+            "hello".to_string(),
         ]
     );
 });
@@ -930,12 +976,25 @@ contract Demo {
 }"#,
         )
         .unwrap();
-    cmd.arg("script").arg(script).args(["--skip", "tests", "--skip", TEMPLATE_CONTRACT]);
+    cmd.arg("script")
+        .arg(script)
+        .args(["--skip", "tests", "--skip", TEMPLATE_CONTRACT])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_execute_script_and_skip_contracts.stdout"),
-    );
+== Return ==
+result: uint256 255
+1: uint8 3
+
+== Logs ==
+  script ran
+
+"#]]);
 });
 
 forgetest_async!(can_run_script_with_empty_setup, |prj, cmd| {

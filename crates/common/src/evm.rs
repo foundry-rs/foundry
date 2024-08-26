@@ -18,6 +18,7 @@ use serde::Serialize;
 pub type Breakpoints = FxHashMap<char, (Address, usize)>;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
+///
 /// All vars are opt-in, their default values are expected to be set by the
 /// [`foundry_config::Config`], and are always present ([`foundry_config::Config::default`])
 ///
@@ -85,7 +86,7 @@ pub struct EvmArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_balance: Option<U256>,
 
-    /// The address which will be executing tests.
+    /// The address which will be executing tests/scripts.
     #[arg(long, value_name = "ADDRESS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender: Option<Address>,
@@ -144,6 +145,11 @@ pub struct EvmArgs {
     #[arg(long)]
     #[serde(skip)]
     pub isolate: bool,
+
+    /// Whether to enable Alphanet features.
+    #[arg(long)]
+    #[serde(skip)]
+    pub alphanet: bool,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -168,6 +174,10 @@ impl Provider for EvmArgs {
 
         if self.isolate {
             dict.insert("isolate".to_string(), self.isolate.into());
+        }
+
+        if self.alphanet {
+            dict.insert("alphanet".to_string(), self.alphanet.into());
         }
 
         if self.always_use_create_2_factory {

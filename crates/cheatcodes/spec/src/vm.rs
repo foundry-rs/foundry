@@ -2203,6 +2203,10 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
 
+    /// Derives secp256r1 public key from the provided `privateKey`.
+    #[cheatcode(group = Crypto)]
+    function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
+
     /// Derive a private key from a provided mnenomic string (or mnenomic file path)
     /// at the derivation path `m/44'/60'/0'/0/{index}`.
     #[cheatcode(group = Crypto)]
@@ -2286,6 +2290,15 @@ interface Vm {
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
     function randomAddress() external returns (address);
+
+    /// Pauses collection of call traces. Useful in cases when you want to skip tracing of
+    /// complex calls which are not useful for debugging.
+    #[cheatcode(group = Utilities)]
+    function pauseTracing() external view;
+
+    /// Unpauses collection of call traces.
+    #[cheatcode(group = Utilities)]
+    function resumeTracing() external view;
 }
 }
 

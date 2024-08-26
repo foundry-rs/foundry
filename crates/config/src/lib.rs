@@ -449,6 +449,12 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eof_version: Option<EofVersion>,
 
+    /// Whether to enable Alphanet features.
+    pub alphanet: bool,
+
+    /// Timeout for transactions in seconds.
+    pub transaction_timeout: u64,
+
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
@@ -913,7 +919,7 @@ impl Config {
     /// Returns the [SpecId] derived from the configured [EvmVersion]
     #[inline]
     pub fn evm_spec_id(&self) -> SpecId {
-        evm_spec_id(&self.evm_version)
+        evm_spec_id(&self.evm_version, self.alphanet)
     }
 
     /// Returns whether the compiler version should be auto-detected
@@ -2143,6 +2149,8 @@ impl Default for Config {
             warnings: vec![],
             extra_args: vec![],
             eof_version: None,
+            alphanet: false,
+            transaction_timeout: 120,
             _non_exhaustive: (),
         }
     }
@@ -2803,6 +2811,7 @@ mod tests {
         endpoints::{RpcEndpointConfig, RpcEndpointType},
         etherscan::ResolvedEtherscanConfigs,
     };
+    use endpoints::RpcAuth;
     use figment::error::Kind::InvalidType;
     use foundry_compilers::artifacts::{
         vyper::VyperOptimizationMode, ModelCheckerEngine, YulDetails,
@@ -3453,6 +3462,7 @@ mod tests {
                             retries: Some(3),
                             retry_backoff: Some(1000),
                             compute_units_per_second: Some(1000),
+                            auth: None,
                         })
                     ),
                 ]),
@@ -3473,6 +3483,76 @@ mod tests {
             );
             Ok(())
         })
+    }
+
+    #[test]
+    fn test_resolve_auth() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                eth_rpc_url = "optimism"
+                [rpc_endpoints]
+                optimism = "https://example.com/"
+                mainnet = { endpoint = "${_CONFIG_MAINNET}", retries = 3, retry_backoff = 1000, compute_units_per_second = 1000, auth = "Bearer ${_CONFIG_AUTH}" }
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            jail.set_env("_CONFIG_AUTH", "123456");
+            jail.set_env("_CONFIG_MAINNET", "https://eth-mainnet.alchemyapi.io/v2/123455");
+
+            assert_eq!(
+                RpcEndpoints::new([
+                    (
+                        "optimism",
+                        RpcEndpointType::String(RpcEndpoint::Url(
+                            "https://example.com/".to_string()
+                        ))
+                    ),
+                    (
+                        "mainnet",
+                        RpcEndpointType::Config(RpcEndpointConfig {
+                            endpoint: RpcEndpoint::Env("${_CONFIG_MAINNET}".to_string()),
+                            retries: Some(3),
+                            retry_backoff: Some(1000),
+                            compute_units_per_second: Some(1000),
+                            auth: Some(RpcAuth::Env("Bearer ${_CONFIG_AUTH}".to_string())),
+                        })
+                    ),
+                ]),
+                config.rpc_endpoints
+            );
+            let resolved = config.rpc_endpoints.resolved();
+            assert_eq!(
+                RpcEndpoints::new([
+                    (
+                        "optimism",
+                        RpcEndpointType::String(RpcEndpoint::Url(
+                            "https://example.com/".to_string()
+                        ))
+                    ),
+                    (
+                        "mainnet",
+                        RpcEndpointType::Config(RpcEndpointConfig {
+                            endpoint: RpcEndpoint::Url(
+                                "https://eth-mainnet.alchemyapi.io/v2/123455".to_string()
+                            ),
+                            retries: Some(3),
+                            retry_backoff: Some(1000),
+                            compute_units_per_second: Some(1000),
+                            auth: Some(RpcAuth::Raw("Bearer 123456".to_string())),
+                        })
+                    ),
+                ])
+                .resolved(),
+                resolved
+            );
+
+            Ok(())
+        });
     }
 
     #[test]

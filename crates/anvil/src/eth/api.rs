@@ -1217,10 +1217,7 @@ impl EthApi {
     /// Returns block receipts by block number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockReceipts`
-    pub async fn block_receipts(
-        &self,
-        number: BlockNumber,
-    ) -> Result<Option<Vec<ReceiptResponse>>> {
+    pub async fn block_receipts(&self, number: BlockId) -> Result<Option<Vec<ReceiptResponse>>> {
         node_info!("eth_getBlockReceipts");
         self.backend.block_receipts(number).await
     }
@@ -2654,7 +2651,7 @@ impl EthApi {
 
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
-                if fork.predates_fork_inclusive(number) {
+                if fork.predates_fork(number) {
                     return Ok(fork.get_nonce(address, number).await?)
                 }
             }

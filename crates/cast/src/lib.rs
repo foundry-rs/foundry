@@ -42,6 +42,7 @@ use std::{
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
 };
 use tokio::signal::ctrl_c;
 
@@ -118,7 +119,7 @@ where
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None).await?;
+    /// let data = cast.call(&tx, None, None, false).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -128,6 +129,7 @@ where
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
+        json: bool,
     ) -> Result<String> {
         let res = self.provider.call(req).block(block.unwrap_or_default()).await?;
 
@@ -167,7 +169,10 @@ where
 
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
-            format!("{res}\n")
+            res.to_string()
+        } else if json {
+            let tokens = decoded.iter().map(format_token_raw).collect::<Vec<_>>();
+            serde_json::to_string_pretty(&tokens).unwrap()
         } else {
             // seth compatible user-friendly return type conversions
             decoded.iter().map(format_token).collect::<Vec<_>>().join("\n")
@@ -686,7 +691,7 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, false, false).await?;
+    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, None, false, false).await?;
     /// println!("{}", receipt);
     /// # Ok(())
     /// # }
@@ -696,6 +701,7 @@ where
         tx_hash: String,
         field: Option<String>,
         confs: u64,
+        timeout: Option<u64>,
         cast_async: bool,
         to_json: bool,
     ) -> Result<String> {
@@ -712,6 +718,7 @@ where
                     } else {
                         PendingTransactionBuilder::new(self.provider.root(), tx_hash)
                             .with_required_confirmations(confs)
+                            .with_timeout(timeout.map(Duration::from_secs))
                             .get_receipt()
                             .await?
                     }
@@ -1499,7 +1506,7 @@ impl SimpleCast {
     ///         decoded[1].as_address().unwrap().to_string().to_lowercase(),
     ///         decoded[2].as_uint().unwrap().0.to_string(),
     ///         decoded[3].as_uint().unwrap().0.to_string(),
-    ///         hex::encode(decoded[4].as_bytes().unwrap())    
+    ///         hex::encode(decoded[4].as_bytes().unwrap())
     ///     ]
     ///     .into_iter()
     ///     .collect::<Vec<_>>();

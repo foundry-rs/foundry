@@ -19,7 +19,7 @@ interface Vm {
     struct ChainInfo { uint256 forkId; uint256 chainId; }
     struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; }
     struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
-    struct Gas { uint64 gasLimit; uint64 gasTotalUsed; uint64 gasMemoryUsed; int64 gasRefunded; uint64 gasRemaining; }
+    struct Gas { uint64 gasLimit; uint64 gasTotalUsed; int64 gasRefunded; uint64 gasRemaining; }
     function _expectCheatcodeRevert() external;
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
@@ -317,6 +317,7 @@ interface Vm {
     function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);
     function parseUint(string calldata stringifiedValue) external pure returns (uint256 parsedValue);
     function pauseGasMetering() external;
+    function pauseTracing() external view;
     function prank(address msgSender) external;
     function prank(address msgSender, address txOrigin) external;
     function prevrandao(bytes32 newPrevrandao) external;
@@ -327,6 +328,7 @@ interface Vm {
     function promptSecret(string calldata promptText) external returns (string memory input);
     function promptSecretUint(string calldata promptText) external returns (uint256);
     function promptUint(string calldata promptText) external returns (uint256);
+    function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
     function randomAddress() external returns (address);
     function randomUint() external returns (uint256);
     function randomUint(uint256 min, uint256 max) external returns (uint256);
@@ -346,6 +348,7 @@ interface Vm {
     function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);
     function resetNonce(address account) external;
     function resumeGasMetering() external;
+    function resumeTracing() external view;
     function revertToState(uint256 snapshotId) external returns (bool success);
     function revertToStateAndDelete(uint256 snapshotId) external returns (bool success);
     function revokePersistent(address account) external;
@@ -399,17 +402,17 @@ interface Vm {
     function startBroadcast() external;
     function startBroadcast(address signer) external;
     function startBroadcast(uint256 privateKey) external;
-    function startGasSnapshot() external;
     function startMappingRecording() external;
     function startPrank(address msgSender) external;
     function startPrank(address msgSender, address txOrigin) external;
+    function startSnapshotGas(string calldata name) external returns (bool success);
     function startStateDiffRecording() external;
     function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
     function stopBroadcast() external;
     function stopExpectSafeMemory() external;
-    function stopGasSnapshot() external;
     function stopMappingRecording() external;
     function stopPrank() external;
+    function stopSnapshotGas(string calldata name) external returns (Gas memory gas);
     function store(address target, bytes32 slot, bytes32 value) external;
     function toBase64URL(bytes calldata data) external pure returns (string memory);
     function toBase64URL(string calldata data) external pure returns (string memory);

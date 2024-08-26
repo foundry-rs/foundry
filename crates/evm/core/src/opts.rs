@@ -63,6 +63,9 @@ pub struct EvmOpts {
 
     /// Whether to disable block gas limit checks.
     pub disable_block_gas_limit: bool,
+
+    /// whether to enable Alphanet features.
+    pub alphanet: bool,
 }
 
 impl EvmOpts {

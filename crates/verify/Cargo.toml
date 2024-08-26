@@ -37,7 +37,6 @@ async-trait.workspace = true
 futures.workspace = true
 semver.workspace = true
 regex = { version = "1", default-features = false }
-once_cell.workspace = true
 yansi.workspace = true
 itertools.workspace = true
 

@@ -336,6 +336,7 @@ impl TestArgs {
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_test_options(test_options)
             .enable_isolation(evm_opts.isolate)
+            .alphanet(evm_opts.alphanet)
             .build(project_root, &output, env, evm_opts)?;
 
         let mut maybe_override_mt = |flag, maybe_regex: Option<&Regex>| {
@@ -559,9 +560,7 @@ impl TestArgs {
                 }
 
                 if let Some(gas_report) = &mut gas_report {
-                    gas_report
-                        .analyze(result.traces.iter().map(|(_, arena)| arena), &decoder)
-                        .await;
+                    gas_report.analyze(result.traces.iter().map(|(_, a)| &a.arena), &decoder).await;
 
                     for trace in result.gas_report_traces.iter() {
                         decoder.clear_addresses();

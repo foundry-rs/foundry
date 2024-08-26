@@ -14,7 +14,7 @@ use foundry_config::{
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
     foundry_compilers::artifacts::{remappings::Remapping, EvmVersion},
-    util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
+    util::{pretty_err, TestCommand, OTHER_SOLC_VERSION},
 };
 use path_slash::PathBufExt;
 use similar_asserts::assert_eq;
@@ -149,6 +149,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         legacy_assertions: false,
         extra_args: vec![],
         eof_version: None,
+        alphanet: false,
+        transaction_timeout: 120,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -399,11 +401,17 @@ contract Foo {
     )
     .unwrap();
 
-    cmd.arg("build");
-    cmd.unchecked_output().stderr_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_set_yul_optimizer.stderr"),
-    );
+    cmd.arg("build").assert_failure().stderr_eq(str![[r#"
+Error: 
+Compiler run failed:
+Error (6553): The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction.
+ [FILE]:6:8:
+  |
+6 |        assembly {
+  |        ^ (Relevant source part starts here and spans across multiple lines).
+
+
+"#]]);
 
     // disable yul optimizer explicitly
     let config = Config {

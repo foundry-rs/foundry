@@ -50,6 +50,7 @@ pub use snapshot::{BackendSnapshot, RevertSnapshotAction, StateSnapshot};
 type ForkDB = CacheDB<SharedBackend>;
 
 /// Represents a numeric `ForkId` valid only for the existence of the `Backend`.
+///
 /// The difference between `ForkId` and `LocalForkId` is that `ForkId` tracks pairs of `endpoint +
 /// block` which can be reused by multiple tests, whereas the `LocalForkId` is unique within a test
 pub type LocalForkId = U256;
@@ -1381,7 +1382,7 @@ impl DatabaseExt for Backend {
         for (addr, acc) in allocs.iter() {
             // Fetch the account from the journaled state. Will create a new account if it does
             // not already exist.
-            let (state_acc, _) = journaled_state.load_account(*addr, self)?;
+            let mut state_acc = journaled_state.load_account(*addr, self)?;
 
             // Set the account's bytecode and code hash, if the `bytecode` field is present.
             if let Some(bytecode) = acc.code.as_ref() {

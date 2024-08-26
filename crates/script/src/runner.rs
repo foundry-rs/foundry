@@ -75,7 +75,7 @@ impl ScriptRunner {
                     rpc: self.evm_opts.fork_url.clone(),
                     transaction: TransactionRequest {
                         from: Some(self.evm_opts.sender),
-                        input: Some(code.clone()).into(),
+                        input: code.clone().into(),
                         nonce: Some(sender_nonce + library_transactions.len() as u64),
                         ..Default::default()
                     }
@@ -109,7 +109,7 @@ impl ScriptRunner {
                         rpc: self.evm_opts.fork_url.clone(),
                         transaction: TransactionRequest {
                             from: Some(self.evm_opts.sender),
-                            input: Some(calldata.into()).into(),
+                            input: calldata.into(),
                             nonce: Some(sender_nonce + library_transactions.len() as u64),
                             to: Some(TxKind::Call(DEFAULT_CREATE2_DEPLOYER)),
                             ..Default::default()

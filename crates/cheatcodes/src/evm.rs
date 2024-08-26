@@ -98,7 +98,7 @@ impl Cheatcode for loadCall {
         let Self { target, slot } = *self;
         ensure_not_precompile!(&target, ccx);
         ccx.ecx.load_account(target)?;
-        let (val, _) = ccx.ecx.sload(target, slot.into())?;
+        let val = ccx.ecx.sload(target, slot.into())?;
         Ok(val.abi_encode())
     }
 }
@@ -218,9 +218,7 @@ impl Cheatcode for getRecordedLogsCall {
 impl Cheatcode for pauseGasMeteringCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        if state.gas_metering.is_none() {
-            state.gas_metering = Some(None);
-        }
+        state.pause_gas_metering = true;
         Ok(Default::default())
     }
 }
@@ -228,7 +226,8 @@ impl Cheatcode for pauseGasMeteringCall {
 impl Cheatcode for resumeGasMeteringCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        state.gas_metering = None;
+        state.pause_gas_metering = false;
+        state.paused_frame_gas = vec![];
         Ok(Default::default())
     }
 }
@@ -639,7 +638,7 @@ impl Cheatcode for setBlockhashCall {
 }
 
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
-    let (account, _) = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
+    let account = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
     Ok(account.info.nonce.abi_encode())
 }
 

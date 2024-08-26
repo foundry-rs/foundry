@@ -1,3 +1,4 @@
+use super::watch::WatchArgs;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_doc::{
@@ -5,7 +6,7 @@ use forge_doc::{
 };
 use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
 use foundry_common::compile::ProjectCompiler;
-use foundry_config::{find_project_root_path, load_config_with_root};
+use foundry_config::{find_project_root_path, load_config_with_root, Config};
 use std::{path::PathBuf, process::Command};
 
 mod server;
@@ -47,6 +48,9 @@ pub struct DocArgs {
     #[arg(long, requires = "serve")]
     hostname: Option<String>,
 
+    #[command(flatten)]
+    pub watch: WatchArgs,
+
     /// Port for serving documentation.
     #[arg(long, short, requires = "serve")]
     port: Option<usize>,
@@ -62,14 +66,14 @@ pub struct DocArgs {
 }
 
 impl DocArgs {
-    pub fn run(self) -> Result<()> {
-        let root = self.root.clone().unwrap_or(find_project_root_path(None)?);
-        let config = load_config_with_root(Some(root.clone()));
+    pub async fn run(self) -> Result<()> {
+        let config = self.config()?;
+        let root = &config.root.0;
         let project = config.project()?;
         let compiler = ProjectCompiler::new().quiet(true);
         let _output = compiler.compile(&project)?;
 
-        let mut doc_config = config.doc.clone();
+        let mut doc_config = config.doc;
         if let Some(out) = self.out {
             doc_config.out = out;
         }
@@ -91,7 +95,7 @@ impl DocArgs {
             }
         }
 
-        let commit = foundry_cli::utils::Git::new(&root).commit_hash(false, "HEAD").ok();
+        let commit = foundry_cli::utils::Git::new(root).commit_hash(false, "HEAD").ok();
 
         let mut builder = DocBuilder::new(
             root.clone(),
@@ -113,19 +117,29 @@ impl DocArgs {
 
         // If deployment docgen is enabled, add the [Deployments] preprocessor
         if let Some(deployments) = self.deployments {
-            builder = builder.with_preprocessor(Deployments { root, deployments });
+            builder = builder.with_preprocessor(Deployments { root: root.clone(), deployments });
         }
 
         builder.build()?;
 
         if self.serve {
             Server::new(doc_config.out)
-                .with_hostname(self.hostname.unwrap_or("localhost".to_owned()))
+                .with_hostname(self.hostname.unwrap_or_else(|| "localhost".into()))
                 .with_port(self.port.unwrap_or(3000))
                 .open(self.open)
                 .serve()?;
         }
 
         Ok(())
+    }
+
+    /// Returns whether watch mode is enabled
+    pub fn is_watch(&self) -> bool {
+        self.watch.watch.is_some()
+    }
+
+    pub fn config(&self) -> Result<Config> {
+        let root = self.root.clone().unwrap_or(find_project_root_path(None)?);
+        Ok(load_config_with_root(Some(root)))
     }
 }

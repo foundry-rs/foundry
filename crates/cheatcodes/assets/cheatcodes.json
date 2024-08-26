@@ -473,14 +473,9 @@
           "description": "The total gas used."
         },
         {
-          "name": "gasMemoryUsed",
-          "ty": "uint64",
-          "description": "DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>"
-        },
-        {
           "name": "gasRefunded",
           "ty": "int64",
-          "description": "The amount of gas refunded."
+          "description": "DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>\n The amount of gas refunded."
         },
         {
           "name": "gasRemaining",
@@ -6433,6 +6428,26 @@
     },
     {
       "func": {
+        "id": "pauseTracing",
+        "description": "Pauses collection of call traces. Useful in cases when you want to skip tracing of\ncomplex calls which are not useful for debugging.",
+        "declaration": "function pauseTracing() external view;",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "pauseTracing()",
+        "selector": "0xc94d1f90",
+        "selectorBytes": [
+          201,
+          77,
+          31,
+          144
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "prank_0",
         "description": "Sets the *next* call's `msg.sender` to be the input address.",
         "declaration": "function prank(address msgSender) external;",
@@ -6628,6 +6643,26 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "publicKeyP256",
+        "description": "Derives secp256r1 public key from the provided `privateKey`.",
+        "declaration": "function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "publicKeyP256(uint256)",
+        "selector": "0xc453949e",
+        "selectorBytes": [
+          196,
+          83,
+          148,
+          158
+        ]
+      },
+      "group": "crypto",
       "status": "stable",
       "safety": "safe"
     },
@@ -7008,6 +7043,26 @@
         ]
       },
       "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "resumeTracing",
+        "description": "Unpauses collection of call traces.",
+        "declaration": "function resumeTracing() external view;",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "resumeTracing()",
+        "selector": "0x72a09ccb",
+        "selectorBytes": [
+          114,
+          160,
+          156,
+          203
+        ]
+      },
+      "group": "utilities",
       "status": "stable",
       "safety": "safe"
     },
@@ -8073,26 +8128,6 @@
     },
     {
       "func": {
-        "id": "startGasSnapshot",
-        "description": "",
-        "declaration": "function startGasSnapshot() external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "startGasSnapshot()",
-        "selector": "0xe6b17ea5",
-        "selectorBytes": [
-          230,
-          177,
-          126,
-          165
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "unsafe"
-    },
-    {
-      "func": {
         "id": "startMappingRecording",
         "description": "Starts recording all map SSTOREs for later retrieval.",
         "declaration": "function startMappingRecording() external;",
@@ -8145,6 +8180,26 @@
           181,
           96,
           120
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "startSnapshotGas",
+        "description": "Start a snapshot capture of the current gas usage.",
+        "declaration": "function startSnapshotGas(string calldata name) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startSnapshotGas(string)",
+        "selector": "0x3cad9d7b",
+        "selectorBytes": [
+          60,
+          173,
+          157,
+          123
         ]
       },
       "group": "evm",
@@ -8233,26 +8288,6 @@
     },
     {
       "func": {
-        "id": "stopGasSnapshot",
-        "description": "",
-        "declaration": "function stopGasSnapshot() external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "stopGasSnapshot()",
-        "selector": "0x10aa79b7",
-        "selectorBytes": [
-          16,
-          170,
-          121,
-          183
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "unsafe"
-    },
-    {
-      "func": {
         "id": "stopMappingRecording",
         "description": "Stops recording all map SSTOREs for later retrieval and clears the recorded data.",
         "declaration": "function stopMappingRecording() external;",
@@ -8285,6 +8320,26 @@
           197,
           1,
           59
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "stopSnapshotGas",
+        "description": "Stop the snapshot capture of the current gas usage, capturing the gas used since the start.",
+        "declaration": "function stopSnapshotGas(string calldata name) external returns (Gas memory gas);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopSnapshotGas(string)",
+        "selector": "0x773b2805",
+        "selectorBytes": [
+          119,
+          59,
+          40,
+          5
         ]
       },
       "group": "evm",

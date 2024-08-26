@@ -167,7 +167,7 @@ impl RevertDecoder {
         }
 
         // ABI-encoded `string`.
-        if let Ok(s) = String::abi_decode(err, false) {
+        if let Ok(s) = String::abi_decode(err, true) {
             return Some(s);
         }
 
