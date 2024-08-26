@@ -621,14 +621,13 @@ casttest!(receipt_revert_reason, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
 
     // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
-    cmd.cast_fuse()
-        .args([
-            "receipt",
-            "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
-            "--rpc-url",
-            rpc.as_str(),
-        ])
-        .assert_success();
+    cmd.args([
+        "receipt",
+        "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success();
     let output = cmd.stdout_lossy();
     assert!(!output.contains("revertReason"));
 
@@ -915,7 +914,7 @@ casttest!(tx_raw, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
 
     // <https://etherscan.io/getRawTx?tx=0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
-    cmd.cast_fuse().args([
+    cmd.args([
         "tx",
         "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
         "raw",
@@ -955,13 +954,12 @@ Must specify a recipient address or contract code to deploy
 
 casttest!(storage, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
-    cmd.cast_fuse()
-        .args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc]).assert_success().stdout_eq(str![
+        [r#"
 0x0000000000000000000000000000000000000000000000000000000000000000
 
-"#]]);
+"#]
+    ]);
 
     let rpc = next_http_rpc_endpoint();
     cmd.cast_fuse()
@@ -1006,8 +1004,7 @@ casttest!(storage, |_prj, cmd| {
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
 casttest!(storage_layout, |_prj, cmd| {
-    cmd.cast_fuse()
-        .args([
+    cmd.args([
             "storage",
             "--rpc-url",
             next_rpc_endpoint(NamedChain::Optimism).as_str(),
@@ -1054,7 +1051,8 @@ casttest!(storage_layout, |_prj, cmd| {
 casttest!(balance, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
     let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
-    cmd.cast_fuse().args([
+
+    cmd.args([
         "balance",
         "0x0000000000000000000000000000000000000000",
         "--erc20",
@@ -1062,6 +1060,7 @@ casttest!(balance, |_prj, cmd| {
         "--rpc-url",
         &rpc,
     ]);
+
     cmd.cast_fuse().args([
         "balance",
         "0x0000000000000000000000000000000000000000",
@@ -1236,6 +1235,7 @@ casttest!(send_eip7702, async |_prj, cmd| {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(Hardfork::PragueEOF))).await;
     let endpoint = handle.http_endpoint();
+
     cmd.args([
         "send",
         "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
@@ -1258,12 +1258,13 @@ casttest!(send_eip7702, async |_prj, cmd| {
 });
 
 casttest!(hash_message, |_prj, cmd| {
-    let tests = [
-        ("hello", "0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750"),
-        ("0x68656c6c6f", "0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750"),
-    ];
-    for (message, expected) in tests {
-        cmd.cast_fuse();
-        assert_eq!(cmd.args(["hash-message", message]).stdout_lossy().trim(), expected);
-    }
+    cmd.args(["hash-message", "hello"]).assert_success().stdout_eq(str![[r#"
+0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750
+
+"#]]);
+
+    cmd.cast_fuse().args(["hash-message", "0x68656c6c6f"]).assert_success().stdout_eq(str![[r#"
+0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750
+
+"#]]);
 });
