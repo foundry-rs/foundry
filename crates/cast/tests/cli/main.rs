@@ -1086,10 +1086,8 @@ casttest!(interface_no_constructor, |prj, cmd| {
     let path = prj.root().join("interface.json");
     fs::write(&path, interface).unwrap();
     // Call `cast find-block`
-    cmd.args(["interface"]).arg(&path);
-    let output = cmd.stdout_lossy();
-
-    let s = r#"// SPDX-License-Identifier: UNLICENSED
+    cmd.args(["interface"]).arg(&path).assert_success().stdout_eq(str![[
+        r#"// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
 interface Interface {
@@ -1108,8 +1106,10 @@ interface Interface {
             uint256[] memory minIncomingAssetAmounts_
         );
     function redeem(address _vaultProxy, bytes memory, bytes memory _assetData) external;
-}"#;
-    assert_eq!(output.trim(), s);
+}
+
+"#
+    ]]);
 });
 
 // tests that fetches WETH interface from etherscan
@@ -1117,10 +1117,9 @@ interface Interface {
 casttest!(fetch_weth_interface_from_etherscan, |_prj, cmd| {
     let weth_address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
     let api_key = "ZUB97R31KSYX7NYVW6224Q6EYY6U56H591";
-    cmd.args(["interface", "--etherscan-api-key", api_key, weth_address]);
-    let output = cmd.stdout_lossy();
-
-    let weth_interface = r#"// SPDX-License-Identifier: UNLICENSED
+    cmd.args(["interface", "--etherscan-api-key", api_key, weth_address])
+        .assert_success()
+        .stdout_eq(str![[r#"// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
 interface WETH9 {
@@ -1142,8 +1141,9 @@ interface WETH9 {
     function transfer(address dst, uint256 wad) external returns (bool);
     function transferFrom(address src, address dst, uint256 wad) external returns (bool);
     function withdraw(uint256 wad) external;
-}"#;
-    assert_eq!(output.trim(), weth_interface);
+}
+
+"#]]);
 });
 
 const ENS_NAME: &str = "emo.eth";
