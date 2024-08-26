@@ -3557,6 +3557,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm-core",
+ "foundry-evm-traces",
  "foundry-wallets",
  "itertools 0.13.0",
  "jsonpath_lib",

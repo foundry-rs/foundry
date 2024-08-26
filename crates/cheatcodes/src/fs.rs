@@ -272,7 +272,7 @@ impl Cheatcode for deployCode_0Call {
     ) -> Result {
         let Self { artifactPath: path } = self;
         let bytecode = get_artifact_code(ccx.state, path, false)?;
-        let output = executor
+        let address = executor
             .exec_create(
                 CreateInputs {
                     caller: ccx.caller,
@@ -282,10 +282,11 @@ impl Cheatcode for deployCode_0Call {
                     gas_limit: ccx.gas_limit,
                 },
                 ccx,
-            )
-            .unwrap();
+            )?
+            .address
+            .ok_or_else(|| fmt_err!("contract creation failed"))?;
 
-        Ok(output.address.unwrap().abi_encode())
+        Ok(address.abi_encode())
     }
 }
 
@@ -298,7 +299,7 @@ impl Cheatcode for deployCode_1Call {
         let Self { artifactPath: path, constructorArgs } = self;
         let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
         bytecode.extend_from_slice(constructorArgs);
-        let output = executor
+        let address = executor
             .exec_create(
                 CreateInputs {
                     caller: ccx.caller,
@@ -308,10 +309,11 @@ impl Cheatcode for deployCode_1Call {
                     gas_limit: ccx.gas_limit,
                 },
                 ccx,
-            )
-            .unwrap();
+            )?
+            .address
+            .ok_or_else(|| fmt_err!("contract creation failed"))?;
 
-        Ok(output.address.unwrap().abi_encode())
+        Ok(address.abi_encode())
     }
 }
 

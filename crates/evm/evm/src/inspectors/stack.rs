@@ -9,7 +9,7 @@ use foundry_evm_core::{
     InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_traces::{CallTraceArena, TraceMode};
+use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     inspectors::CustomPrintTracer,
     interpreter::{
@@ -244,7 +244,7 @@ macro_rules! call_inspectors_adjust_depth {
 pub struct InspectorData {
     pub logs: Vec<Log>,
     pub labels: HashMap<Address, String>,
-    pub traces: Option<CallTraceArena>,
+    pub traces: Option<SparsedTraceArena>,
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
@@ -317,6 +317,10 @@ impl CheatcodesExecutor for InspectorStackInner {
         cheats: &'a mut Cheatcodes,
     ) -> impl InspectorExt<DB> + 'a {
         InspectorStackRefMut { cheatcodes: Some(cheats), inner: self }
+    }
+
+    fn tracing_inspector(&mut self) -> Option<&mut Option<TracingInspector>> {
+        Some(&mut self.tracer)
     }
 }
 
@@ -437,9 +441,27 @@ impl InspectorStack {
     #[inline]
     pub fn collect(self) -> InspectorData {
         let Self {
-            cheatcodes,
+            mut cheatcodes,
             inner: InspectorStackInner { chisel_state, coverage, log_collector, tracer, .. },
         } = self;
+
+        let traces = tracer.map(|tracer| tracer.into_traces()).map(|arena| {
+            let ignored = cheatcodes
+                .as_mut()
+                .map(|cheatcodes| {
+                    let mut ignored = std::mem::take(&mut cheatcodes.ignored_traces.ignored);
+
+                    // If the last pause call was not resumed, ignore the rest of the trace
+                    if let Some(last_pause_call) = cheatcodes.ignored_traces.last_pause_call {
+                        ignored.insert(last_pause_call, (arena.nodes().len(), 0));
+                    }
+
+                    ignored
+                })
+                .unwrap_or_default();
+
+            SparsedTraceArena { arena, ignored }
+        });
 
         InspectorData {
             logs: log_collector.map(|logs| logs.logs).unwrap_or_default(),
@@ -447,7 +469,7 @@ impl InspectorStack {
                 .as_ref()
                 .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
-            traces: tracer.map(|tracer| tracer.into_traces()),
+            traces,
             coverage: coverage.map(|coverage| coverage.maps),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
