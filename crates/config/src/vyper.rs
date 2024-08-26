@@ -12,4 +12,6 @@ pub struct VyperConfig {
     /// The Vyper instance to use if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub experimental_codegen: Option<bool>,
 }
