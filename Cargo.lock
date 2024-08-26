@@ -4047,11 +4047,9 @@ dependencies = [
  "rand",
  "regex",
  "serde_json",
- "similar-asserts",
  "snapbox",
  "tracing",
  "tracing-subscriber",
- "walkdir",
 ]
 
 [[package]]

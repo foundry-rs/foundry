@@ -1241,7 +1241,7 @@ forgetest_async!(can_sign_with_script_wallet_multiple, |prj, cmd| {
 forgetest_async!(fails_with_function_name_and_overloads, |prj, cmd| {
     let script = prj
         .add_script(
-            "Sctipt.s.sol",
+            "Script.s.sol",
             r#"
 contract Script {
     function run() external {}
@@ -1294,6 +1294,7 @@ contract CustomErrorScript is Script {
     cmd.assert_failure().stderr_eq(str![[r#"
 Error: 
 script failed: CustomError()
+
 "#]]);
 });
 
@@ -1423,6 +1424,7 @@ contract SimpleScript is Script {
     cmd.assert_failure().stderr_eq(str![[r#"
 Error: 
 script failed: missing CREATE2 deployer
+
 "#]]);
 });
 

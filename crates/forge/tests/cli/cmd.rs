@@ -1634,19 +1634,34 @@ forgetest_init!(can_bind, |_prj, cmd| {
 
 // checks missing dependencies are auto installed
 forgetest_init!(can_install_missing_deps_test, |prj, cmd| {
+    prj.clear();
+
     // wipe forge-std
     let forge_std_dir = prj.root().join("lib/forge-std");
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
 
-    cmd.arg("test");
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+Missing dependencies found. Installing now...
 
-    let output = cmd.stdout_lossy();
-    assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
-    assert!(output.contains("[PASS]"), "{}", output);
+[UPDATING_DEPENDENCIES]
+Compiling 25 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
+[PASS] test_Increment() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
 });
 
 // checks missing dependencies are auto installed
 forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
+    prj.clear();
+
     // wipe forge-std
     let forge_std_dir = prj.root().join("lib/forge-std");
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
@@ -1656,7 +1671,7 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
 Missing dependencies found. Installing now...
 
 [UPDATING_DEPENDENCIES]
-Compiling 26 files with [SOLC_VERSION]
+Compiling 27 files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 

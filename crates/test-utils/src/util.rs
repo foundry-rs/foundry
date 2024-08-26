@@ -1104,10 +1104,6 @@ fn test_redactions() -> snapbox::Redactions {
 }
 
 /// Extension trait for [`Output`].
-///
-/// These function will read the path's content and assert that the process' output matches the
-/// fixture. Since `forge` commands may emit colorized output depending on whether the current
-/// terminal is tty, the path argument can be wrapped in [tty_fixture_path()]
 pub trait OutputExt {
     /// Returns the stdout as lossy string
     fn stdout_lossy(&self) -> String;
@@ -1117,32 +1113,6 @@ impl OutputExt for Output {
     fn stdout_lossy(&self) -> String {
         lossy_string(&self.stdout)
     }
-}
-
-/// Returns the fixture path depending on whether the current terminal is tty
-///
-/// This is useful in combination with [OutputExt]
-pub fn tty_fixture_path(path: impl AsRef<Path>) -> PathBuf {
-    let path = path.as_ref();
-    if *IS_TTY {
-        return if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-            path.with_extension(format!("tty.{ext}"))
-        } else {
-            path.with_extension("tty")
-        }
-    }
-    path.to_path_buf()
-}
-
-/// Return a recursive listing of all files and directories in the given
-/// directory. This is useful for debugging transient and odd failures in
-/// integration tests.
-pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
-    walkdir::WalkDir::new(dir)
-        .follow_links(true)
-        .into_iter()
-        .map(|result| result.unwrap().path().to_string_lossy().into_owned())
-        .collect()
 }
 
 fn lossy_string(bytes: &[u8]) -> String {
