@@ -1,7 +1,7 @@
 //! Contains various tests for checking cast commands
 
 use alloy_chains::NamedChain;
-use alloy_primitives::{address, b256, Address, B256};
+use alloy_primitives::{b256, B256};
 use anvil::{Hardfork, NodeConfig};
 use foundry_test_utils::{
     casttest,
@@ -1146,50 +1146,65 @@ interface WETH9 {
 "#]]);
 });
 
-const ENS_NAME: &str = "emo.eth";
-const ENS_NAMEHASH: B256 =
-    b256!("0a21aaf2f6414aa664deb341d1114351fdb023cad07bf53b28e57c26db681910");
-const ENS_ADDRESS: Address = address!("28679A1a632125fbBf7A68d850E50623194A709E");
-
 casttest!(ens_namehash, |_prj, cmd| {
-    cmd.args(["namehash", ENS_NAME]);
-    let out = cmd.stdout_lossy().trim().parse::<B256>();
-    assert_eq!(out, Ok(ENS_NAMEHASH));
+    cmd.args(["namehash", "emo.eth"]).assert_success().stdout_eq(str![[r#"
+0x0a21aaf2f6414aa664deb341d1114351fdb023cad07bf53b28e57c26db681910
+
+"#]]);
 });
 
 casttest!(ens_lookup, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
-    cmd.args(["lookup-address", &ENS_ADDRESS.to_string(), "--rpc-url", &eth_rpc_url, "--verify"]);
-    let out = cmd.stdout_lossy();
-    assert_eq!(out.trim(), ENS_NAME);
+    cmd.args([
+        "lookup-address",
+        "0x28679A1a632125fbBf7A68d850E50623194A709E",
+        "--rpc-url",
+        &eth_rpc_url,
+        "--verify",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+emo.eth
+
+"#]]);
 });
 
 casttest!(ens_resolve, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
-    cmd.args(["resolve-name", ENS_NAME, "--rpc-url", &eth_rpc_url, "--verify"]);
-    let out = cmd.stdout_lossy().trim().parse::<Address>();
-    assert_eq!(out, Ok(ENS_ADDRESS));
+    cmd.args(["resolve-name", "emo.eth", "--rpc-url", &eth_rpc_url, "--verify"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x28679A1a632125fbBf7A68d850E50623194A709E
+
+"#]]);
 });
 
 casttest!(ens_resolve_no_dot_eth, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
-    let name = ENS_NAME.strip_suffix(".eth").unwrap();
-    cmd.args(["resolve-name", name, "--rpc-url", &eth_rpc_url, "--verify"]);
-    let (_out, err) = cmd.unchecked_output_lossy();
-    assert!(err.contains("not found"), "{err:?}");
+    cmd.args(["resolve-name", "emo", "--rpc-url", &eth_rpc_url, "--verify"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: 
+ENS resolver not found for name "emo"
+
+"#]]);
 });
 
 casttest!(index7201, |_prj, cmd| {
-    let tests =
-        [("example.main", "0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500")];
-    for (id, expected) in tests {
-        cmd.cast_fuse();
-        assert_eq!(cmd.args(["index-erc7201", id]).stdout_lossy().trim(), expected);
-    }
+    cmd.args(["index-erc7201", "example.main"]).assert_success().stdout_eq(str![[r#"
+0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500
+
+"#]]);
 });
 
 casttest!(index7201_unknown_formula_id, |_prj, cmd| {
-    cmd.args(["index-7201", "test", "--formula-id", "unknown"]).assert_err();
+    cmd.args(["index-erc7201", "test", "--formula-id", "unknown"]).assert_failure().stderr_eq(
+        str![[r#"
+Error: 
+unsupported formula ID: unknown
+
+"#]],
+    );
 });
 
 casttest!(block_number, |_prj, cmd| {
