@@ -67,6 +67,11 @@ impl EvmFoldedStackTraceBuilder {
             }
         }
 
+        // Exit pending internal function calls if any.
+        for _ in 0..step_exits.len() {
+            self.fst.exit();
+        }
+
         // Exit from this call context in the folded stack trace.
         self.fst.exit();
     }
