@@ -132,7 +132,7 @@ pub struct FoldedStackTraceBuilder {
     /// Trace entries.
     traces: Vec<TraceEntry>,
     /// Number of exits to be done before entering a new function.
-    exits: Option<u64>,
+    exits: usize,
 }
 
 #[derive(Debug, Default)]
@@ -148,12 +148,10 @@ impl FoldedStackTraceBuilder {
     pub fn enter(&mut self, label: String, gas: i64) {
         let mut names = self.traces.last().map(|entry| entry.names.clone()).unwrap_or_default();
 
-        let mut exits = self.exits.unwrap_or_default();
-        while exits > 0 {
+        while self.exits > 0 {
             names.pop();
-            exits -= 1;
+            self.exits -= 1;
         }
-        self.exits = None;
 
         names.push(label);
         self.traces.push(TraceEntry { names, gas });
@@ -161,7 +159,7 @@ impl FoldedStackTraceBuilder {
 
     /// Exit execution of a function call.
     pub fn exit(&mut self) {
-        self.exits = self.exits.map(|exits| exits + 1).or(Some(1));
+        self.exits += 1;
     }
 
     /// Returns folded stack trace.
