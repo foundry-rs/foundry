@@ -1093,7 +1093,7 @@ fn test_redactions() -> snapbox::Redactions {
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
             ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
             ("[ADDRESS]", r"Address: 0x[0-9A-Fa-f]{40}"),
-            ("[LIB_DIR]", r"/tmp/[^/]+-[^/]+/lib"),
+            ("[UPDATING_DEPENDENCIES]", r"Updating dependencies in .*"),
         ];
         for (placeholder, re) in redactions {
             r.insert(placeholder, Regex::new(re).expect(re)).expect(re);

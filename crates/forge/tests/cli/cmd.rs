@@ -1655,7 +1655,7 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 Missing dependencies found. Installing now...
 
-Updating dependencies in [LIB_DIR]
+[UPDATING_DEPENDENCIES]
 Compiling 26 files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
