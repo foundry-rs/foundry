@@ -1313,7 +1313,7 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testSelfMeteringRevert() (gas: 3399)
+[PASS] testSelfMeteringRevert() (gas: 3299)
 ...
 "#]]);
 });
