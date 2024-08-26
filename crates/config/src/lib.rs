@@ -1000,7 +1000,7 @@ impl Config {
 
     /// Returns configuration for a compiler to use when setting up a [Project].
     pub fn compiler(&self) -> Result<MultiCompiler, SolcError> {
-        Ok(MultiCompiler { solc: self.solc_compiler()?, vyper: self.vyper_compiler()? })
+        Ok(MultiCompiler { solc: Some(self.solc_compiler()?), vyper: self.vyper_compiler()? })
     }
 
     /// Returns configured [MultiCompilerSettings].
@@ -1350,6 +1350,7 @@ impl Config {
                 "evm.deployedBytecode".to_string(),
             ]),
             search_paths: None,
+            experimental_codegen: None,
         })
     }
 
