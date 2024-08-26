@@ -813,20 +813,27 @@ contract A {
     )
     .unwrap();
 
-    cmd.args(["build", "--force"]);
-    let out = cmd.stdout_lossy();
-    // expect no warning as path is ignored
-    assert!(out.contains("Compiler run successful!"));
-    assert!(!out.contains("Compiler run successful with warnings:"));
+    cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     // Reconfigure without ignored paths or error codes and check for warnings
     // need to reset empty error codes as default would set some error codes
     prj.write_config(Config { ignored_error_codes: vec![], ..Default::default() });
 
-    let out = cmd.stdout_lossy();
-    // expect warnings as path is not ignored
-    assert!(out.contains("Compiler run successful with warnings:"), "{out}");
-    assert!(out.contains("Warning") && out.contains("SPDX-License-Identifier"), "{out}");
+    cmd.args(["build"]).assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+[FILE]
+
+
+"#]]);
 });
 
 // test that `forge build` does not print `(with warnings)` if there arent any
