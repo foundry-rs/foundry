@@ -1356,7 +1356,7 @@ impl Cheatcodes {
     #[cold]
     fn meter_gas_end(&mut self, interpreter: &mut Interpreter) {
         fn will_exit(ir: InstructionResult) -> bool {
-            ir != InstructionResult::Continue && (ir.is_ok() || ir.is_error() || ir.is_revert())
+            !matches!(ir, InstructionResult::Continue | InstructionResult::CallOrCreate)
         }
 
         // Remove recorded gas if we exit frame.
