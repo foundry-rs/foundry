@@ -24,9 +24,28 @@ casttest!(latest_block, |_prj, cmd| {
     // Call `cast find-block`
     cmd.args(["block", "latest", "--rpc-url", eth_rpc_url.as_str()]);
     cmd.assert_success().stdout_eq(str![[r#"
-...
-gasUsed [..]
-...
+
+
+baseFeePerGas        [..]
+difficulty           [..]
+extraData            [..]
+gasLimit             [..]
+gasUsed              [..]
+hash                 [..]
+logsBloom            [..]
+miner                [..]
+mixHash              [..]
+nonce                [..]
+number               [..]
+parentHash           [..]
+transactionsRoot     [..]
+receiptsRoot         [..]
+sha3Uncles           [..]
+size                 [..]
+stateRoot            [..]
+timestamp            [..]
+withdrawalsRoot      [..]
+totalDifficulty      [..]
 transactions:        [
 ...
 ]
@@ -1096,7 +1115,9 @@ casttest!(balance, |_prj, cmd| {
         ])
         .assert_success()
         .get_output()
-        .stdout_lossy();
+        .stdout_lossy()
+        .trim()
+        .to_string();
 
     let alias_result = cmd
         .cast_fuse()
@@ -1110,9 +1131,11 @@ casttest!(balance, |_prj, cmd| {
         ])
         .assert_success()
         .get_output()
-        .stdout_lossy();
+        .stdout_lossy()
+        .trim()
+        .to_string();
 
-    assert_ne!(usdt_result, "0x0000000000000000000000000000000000000000000000000000000000000000");
+    assert_ne!(usdt_result, "0");
     assert_eq!(alias_result, usdt_result);
 });
 
