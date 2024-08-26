@@ -1286,3 +1286,83 @@ contract ATest is Test {
 ...
 "#]]);
 });
+
+// see https://github.com/foundry-rs/foundry/issues/5564
+forgetest_init!(repro_5564, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "ATest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+contract ATest is Test {
+    error MyError();
+    function testSelfMeteringRevert() public {
+        vm.pauseGasMetering();
+        vm.expectRevert(MyError.selector);
+        this.selfReverts();
+    }
+    function selfReverts() external {
+        vm.resumeGasMetering();
+        revert MyError();
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+[PASS] testSelfMeteringRevert() (gas: 3299)
+...
+"#]]);
+});
+
+// see https://github.com/foundry-rs/foundry/issues/4523
+forgetest_init!(repro_4523, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "ATest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract ATest is Test {
+    mapping(uint => bytes32) map;
+
+    function test_GasMeter () public {
+        vm.pauseGasMetering();
+        for (uint i = 0; i < 10000; i++) {
+            map[i] = keccak256(abi.encode(i));
+        }
+        vm.resumeGasMetering();
+
+        for (uint i = 0; i < 10000; i++) {
+            map[i] = keccak256(abi.encode(i));
+        }
+    }
+
+    function test_GasLeft () public {
+        for (uint i = 0; i < 10000; i++) {
+            map[i] = keccak256(abi.encode(i));
+        }
+
+        uint start = gasleft();
+        for (uint i = 0; i < 10000; i++) {
+            map[i] = keccak256(abi.encode(i));
+        }
+        console2.log("Gas cost:", start - gasleft());
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvvv"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Logs:
+  Gas cost: 5754479
+...
+[PASS] test_GasMeter() (gas: 5757137)
+...
+"#]]);
+});

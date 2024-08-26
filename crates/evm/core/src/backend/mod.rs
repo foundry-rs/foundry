@@ -50,6 +50,7 @@ pub use snapshot::{BackendSnapshot, RevertSnapshotAction, StateSnapshot};
 type ForkDB = CacheDB<SharedBackend>;
 
 /// Represents a numeric `ForkId` valid only for the existence of the `Backend`.
+///
 /// The difference between `ForkId` and `LocalForkId` is that `ForkId` tracks pairs of `endpoint +
 /// block` which can be reused by multiple tests, whereas the `LocalForkId` is unique within a test
 pub type LocalForkId = U256;

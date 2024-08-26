@@ -299,6 +299,7 @@ impl FuzzedCases {
 }
 
 /// Fixtures to be used for fuzz tests.
+///
 /// The key represents name of the fuzzed parameter, value holds possible fuzzed values.
 /// For example, for a fixture function declared as
 /// `function fixture_sender() external returns (address[] memory senders)`
