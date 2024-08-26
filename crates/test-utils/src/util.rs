@@ -883,28 +883,11 @@ impl TestCommand {
 
     /// Executes the command and returns the `(stdout, stderr)` of the output as lossy `String`s.
     ///
-    /// Expects the command to be successful.
-    #[track_caller]
-    pub fn output_lossy(&mut self) -> (String, String) {
-        let output = self.output();
-        (lossy_string(&output.stdout), lossy_string(&output.stderr))
-    }
-
-    /// Executes the command and returns the `(stdout, stderr)` of the output as lossy `String`s.
-    ///
     /// Does not expect the command to be successful.
     #[track_caller]
     pub fn unchecked_output_lossy(&mut self) -> (String, String) {
         let output = self.unchecked_output();
         (lossy_string(&output.stdout), lossy_string(&output.stderr))
-    }
-
-    /// Executes the command and returns the stderr as lossy `String`.
-    ///
-    /// **Note**: This function checks whether the command was successful.
-    #[track_caller]
-    pub fn stdout_lossy(&mut self) -> String {
-        lossy_string(&self.output().stdout)
     }
 
     /// Returns the output but does not expect that the command was successful

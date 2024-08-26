@@ -3,7 +3,7 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
-use foundry_test_utils::{rpc, ScriptOutcome, ScriptTester};
+use foundry_test_utils::{rpc, util::OutputExt, ScriptOutcome, ScriptTester};
 use regex::Regex;
 use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
@@ -184,7 +184,7 @@ contract GasWaster {
     }
 }
 contract DeployScript is Script {
-    function run() external returns (uint256 result, uint8) {
+    function run() external {
         vm.startBroadcast();
         GasWaster gasWaster = new GasWaster();
         gasWaster.wasteGas{gas: 500000}(200000);
@@ -215,11 +215,66 @@ contract DeployScript is Script {
         "--slow",
         "--broadcast",
         "--unlocked",
-    ]);
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to view
+ [FILE]:7:5:
+  |
+7 |     function wasteGas(uint256 minGas) public {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
 
-    let output = cmd.stdout_lossy();
-    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
-    assert!(output.contains("Gas limit was set in script to 500000"));
+Traces:
+  [81040] DeployScript::run()
+    ├─ [0] VM::startBroadcast()
+    │   └─ ← [Return] 
+    ├─ [45299] → new GasWaster@0x1c32f8818e38a50d37d1E98c72B9516a50985227
+    │   └─ ← [Return] 226 bytes of code
+    ├─ [226] GasWaster::wasteGas(200000 [2e5])
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
+
+
+Script ran successfully.
+
+## Setting up 1 EVM.
+==========================
+Simulated On-chain Traces:
+
+Gas limit was set in script to 500000
+  [45299] → new GasWaster@0x1c32f8818e38a50d37d1E98c72B9516a50985227
+    └─ ← [Return] 226 bytes of code
+
+  [226] GasWaster::wasteGas(200000 [2e5])
+    └─ ← [Stop] 
+
+
+==========================
+
+Chain 1
+
+Estimated gas price: [..]
+
+Estimated total gas used for script: [..]
+
+Estimated amount required: [..]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Transactions saved to: [..]
+
+Sensitive values saved to: [..]
+
+
+"#]]);
 });
 
 // Tests that the manually specified gas limit is used.
@@ -256,21 +311,26 @@ contract DeployScript is Script {
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
     cmd.set_current_dir(prj.root());
 
-    cmd.args([
-        "script",
-        &deploy_contract,
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--fork-url",
-        &handle.http_endpoint(),
-        "-vvvvv",
-        "--slow",
-        "--broadcast",
-        "--private-key",
-        &private_key,
-    ]);
+    let output = cmd
+        .args([
+            "script",
+            &deploy_contract,
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--fork-url",
+            &handle.http_endpoint(),
+            "-vvvvv",
+            "--slow",
+            "--broadcast",
+            "--private-key",
+            &private_key,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
 
-    let output = cmd.stdout_lossy();
+    println!("{}", output);
+
     assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
     assert!(output.contains("Gas limit was set in script to 500000"));
 });
@@ -388,22 +448,24 @@ contract DeployScript is Script {
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
     cmd.set_current_dir(prj.root());
 
-    cmd.args([
-        "script",
-        &deploy_contract,
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--fork-url",
-        &handle.http_endpoint(),
-        "-vvvvv",
-        "--broadcast",
-        "--slow",
-        "--skip-simulation",
-        "--private-key",
-        &private_key,
-    ]);
-
-    let output = cmd.stdout_lossy();
+    let output = cmd
+        .args([
+            "script",
+            &deploy_contract,
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--fork-url",
+            &handle.http_endpoint(),
+            "-vvvvv",
+            "--broadcast",
+            "--slow",
+            "--skip-simulation",
+            "--private-key",
+            &private_key,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
 
     assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
     assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
@@ -439,26 +501,28 @@ contract RunScript is Script {
     let run_script = prj.add_source("RunScript", &run_code).unwrap();
     let run_contract = run_script.display().to_string() + ":RunScript";
 
-    cmd.forge_fuse();
-    cmd.set_current_dir(prj.root());
-    cmd.args([
-        "script",
-        &run_contract,
-        "--root",
-        prj.root().to_str().unwrap(),
-        "--fork-url",
-        &handle.http_endpoint(),
-        "-vvvvv",
-        "--broadcast",
-        "--slow",
-        "--skip-simulation",
-        "--gas-estimate-multiplier",
-        "200",
-        "--private-key",
-        &private_key,
-    ]);
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "script",
+            &run_contract,
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--fork-url",
+            &handle.http_endpoint(),
+            "-vvvvv",
+            "--broadcast",
+            "--slow",
+            "--skip-simulation",
+            "--gas-estimate-multiplier",
+            "200",
+            "--private-key",
+            &private_key,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
 
-    let output = cmd.stdout_lossy();
     assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
     assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
 });
@@ -845,16 +909,21 @@ contract Script0 is Script {
             )
             .unwrap();
 
-    cmd.arg("script").arg(script).args([
-        "--tc",
-        "Script0",
-        "--sender",
-        "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
-        "--rpc-url",
-        handle.http_endpoint().as_str(),
-    ]);
-
-    assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
+    let output = cmd
+        .arg("script")
+        .arg(script)
+        .args([
+            "--tc",
+            "Script0",
+            "--sender",
+            "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("SIMULATION COMPLETE"));
 
     let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
         .find(|path| path.ends_with("run-latest.json"))
@@ -929,16 +998,21 @@ contract Script0 is Script {
         )
         .unwrap();
 
-    cmd.arg("script").arg(script).args([
-        "--tc",
-        "Script0",
-        "--sender",
-        "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
-        "--rpc-url",
-        handle.http_endpoint().as_str(),
-    ]);
-
-    assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE"));
+    let output = cmd
+        .arg("script")
+        .arg(script)
+        .args([
+            "--tc",
+            "Script0",
+            "--sender",
+            "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("SIMULATION COMPLETE"));
 
     let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
         .find(|file| file.ends_with("run-latest.json"))
@@ -1070,8 +1144,14 @@ contract ContractC {
         )
         .unwrap();
 
-    cmd.arg("script").arg(script).args(["--tc", "ScriptTxOrigin"]);
-    assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+    let output = cmd
+        .arg("script")
+        .arg(script)
+        .args(["--tc", "ScriptTxOrigin"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("Script ran successfully."));
 });
 
 forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, cmd| {
@@ -1116,8 +1196,14 @@ contract NestedCreateFail is Script {
         )
         .unwrap();
 
-    cmd.arg("script").arg(script).args(["--tc", "NestedCreateFail"]);
-    assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+    let output = cmd
+        .arg("script")
+        .arg(script)
+        .args(["--tc", "NestedCreateFail"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("Script ran successfully."));
 });
 
 forgetest_async!(assert_can_detect_target_contract_with_interfaces, |prj, cmd| {
@@ -1134,8 +1220,14 @@ interface Interface {}
         )
         .unwrap();
 
-    cmd.arg("script").arg(script);
-    assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+"#]]);
 });
 
 forgetest_async!(assert_can_detect_unlinked_target_with_libraries, |prj, cmd| {
@@ -1156,8 +1248,16 @@ contract Script {
         )
         .unwrap();
 
-    cmd.arg("script").arg(script);
-    assert!(cmd.stdout_lossy().contains("Script ran successfully."));
+    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+If you wish to simulate on-chain transactions pass a RPC URL.
+
+"#]]);
 });
 
 forgetest_async!(assert_can_resume_with_additional_contracts, |prj, cmd| {
@@ -1322,37 +1422,42 @@ contract SimpleScript is Script {
 
     // Firstly run script with non-zero gas prices to ensure that eth_feeHistory contains non-zero
     // values.
-    cmd.args([
-        "script",
-        "SimpleScript",
-        "--fork-url",
-        &handle.http_endpoint(),
-        "--sender",
-        format!("{dev:?}").as_str(),
-        "--broadcast",
-        "--unlocked",
-        "--with-gas-price",
-        "2000000",
-        "--priority-gas-price",
-        "100000",
-    ]);
-
-    let output = cmd.stdout_lossy();
+    let output = cmd
+        .args([
+            "script",
+            "SimpleScript",
+            "--fork-url",
+            &handle.http_endpoint(),
+            "--sender",
+            format!("{dev:?}").as_str(),
+            "--broadcast",
+            "--unlocked",
+            "--with-gas-price",
+            "2000000",
+            "--priority-gas-price",
+            "100000",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
 
     // Ensure that we can correctly estimate gas when base fee is zero but priority fee is not.
-    cmd.forge_fuse().args([
-        "script",
-        "SimpleScript",
-        "--fork-url",
-        &handle.http_endpoint(),
-        "--sender",
-        format!("{dev:?}").as_str(),
-        "--broadcast",
-        "--unlocked",
-    ]);
-
-    let output = cmd.stdout_lossy();
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "script",
+            "SimpleScript",
+            "--fork-url",
+            &handle.http_endpoint(),
+            "--sender",
+            format!("{dev:?}").as_str(),
+            "--broadcast",
+            "--unlocked",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
 });
 
@@ -1376,16 +1481,18 @@ contract SimpleScript is Script {
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    cmd.args([
-        "script",
-        "SimpleScript",
-        "--fork-url",
-        &handle.http_endpoint(),
-        "--broadcast",
-        "--unlocked",
-    ]);
-
-    let output = cmd.stdout_lossy();
+    let output = cmd
+        .args([
+            "script",
+            "SimpleScript",
+            "--fork-url",
+            &handle.http_endpoint(),
+            "--broadcast",
+            "--unlocked",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
 });
 
@@ -1463,9 +1570,21 @@ contract SimpleScript is Script {
         &url,
         "--sender",
         "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-    ]);
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to view
+  [FILE]:13:5:
+   |
+13 |     function run() external {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
 
-    cmd.stdout_lossy();
+Script ran successfully.
+
+"#]]);
 });
 
 // Asserts that running the same script twice only deploys library once.

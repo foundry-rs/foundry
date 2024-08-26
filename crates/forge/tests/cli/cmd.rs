@@ -1612,7 +1612,8 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let first_out =
+        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
     assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
 
     // ignore ContractTwo
@@ -1623,7 +1624,8 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let second_out =
+        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
     assert!(
         second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
     );
@@ -1640,7 +1642,8 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let third_out =
+        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
 });
 

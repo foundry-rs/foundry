@@ -379,7 +379,7 @@ casttest!(wallet_import_and_decrypt, |prj, cmd| {
     ]);
 
     // get the PK out of the output (last word in the output)
-    let decrypt_output = decrypt_output.stdout_lossy();
+    let decrypt_output = decrypt_output.assert_success().get_output().stdout_lossy();
     let private_key_string = decrypt_output.split_whitespace().last().unwrap();
     // check that the decrypted private key matches the imported private key
     let decrypted_private_key = B256::from_str(private_key_string).unwrap();
@@ -390,19 +390,24 @@ casttest!(wallet_import_and_decrypt, |prj, cmd| {
 // tests that `cast estimate` is working correctly.
 casttest!(estimate_function_gas, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
-    cmd.args([
-        "estimate",
-        "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", // vitalik.eth
-        "--value",
-        "100",
-        "deposit()",
-        "--rpc-url",
-        eth_rpc_url.as_str(),
-    ])
-    .assert_success();
 
     // ensure we get a positive non-error value for gas estimate
-    let output: u32 = cmd.stdout_lossy().trim().parse().unwrap();
+    let output: u32 = cmd
+        .args([
+            "estimate",
+            "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", // vitalik.eth
+            "--value",
+            "100",
+            "deposit()",
+            "--rpc-url",
+            eth_rpc_url.as_str(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .parse()
+        .unwrap();
     assert!(output.ge(&0));
 });
 
@@ -411,39 +416,45 @@ casttest!(estimate_contract_deploy_gas, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
     // sample contract code bytecode. Wouldn't run but is valid bytecode that the estimate method
     // accepts and could be deployed.
-    cmd.args([
-        "estimate",
-        "--rpc-url",
-        eth_rpc_url.as_str(),
-        "--create",
-        "0000",
-        "ERC20(uint256,string,string)",
-        "100",
-        "Test",
-        "TST",
-    ])
-    .assert_success();
+    let output = cmd
+        .args([
+            "estimate",
+            "--rpc-url",
+            eth_rpc_url.as_str(),
+            "--create",
+            "0000",
+            "ERC20(uint256,string,string)",
+            "100",
+            "Test",
+            "TST",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
 
     // ensure we get a positive non-error value for gas estimate
-    let output: u32 = cmd.stdout_lossy().trim().parse().unwrap();
+    let output: u32 = output.trim().parse().unwrap();
     assert!(output > 0);
 });
 
 // tests that the `cast upload-signatures` command works correctly
 casttest!(upload_signatures, |_prj, cmd| {
     // test no prefix is accepted as function
-    cmd.args(["upload-signature", "transfer(address,uint256)"]);
-    let output = cmd.stdout_lossy();
+    let output = cmd
+        .args(["upload-signature", "transfer(address,uint256)"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(output.contains("Function transfer(address,uint256): 0xa9059cbb"), "{}", output);
 
     // test event prefix
     cmd.args(["upload-signature", "event Transfer(address,uint256)"]);
-    let output = cmd.stdout_lossy();
+    let output = cmd.assert_success().get_output().stdout_lossy();
     assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
 
     // test error prefix
     cmd.args(["upload-signature", "error ERC20InsufficientBalance(address,uint256,uint256)"]);
-    let output = cmd.stdout_lossy();
+    let output = cmd.assert_success().get_output().stdout_lossy();
     assert!(
         output.contains("Function ERC20InsufficientBalance(address,uint256,uint256): 0xe450d38c"),
         "{}",
@@ -457,7 +468,7 @@ casttest!(upload_signatures, |_prj, cmd| {
         "transfer(address,uint256)",
         "approve(address,uint256)",
     ]);
-    let output = cmd.stdout_lossy();
+    let output = cmd.assert_success().get_output().stdout_lossy();
     assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
     assert!(output.contains("Function transfer(address,uint256): 0xa9059cbb"), "{}", output);
     assert!(output.contains("Function approve(address,uint256): 0x095ea7b3"), "{}", output);
@@ -475,7 +486,7 @@ casttest!(upload_signatures, |_prj, cmd| {
             .unwrap()
             .as_str(),
     ]);
-    let output = cmd.stdout_lossy();
+    let output = cmd.assert_success().get_output().stdout_lossy();
     assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
     assert!(output.contains("Function transfer(address,uint256): 0xa9059cbb"), "{}", output);
     assert!(output.contains("Function approve(address,uint256): 0x095ea7b3"), "{}", output);
@@ -626,11 +637,11 @@ casttest!(to_base, |_prj, cmd| {
             if subcmd == "--to-base" {
                 for base in ["bin", "oct", "dec", "hex"] {
                     cmd.cast_fuse().args([subcmd, value, base]);
-                    assert!(!cmd.stdout_lossy().trim().is_empty());
+                    assert!(!cmd.assert_success().get_output().stdout_lossy().trim().is_empty());
                 }
             } else {
                 cmd.cast_fuse().args([subcmd, value]);
-                assert!(!cmd.stdout_lossy().trim().is_empty());
+                assert!(!cmd.assert_success().get_output().stdout_lossy().trim().is_empty());
             }
         }
     }
@@ -1210,13 +1221,21 @@ unsupported formula ID: unknown
 
 casttest!(block_number, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
-    let s = cmd.args(["block-number", "--rpc-url", eth_rpc_url.as_str()]).stdout_lossy();
+    let s = cmd
+        .args(["block-number", "--rpc-url", eth_rpc_url.as_str()])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(s.trim().parse::<u64>().unwrap() > 0, "{s}")
 });
 
 casttest!(block_number_latest, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
-    let s = cmd.args(["block-number", "--rpc-url", eth_rpc_url.as_str(), "latest"]).stdout_lossy();
+    let s = cmd
+        .args(["block-number", "--rpc-url", eth_rpc_url.as_str(), "latest"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(s.trim().parse::<u64>().unwrap() > 0, "{s}")
 });
 
@@ -1229,6 +1248,8 @@ casttest!(block_number_hash, |_prj, cmd| {
             eth_rpc_url.as_str(),
             "0x88e96d4537bea4d9c05d12549907b32561d3bf31f45aae734cdc119f13406cb6",
         ])
+        .assert_success()
+        .get_output()
         .stdout_lossy();
     assert_eq!(s.trim().parse::<u64>().unwrap(), 1, "{s}")
 });

@@ -361,9 +361,8 @@ contract Greeter {}
     let config = Config { solc: Some(OTHER_SOLC_VERSION.into()), ..Default::default() };
     prj.write_config(config);
 
-    cmd.arg("build");
-
-    assert!(cmd.stdout_lossy().contains("Compiler run successful!"));
+    let output = cmd.arg("build").assert_success().get_output().stdout_lossy();
+    assert!(output.contains("Compiler run successful!"));
 });
 
 // tests that `--use <solc>` works
@@ -377,15 +376,21 @@ contract Foo {}
     )
     .unwrap();
 
-    cmd.args(["build", "--use", OTHER_SOLC_VERSION]);
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiler run successful"));
+    let output = cmd
+        .args(["build", "--use", OTHER_SOLC_VERSION])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("Compiler run successful"));
 
-    cmd.forge_fuse()
+    let output = cmd
+        .forge_fuse()
         .args(["build", "--force", "--use", &format!("solc:{OTHER_SOLC_VERSION}")])
-        .root_arg();
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiler run successful"));
+        .root_arg()
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("Compiler run successful"));
 
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
@@ -397,9 +402,15 @@ Error:
 
     // `OTHER_SOLC_VERSION` was installed in previous step, so we can use the path to this directly
     let local_solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
-    cmd.forge_fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiler run successful"));
+    let output = cmd
+        .forge_fuse()
+        .args(["build", "--force", "--use"])
+        .arg(local_solc.solc)
+        .root_arg()
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("Compiler run successful"));
 });
 
 // test to ensure yul optimizer can be set as intended
@@ -722,8 +733,11 @@ forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
 
 // tests if evm version is normalized for config output
 forgetest!(normalize_config_evm_version, |_prj, cmd| {
-    cmd.args(["config", "--use", "0.8.0", "--json"]);
-    let output = cmd.stdout_lossy();
+    let output = cmd
+        .args(["config", "--use", "0.8.0", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Istanbul);
 });
