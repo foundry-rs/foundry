@@ -382,8 +382,8 @@ casttest!(estimate_function_gas, |_prj, cmd| {
     .assert_success();
 
     // ensure we get a positive non-error value for gas estimate
-    let out: u32 = cmd.stdout_lossy().trim().parse().unwrap();
-    assert!(out.ge(&0));
+    let output: u32 = cmd.stdout_lossy().trim().parse().unwrap();
+    assert!(output.ge(&0));
 });
 
 // tests that `cast estimate --create` is working correctly.
@@ -405,8 +405,8 @@ casttest!(estimate_contract_deploy_gas, |_prj, cmd| {
     .assert_success();
 
     // ensure we get a positive non-error value for gas estimate
-    let gas: u32 = cmd.stdout_lossy().trim().parse().unwrap();
-    assert!(gas > 0);
+    let output: u32 = cmd.stdout_lossy().trim().parse().unwrap();
+    assert!(output > 0);
 });
 
 // tests that the `cast upload-signatures` command works correctly
@@ -414,19 +414,16 @@ casttest!(upload_signatures, |_prj, cmd| {
     // test no prefix is accepted as function
     cmd.args(["upload-signature", "transfer(address,uint256)"]);
     let output = cmd.stdout_lossy();
-
     assert!(output.contains("Function transfer(address,uint256): 0xa9059cbb"), "{}", output);
 
     // test event prefix
     cmd.args(["upload-signature", "event Transfer(address,uint256)"]);
     let output = cmd.stdout_lossy();
-
     assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
 
     // test error prefix
     cmd.args(["upload-signature", "error ERC20InsufficientBalance(address,uint256,uint256)"]);
     let output = cmd.stdout_lossy();
-
     assert!(
         output.contains("Function ERC20InsufficientBalance(address,uint256,uint256): 0xe450d38c"),
         "{}",
@@ -441,7 +438,6 @@ casttest!(upload_signatures, |_prj, cmd| {
         "approve(address,uint256)",
     ]);
     let output = cmd.stdout_lossy();
-
     assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
     assert!(output.contains("Function transfer(address,uint256): 0xa9059cbb"), "{}", output);
     assert!(output.contains("Function approve(address,uint256): 0x095ea7b3"), "{}", output);
@@ -460,7 +456,6 @@ casttest!(upload_signatures, |_prj, cmd| {
             .as_str(),
     ]);
     let output = cmd.stdout_lossy();
-
     assert!(output.contains("Event Transfer(address,uint256): 0x69ca02dd4edd7bf0a4abb9ed3b7af3f14778db5d61921c7dc7cd545266326de2"), "{}", output);
     assert!(output.contains("Function transfer(address,uint256): 0xa9059cbb"), "{}", output);
     assert!(output.contains("Function approve(address,uint256): 0x095ea7b3"), "{}", output);
@@ -475,14 +470,18 @@ casttest!(upload_signatures, |_prj, cmd| {
 
 // tests that the `cast to-rlp` and `cast from-rlp` commands work correctly
 casttest!(rlp, |_prj, cmd| {
-    cmd.args(["--to-rlp", "[\"0xaa\", [[\"bb\"]], \"0xcc\"]"]);
-    let out = cmd.stdout_lossy();
-    assert!(out.contains("0xc881aac3c281bb81cc"), "{}", out);
+    cmd.args(["--to-rlp", "[\"0xaa\", [[\"bb\"]], \"0xcc\"]"]).assert_success().stdout_eq(str![[
+        r#"
+0xc881aac3c281bb81cc
+
+"#
+    ]]);
 
     cmd.cast_fuse();
-    cmd.args(["--from-rlp", "0xcbc58455556666c0c0c2c1c0"]);
-    let out = cmd.stdout_lossy();
-    assert!(out.contains("[[\"0x55556666\"],[],[],[[[]]]]"), "{}", out);
+    cmd.args(["--from-rlp", "0xcbc58455556666c0c0c2c1c0"]).assert_success().stdout_eq(str![[r#"
+[["0x55556666"],[],[],[[[]]]]
+
+"#]]);
 });
 
 // test for cast_rpc without arguments
@@ -622,25 +621,33 @@ casttest!(receipt_revert_reason, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
 
     // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
-    cmd.cast_fuse().args([
-        "receipt",
-        "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
-        "--rpc-url",
-        rpc.as_str(),
-    ]);
+    cmd.cast_fuse()
+        .args([
+            "receipt",
+            "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
+            "--rpc-url",
+            rpc.as_str(),
+        ])
+        .assert_success();
     let output = cmd.stdout_lossy();
     assert!(!output.contains("revertReason"));
 
     // <https://etherscan.io/tx/0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c>
-    cmd.cast_fuse().args([
-        "receipt",
-        "0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c",
-        "--rpc-url",
-        rpc.as_str(),
-    ]);
-    let output = cmd.stdout_lossy();
-    assert!(output.contains("revertReason"));
-    assert!(output.contains("Transaction too old"));
+    cmd.cast_fuse()
+        .args([
+            "receipt",
+            "0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c",
+            "--rpc-url",
+            rpc.as_str(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+status                  0 (failed)
+...
+revertReason            Transaction too old, data: [..]
+
+"#]]);
 });
 
 // tests that `cast --parse-bytes32-address` command is working correctly.
@@ -648,9 +655,12 @@ casttest!(parse_bytes32_address, |_prj, cmd| {
     cmd.args([
         "--parse-bytes32-address",
         "0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045",
-    ]);
-    let output = cmd.stdout_lossy();
-    assert_eq!(output.trim(), "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+
+"#]]);
 });
 
 casttest!(access_list, |_prj, cmd| {
@@ -664,12 +674,26 @@ casttest!(access_list, |_prj, cmd| {
         rpc.as_str(),
         "--gas-limit", // need to set this for alchemy.io to avoid "intrinsic gas too low" error
         "100000",
-    ]);
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[GAS]
+access list:
+- address: 0xBb2b8038a1640196FbE3e38816F3e67Cba72D940
+  keys:
+    0x000000000000000000000000000000000000000000000000000000000000000c
+    0x0000000000000000000000000000000000000000000000000000000000000006
+    0x0000000000000000000000000000000000000000000000000000000000000007
+    0x0000000000000000000000000000000000000000000000000000000000000008
+- address: 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599
+  keys:
+    0x0d2a19d3ac39dc6cc6fd07423195495e18679bd8c7dd610aa1db7cd784a683a8
+    0x0000000000000000000000000000000000000000000000000000000000000005
+- address: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+  keys:
+    0x7fba2702a7d6e85ac783a88eacdc48e51310443458071f6db9ac66f8ca7068b8
 
-    let output = cmd.stdout_lossy();
-    assert!(output.contains("address: 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"));
-    assert!(output.contains("0x0d2a19d3ac39dc6cc6fd07423195495e18679bd8c7dd610aa1db7cd784a683a8"));
-    assert!(output.contains("0x7fba2702a7d6e85ac783a88eacdc48e51310443458071f6db9ac66f8ca7068b8"));
+"#]]);
 });
 
 casttest!(logs_topics, |_prj, cmd| {
@@ -821,12 +845,10 @@ casttest!(mktx, |_prj, cmd| {
         "--priority-gas-price",
         "1000000000",
         "0x0000000000000000000000000000000000000001",
-    ]);
-    let output = cmd.stdout_lossy();
-    assert_eq!(
-        output.trim(),
-        "0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
-    );
+    ]).assert_success().stdout_eq(str![[r#"
+0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a
+
+"#]]);
 });
 
 // ensure recipient or code is required
@@ -882,43 +904,39 @@ casttest!(mktx_signer_from_match, |_prj, cmd| {
         "--priority-gas-price",
         "1000000000",
         "0x0000000000000000000000000000000000000001",
-    ]);
-    let output = cmd.stdout_lossy();
-    assert_eq!(
-        output.trim(),
-        "0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c001a0cce9a61187b5d18a89ecd27ec675e3b3f10d37f165627ef89a15a7fe76395ce8a07537f5bffb358ffbef22cda84b1c92f7211723f9e09ae037e81686805d3e5505"
-    );
+    ]).assert_success().stdout_eq(str![[r#"
+0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c001a0cce9a61187b5d18a89ecd27ec675e3b3f10d37f165627ef89a15a7fe76395ce8a07537f5bffb358ffbef22cda84b1c92f7211723f9e09ae037e81686805d3e5505
+
+"#]]);
 });
 
 // tests that the raw encoded transaction is returned
 casttest!(tx_raw, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
 
-    // <https://etherscan.io/tx/0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
+    // <https://etherscan.io/getRawTx?tx=0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
     cmd.cast_fuse().args([
         "tx",
         "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
         "raw",
         "--rpc-url",
         rpc.as_str(),
-    ]);
-    let output = cmd.stdout_lossy();
+    ]).assert_success().stdout_eq(str![[r#"
+0xf86d824c548502743b65088275309491da5bf3f8eb72724e6f50ec6c3d199c6355c59c87a0a73f33e9e4cc8025a0428518b1748a08bbeb2392ea055b418538944d30adfc2accbbfa8362a401d3a4a07d6093ab2580efd17c11b277de7664fce56e6953cae8e925bec3313399860470
+
+"#]]);
 
     // <https://etherscan.io/getRawTx?tx=0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
-    assert_eq!(
-        output.trim(),
-        "0xf86d824c548502743b65088275309491da5bf3f8eb72724e6f50ec6c3d199c6355c59c87a0a73f33e9e4cc8025a0428518b1748a08bbeb2392ea055b418538944d30adfc2accbbfa8362a401d3a4a07d6093ab2580efd17c11b277de7664fce56e6953cae8e925bec3313399860470"
-    );
-
     cmd.cast_fuse().args([
         "tx",
         "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
         "--raw",
         "--rpc-url",
         rpc.as_str(),
-    ]);
-    let output2 = cmd.stdout_lossy();
-    assert_eq!(output, output2);
+    ]).assert_success().stdout_eq(str![[r#"
+0xf86d824c548502743b65088275309491da5bf3f8eb72724e6f50ec6c3d199c6355c59c87a0a73f33e9e4cc8025a0428518b1748a08bbeb2392ea055b418538944d30adfc2accbbfa8362a401d3a4a07d6093ab2580efd17c11b277de7664fce56e6953cae8e925bec3313399860470
+
+"#]]);
 });
 
 // ensure receipt or code is required
@@ -936,48 +954,54 @@ Must specify a recipient address or contract code to deploy
 });
 
 casttest!(storage, |_prj, cmd| {
-    let empty = "0x0000000000000000000000000000000000000000000000000000000000000000";
+    let rpc = next_http_rpc_endpoint();
+    cmd.cast_fuse()
+        .args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000000
+
+"#]]);
 
     let rpc = next_http_rpc_endpoint();
-    cmd.cast_fuse().args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc]);
-    assert_eq!(cmd.stdout_lossy().trim(), empty);
+    cmd.cast_fuse()
+        .args(["storage", "vitalik.eth", "0x01", "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000000
 
-    let rpc = next_http_rpc_endpoint();
-    cmd.cast_fuse().args(["storage", "vitalik.eth", "0x01", "--rpc-url", &rpc]);
-    assert_eq!(cmd.stdout_lossy().trim(), empty);
+"#]]);
 
     let rpc = next_http_rpc_endpoint();
     let usdt = "0xdac17f958d2ee523a2206206994597c13d831ec7";
     let decimals_slot = "0x09";
-    let six = "0x0000000000000000000000000000000000000000000000000000000000000006";
-    cmd.cast_fuse().args(["storage", usdt, decimals_slot, "--rpc-url", &rpc]);
-    assert_eq!(cmd.stdout_lossy().trim(), six);
+    cmd.cast_fuse()
+        .args(["storage", usdt, decimals_slot, "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000006
+
+"#]]);
 
     let rpc = next_http_rpc_endpoint();
     let total_supply_slot = "0x01";
-    let issued = "0x000000000000000000000000000000000000000000000000000000174876e800";
     let block_before = "4634747";
     let block_after = "4634748";
-    cmd.cast_fuse().args([
-        "storage",
-        usdt,
-        total_supply_slot,
-        "--rpc-url",
-        &rpc,
-        "--block",
-        block_before,
-    ]);
-    assert_eq!(cmd.stdout_lossy().trim(), empty);
-    cmd.cast_fuse().args([
-        "storage",
-        usdt,
-        total_supply_slot,
-        "--rpc-url",
-        &rpc,
-        "--block",
-        block_after,
-    ]);
-    assert_eq!(cmd.stdout_lossy().trim(), issued);
+    cmd.cast_fuse()
+        .args(["storage", usdt, total_supply_slot, "--rpc-url", &rpc, "--block", block_before])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x0000000000000000000000000000000000000000000000000000000000000000
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["storage", usdt, total_supply_slot, "--rpc-url", &rpc, "--block", block_after])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000174876e800
+
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
