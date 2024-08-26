@@ -32,8 +32,8 @@ use itertools::Itertools;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use revm::{
     interpreter::{
-        opcode, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
-        Gas, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+        opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
+        EOFCreateInputs, Gas, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
     primitives::{BlockEnv, CreateScheme, EVMError},
     EvmContext, InnerEvmContext, Inspector,
@@ -979,7 +979,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    fn log(&mut self, _interpreter: &mut Interpreter, _context: &mut EvmContext<DB>, log: &Log) {
+    #[inline]
+    fn step_end(&mut self, interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>) {
+        if self.pause_gas_metering {
+            self.meter_gas_end(interpreter);
+        }
+    }
+
+    fn log(&mut self, _interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>, log: &Log) {
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, log);
         }
@@ -994,12 +1001,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    fn call(
-        &mut self,
-        context: &mut EvmContext<DB>,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
-        Self::call_with_executor(self, context, inputs, &mut TransparentCheatcodesExecutor)
+    fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
+        Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
     }
 
     fn call_end(
@@ -1348,13 +1351,13 @@ impl Cheatcodes {
             // Record frame paused gas.
             self.paused_frame_gas.push(interpreter.gas);
         }
+    }
 
+    #[cold]
+    fn meter_gas_end(&mut self, interpreter: &mut Interpreter) {
         // Remove recorded gas if we exit frame.
-        match interpreter.current_opcode() {
-            opcode::STOP | opcode::RETURN | opcode::REVERT | opcode::SELFDESTRUCT => {
-                self.paused_frame_gas.pop();
-            }
-            _ => {}
+        if interpreter.instruction_result != InstructionResult::Continue {
+            self.paused_frame_gas.pop();
         }
     }
 
@@ -1363,11 +1366,11 @@ impl Cheatcodes {
     fn record_accesses(&mut self, interpreter: &mut Interpreter) {
         let Some(access) = &mut self.accesses else { return };
         match interpreter.current_opcode() {
-            opcode::SLOAD => {
+            op::SLOAD => {
                 let key = try_or_return!(interpreter.stack().peek(0));
                 access.record_read(interpreter.contract().target_address, key);
             }
-            opcode::SSTORE => {
+            op::SSTORE => {
                 let key = try_or_return!(interpreter.stack().peek(0));
                 access.record_write(interpreter.contract().target_address, key);
             }
@@ -1383,7 +1386,7 @@ impl Cheatcodes {
     ) {
         let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         match interpreter.current_opcode() {
-            opcode::SELFDESTRUCT => {
+            op::SELFDESTRUCT => {
                 // Ensure that we're not selfdestructing a context recording was initiated on
                 let Some(last) = account_accesses.last_mut() else { return };
 
@@ -1422,7 +1425,7 @@ impl Cheatcodes {
                 });
             }
 
-            opcode::SLOAD => {
+            op::SLOAD => {
                 let Some(last) = account_accesses.last_mut() else { return };
 
                 let key = try_or_return!(interpreter.stack().peek(0));
@@ -1447,7 +1450,7 @@ impl Cheatcodes {
                 };
                 append_storage_access(last, access, ecx.journaled_state.depth());
             }
-            opcode::SSTORE => {
+            op::SSTORE => {
                 let Some(last) = account_accesses.last_mut() else { return };
 
                 let key = try_or_return!(interpreter.stack().peek(0));
@@ -1474,12 +1477,12 @@ impl Cheatcodes {
             }
 
             // Record account accesses via the EXT family of opcodes
-            opcode::EXTCODECOPY | opcode::EXTCODESIZE | opcode::EXTCODEHASH | opcode::BALANCE => {
+            op::EXTCODECOPY | op::EXTCODESIZE | op::EXTCODEHASH | op::BALANCE => {
                 let kind = match interpreter.current_opcode() {
-                    opcode::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
-                    opcode::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,
-                    opcode::EXTCODEHASH => crate::Vm::AccountAccessKind::Extcodehash,
-                    opcode::BALANCE => crate::Vm::AccountAccessKind::Balance,
+                    op::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
+                    op::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,
+                    op::EXTCODEHASH => crate::Vm::AccountAccessKind::Extcodehash,
+                    op::BALANCE => crate::Vm::AccountAccessKind::Balance,
                     _ => unreachable!(),
                 };
                 let address =
@@ -1548,7 +1551,7 @@ impl Cheatcodes {
                     //    OPERATIONS THAT CAN EXPAND/MUTATE MEMORY BY WRITING     //
                     ////////////////////////////////////////////////////////////////
 
-                    opcode::MSTORE => {
+                    op::MSTORE => {
                         // The offset of the mstore operation is at the top of the stack.
                         let offset = try_or_return!(interpreter.stack().peek(0)).saturating_to::<u64>();
 
@@ -1570,7 +1573,7 @@ impl Cheatcodes {
                             return
                         }
                     }
-                    opcode::MSTORE8 => {
+                    op::MSTORE8 => {
                         // The offset of the mstore8 operation is at the top of the stack.
                         let offset = try_or_return!(interpreter.stack().peek(0)).saturating_to::<u64>();
 
@@ -1586,7 +1589,7 @@ impl Cheatcodes {
                     //        OPERATIONS THAT CAN EXPAND MEMORY BY READING        //
                     ////////////////////////////////////////////////////////////////
 
-                    opcode::MLOAD => {
+                    op::MLOAD => {
                         // The offset of the mload operation is at the top of the stack
                         let offset = try_or_return!(interpreter.stack().peek(0)).saturating_to::<u64>();
 
@@ -1605,7 +1608,7 @@ impl Cheatcodes {
                     //          OPERATIONS WITH OFFSET AND SIZE ON STACK          //
                     ////////////////////////////////////////////////////////////////
 
-                    opcode::CALL => {
+                    op::CALL => {
                         // The destination offset of the operation is the fifth element on the stack.
                         let dest_offset = try_or_return!(interpreter.stack().peek(5)).saturating_to::<u64>();
 
@@ -1641,7 +1644,7 @@ impl Cheatcodes {
                         }
                     }
 
-                    $(opcode::$opcode => {
+                    $(op::$opcode => {
                         // The destination offset of the operation.
                         let dest_offset = try_or_return!(interpreter.stack().peek($offset_depth)).saturating_to::<u64>();
 
