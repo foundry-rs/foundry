@@ -118,7 +118,7 @@ impl SparsedTraceArena {
                                     remove = false;
                                 }
 
-                                return false;
+                                false
                             });
                         }
                         _ => {}
@@ -135,10 +135,8 @@ impl SparsedTraceArena {
                     }
                 }
 
-                let mut offset = 0;
-                for item_idx in items_to_remove {
+                for (offset, item_idx) in items_to_remove.into_iter().enumerate() {
                     nodes[node_idx].ordering.remove(item_idx - offset - 1);
-                    offset += 1;
                 }
             }
 

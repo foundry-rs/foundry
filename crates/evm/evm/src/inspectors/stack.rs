@@ -319,8 +319,8 @@ impl CheatcodesExecutor for InspectorStackInner {
         InspectorStackRefMut { cheatcodes: Some(cheats), inner: self }
     }
 
-    fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
-        self.tracer.as_mut()
+    fn tracing_inspector(&mut self) -> Option<&mut Option<TracingInspector>> {
+        Some(&mut self.tracer)
     }
 }
 

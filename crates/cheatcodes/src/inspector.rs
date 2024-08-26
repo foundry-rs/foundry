@@ -153,7 +153,8 @@ pub trait CheatcodesExecutor {
         self.get_inspector::<DB>(ccx.state).console_log(message);
     }
 
-    fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
+    /// Returns a mutable reference to the tracing inspector if it is available.
+    fn tracing_inspector(&mut self) -> Option<&mut Option<TracingInspector>> {
         None
     }
 }
