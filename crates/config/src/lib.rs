@@ -5024,6 +5024,7 @@ mod tests {
                 [vyper]
                 optimize = "codesize"
                 path = "/path/to/vyper"
+                experimental_codegen = true
             "#,
             )?;
 
@@ -5032,7 +5033,8 @@ mod tests {
                 config.vyper,
                 VyperConfig {
                     optimize: Some(VyperOptimizationMode::Codesize),
-                    path: Some("/path/to/vyper".into())
+                    path: Some("/path/to/vyper".into()),
+                    experimental_codegen: Some(true),
                 }
             );
 
