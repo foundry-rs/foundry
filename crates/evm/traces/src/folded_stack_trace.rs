@@ -24,11 +24,12 @@ impl EvmFoldedStackTraceBuilder {
         self.fst.build()
     }
 
-    /// Creates an entry for a EVM CALL in the folded stack trace.
+    /// Creates an entry for a EVM CALL in the folded stack trace. This method recursively processes
+    /// all the children nodes of the call node and at the end it exits.
     pub fn process_call_node(&mut self, nodes: &[CallTraceNode], idx: usize) {
         let node = &nodes[idx];
 
-        let label = if node.trace.kind.is_any_create() {
+        let func_name = if node.trace.kind.is_any_create() {
             let default_contract_name = "Contract".to_string();
             let contract_name = node.trace.decoded.label.as_ref().unwrap_or(&default_contract_name);
             format!("new {contract_name}")
@@ -47,9 +48,9 @@ impl EvmFoldedStackTraceBuilder {
             }
         };
 
-        self.fst.enter(label, node.trace.gas_used as i64);
+        self.fst.enter(func_name, node.trace.gas_used as i64);
 
-        // Track step exits to do in this call context
+        // Track internal function step exits to do in this call context.
         let mut step_exits = vec![];
 
         // Process children nodes.
@@ -76,7 +77,9 @@ impl EvmFoldedStackTraceBuilder {
         self.fst.exit();
     }
 
-    /// Creates an entry for an internal function call in the folded stack trace.
+    /// Creates an entry for an internal function call in the folded stack trace. This method only
+    /// enters the function in the folded stack trace, we cannot exit since we need to exit at a
+    /// future step. Hence, we keep track of the step end index in the `step_exits`.
     fn process_step(
         &mut self,
         steps: &[CallTraceStep],
@@ -111,9 +114,9 @@ impl EvmFoldedStackTraceBuilder {
 /// Helps to translate a function enter-exit flow into a folded stack trace.
 ///
 /// Example:
-/// fn top() { child_a(); child_b() } // consumes 500 cpu cycles
-/// fn child_a() {} // consumes 100 cpu cycles
-/// fn child_b() {} // consumes 200 cpu cycles
+/// fn top() { child_a(); child_b() } // consumes 500 gas
+/// fn child_a() {} // consumes 100 gas
+/// fn child_b() {} // consumes 200 gas
 ///
 /// For execution of the `top` function looks like:
 /// 1. enter `top`
@@ -185,7 +188,7 @@ impl FoldedStackTraceBuilder {
 
     /// Subtracts gas consumed by the children function calls from the parent function calls.
     fn subtract_children(&mut self) {
-        // Iterate over each trace to find the children and subtract their values from the parents
+        // Iterate over each trace to find the children and subtract their values from the parents.
         for i in 0..self.traces.len() {
             let (left, right) = self.traces.split_at_mut(i);
             let TraceEntry { names, gas } = &right[0];
