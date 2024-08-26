@@ -1366,3 +1366,31 @@ Logs:
 ...
 "#]]);
 });
+
+// https://github.com/foundry-rs/foundry/issues/4370
+forgetest_init!(repro_4370, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "ATest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+contract ATest is Test {
+    uint a;
+    function test_negativeGas () public {
+        vm.pauseGasMetering();
+        a = 100;
+        vm.resumeGasMetering();
+        delete a;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+[PASS] test_negativeGas() (gas: 3252)
+...
+"#]]);
+});

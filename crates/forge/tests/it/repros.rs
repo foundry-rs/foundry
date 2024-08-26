@@ -363,7 +363,12 @@ test_repro!(8287);
 test_repro!(8168);
 
 // https://github.com/foundry-rs/foundry/issues/8383
-test_repro!(8383);
+test_repro!(8383, false, None, |res| {
+    let mut res = res.remove("default/repros/Issue8383.t.sol:Issue8383Test").unwrap();
+    let test = res.test_results.remove("testP256VerifyOutOfBounds()").unwrap();
+    assert_eq!(test.status, TestStatus::Success);
+    assert!(test.short_result("").contains("(gas: 3103)"));
+});
 
 // https://github.com/foundry-rs/foundry/issues/1543
 test_repro!(1543);

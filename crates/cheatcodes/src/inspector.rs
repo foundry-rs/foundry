@@ -195,6 +195,28 @@ pub struct BroadcastableTransaction {
     pub transaction: TransactionMaybeSigned,
 }
 
+/// Holds gas metering state.
+#[derive(Clone, Debug, Default)]
+pub struct GasMetering {
+    /// True if gas metering is paused.
+    pub paused: bool,
+    /// True if gas metering was resumed during the test.
+    pub resumed: bool,
+    /// Stores frames paused gas.
+    pub paused_frames: Vec<Gas>,
+}
+
+impl GasMetering {
+    /// Resume paused gas metering.
+    pub fn resume(&mut self) {
+        if self.paused {
+            self.paused = false;
+            self.resumed = true;
+        }
+        self.paused_frames.clear();
+    }
+}
+
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 
@@ -293,11 +315,8 @@ pub struct Cheatcodes {
     /// All recorded ETH `deal`s.
     pub eth_deals: Vec<DealRecord>,
 
-    /// If true then gas metering is paused.
-    pub pause_gas_metering: bool,
-
-    /// Stores frames paused gas.
-    pub paused_frame_gas: Vec<Gas>,
+    /// Gas metering state.
+    pub gas_metering: GasMetering,
 
     /// Mapping slots.
     pub mapping_slots: Option<HashMap<Address, MappingSlots>>,
@@ -346,8 +365,7 @@ impl Cheatcodes {
             context: Default::default(),
             serialized_jsons: Default::default(),
             eth_deals: Default::default(),
-            pause_gas_metering: false,
-            paused_frame_gas: Default::default(),
+            gas_metering: Default::default(),
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
@@ -943,9 +961,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             ecx.env.tx.gas_price = gas_price;
         }
 
-        // Record gas for current frame if gas metering is paused.
-        if self.pause_gas_metering {
-            self.paused_frame_gas.push(interpreter.gas);
+        // Record gas for current frame.
+        if self.gas_metering.paused {
+            self.gas_metering.paused_frames.push(interpreter.gas);
         }
     }
 
@@ -954,7 +972,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         self.pc = interpreter.program_counter();
 
         // `pauseGasMetering`: reset interpreter gas.
-        if self.pause_gas_metering {
+        if self.gas_metering.paused {
             self.meter_gas(interpreter);
         }
 
@@ -981,8 +999,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
     #[inline]
     fn step_end(&mut self, interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>) {
-        if self.pause_gas_metering {
+        if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
+        }
+
+        if self.gas_metering.resumed {
+            self.meter_gas_check(interpreter);
         }
     }
 
@@ -1344,24 +1366,33 @@ impl<DB: DatabaseExt> InspectorExt<DB> for Cheatcodes {
 impl Cheatcodes {
     #[cold]
     fn meter_gas(&mut self, interpreter: &mut Interpreter) {
-        if let Some(paused_gas) = self.paused_frame_gas.last() {
+        if let Some(paused_gas) = self.gas_metering.paused_frames.last() {
             // Keep gas constant if paused.
             interpreter.gas = *paused_gas;
         } else {
             // Record frame paused gas.
-            self.paused_frame_gas.push(interpreter.gas);
+            self.gas_metering.paused_frames.push(interpreter.gas);
         }
     }
 
     #[cold]
     fn meter_gas_end(&mut self, interpreter: &mut Interpreter) {
-        fn will_exit(ir: InstructionResult) -> bool {
-            !matches!(ir, InstructionResult::Continue | InstructionResult::CallOrCreate)
-        }
-
         // Remove recorded gas if we exit frame.
         if will_exit(interpreter.instruction_result) {
-            self.paused_frame_gas.pop();
+            self.gas_metering.paused_frames.pop();
+        }
+    }
+
+    #[cold]
+    fn meter_gas_check(&mut self, interpreter: &mut Interpreter) {
+        if will_exit(interpreter.instruction_result) {
+            // Reconcile gas if spent is less than refunded.
+            // This can happen if gas was paused / resumed (https://github.com/foundry-rs/foundry/issues/4370).
+            if interpreter.gas.spent() <
+                u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
+            {
+                interpreter.gas = Gas::new(interpreter.gas.remaining());
+            }
         }
     }
 
@@ -1825,6 +1856,11 @@ fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
     let mut result = vm_calls!(dispatch);
     fill_and_trace_return(&mut dyn_cheat, &mut result);
     result
+}
+
+/// Helper function to check if frame execution will exit.
+fn will_exit(ir: InstructionResult) -> bool {
+    !matches!(ir, InstructionResult::Continue | InstructionResult::CallOrCreate)
 }
 
 // Caches the result of `calls_as_dyn_cheatcode`.
