@@ -913,22 +913,52 @@ contract PrecompileLabelsTest is Test {
     )
     .unwrap();
 
-    let output = cmd.args(["test", "-vvvv"]).stdout_lossy();
-    assert!(output.contains("VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D]"));
-    assert!(output.contains("console: [0x000000000000000000636F6e736F6c652e6c6f67]"));
-    assert!(output.contains("Create2Deployer: [0x4e59b44847b379578588920cA78FbF26c0B4956C]"));
-    assert!(output.contains("DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38]"));
-    assert!(output.contains("DefaultTestContract: [0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84]"));
-    assert!(output.contains("ECRecover: [0x0000000000000000000000000000000000000001]"));
-    assert!(output.contains("SHA-256: [0x0000000000000000000000000000000000000002]"));
-    assert!(output.contains("RIPEMD-160: [0x0000000000000000000000000000000000000003]"));
-    assert!(output.contains("Identity: [0x0000000000000000000000000000000000000004]"));
-    assert!(output.contains("ModExp: [0x0000000000000000000000000000000000000005]"));
-    assert!(output.contains("ECAdd: [0x0000000000000000000000000000000000000006]"));
-    assert!(output.contains("ECMul: [0x0000000000000000000000000000000000000007]"));
-    assert!(output.contains("ECPairing: [0x0000000000000000000000000000000000000008]"));
-    assert!(output.contains("Blake2F: [0x0000000000000000000000000000000000000009]"));
-    assert!(output.contains("PointEvaluation: [0x000000000000000000000000000000000000000A]"));
+    cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Contract.t.sol:PrecompileLabelsTest
+[PASS] testPrecompileLabels() ([GAS])
+Traces:
+  [9474] PrecompileLabelsTest::testPrecompileLabels()
+    ├─ [0] VM::deal(VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(console: [0x000000000000000000636F6e736F6c652e6c6f67], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(Create2Deployer: [0x4e59b44847b379578588920cA78FbF26c0B4956C], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(DefaultTestContract: [0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(ECRecover: [0x0000000000000000000000000000000000000001], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(SHA-256: [0x0000000000000000000000000000000000000002], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(RIPEMD-160: [0x0000000000000000000000000000000000000003], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(Identity: [0x0000000000000000000000000000000000000004], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(ModExp: [0x0000000000000000000000000000000000000005], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(ECAdd: [0x0000000000000000000000000000000000000006], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(ECMul: [0x0000000000000000000000000000000000000007], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(ECPairing: [0x0000000000000000000000000000000000000008], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(Blake2F: [0x0000000000000000000000000000000000000009], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(PointEvaluation: [0x000000000000000000000000000000000000000A], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests that `forge test` with config `show_logs: true` for fuzz tests will
