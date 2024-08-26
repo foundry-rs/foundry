@@ -2676,8 +2676,8 @@ pub fn transaction_build(
     WithOtherFields::new(transaction)
 }
 
-/// Prove a storage key's existence or nonexistence in the account's storage
-/// trie.
+/// Prove a storage key's existence or nonexistence in the account's storage trie.
+///
 /// `storage_key` is the hash of the desired storage key, meaning
 /// this will only work correctly under a secure trie.
 /// `storage_key` == keccak(key)

@@ -62,6 +62,8 @@ pub enum RuntimeTransportError {
     InvalidJwt(String),
 }
 
+/// Runtime transport that only connects on first request.
+///
 /// A runtime transport is a custom [alloy_transport::Transport] that only connects when the *first*
 /// request is made. When the first request is made, it will connect to the runtime using either an
 /// HTTP WebSocket, or IPC transport depending on the URL used.

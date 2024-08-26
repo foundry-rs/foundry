@@ -18,6 +18,7 @@ use serde::Serialize;
 pub type Breakpoints = FxHashMap<char, (Address, usize)>;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
+///
 /// All vars are opt-in, their default values are expected to be set by the
 /// [`foundry_config::Config`], and are always present ([`foundry_config::Config::default`])
 ///
