@@ -824,7 +824,7 @@ Compiler run successful!
     // need to reset empty error codes as default would set some error codes
     prj.write_config(Config { ignored_error_codes: vec![], ..Default::default() });
 
-    cmd.args(["build"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 Compiling 1 files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
@@ -834,39 +834,6 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 
 
 "#]]);
-});
-
-// test that `forge build` does not print `(with warnings)` if there arent any
-forgetest!(can_compile_without_warnings, |prj, cmd| {
-    let config = Config {
-        ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
-        ..Default::default()
-    };
-    prj.write_config(config);
-    prj.add_raw_source(
-        "A",
-        r"
-pragma solidity *;
-contract A {
-    function testExample() public {}
-}
-   ",
-    )
-    .unwrap();
-
-    cmd.args(["build", "--force"]);
-    let out = cmd.stdout_lossy();
-    // no warnings
-    assert!(out.contains("Compiler run successful!"));
-    assert!(!out.contains("Compiler run successful with warnings:"));
-
-    // don't ignore errors
-    let config = Config { ignored_error_codes: vec![], ..Default::default() };
-    prj.write_config(config);
-    let out = cmd.stdout_lossy();
-
-    assert!(out.contains("Compiler run successful with warnings:"), "{out}");
-    assert!(out.contains("Warning") && out.contains("SPDX-License-Identifier"), "{out}");
 });
 
 // test that `forge build` compiles when severity set to error, fails when set to warning, and
@@ -886,14 +853,30 @@ contract A {
     .unwrap();
 
     // there are no errors
-    cmd.args(["build", "--force"]);
-    let out = cmd.stdout_lossy();
-    assert!(out.contains("Compiler run successful with warnings:"), "{out}");
+    cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+[FILE]
+
+
+"#]]);
 
     // warning fails to compile
     let config = Config { ignored_error_codes: vec![], deny_warnings: true, ..Default::default() };
     prj.write_config(config);
-    cmd.assert_err();
+
+    cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+Compiler run failed:
+Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+[FILE]
+
+
+"#]]);
 
     // ignores error code and compiles
     let config = Config {
@@ -902,10 +885,13 @@ contract A {
         ..Default::default()
     };
     prj.write_config(config);
-    let out = cmd.stdout_lossy();
 
-    assert!(out.contains("Compiler run successful!"));
-    assert!(!out.contains("Compiler run successful with warnings:"));
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 // test that a failing `forge build` does not impact followup builds
@@ -937,8 +923,13 @@ contract BTest is DSTest {
     )
     .unwrap();
 
-    cmd.arg("build");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+Compiling 3 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
     prj.assert_cache_exists();
     prj.assert_artifacts_dir_exists();
 
@@ -955,16 +946,34 @@ contract CTest is DSTest {
     prj.add_source("CTest.t.sol", syntax_err).unwrap();
 
     // `forge build --force` which should fail
-    cmd.arg("--force");
-    cmd.assert_err();
+    cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+Compiler run failed:
+Error (2314): Expected ';' but got identifier
+ [FILE]:7:19:
+  |
+7 |         THIS WILL CAUSE AN ERROR
+  |                   ^^^^^
+
+
+"#]]);
 
     // but ensure this cleaned cache and artifacts
     assert!(!prj.paths().artifacts.exists());
     assert!(!prj.cache().exists());
 
     // still errors
-    cmd.forge_fuse().arg("build");
-    cmd.assert_err();
+    cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+Compiler run failed:
+Error (2314): Expected ';' but got identifier
+ [FILE]:7:19:
+  |
+7 |         THIS WILL CAUSE AN ERROR
+  |                   ^^^^^
+
+
+"#]]);
 
     // resolve the error by replacing the file
     prj.add_source(
@@ -980,7 +989,14 @@ contract CTest is DSTest {
     )
     .unwrap();
 
-    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+Compiling 4 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
+    // cmd.assert_non_empty_stdout();
     prj.assert_cache_exists();
     prj.assert_artifacts_dir_exists();
 
@@ -989,7 +1005,17 @@ contract CTest is DSTest {
 
     // introduce the error again but building without force
     prj.add_source("CTest.t.sol", syntax_err).unwrap();
-    cmd.assert_err();
+    cmd.forge_fuse().arg("build").assert_failure().stderr_eq(str![[r#"
+Error: 
+Compiler run failed:
+Error (2314): Expected ';' but got identifier
+ [FILE]:7:19:
+  |
+7 |         THIS WILL CAUSE AN ERROR
+  |                   ^^^^^
+
+
+"#]]);
 
     // ensure unchanged cache file
     let cache_after = fs::read_to_string(prj.cache()).unwrap();
