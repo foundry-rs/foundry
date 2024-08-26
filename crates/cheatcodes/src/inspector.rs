@@ -953,7 +953,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         self.pc = interpreter.program_counter();
 
-        self.meter_gas(interpreter);
+        // `pauseGasMetering`: reset interpreter gas.
+        if self.pause_gas_metering {
+            self.meter_gas(interpreter);
+        }
 
         // `record`: record storage reads and writes.
         if self.accesses.is_some() {
@@ -1338,22 +1341,20 @@ impl<DB: DatabaseExt> InspectorExt<DB> for Cheatcodes {
 impl Cheatcodes {
     #[cold]
     fn meter_gas(&mut self, interpreter: &mut Interpreter) {
-        if self.pause_gas_metering {
-            if let Some(paused_gas) = self.paused_frame_gas.last() {
-                // Keep gas constant if paused.
-                interpreter.gas = *paused_gas;
-            } else {
-                // Record frame paused gas.
-                self.paused_frame_gas.push(interpreter.gas);
-            }
+        if let Some(paused_gas) = self.paused_frame_gas.last() {
+            // Keep gas constant if paused.
+            interpreter.gas = *paused_gas;
+        } else {
+            // Record frame paused gas.
+            self.paused_frame_gas.push(interpreter.gas);
+        }
 
-            // Remove recorded gas if we exit frame.
-            match interpreter.current_opcode() {
-                opcode::STOP | opcode::RETURN | opcode::REVERT | opcode::SELFDESTRUCT => {
-                    self.paused_frame_gas.pop();
-                }
-                _ => {}
+        // Remove recorded gas if we exit frame.
+        match interpreter.current_opcode() {
+            opcode::STOP | opcode::RETURN | opcode::REVERT | opcode::SELFDESTRUCT => {
+                self.paused_frame_gas.pop();
             }
+            _ => {}
         }
     }
 
