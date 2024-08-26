@@ -835,6 +835,47 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 "#]]);
 });
 
+// test that `forge build` does not print `(with warnings)` if there arent any
+forgetest!(can_compile_without_warnings, |prj, cmd| {
+    let config = Config {
+        ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
+        ..Default::default()
+    };
+    prj.write_config(config);
+    prj.add_raw_source(
+        "A",
+        r"
+pragma solidity *;
+contract A {
+    function testExample() public {}
+}
+   ",
+    )
+    .unwrap();
+
+    cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
+    // don't ignore errors
+    let config = Config { ignored_error_codes: vec![], ..Default::default() };
+    prj.write_config(config);
+
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+[FILE]
+
+
+"#]]);
+});
+
 // test that `forge build` compiles when severity set to error, fails when set to warning, and
 // handles ignored error codes as an exception
 forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
