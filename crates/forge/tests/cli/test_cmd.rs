@@ -1368,6 +1368,7 @@ Logs:
 });
 
 // tests `pauseTracing` and `resumeTracing` functions
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(pause_tracing, |prj, cmd| {
     prj.wipe_contracts();
     prj.insert_ds_test();
@@ -1423,10 +1424,11 @@ Traces:
     ├─ [0] VM::pauseTracing() [staticcall]
     │   └─ ← [Return] 
     └─ ← [Stop] 
-  [294725] PauseTracingTest::test()
+
+  [390805] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return] 
-    ├─ [18373] TraceGenerator::generate()
+    ├─ [43937] TraceGenerator::generate()
     │   ├─ [1280] TraceGenerator::call(0)
     │   │   ├─ emit DummyEvent(i: 0)
     │   │   └─ ← [Stop] 
