@@ -296,11 +296,8 @@ pub struct Cheatcodes {
     /// If true then gas metering is paused.
     pub pause_gas_metering: bool,
 
-    /// Stores paused gas per frame.
-    pub paused_frame_gas: HashMap<usize, Gas>,
-
-    /// Current execution frame, used for pause / resume gas metering.
-    pub current_frame: usize,
+    /// Stores frames paused gas.
+    pub paused_frame_gas: Vec<Gas>,
 
     /// Mapping slots.
     pub mapping_slots: Option<HashMap<Address, MappingSlots>>,
@@ -351,7 +348,6 @@ impl Cheatcodes {
             eth_deals: Default::default(),
             pause_gas_metering: false,
             paused_frame_gas: Default::default(),
-            current_frame: 0,
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
@@ -947,10 +943,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             ecx.env.tx.gas_price = gas_price;
         }
 
-        // Record current frame and paused gas for current frame if gas metering is paused.
-        self.current_frame += 1;
+        // Record gas for current frame if gas metering is paused.
         if self.pause_gas_metering {
-            self.paused_frame_gas.insert(self.current_frame, interpreter.gas);
+            self.paused_frame_gas.push(interpreter.gas);
         }
     }
 
@@ -1344,22 +1339,21 @@ impl Cheatcodes {
     #[cold]
     fn meter_gas(&mut self, interpreter: &mut Interpreter) {
         if self.pause_gas_metering {
-            // If gas is paused for current frame then keep it constant.
-            if let Some(paused_gas) = self.paused_frame_gas.get(&self.current_frame) {
+            if let Some(paused_gas) = self.paused_frame_gas.last() {
+                // Keep gas constant if paused.
                 interpreter.gas = *paused_gas;
             } else {
-                // Record paused gas for current frame.
-                self.paused_frame_gas.insert(self.current_frame, interpreter.gas);
+                // Record frame paused gas.
+                self.paused_frame_gas.push(interpreter.gas);
             }
-        }
 
-        // Reset frame and recorded paused gas if we exit current frame.
-        match interpreter.current_opcode() {
-            opcode::STOP | opcode::RETURN | opcode::REVERT | opcode::SELFDESTRUCT => {
-                self.paused_frame_gas.remove(&self.current_frame);
-                self.current_frame -= 1;
+            // Remove recorded gas if we exit frame.
+            match interpreter.current_opcode() {
+                opcode::STOP | opcode::RETURN | opcode::REVERT | opcode::SELFDESTRUCT => {
+                    self.paused_frame_gas.pop();
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 

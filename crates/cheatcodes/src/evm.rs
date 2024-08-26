@@ -218,7 +218,7 @@ impl Cheatcode for resumeGasMeteringCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.pause_gas_metering = false;
-        state.paused_frame_gas = HashMap::new();
+        state.paused_frame_gas = vec![];
         Ok(Default::default())
     }
 }
