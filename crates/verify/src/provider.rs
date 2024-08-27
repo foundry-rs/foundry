@@ -38,7 +38,7 @@ impl VerificationContext {
         project.no_artifacts = true;
 
         let solc = Solc::find_or_install(&compiler_version)?;
-        project.compiler.solc = SolcCompiler::Specific(solc);
+        project.compiler.solc = Some(SolcCompiler::Specific(solc));
 
         Ok(Self { config, project, target_name, target_path, compiler_version })
     }
