@@ -13,8 +13,21 @@ use std::{fs, io::Write, path::Path, str::FromStr};
 
 // tests `--help` is printed to std out
 casttest!(print_help, |_prj, cmd| {
-    cmd.arg("--help");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("--help").assert_success().stdout_eq(str![[r#"
+Perform Ethereum RPC calls from the comfort of your command line
+
+Usage: cast <COMMAND>
+
+Commands:
+...
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
+
+"#]]);
 });
 
 // tests that the `cast block` command works correctly
@@ -348,19 +361,23 @@ casttest!(wallet_import_and_decrypt, |prj, cmd| {
         b256!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     // import private key
-    cmd.cast_fuse().args([
-        "wallet",
-        "import",
-        account_name,
-        "--private-key",
-        &test_private_key.to_string(),
-        "-k",
-        "keystore",
-        "--unsafe-password",
-        "test",
-    ]);
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "import",
+            account_name,
+            "--private-key",
+            &test_private_key.to_string(),
+            "-k",
+            "keystore",
+            "--unsafe-password",
+            "test",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+`testAccount` keystore was saved successfully. [ADDRESS]
 
-    cmd.assert_non_empty_stdout();
+"#]]);
 
     // check that the keystore file was created
     let keystore_file = keystore_path.join(account_name);

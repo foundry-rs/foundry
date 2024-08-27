@@ -20,8 +20,21 @@ use std::{
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_prj, cmd| {
-    cmd.arg("--help");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("--help").assert_success().stdout_eq(str![[r#"
+Build, test, fuzz, debug and deploy Solidity contracts
+
+Usage: forge <COMMAND>
+
+Commands:
+...
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html
+
+"#]]);
 });
 
 // checks that `clean` can be invoked even if out and cache don't exist
@@ -51,10 +64,9 @@ forgetest!(
         fs::write(block2_file, "{}").unwrap();
         fs::create_dir_all(etherscan_cache_dir).unwrap();
 
-        cmd.args(["cache", "ls"]);
-        let output_string = String::from_utf8_lossy(&cmd.output().stdout).to_string();
-        let output_lines = output_string.split('\n').collect::<Vec<_>>();
-        println!("{output_string}");
+        let output = cmd.args(["cache", "ls"]).assert_success().get_output().stdout_lossy();
+        let output_lines = output.split('\n').collect::<Vec<_>>();
+        println!("{output}");
 
         assert_eq!(output_lines.len(), 6);
         assert!(output_lines[0].starts_with("-️ mainnet ("));
@@ -268,8 +280,7 @@ forgetest!(can_init_no_git, |prj, cmd| {
 forgetest!(can_init_quiet, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root()).arg("-q");
-    let _ = cmd.output();
+    cmd.arg("init").arg(prj.root()).arg("-q").assert_success().stdout_eq(str![[r#""#]]);
 });
 
 // `forge init foobar` works with dir argument
@@ -320,8 +331,12 @@ forgetest!(can_init_with_dir_and_template_and_branch, |prj, cmd| {
 // `forge init --force` works on non-empty dirs
 forgetest!(can_init_non_empty, |prj, cmd| {
     prj.create_file("README.md", "non-empty dir");
-    cmd.arg("init").arg(prj.root());
-    cmd.assert_err();
+    cmd.arg("init").arg(prj.root()).assert_failure().stderr_eq(str![[r#"
+Error: 
+Cannot run `init` on a non-empty directory.
+Run with the `--force` flag to initialize regardless.
+
+"#]]);
 
     cmd.arg("--force");
     cmd.assert_non_empty_stdout();
@@ -344,8 +359,12 @@ forgetest!(can_init_in_empty_repo, |prj, cmd| {
     assert!(status.success());
     assert!(root.join(".git").exists());
 
-    cmd.arg("init").arg(root);
-    cmd.assert_err();
+    cmd.arg("init").arg(root).assert_failure().stderr_eq(str![[r#"
+Error: 
+Cannot run `init` on a non-empty directory.
+Run with the `--force` flag to initialize regardless.
+
+"#]]);
 
     cmd.arg("--force");
     cmd.assert_non_empty_stdout();
@@ -370,8 +389,12 @@ forgetest!(can_init_in_non_empty_repo, |prj, cmd| {
     prj.create_file("README.md", "non-empty dir");
     prj.create_file(".gitignore", "not foundry .gitignore");
 
-    cmd.arg("init").arg(root);
-    cmd.assert_err();
+    cmd.arg("init").arg(root).assert_failure().stderr_eq(str![[r#"
+Error: 
+Cannot run `init` on a non-empty directory.
+Run with the `--force` flag to initialize regardless.
+
+"#]]);
 
     cmd.arg("--force");
     cmd.assert_non_empty_stdout();
@@ -439,8 +462,13 @@ forgetest!(can_init_template_with_branch, |prj, cmd| {
 // checks that init fails when the provided template doesn't exist
 forgetest!(fail_init_nonexistent_template, |prj, cmd| {
     prj.wipe();
-    cmd.args(["init", "--template", "a"]).arg(prj.root());
-    cmd.assert_non_empty_stderr();
+    cmd.args(["init", "--template", "a"]).arg(prj.root()).assert_failure().stderr_eq(str![[r#"
+remote: Not Found
+fatal: repository 'https://github.com/a/' not found
+Error: 
+git fetch exited with code 128
+
+"#]]);
 });
 
 // checks that clone works
@@ -528,7 +556,7 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
         eprintln!("Skipping test due to 502 Bad Gateway: {}", cmd.make_error_message(&out, false));
         return
     }
-    cmd.ensure_success(&out).unwrap();
+    cmd.assert_success();
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -563,8 +591,7 @@ forgetest_init!(can_clean_config, |prj, cmd| {
     let artifact = prj.root().join(format!("custom-out/{TEMPLATE_TEST_CONTRACT_ARTIFACT_JSON}"));
     assert!(artifact.exists());
 
-    cmd.forge_fuse().arg("clean");
-    cmd.output();
+    cmd.forge_fuse().arg("clean").assert_success().stdout_eq(str![[r#""#]]);
     assert!(!artifact.exists());
 });
 

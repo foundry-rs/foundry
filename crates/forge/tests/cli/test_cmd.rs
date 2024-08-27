@@ -468,7 +468,7 @@ forgetest_init!(exit_code_error_on_fail_fast, |prj, cmd| {
     cmd.args(["test", "--fail-fast"]);
 
     // run command and assert error exit code
-    cmd.assert_err();
+    cmd.assert_empty_stderr();
 });
 
 forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
@@ -479,7 +479,7 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     cmd.args(["test", "--fail-fast", "--json"]);
 
     // run command and assert error exit code
-    cmd.assert_err();
+    cmd.assert_empty_stderr();
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6531>
@@ -856,8 +856,29 @@ contract ReplayFailuresTest is Test {
     )
     .unwrap();
 
-    cmd.args(["test"]);
-    cmd.assert_err();
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 4 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
+[PASS] testA() ([GAS])
+[FAIL. Reason: revert: testB failed] testB() ([GAS])
+[PASS] testC() ([GAS])
+[FAIL. Reason: revert: testD failed] testD() ([GAS])
+Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 2 failed, 0 skipped (4 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
+[FAIL. Reason: revert: testB failed] testB() ([GAS])
+[FAIL. Reason: revert: testD failed] testD() ([GAS])
+
+Encountered a total of 2 failing tests, 2 tests succeeded
+
+"#]]);
+
     // Test failure filter should be persisted.
     assert!(prj.root().join("cache/test-failures").exists());
 
