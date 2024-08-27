@@ -217,10 +217,6 @@ pub struct BroadcastableTransaction {
 /// Holds gas metering state.
 #[derive(Clone, Debug, Default)]
 pub struct GasMetering {
-    /// Gas price used in the cheatcode handler to overwrite the gas price separately from the
-    /// gas price in the execution environment.
-    pub gas_price: Option<U256>,
-
     /// True if gas metering is paused.
     pub paused: bool,
     /// True if gas metering was resumed or reseted during the test.
@@ -282,6 +278,12 @@ pub struct Cheatcodes {
     /// Used in the cheatcode handler to overwrite the block environment separately from the
     /// execution block environment.
     pub block: Option<BlockEnv>,
+
+    /// The gas price.
+    ///
+    /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
+    /// in the execution environment.
+    pub gas_price: Option<U256>,
 
     /// Address labels
     pub labels: HashMap<Address, String>,
@@ -379,6 +381,7 @@ impl Cheatcodes {
             labels: config.labels.clone(),
             config,
             block: Default::default(),
+            gas_price: Default::default(),
             prank: Default::default(),
             expected_revert: Default::default(),
             fork_revert_diagnostic: Default::default(),
@@ -987,7 +990,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(block) = self.block.take() {
             ecx.env.block = block;
         }
-        if let Some(gas_price) = self.gas_metering.gas_price.take() {
+        if let Some(gas_price) = self.gas_price.take() {
             ecx.env.tx.gas_price = gas_price;
         }
 
