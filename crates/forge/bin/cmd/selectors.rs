@@ -340,10 +340,12 @@ impl SelectorsSubcommands {
                 }
 
                 if table.row_count() > 0 {
+                    println!();
                     println!("Found {} instance(s)...", table.row_count());
                     println!("{table}");
                 } else {
-                    println!("Selector not found in the project.");
+                    println!();
+                    return Err(eyre::eyre!("Selector not found in the project."));
                 }
             }
         }
