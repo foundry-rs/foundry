@@ -27,7 +27,8 @@ forgesoldeer!(install_dependency, |prj, cmd| {
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
     assert!(actual_lock_contents.contains("forge-std"));
-    assert!(actual_lock_contents.contains("0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"));
+    assert!(actual_lock_contents
+        .contains("0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"));
     assert!(actual_lock_contents.contains("1.8.1"));
 
     // Making sure the foundry contents are the right ones
@@ -62,7 +63,6 @@ forgesoldeer!(install_dependency_git, |prj, cmd| {
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
     assert!(actual_lock_contents.contains("forge-std"));
@@ -165,7 +165,6 @@ mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/
     let dep5 = prj.root().join("dependencies").join("mario-custom-tag-1.0");
     let dep6 = prj.root().join("dependencies").join("mario-custom-branch-1.0");
 
-
     let actual_lock_contents = read_file_to_string(&path_lock_file);
     assert!(actual_lock_contents.contains("@tt"));
     assert!(actual_lock_contents.contains("forge-std"));
@@ -231,7 +230,8 @@ forge-std = "1.8.1"
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
     assert!(actual_lock_contents.contains("forge-std"));
-    assert!(actual_lock_contents.contains("0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"));
+    assert!(actual_lock_contents
+        .contains("0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"));
     assert!(actual_lock_contents.contains("1.8.1"));
 
     // Making sure the foundry contents are the right ones

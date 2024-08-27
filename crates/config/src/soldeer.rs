@@ -82,7 +82,7 @@ impl AsRef<Self> for SoldeerConfig {
 }
 impl Default for SoldeerConfig {
     fn default() -> Self {
-        SoldeerConfig {
+        Self {
             remappings_generate: true,
             remappings_regenerate: false,
             remappings_version: true,
