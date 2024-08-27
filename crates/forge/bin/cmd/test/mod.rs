@@ -641,8 +641,7 @@ impl TestArgs {
         }
         if filter.path_pattern.is_some() {
             if self.path.is_some() {
-                println!("Can not supply both --match-path and |path|");
-                std::process::exit(0);
+                panic!("Can not supply both --match-path and |path|");
             }
         } else {
             filter.path_pattern = self.path.clone();
