@@ -1,7 +1,9 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Error, Result, Vm::*};
 use alloy_primitives::{address, hex, Address, Bytes, LogData as RawLog, U256};
 use alloy_sol_types::{SolError, SolValue};
-use revm::interpreter::{return_ok, InstructionResult};
+use revm::interpreter::{
+    return_ok, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+};
 use spec::Vm;
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -444,7 +446,11 @@ fn expect_emit(
     Ok(Default::default())
 }
 
-pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives::Log) {
+pub(crate) fn handle_expect_emit(
+    state: &mut Cheatcodes,
+    log: &alloy_primitives::Log,
+    interpreter: &mut Interpreter,
+) {
     // Fill or check the expected emits.
     // We expect for emit checks to be filled as they're declared (from oldest to newest),
     // so we fill them and push them to the back of the queue.
@@ -473,11 +479,19 @@ pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives:
     let Some(expected) = &event_to_fill_or_check.log else {
         // Unless the caller is trying to match an anonymous event, the first topic must be
         // filled.
-        // TODO: failing this check should probably cause a warning
         if event_to_fill_or_check.anonymous || log.topics().first().is_some() {
             event_to_fill_or_check.log = Some(log.data.clone());
+            state.expected_emits.push_back(event_to_fill_or_check);
+        } else {
+            interpreter.instruction_result = InstructionResult::Revert;
+            interpreter.next_action = InterpreterAction::Return {
+                result: InterpreterResult {
+                    output: Error::encode("use vm.expectEmitAnonymous to match anonymous events"),
+                    gas: interpreter.gas,
+                    result: InstructionResult::Revert,
+                },
+            };
         }
-        state.expected_emits.push_back(event_to_fill_or_check);
         return
     };
 

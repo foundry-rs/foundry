@@ -1031,9 +1031,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    fn log(&mut self, _interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>, log: &Log) {
         if !self.expected_emits.is_empty() {
-            expect::handle_expect_emit(self, log);
+            expect::handle_expect_emit(self, log, interpreter);
         }
 
         // `recordLogs`
