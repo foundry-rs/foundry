@@ -11,7 +11,7 @@ use foundry_evm_fuzz::{
     strategies::{fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState},
     BaseCounterExample, CounterExample, FuzzCase, FuzzError, FuzzFixtures, FuzzTestResult,
 };
-use foundry_evm_traces::CallTraceArena;
+use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use std::cell::RefCell;
@@ -29,7 +29,7 @@ pub struct FuzzTestData {
     // Stores the result and calldata of the last failed call, if any.
     pub counterexample: (Bytes, RawCallResult),
     // Stores up to `max_traces_to_collect` traces.
-    pub traces: Vec<CallTraceArena>,
+    pub traces: Vec<SparsedTraceArena>,
     // Stores breakpoints for the last fuzz case.
     pub breakpoints: Option<Breakpoints>,
     // Stores coverage information for all fuzz cases.
@@ -163,7 +163,7 @@ impl FuzzedExecutor {
             labeled_addresses: call.labels,
             traces: last_run_traces,
             breakpoints: last_run_breakpoints,
-            gas_report_traces: traces,
+            gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
             coverage: fuzz_result.coverage,
         };
 

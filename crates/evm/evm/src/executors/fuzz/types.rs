@@ -3,7 +3,7 @@ use alloy_primitives::{Bytes, Log};
 use foundry_common::evm::Breakpoints;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::FuzzCase;
-use foundry_evm_traces::CallTraceArena;
+use foundry_evm_traces::SparsedTraceArena;
 use revm::interpreter::InstructionResult;
 
 /// Returned by a single fuzz in the case of a successful run
@@ -12,7 +12,7 @@ pub struct CaseOutcome {
     /// Data of a single fuzz test case
     pub case: FuzzCase,
     /// The traces of the call
-    pub traces: Option<CallTraceArena>,
+    pub traces: Option<SparsedTraceArena>,
     /// The coverage info collected during the call
     pub coverage: Option<HitMaps>,
     /// Breakpoints char pc map

@@ -317,6 +317,7 @@ interface Vm {
     function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);
     function parseUint(string calldata stringifiedValue) external pure returns (uint256 parsedValue);
     function pauseGasMetering() external;
+    function pauseTracing() external view;
     function prank(address msgSender) external;
     function prank(address msgSender, address txOrigin) external;
     function prevrandao(bytes32 newPrevrandao) external;
@@ -345,8 +346,10 @@ interface Vm {
     function removeDir(string calldata path, bool recursive) external;
     function removeFile(string calldata path) external;
     function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);
+    function resetGasMetering() external;
     function resetNonce(address account) external;
     function resumeGasMetering() external;
+    function resumeTracing() external view;
     function revertTo(uint256 snapshotId) external returns (bool success);
     function revertToAndDelete(uint256 snapshotId) external returns (bool success);
     function revokePersistent(address account) external;

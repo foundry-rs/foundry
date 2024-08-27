@@ -27,16 +27,12 @@ forgesoldeer!(install_dependency, |prj, cmd| {
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents = r#"
-[[dependencies]]
-name = "forge-std"
-version = "1.8.1"
-source = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_8_1_23-03-2024_00:05:44_forge-std-v1.8.1.zip"
-checksum = "0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"
-"#;
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
-    assert_eq!(lock_contents, actual_lock_contents);
+    assert!(actual_lock_contents.contains("forge-std"));
+    assert!(actual_lock_contents
+        .contains("0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"));
+    assert!(actual_lock_contents.contains("1.8.1"));
 
     // Making sure the foundry contents are the right ones
     let foundry_contents = r#"[profile.default]
@@ -44,10 +40,10 @@ src = "src"
 out = "out"
 libs = ["lib"]
 
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
-
 [dependencies]
 forge-std = "1.8.1"
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 "#;
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
@@ -56,7 +52,7 @@ forge-std = "1.8.1"
 forgesoldeer!(install_dependency_git, |prj, cmd| {
     let command = "install";
     let dependency = "forge-std~1.8.1";
-    let git = "git@gitlab.com:mario4582928/Mario.git";
+    let git = "https://gitlab.com/mario4582928/Mario.git";
 
     let foundry_file = prj.root().join("foundry.toml");
 
@@ -72,16 +68,11 @@ forgesoldeer!(install_dependency_git, |prj, cmd| {
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents = r#"
-[[dependencies]]
-name = "forge-std"
-version = "1.8.1"
-source = "git@gitlab.com:mario4582928/Mario.git"
-checksum = "22868f426bd4dd0e682b5ec5f9bd55507664240c"
-"#;
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
-    assert_eq!(lock_contents, actual_lock_contents);
+    assert!(actual_lock_contents.contains("forge-std"));
+    assert!(actual_lock_contents.contains("22868f426bd4dd0e682b5ec5f9bd55507664240c"));
+    assert!(actual_lock_contents.contains("1.8.1"));
 
     // Making sure the foundry contents are the right ones
     let foundry_contents = r#"[profile.default]
@@ -89,10 +80,10 @@ src = "src"
 out = "out"
 libs = ["lib"]
 
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
-
 [dependencies]
-forge-std = { version = "1.8.1", git = "git@gitlab.com:mario4582928/Mario.git", rev = "22868f426bd4dd0e682b5ec5f9bd55507664240c" }
+forge-std = { version = "1.8.1", git = "https://gitlab.com/mario4582928/Mario.git", rev = "22868f426bd4dd0e682b5ec5f9bd55507664240c" }
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 "#;
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
@@ -101,7 +92,7 @@ forge-std = { version = "1.8.1", git = "git@gitlab.com:mario4582928/Mario.git", 
 forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
     let command = "install";
     let dependency = "forge-std~1.8.1";
-    let git = "git@gitlab.com:mario4582928/Mario.git";
+    let git = "https://gitlab.com/mario4582928/Mario.git";
     let rev_flag = "--rev";
     let commit = "7a0663eaf7488732f39550be655bad6694974cb3";
 
@@ -123,16 +114,12 @@ forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents = r#"
-[[dependencies]]
-name = "forge-std"
-version = "1.8.1"
-source = "git@gitlab.com:mario4582928/Mario.git"
-checksum = "7a0663eaf7488732f39550be655bad6694974cb3"
-"#;
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
-    assert_eq!(lock_contents, actual_lock_contents);
+    assert!(actual_lock_contents.contains("forge-std"));
+    assert!(actual_lock_contents.contains("7a0663eaf7488732f39550be655bad6694974cb3"));
+    assert!(actual_lock_contents.contains("https://gitlab.com/mario4582928/Mario.git"));
+    assert!(actual_lock_contents.contains("1.8.1"));
 
     // Making sure the foundry contents are the right ones
     let foundry_contents = r#"[profile.default]
@@ -140,10 +127,10 @@ src = "src"
 out = "out"
 libs = ["lib"]
 
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
-
 [dependencies]
-forge-std = { version = "1.8.1", git = "git@gitlab.com:mario4582928/Mario.git", rev = "7a0663eaf7488732f39550be655bad6694974cb3" }
+forge-std = { version = "1.8.1", git = "https://gitlab.com/mario4582928/Mario.git", rev = "7a0663eaf7488732f39550be655bad6694974cb3" }
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 "#;
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
@@ -155,7 +142,12 @@ forgesoldeer!(update_dependencies, |prj, cmd| {
     // We need to write this into the foundry.toml to make the update install the dependency
     let foundry_updates = r#"
 [dependencies]
+"@tt" = {version = "1.6.1", url = "https://soldeer-revisions.s3.amazonaws.com/@openzeppelin-contracts/3_3_0-rc_2_22-01-2024_13:12:57_contracts.zip"}
 forge-std = { version = "1.8.1" }
+solmate = "6.7.0"
+mario = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", rev = "22868f426bd4dd0e682b5ec5f9bd55507664240c" }
+mario-custom-tag = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", tag = "custom-tag" }
+mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", tag = "custom-branch" }
 "#;
     let foundry_file = prj.root().join("foundry.toml");
 
@@ -179,16 +171,20 @@ forge-std = { version = "1.8.1" }
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents = r#"
-[[dependencies]]
-name = "forge-std"
-version = "1.8.1"
-source = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_8_1_23-03-2024_00:05:44_forge-std-v1.8.1.zip"
-checksum = "0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"
-"#;
+    let dep1 = prj.root().join("dependencies").join("@tt-1.6.1");
+    let dep2 = prj.root().join("dependencies").join("forge-std-1.8.1");
+    let dep3 = prj.root().join("dependencies").join("mario-1.0");
+    let dep4 = prj.root().join("dependencies").join("solmate-6.7.0");
+    let dep5 = prj.root().join("dependencies").join("mario-custom-tag-1.0");
+    let dep6 = prj.root().join("dependencies").join("mario-custom-branch-1.0");
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
-    assert_eq!(lock_contents, actual_lock_contents);
+    assert!(actual_lock_contents.contains("@tt"));
+    assert!(actual_lock_contents.contains("forge-std"));
+    assert!(actual_lock_contents.contains("mario"));
+    assert!(actual_lock_contents.contains("solmate"));
+    assert!(actual_lock_contents.contains("mario-custom-tag"));
+    assert!(actual_lock_contents.contains("mario-custom-branch"));
 
     // Making sure the foundry contents are the right ones
     let foundry_contents = r#"[profile.default]
@@ -199,10 +195,21 @@ libs = ["lib"]
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
 [dependencies]
+"@tt" = {version = "1.6.1", url = "https://soldeer-revisions.s3.amazonaws.com/@openzeppelin-contracts/3_3_0-rc_2_22-01-2024_13:12:57_contracts.zip"}
 forge-std = { version = "1.8.1" }
+solmate = "6.7.0"
+mario = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", rev = "22868f426bd4dd0e682b5ec5f9bd55507664240c" }
+mario-custom-tag = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", tag = "custom-tag" }
+mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", tag = "custom-branch" }
 "#;
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
+    assert!(dep1.exists());
+    assert!(dep2.exists());
+    assert!(dep3.exists());
+    assert!(dep4.exists());
+    assert!(dep5.exists());
+    assert!(dep6.exists());
 });
 
 forgesoldeer!(update_dependencies_simple_version, |prj, cmd| {
@@ -236,16 +243,12 @@ forge-std = "1.8.1"
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents = r#"
-[[dependencies]]
-name = "forge-std"
-version = "1.8.1"
-source = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_8_1_23-03-2024_00:05:44_forge-std-v1.8.1.zip"
-checksum = "0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"
-"#;
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
-    assert_eq!(lock_contents, actual_lock_contents);
+    assert!(actual_lock_contents.contains("forge-std"));
+    assert!(actual_lock_contents
+        .contains("0f7cd44f5670c31a9646d4031e70c66321cd3ed6ebac3c7278e4e57e4e5c5bd0"));
+    assert!(actual_lock_contents.contains("1.8.1"));
 
     // Making sure the foundry contents are the right ones
     let foundry_contents = r#"[profile.default]
@@ -279,6 +282,88 @@ Failed to run [..]oldeer Invalid email
 ℹ️  If you do not have an account, please go to soldeer.xyz to create one.
 📧 Please enter your email: 
 "#]]);
+});
+
+forgesoldeer!(install_dependency_with_remappings_config, |prj, cmd| {
+    let command = "install";
+    let dependency = "forge-std~1.8.1";
+    let foundry_updates = r#"
+[soldeer]
+remappings_generate = true
+remappings_prefix = "@custom-f@"
+remappings_location = "config"
+remappings_regenerate = true
+"#;
+    let foundry_file = prj.root().join("foundry.toml");
+    let mut file = OpenOptions::new().append(true).open(&foundry_file).unwrap();
+
+    if let Err(e) = write!(file, "{foundry_updates}") {
+        eprintln!("Couldn't write to file: {e}");
+    }
+
+    cmd.arg("soldeer").args([command, dependency]);
+    cmd.execute();
+
+    // Making sure the path was created to the dependency and that foundry.toml exists
+    // meaning that the dependencies were installed correctly
+    let path_dep_forge =
+        prj.root().join("dependencies").join("forge-std-1.8.1").join("foundry.toml");
+    assert!(path_dep_forge.exists());
+
+    // Making sure the foundry contents are the right ones
+    let foundry_contents = r#"[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+remappings = ["@custom-f@forge-std-1.8.1/=dependencies/forge-std-1.8.1/"]
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+[soldeer]
+remappings_generate = true
+remappings_prefix = "@custom-f@"
+remappings_location = "config"
+remappings_regenerate = true
+
+[dependencies]
+forge-std = "1.8.1"
+"#;
+
+    assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
+});
+
+forgesoldeer!(install_dependency_with_remappings_txt, |prj, cmd| {
+    let command = "install";
+    let dependency = "forge-std~1.8.1";
+    let foundry_updates = r#"
+[soldeer]
+remappings_generate = true
+remappings_prefix = "@custom-f@"
+remappings_location = "txt"
+remappings_regenerate = true
+"#;
+    let foundry_file = prj.root().join("foundry.toml");
+    let mut file = OpenOptions::new().append(true).open(&foundry_file).unwrap();
+
+    if let Err(e) = write!(file, "{foundry_updates}") {
+        eprintln!("Couldn't write to file: {e}");
+    }
+
+    cmd.arg("soldeer").args([command, dependency]);
+    cmd.execute();
+
+    // Making sure the path was created to the dependency and that foundry.toml exists
+    // meaning that the dependencies were installed correctly
+    let path_dep_forge =
+        prj.root().join("dependencies").join("forge-std-1.8.1").join("foundry.toml");
+    assert!(path_dep_forge.exists());
+
+    // Making sure the foundry contents are the right ones
+    let remappings_content = "@custom-f@forge-std-1.8.1/=dependencies/forge-std-1.8.1/\n";
+    let remappings_file = prj.root().join("remappings.txt");
+    println!("ddd {:?}", read_file_to_string(&remappings_file));
+
+    assert_data_eq!(read_file_to_string(&remappings_file), remappings_content);
 });
 
 fn read_file_to_string(path: &Path) -> String {

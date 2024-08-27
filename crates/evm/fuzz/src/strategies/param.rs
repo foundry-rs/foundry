@@ -14,9 +14,10 @@ pub fn fuzz_param(param: &DynSolType) -> BoxedStrategy<DynSolValue> {
 }
 
 /// Given a parameter type and configured fixtures for param name, returns a strategy for generating
-/// values for that type. Fixtures can be currently generated for uint, int, address, bytes and
-/// string types and are defined for parameter name.
+/// values for that type.
 ///
+/// Fixtures can be currently generated for uint, int, address, bytes and
+/// string types and are defined for parameter name.
 /// For example, fixtures for parameter `owner` of type `address` can be defined in a function with
 /// a `function fixture_owner() public returns (address[] memory)` signature.
 ///

@@ -662,6 +662,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function resumeGasMetering() external;
 
+    /// Reset gas metering (i.e. gas usage is set to gas limit).
+    #[cheatcode(group = Evm, safety = Safe)]
+    function resetGasMetering() external;
+
     // -------- Gas Measurement --------
 
     /// Gets the gas used in the last call.
@@ -2282,6 +2286,15 @@ interface Vm {
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
     function randomAddress() external returns (address);
+
+    /// Pauses collection of call traces. Useful in cases when you want to skip tracing of
+    /// complex calls which are not useful for debugging.
+    #[cheatcode(group = Utilities)]
+    function pauseTracing() external view;
+
+    /// Unpauses collection of call traces.
+    #[cheatcode(group = Utilities)]
+    function resumeTracing() external view;
 }
 }
 

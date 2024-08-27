@@ -495,8 +495,8 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     cmd.assert_empty_stderr();
 });
 
-// <https://github.com/foundry-rs/foundry/issues/6531>
-forgetest_init!(repro_6531, |prj, cmd| {
+// https://github.com/foundry-rs/foundry/pull/6531
+forgetest_init!(fork_traces, |prj, cmd| {
     prj.wipe_contracts();
 
     let endpoint = rpc::next_http_archive_rpc_endpoint();
@@ -543,7 +543,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
-// <https://github.com/foundry-rs/foundry/issues/6579>
+// https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
     prj.wipe_contracts();
 
@@ -916,7 +916,7 @@ Encountered a total of 2 failing tests, 0 tests succeeded
 "#]]);
 });
 
-// <https://github.com/foundry-rs/foundry/issues/7530>
+// https://github.com/foundry-rs/foundry/issues/7530
 forgetest_init!(should_show_precompile_labels, |prj, cmd| {
     prj.wipe_contracts();
 
@@ -1377,9 +1377,9 @@ contract DeterministicRandomnessTest is Test {
     assert_ne!(res4, res3);
 });
 
-// tests that `pauseGasMetering` used at the end of test does not produce meaningless values
-// see https://github.com/foundry-rs/foundry/issues/5491
-forgetest_init!(repro_5491, |prj, cmd| {
+// Tests that `pauseGasMetering` used at the end of test does not produce meaningless values.
+// https://github.com/foundry-rs/foundry/issues/5491
+forgetest_init!(gas_metering_pause_last_call, |prj, cmd| {
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1421,6 +1421,321 @@ contract ATest is Test {
 [PASS] testWeirdGas1() (gas: 3040)
 [PASS] testWeirdGas2() (gas: 3148)
 [PASS] testWithAssembly() (gas: 3083)
+...
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/5564
+forgetest_init!(gas_metering_expect_revert, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "ATest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+contract ATest is Test {
+    error MyError();
+    function testSelfMeteringRevert() public {
+        vm.pauseGasMetering();
+        vm.expectRevert(MyError.selector);
+        this.selfReverts();
+    }
+    function selfReverts() external {
+        vm.resumeGasMetering();
+        revert MyError();
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+[PASS] testSelfMeteringRevert() (gas: 3299)
+...
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/4523
+forgetest_init!(gas_metering_gasleft, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "ATest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ATest is Test {
+    mapping(uint256 => bytes32) map;
+
+    function test_GasMeter() public {
+        vm.pauseGasMetering();
+        consumeGas();
+        vm.resumeGasMetering();
+
+        consumeGas();
+    }
+
+    function test_GasLeft() public {
+        consumeGas();
+
+        uint256 start = gasleft();
+        consumeGas();
+        console.log("Gas cost:", start - gasleft());
+    }
+
+    function consumeGas() private {
+        for (uint256 i = 0; i < 100; i++) {
+            map[i] = keccak256(abi.encode(i));
+        }
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    // Log and test gas cost should be similar.
+    cmd.args(["test", "-vvvv"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Logs:
+  Gas cost: 34468
+...
+[PASS] test_GasMeter() (gas: 37512)
+...
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/4370
+forgetest_init!(repro_4370, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "ATest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+contract ATest is Test {
+    uint a;
+    function test_negativeGas () public {
+        vm.pauseGasMetering();
+        a = 100;
+        vm.resumeGasMetering();
+        delete a;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+[PASS] test_negativeGas() (gas: 0)
+...
+"#]]);
+});
+
+// tests `pauseTracing` and `resumeTracing` functions
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(pause_tracing, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    prj.add_source(
+        "Pause.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+contract TraceGenerator is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    event DummyEvent(uint256 i);
+    function call(uint256 i) public {
+        emit DummyEvent(i);
+    }
+    function generate() public {
+        for (uint256 i = 0; i < 10; i++) {
+            if (i == 3) {
+                vm.pauseTracing();
+            }
+            this.call(i);
+            if (i == 7) {
+                vm.resumeTracing();
+            }
+        }
+    }
+}
+contract PauseTracingTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    event DummyEvent(uint256 i);
+    function setUp() public {
+        emit DummyEvent(1);
+        vm.pauseTracing();
+        emit DummyEvent(2);
+    }
+    function test() public {
+        emit DummyEvent(3);
+        TraceGenerator t = new TraceGenerator();
+        vm.resumeTracing();
+        t.generate();
+    }
+}
+     "#,
+    )
+    .unwrap();
+    cmd.args(["test", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+...
+Traces:
+  [7285] PauseTracingTest::setUp()
+    ├─ emit DummyEvent(i: 1)
+    ├─ [0] VM::pauseTracing() [staticcall]
+    │   └─ ← [Return] 
+    └─ ← [Stop] 
+
+  [294725] PauseTracingTest::test()
+    ├─ [0] VM::resumeTracing() [staticcall]
+    │   └─ ← [Return] 
+    ├─ [18373] TraceGenerator::generate()
+    │   ├─ [1280] TraceGenerator::call(0)
+    │   │   ├─ emit DummyEvent(i: 0)
+    │   │   └─ ← [Stop] 
+    │   ├─ [1280] TraceGenerator::call(1)
+    │   │   ├─ emit DummyEvent(i: 1)
+    │   │   └─ ← [Stop] 
+    │   ├─ [1280] TraceGenerator::call(2)
+    │   │   ├─ emit DummyEvent(i: 2)
+    │   │   └─ ← [Stop] 
+    │   ├─ [0] VM::pauseTracing() [staticcall]
+    │   │   └─ ← [Return] 
+    │   ├─ [0] VM::resumeTracing() [staticcall]
+    │   │   └─ ← [Return] 
+    │   ├─ [1280] TraceGenerator::call(8)
+    │   │   ├─ emit DummyEvent(i: 8)
+    │   │   └─ ← [Stop] 
+    │   ├─ [1280] TraceGenerator::call(9)
+    │   │   ├─ emit DummyEvent(i: 9)
+    │   │   └─ ← [Stop] 
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
+...
+"#]]);
+});
+
+forgetest_init!(gas_metering_reset, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    prj.add_source(
+        "ATest.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+contract B {
+    function a() public returns (uint256) {
+        return 100;
+    }
+}
+contract ATest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    B b;
+    uint256 a;
+
+    function testResetGas() public {
+        vm.resetGasMetering();
+    }
+
+    function testResetGas1() public {
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas2() public {
+        b = new B();
+        b = new B();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas3() public {
+        vm.resetGasMetering();
+        b = new B();
+        b = new B();
+    }
+
+    function testResetGas4() public {
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+        b = new B();
+    }
+
+    function testResetGas5() public {
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas6() public {
+        vm.resetGasMetering();
+        b = new B();
+        b = new B();
+        _reset();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas7() public {
+        vm.resetGasMetering();
+        b = new B();
+        b = new B();
+        _reset();
+    }
+
+    function testResetGas8() public {
+        this.resetExternal();
+    }
+
+    function testResetGas9() public {
+        this.resetExternal();
+        vm.resetGasMetering();
+    }
+
+    function testResetNegativeGas() public {
+        a = 100;
+        vm.resetGasMetering();
+
+        delete a;
+    }
+
+    function _reset() internal {
+        vm.resetGasMetering();
+    }
+
+    function resetExternal() external {
+        b = new B();
+        b = new B();
+        vm.resetGasMetering();
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+[PASS] testResetGas() (gas: 40)
+[PASS] testResetGas1() (gas: 40)
+[PASS] testResetGas2() (gas: 40)
+[PASS] testResetGas3() (gas: 134476)
+[PASS] testResetGas4() (gas: 56302)
+[PASS] testResetGas5() (gas: 40)
+[PASS] testResetGas6() (gas: 40)
+[PASS] testResetGas7() (gas: 49)
+[PASS] testResetGas8() (gas: 622)
+[PASS] testResetGas9() (gas: 40)
+[PASS] testResetNegativeGas() (gas: 0)
 ...
 "#]]);
 });
