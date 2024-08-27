@@ -7457,6 +7457,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sanitize-filename"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ed72fbaf78e6f2d41744923916966c4fbe3d7c74e3037a8ee482f1115572603"
+dependencies = [
+ "lazy_static",
+ "regex",
+]
+
+[[package]]
 name = "scale-info"
 version = "2.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7827,19 +7837,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sha256"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18278f6a914fa3070aa316493f7d2ddfb9ac86ebc06fa3b83bffda487e9065b0"
-dependencies = [
- "async-trait",
- "bytes",
- "hex",
- "sha2",
- "tokio",
-]
-
-[[package]]
 name = "sha3"
 version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7947,15 +7944,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "simple-home-dir"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c221cbc8c1ff6bdf949b12cc011456c510ec6840654b444c7374c78e928ce344"
-dependencies = [
- "windows-sys 0.52.0",
-]
-
-[[package]]
 name = "simple_asn1"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8039,30 +8027,29 @@ dependencies = [
 
 [[package]]
 name = "soldeer"
-version = "0.2.19"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d584c27ebf7ad3e2557d029a07b19fa0d192d67bd73eea1e1695936eb5666e34"
+checksum = "6191e16cbc3b4ed14cafc642bc2b7f966eddb7c1f3a9f60549f6a1e526016127"
 dependencies = [
  "chrono",
  "clap",
+ "const-hex",
  "email-address-parser",
  "futures",
- "once_cell",
+ "home",
+ "ignore",
  "regex",
  "reqwest",
  "rpassword",
+ "sanitize-filename",
  "serde",
- "serde_derive",
  "serde_json",
- "sha256",
- "simple-home-dir",
+ "sha2",
+ "thiserror",
  "tokio",
- "toml 0.8.19",
  "toml_edit 0.22.20",
  "uuid 1.10.0",
- "walkdir",
  "yansi",
- "yash-fnmatch",
  "zip 2.2.0",
  "zip-extract",
 ]
@@ -9686,17 +9673,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 dependencies = [
  "is-terminal",
-]
-
-[[package]]
-name = "yash-fnmatch"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "697c20b479d2e6419e9a073bfdd20e90cbd8540d6c683ee46712e13de650e54f"
-dependencies = [
- "regex",
- "regex-syntax 0.8.4",
- "thiserror",
 ]
 
 [[package]]
