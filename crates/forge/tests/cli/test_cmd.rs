@@ -1390,7 +1390,7 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] test_negativeGas() (gas: 3252)
+[PASS] test_negativeGas() (gas: 0)
 ...
 "#]]);
 });
@@ -1597,7 +1597,7 @@ contract ATest is DSTest {
 [PASS] testResetGas7() (gas: 49)
 [PASS] testResetGas8() (gas: 622)
 [PASS] testResetGas9() (gas: 40)
-[PASS] testResetNegativeGas() (gas: 146)
+[PASS] testResetNegativeGas() (gas: 0)
 ...
 "#]]);
 });

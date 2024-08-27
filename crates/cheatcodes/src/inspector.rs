@@ -1427,12 +1427,13 @@ impl Cheatcodes {
     #[cold]
     fn meter_gas_check(&mut self, interpreter: &mut Interpreter) {
         if will_exit(interpreter.instruction_result) {
-            // Reconcile gas if spent is less than refunded.
-            // This can happen if gas was paused / resumed (https://github.com/foundry-rs/foundry/issues/4370).
+            // Reset gas if spent is less than refunded.
+            // This can happen if gas was paused / resumed or reset.
+            // https://github.com/foundry-rs/foundry/issues/4370
             if interpreter.gas.spent() <
                 u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
             {
-                interpreter.gas = Gas::new(interpreter.gas.remaining());
+                interpreter.gas = Gas::new(interpreter.gas.limit());
             }
         }
     }
