@@ -222,10 +222,18 @@ impl Cheatcode for resumeGasMeteringCall {
     }
 }
 
+impl Cheatcode for resetGasMeteringCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        state.gas_metering.reset();
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for lastCallGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        let Some(last_call_gas) = &state.last_call_gas else {
+        let Some(last_call_gas) = &state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
         };
         Ok(last_call_gas.abi_encode())

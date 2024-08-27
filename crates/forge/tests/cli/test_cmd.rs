@@ -1390,7 +1390,7 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] test_negativeGas() (gas: 3252)
+[PASS] test_negativeGas() (gas: 0)
 ...
 "#]]);
 });
@@ -1482,6 +1482,126 @@ Traces:
 "#]]);
 });
 
+forgetest_init!(gas_metering_reset, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    prj.add_source(
+        "ATest.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+contract B {
+    function a() public returns (uint256) {
+        return 100;
+    }
+}
+contract ATest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    B b;
+    uint256 a;
+
+    function testResetGas() public {
+        vm.resetGasMetering();
+    }
+
+    function testResetGas1() public {
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas2() public {
+        b = new B();
+        b = new B();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas3() public {
+        vm.resetGasMetering();
+        b = new B();
+        b = new B();
+    }
+
+    function testResetGas4() public {
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+        b = new B();
+    }
+
+    function testResetGas5() public {
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas6() public {
+        vm.resetGasMetering();
+        b = new B();
+        b = new B();
+        _reset();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas7() public {
+        vm.resetGasMetering();
+        b = new B();
+        b = new B();
+        _reset();
+    }
+
+    function testResetGas8() public {
+        this.resetExternal();
+    }
+
+    function testResetGas9() public {
+        this.resetExternal();
+        vm.resetGasMetering();
+    }
+
+    function testResetNegativeGas() public {
+        a = 100;
+        vm.resetGasMetering();
+
+        delete a;
+    }
+
+    function _reset() internal {
+        vm.resetGasMetering();
+    }
+
+    function resetExternal() external {
+        b = new B();
+        b = new B();
+        vm.resetGasMetering();
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+[PASS] testResetGas() (gas: 40)
+[PASS] testResetGas1() (gas: 40)
+[PASS] testResetGas2() (gas: 40)
+[PASS] testResetGas3() (gas: 134476)
+[PASS] testResetGas4() (gas: 56302)
+[PASS] testResetGas5() (gas: 40)
+[PASS] testResetGas6() (gas: 40)
+[PASS] testResetGas7() (gas: 49)
+[PASS] testResetGas8() (gas: 622)
+[PASS] testResetGas9() (gas: 40)
+[PASS] testResetNegativeGas() (gas: 0)
+...
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/8705
 forgetest_init!(test_expect_revert_decode, |prj, cmd| {
     prj.wipe_contracts();
@@ -1490,35 +1610,27 @@ forgetest_init!(test_expect_revert_decode, |prj, cmd| {
         "Counter.t.sol",
         r#"
 import {Test} from "forge-std/Test.sol";
-
 contract Counter {
     uint256 public number;
-
     error NumberNotEven(uint256 number);
     error RandomError();
-
     function setNumber(uint256 newNumber) public {
         if (newNumber % 2 != 0) {
             revert NumberNotEven(newNumber);
         }
-
         number = newNumber;
     }
 }
-
 contract CounterTest is Test {
     Counter public counter;
-
     function setUp() public {
         counter = new Counter();
         counter.setNumber(0);
     }
-
     function test_decode() public {
         vm.expectRevert(Counter.RandomError.selector);
         counter.setNumber(1);
     }
-
     function test_decode_with_args() public {
         vm.expectRevert(abi.encodePacked(Counter.NumberNotEven.selector, uint(2)));
         counter.setNumber(1);
