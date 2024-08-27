@@ -758,7 +758,7 @@ contract CounterTest is Test {
 
     // make sure there are only 61 runs (with proptest shrinking same test results in 298 runs)
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
-Compiling 23 files with [SOLC_VERSION]
+Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -809,7 +809,7 @@ contract CounterTest is Test {
 
     // make sure invariant test exit early with 0 runs
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
-Compiling 23 files with [SOLC_VERSION]
+Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -988,7 +988,7 @@ forgetest_init!(should_show_logs_when_fuzz_test, |prj, cmd| {
     )
     .unwrap();
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
-Compiling 23 files with [SOLC_VERSION]
+Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1033,7 +1033,7 @@ forgetest_init!(should_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
     )
     .unwrap();
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
-Compiling 23 files with [SOLC_VERSION]
+Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1079,7 +1079,7 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
     )
     .unwrap();
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
-Compiling 23 files with [SOLC_VERSION]
+Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1119,7 +1119,7 @@ forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
     )
     .unwrap();
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
-Compiling 23 files with [SOLC_VERSION]
+Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1180,7 +1180,7 @@ contract SimpleContractTest is Test {
     )
     .unwrap();
     cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
-Compiling 24 files with [SOLC_VERSION]
+Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 

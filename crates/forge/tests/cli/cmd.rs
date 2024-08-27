@@ -1929,7 +1929,7 @@ forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
     prj.clear_cache();
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
-Compiling 27 files with [SOLC_VERSION]
+Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 | Contract | Size (B) | Margin (B) |

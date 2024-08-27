@@ -1036,6 +1036,9 @@ contract A {
     int c;
     bytes32 d;
     bool e;
+    bytes f;
+    Point g;
+    string h;
 
   constructor(address _a, uint _b, int _c, bytes32 _d, bool _e, bytes memory _f, Point memory _g, string memory _h) {
     a = _a;
@@ -1043,6 +1046,9 @@ contract A {
     c = _c;
     d = _d;
     e = _e;
+    f = _f;
+    g = _g;
+    h = _h;
   }
 }
 
@@ -1057,7 +1063,7 @@ contract Script0 is Script {
             )
             .unwrap();
 
-    let output = cmd
+    cmd
         .arg("script")
         .arg(script)
         .args([
@@ -1069,9 +1075,35 @@ contract Script0 is Script {
             handle.http_endpoint().as_str(),
         ])
         .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(output.contains("SIMULATION COMPLETE"));
+        .stdout_eq(str![[r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+...
+Script ran successfully.
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+Estimated gas price: [..]
+
+Estimated total gas used for script: [..]
+
+Estimated amount required: [..]
+
+==========================
+
+SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
+
+Transactions saved to: [..]
+
+Sensitive values saved to: [..]
+
+
+"#]]);
 
     let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
         .find(|path| path.ends_with("run-latest.json"))
@@ -1146,7 +1178,7 @@ contract Script0 is Script {
         )
         .unwrap();
 
-    let output = cmd
+    cmd
         .arg("script")
         .arg(script)
         .args([
@@ -1158,9 +1190,35 @@ contract Script0 is Script {
             handle.http_endpoint().as_str(),
         ])
         .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(output.contains("SIMULATION COMPLETE"));
+        .stdout_eq(str![[r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+...
+Script ran successfully.
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+Estimated gas price: [..]
+
+Estimated total gas used for script: [..]
+
+Estimated amount required: [..]
+
+==========================
+
+SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
+
+Transactions saved to: [..]
+
+Sensitive values saved to: [..]
+
+
+"#]]);
 
     let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
         .find(|file| file.ends_with("run-latest.json"))
@@ -1292,14 +1350,18 @@ contract ContractC {
         )
         .unwrap();
 
-    let output = cmd
-        .arg("script")
-        .arg(script)
-        .args(["--tc", "ScriptTxOrigin"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(output.contains("Script ran successfully."));
+    cmd.arg("script").arg(script).args(["--tc", "ScriptTxOrigin"]).assert_success().stdout_eq(
+        str![[r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+If you wish to simulate on-chain transactions pass a RPC URL.
+
+"#]],
+    );
 });
 
 forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, cmd| {
@@ -1318,18 +1380,20 @@ contract Contract {
     console.log(tx.origin);
   }
 }
+
 contract SubContract {
   constructor() {
     console.log(tx.origin);
   }
 }
+
 contract BadContract {
   constructor() {
-    // new SubContract();
+    new SubContract();
     console.log(tx.origin);
   }
 }
-contract NestedCreateFail is Script {
+contract NestedCreate is Script {
   function run() public {
     address sender = address(uint160(uint(keccak256("woops"))));
 
@@ -1344,14 +1408,23 @@ contract NestedCreateFail is Script {
         )
         .unwrap();
 
-    let output = cmd
-        .arg("script")
-        .arg(script)
-        .args(["--tc", "NestedCreateFail"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(output.contains("Script ran successfully."));
+    cmd.arg("script").arg(script).args(["--tc", "NestedCreate"]).assert_success().stdout_eq(str![
+        [r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  0x159E2f2F1C094625A2c6c8bF59526d91454c2F3c
+  0x159E2f2F1C094625A2c6c8bF59526d91454c2F3c
+  0x159E2f2F1C094625A2c6c8bF59526d91454c2F3c
+
+If you wish to simulate on-chain transactions pass a RPC URL.
+
+"#]
+    ]);
 });
 
 forgetest_async!(assert_can_detect_target_contract_with_interfaces, |prj, cmd| {
@@ -1555,9 +1628,9 @@ forgetest_async!(can_run_zero_base_fee, |prj, cmd| {
 import "forge-std/Script.sol";
 
 contract SimpleScript is Script {
-    function run() external {
+    function run() external returns (bool success) {
         vm.startBroadcast();
-        address(0).call("");
+        (success, ) = address(0).call("");
     }
 }
    "#,
@@ -1570,29 +1643,59 @@ contract SimpleScript is Script {
 
     // Firstly run script with non-zero gas prices to ensure that eth_feeHistory contains non-zero
     // values.
-    let output = cmd
-        .args([
-            "script",
-            "SimpleScript",
-            "--fork-url",
-            &handle.http_endpoint(),
-            "--sender",
-            format!("{dev:?}").as_str(),
-            "--broadcast",
-            "--unlocked",
-            "--with-gas-price",
-            "2000000",
-            "--priority-gas-price",
-            "100000",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "--broadcast",
+        "--unlocked",
+        "--with-gas-price",
+        "2000000",
+        "--priority-gas-price",
+        "100000",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+...
+Script ran successfully.
+
+== Return ==
+success: bool true
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+Estimated gas price: [..]
+
+Estimated total gas used for script: [..]
+
+Estimated amount required: [..]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Transactions saved to: [..]
+
+Sensitive values saved to: [..]
+
+
+"#]]);
 
     // Ensure that we can correctly estimate gas when base fee is zero but priority fee is not.
-    let output = cmd
-        .forge_fuse()
+    cmd.forge_fuse()
         .args([
             "script",
             "SimpleScript",
@@ -1604,9 +1707,39 @@ contract SimpleScript is Script {
             "--unlocked",
         ])
         .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+...
+Script ran successfully.
+
+== Return ==
+success: bool true
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+Estimated gas price: [..]
+
+Estimated total gas used for script: [..]
+
+Estimated amount required: [..]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Transactions saved to: [..]
+
+Sensitive values saved to: [..]
+
+
+"#]]);
 });
 
 // https://github.com/foundry-rs/foundry/pull/7742
@@ -1618,9 +1751,9 @@ forgetest_async!(unlocked_no_sender, |prj, cmd| {
 import "forge-std/Script.sol";
 
 contract SimpleScript is Script {
-    function run() external {
+    function run() external returns (bool success) {
         vm.startBroadcast(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
-        address(0).call("");
+        (success, ) = address(0).call("");
     }
 }
    "#,
@@ -1629,19 +1762,50 @@ contract SimpleScript is Script {
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
-    let output = cmd
-        .args([
-            "script",
-            "SimpleScript",
-            "--fork-url",
-            &handle.http_endpoint(),
-            "--broadcast",
-            "--unlocked",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+    cmd.args([
+        "script",
+        "SimpleScript",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--unlocked",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+...
+Script ran successfully.
+
+== Return ==
+success: bool true
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+Estimated gas price: [..]
+
+Estimated total gas used for script: [..]
+
+Estimated amount required: [..]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Transactions saved to: [..]
+
+Sensitive values saved to: [..]
+
+
+"#]]);
 });
 
 // https://github.com/foundry-rs/foundry/issues/7833
