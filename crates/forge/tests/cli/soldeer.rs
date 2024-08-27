@@ -15,7 +15,7 @@ forgesoldeer!(install_dependency, |prj, cmd| {
     let foundry_file = prj.root().join("foundry.toml");
 
     cmd.arg("soldeer").args([command, dependency]).assert_success().stdout_eq(str![[r#"
-🦌 Running soldeer install 🦌
+🦌 Running [..]oldeer install 🦌
 ...
 "#]]);
 
@@ -61,7 +61,7 @@ forgesoldeer!(install_dependency_git, |prj, cmd| {
     let foundry_file = prj.root().join("foundry.toml");
 
     cmd.arg("soldeer").args([command, dependency, git]).assert_success().stdout_eq(str![[r#"
-🦌 Running soldeer install 🦌
+🦌 Running [..]oldeer install 🦌
 ...
 "#]]);
 
@@ -111,7 +111,7 @@ forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
         .args([command, dependency, git, rev_flag, commit])
         .assert_success()
         .stdout_eq(str![[r#"
-🦌 Running soldeer install 🦌
+🦌 Running [..]oldeer install 🦌
 ...
 "#]]);
 
@@ -166,7 +166,7 @@ forge-std = { version = "1.8.1" }
     }
 
     cmd.arg("soldeer").arg(command).assert_success().stdout_eq(str![[r#"
-🦌 Running soldeer update 🦌
+🦌 Running [..]oldeer update 🦌
 ...
 
 "#]]);
@@ -223,7 +223,7 @@ forge-std = "1.8.1"
     }
 
     cmd.arg("soldeer").arg(command).assert_success().stdout_eq(str![[r#"
-🦌 Running soldeer update 🦌
+🦌 Running [..]oldeer update 🦌
 ...
 
 "#]]);
@@ -270,11 +270,11 @@ forgesoldeer!(login, |prj, cmd| {
         .assert_failure()
         .stderr_eq(str![[r#"
 Error: 
-Failed to run soldeer Invalid email
+Failed to run [..]oldeer Invalid email
 
 "#]])
         .stdout_eq(str![[r#"
-🦌 Running soldeer login 🦌
+🦌 Running [..]oldeer login 🦌
 
 ℹ️  If you do not have an account, please go to soldeer.xyz to create one.
 📧 Please enter your email: 
