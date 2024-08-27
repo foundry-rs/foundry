@@ -7,14 +7,22 @@ use std::{
 
 use foundry_test_utils::forgesoldeer;
 use std::io::Write;
+
 forgesoldeer!(install_dependency, |prj, cmd| {
     let command = "install";
     let dependency = "forge-std~1.8.1";
 
     let foundry_file = prj.root().join("foundry.toml");
 
-    cmd.arg("soldeer").args([command, dependency]);
-    cmd.execute();
+    cmd.arg("soldeer").args([command, dependency]).assert_success().stdout_eq(str![[r#"
+🦌 Running soldeer install 🦌
+
+Dependency forge-std-[..] downloaded!
+Writing forge-std~[..] to the lock file.
+The dependency forge-std-[..] was unzipped!
+Adding dependency forge-std-[..] to the config file
+Added a new dependency to remappings @forge-std-[..]
+"#]]);
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -57,8 +65,15 @@ forgesoldeer!(install_dependency_git, |prj, cmd| {
 
     let foundry_file = prj.root().join("foundry.toml");
 
-    cmd.arg("soldeer").args([command, dependency, git]);
-    cmd.execute();
+    cmd.arg("soldeer").args([command, dependency, git]).assert_success().stdout_eq(str![[r#"
+🦌 Running soldeer install 🦌
+
+Successfully downloaded forge-std~1.8.1 the dependency via git
+Dependency forge-std-1.8.1 downloaded!
+Writing forge-std~1.8.1 to the lock file.
+Adding dependency forge-std-1.8.1 to the config file
+Added a new dependency to remappings @forge-std-1.8.1
+"#]]);
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -102,8 +117,19 @@ forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
 
     let foundry_file = prj.root().join("foundry.toml");
 
-    cmd.arg("soldeer").args([command, dependency, git, rev_flag, commit]);
-    cmd.execute();
+    cmd.arg("soldeer")
+        .args([command, dependency, git, rev_flag, commit])
+        .assert_success()
+        .stdout_eq(str![[r#"
+🦌 Running soldeer install 🦌
+
+Successfully downloaded forge-std~1.8.1 the dependency via git
+Dependency forge-std-1.8.1 downloaded!
+Writing forge-std~1.8.1 to the lock file.
+Adding dependency forge-std-1.8.1 to the config file
+Added a new dependency to remappings @forge-std-1.8.1
+
+"#]]);
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -155,8 +181,15 @@ forge-std = { version = "1.8.1" }
         eprintln!("Couldn't write to file: {e}");
     }
 
-    cmd.arg("soldeer").arg(command);
-    cmd.execute();
+    cmd.arg("soldeer").arg(command).assert_success().stdout_eq(str![[r#"
+🦌 Running soldeer update 🦌
+
+Dependency forge-std-1.8.1 downloaded!
+The dependency forge-std-1.8.1 was unzipped!
+Writing forge-std~1.8.1 to the lock file.
+Added a new dependency to remappings @forge-std-1.8.1
+
+"#]]);
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -209,8 +242,15 @@ forge-std = "1.8.1"
         eprintln!("Couldn't write to file: {e}");
     }
 
-    cmd.arg("soldeer").arg(command);
-    cmd.execute();
+    cmd.arg("soldeer").arg(command).assert_success().stdout_eq(str![[r#"
+🦌 Running soldeer update 🦌
+
+Dependency forge-std-1.8.1 downloaded!
+The dependency forge-std-1.8.1 was unzipped!
+Writing forge-std~1.8.1 to the lock file.
+Added a new dependency to remappings @forge-std-1.8.1
+
+"#]]);
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -249,12 +289,20 @@ forge-std = "1.8.1"
 forgesoldeer!(login, |prj, cmd| {
     let command = "login";
 
-    cmd.arg("soldeer").arg(command);
-    let output = cmd.execute();
+    cmd.arg("soldeer")
+        .arg(command)
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: 
+Failed to run soldeer Invalid email
 
-    // On login, we can only check if the prompt is displayed in the stdout
-    let stdout = String::from_utf8(output.stdout).expect("Could not parse the output");
-    assert!(stdout.contains("Please enter your email"));
+"#]])
+        .stdout_eq(str![[r#"
+🦌 Running soldeer login 🦌
+
+ℹ️  If you do not have an account, please go to soldeer.xyz to create one.
+📧 Please enter your email: 
+"#]]);
 });
 
 fn read_file_to_string(path: &Path) -> String {
