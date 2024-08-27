@@ -224,8 +224,14 @@ forgetest!(can_init_repo_with_config, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.args(["init", "--force"]).arg(prj.root());
-    cmd.assert_non_empty_stdout();
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -267,8 +273,13 @@ https://github.com/foundry-rs/foundry/issues/new/choose
 forgetest!(can_init_no_git, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root()).arg("--no-git");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("init").arg(prj.root()).arg("--no-git").assert_success().stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std
+    Initialized forge project
+
+"#]]);
     prj.assert_config_exists();
 
     assert!(!prj.root().join(".git").exists());
@@ -294,10 +305,14 @@ forgetest!(can_init_with_dir, |prj, cmd| {
 
 // `forge init foobar --template [template]` works with dir argument
 forgetest!(can_init_with_dir_and_template, |prj, cmd| {
-    cmd.args(["init", "foobar", "--template", "foundry-rs/forge-template"]);
+    cmd.args(["init", "foobar", "--template", "foundry-rs/forge-template"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Initializing [..] from https://github.com/foundry-rs/forge-template...
+    Initialized forge project
 
-    cmd.assert_success();
-    cmd.assert_non_empty_stdout();
+"#]]);
+
     assert!(prj.root().join("foobar/.git").exists());
     assert!(prj.root().join("foobar/foundry.toml").exists());
     assert!(prj.root().join("foobar/lib/forge-std").exists());
@@ -316,10 +331,14 @@ forgetest!(can_init_with_dir_and_template_and_branch, |prj, cmd| {
         "foundry-rs/forge-template",
         "--branch",
         "test/deployments",
-    ]);
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Initializing [..] from https://github.com/foundry-rs/forge-template...
+    Initialized forge project
 
-    cmd.assert_success();
-    cmd.assert_non_empty_stdout();
+"#]]);
+
     assert!(prj.root().join("foobar/.dapprc").exists());
     assert!(prj.root().join("foobar/lib/ds-test").exists());
     // assert that gitmodules were correctly initialized
@@ -338,8 +357,15 @@ Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
+
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join("lib/forge-std").exists());
 });
@@ -366,8 +392,14 @@ Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
     assert!(root.join("lib/forge-std").exists());
 });
 
@@ -396,8 +428,14 @@ Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
     assert!(root.join("lib/forge-std").exists());
 
     // not overwritten
@@ -410,8 +448,13 @@ Run with the `--force` flag to initialize regardless.
 forgetest!(can_init_vscode, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root()).arg("--vscode");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("init").arg(prj.root()).arg("--vscode").assert_success().stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
 
     let settings = prj.root().join(".vscode/settings.json");
     assert!(settings.is_file());
@@ -433,8 +476,16 @@ forgetest!(can_init_vscode, |prj, cmd| {
 // checks that forge can init with template
 forgetest!(can_init_template, |prj, cmd| {
     prj.wipe();
-    cmd.args(["init", "--template", "foundry-rs/forge-template"]).arg(prj.root());
-    cmd.assert_non_empty_stdout();
+
+    cmd.args(["init", "--template", "foundry-rs/forge-template"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
+Initializing [..] from https://github.com/foundry-rs/forge-template...
+    Initialized forge project
+
+"#]]);
+
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join("foundry.toml").exists());
     assert!(prj.root().join("lib/forge-std").exists());
@@ -448,8 +499,14 @@ forgetest!(can_init_template, |prj, cmd| {
 forgetest!(can_init_template_with_branch, |prj, cmd| {
     prj.wipe();
     cmd.args(["init", "--template", "foundry-rs/forge-template", "--branch", "test/deployments"])
-        .arg(prj.root());
-    cmd.assert_non_empty_stdout();
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
+Initializing [..] from https://github.com/foundry-rs/forge-template...
+    Initialized forge project
+
+"#]]);
+
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join(".dapprc").exists());
     assert!(prj.root().join("lib/ds-test").exists());
@@ -484,8 +541,20 @@ forgetest!(can_clone, |prj, cmd| {
         next_etherscan_api_key().as_str(),
         "0x044b75f554b886A065b9567891e45c79542d7357",
     ])
-    .arg(prj.root());
-    cmd.assert_non_empty_stdout();
+    .arg(prj.root())
+    .assert_success()
+    .stdout_eq(str![[r#"
+Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -502,8 +571,8 @@ forgetest!(can_clone_quiet, |prj, cmd| {
         "--quiet",
         "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec",
     ])
-    .arg(prj.root());
-    cmd.assert_empty_stdout();
+    .arg(prj.root())
+    .assert_empty_stdout();
 });
 
 // checks that clone works with --no-remappings-txt
@@ -520,8 +589,20 @@ forgetest!(can_clone_no_remappings_txt, |prj, cmd| {
         "--no-remappings-txt",
         "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
     ])
-    .arg(prj.root());
-    cmd.assert_non_empty_stdout();
+    .arg(prj.root())
+    .assert_success()
+    .stdout_eq(str![[r#"
+Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -534,14 +615,15 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.args([
-        "clone",
-        "--etherscan-api-key",
-        next_etherscan_api_key().as_str(),
-        "--keep-directory-structure",
-        "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
-    ])
-    .arg(prj.root());
+    cmd.forge_fuse()
+        .args([
+            "clone",
+            "--etherscan-api-key",
+            next_etherscan_api_key().as_str(),
+            "--keep-directory-structure",
+            "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
+        ])
+        .arg(prj.root());
     let out = cmd.unchecked_output();
     if out.stdout_lossy().contains("502 Bad Gateway") {
         // etherscan nginx proxy issue, skip this test:
@@ -556,7 +638,7 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
         eprintln!("Skipping test due to 502 Bad Gateway: {}", cmd.make_error_message(&out, false));
         return
     }
-    cmd.assert_success();
+    cmd.ensure_success(&out).unwrap();
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -584,14 +666,18 @@ forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj, cmd| {
 forgetest_init!(can_clean_config, |prj, cmd| {
     let config = Config { out: "custom-out".into(), ..Default::default() };
     prj.write_config(config);
-    cmd.arg("build");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     // default test contract is written in custom out directory
     let artifact = prj.root().join(format!("custom-out/{TEMPLATE_TEST_CONTRACT_ARTIFACT_JSON}"));
     assert!(artifact.exists());
 
-    cmd.forge_fuse().arg("clean").assert_success().stdout_eq(str![[r#""#]]);
+    cmd.forge_fuse().arg("clean").assert_empty_stdout();
     assert!(!artifact.exists());
 });
 
@@ -620,16 +706,28 @@ forgetest_init!(can_clean_test_cache, |prj, cmd| {
 
 // checks that extra output works
 forgetest_init!(can_emit_extra_output, |prj, cmd| {
-    cmd.args(["build", "--extra-output", "metadata"]);
-    cmd.assert_non_empty_stdout();
+    cmd.args(["build", "--extra-output", "metadata"]).assert_success().stdout_eq(str![[r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
         foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
 
-    cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
-    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse()
+        .args(["build", "--extra-output-files", "metadata", "--force"])
+        .root_arg()
+        .assert_success()
+        .stdout_eq(str![[r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
@@ -638,8 +736,14 @@ forgetest_init!(can_emit_extra_output, |prj, cmd| {
 
 // checks that extra output works
 forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
-    cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
-    cmd.assert_non_empty_stdout();
+    cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
@@ -657,8 +761,14 @@ forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
             "evm.bytecode.sourceMap",
             "--force",
         ])
-        .root_arg();
-    cmd.assert_non_empty_stdout();
+        .root_arg()
+        .assert_success()
+        .stdout_eq(str![[r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
@@ -1063,7 +1173,6 @@ Compiler run successful!
 
 "#]]);
 
-    // cmd.assert_non_empty_stdout();
     prj.assert_cache_exists();
     prj.assert_artifacts_dir_exists();
 
@@ -1101,8 +1210,15 @@ forgetest!(can_install_and_remove, |prj, cmd| {
     let forge_std_mod = git_mod.join("forge-std");
 
     let install = |cmd: &mut TestCommand| {
-        cmd.forge_fuse().args(["install", "foundry-rs/forge-std", "--no-commit"]);
-        cmd.assert_non_empty_stdout();
+        cmd.forge_fuse()
+            .args(["install", "foundry-rs/forge-std", "--no-commit"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+
+"#]]);
+
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
 
@@ -1111,8 +1227,14 @@ forgetest!(can_install_and_remove, |prj, cmd| {
     };
 
     let remove = |cmd: &mut TestCommand, target: &str| {
-        cmd.forge_fuse().args(["remove", "--force", target]);
-        cmd.assert_non_empty_stdout();
+        // TODO: flaky behavior with URL, sometimes it is None, sometimes it is Some("https://github.com/lib/forge-std")
+        cmd.forge_fuse().args(["remove", "--force", target]).assert_success().stdout_eq(str![[
+            r#"
+Removing 'forge-std' in [..], (url: [..], tag: None)
+
+"#
+        ]]);
+
         assert!(!forge_std.exists());
         assert!(!forge_std_mod.exists());
         let submods = read_string(&git_mod_file);
@@ -1156,8 +1278,15 @@ forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
     let forge_std_mod = git_mod.join("forge-std");
 
     let install = |cmd: &mut TestCommand| {
-        cmd.forge_fuse().args(["install", "foundry-rs/forge-std", "--no-commit"]);
-        cmd.assert_non_empty_stdout();
+        cmd.forge_fuse()
+            .args(["install", "foundry-rs/forge-std", "--no-commit"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+
+"#]]);
+
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
 
@@ -1220,7 +1349,12 @@ forgetest!(
         // install main dependency
         cmd.forge_fuse()
             .args(["install", "evalir/forge-5980-test", "--no-commit"])
-            .assert_non_empty_stdout();
+            .assert_success()
+            .stdout_eq(str![[r#"
+Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5980-test"), tag: None)
+    Installed forge-5980-test
+
+"#]]);
 
         // assert paths exist
         assert!(package.exists());
@@ -1775,8 +1909,14 @@ forgetest_init!(can_inspect_ir_optimized, |_prj, cmd| {
 
 // checks forge bind works correctly on the default project
 forgetest_init!(can_bind, |_prj, cmd| {
-    cmd.arg("bind");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("bind").assert_success().stdout_eq(str![[r#"
+Compiling [..] files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Generating bindings for [..] contracts
+Bindings have been generated to [..]
+
+"#]]);
 });
 
 // checks missing dependencies are auto installed

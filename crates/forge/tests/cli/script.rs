@@ -1015,12 +1015,17 @@ struct Transaction {
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
 forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root());
-    cmd.assert_non_empty_stdout();
-    cmd.forge_fuse();
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let script = prj            .add_script(
+    let script = prj.add_script(
                 "Counter.s.sol",
                 r#"
 import "forge-std/Script.sol";
@@ -1064,6 +1069,7 @@ contract Script0 is Script {
             .unwrap();
 
     cmd
+        .forge_fuse()
         .arg("script")
         .arg(script)
         .args([
@@ -1131,9 +1137,14 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
 forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root());
-    cmd.assert_non_empty_stdout();
-    cmd.forge_fuse();
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let script = prj
@@ -1179,6 +1190,7 @@ contract Script0 is Script {
         .unwrap();
 
     cmd
+        .forge_fuse()
         .arg("script")
         .arg(script)
         .args([
@@ -1292,9 +1304,14 @@ forgetest_async!(does_script_override_correctly, |prj, cmd| {
 });
 
 forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root());
-    cmd.assert_non_empty_stdout();
-    cmd.forge_fuse();
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
 
     let script = prj
         .add_script(
@@ -1350,8 +1367,12 @@ contract ContractC {
         )
         .unwrap();
 
-    cmd.arg("script").arg(script).args(["--tc", "ScriptTxOrigin"]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(script)
+        .args(["--tc", "ScriptTxOrigin"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -1360,14 +1381,18 @@ Script ran successfully.
 
 If you wish to simulate on-chain transactions pass a RPC URL.
 
-"#]],
-    );
+"#]]);
 });
 
 forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root());
-    cmd.assert_non_empty_stdout();
-    cmd.forge_fuse();
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
 
     let script = prj
         .add_script(
@@ -1408,8 +1433,12 @@ contract NestedCreate is Script {
         )
         .unwrap();
 
-    cmd.arg("script").arg(script).args(["--tc", "NestedCreate"]).assert_success().stdout_eq(str![
-        [r#"
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(script)
+        .args(["--tc", "NestedCreate"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -1423,8 +1452,7 @@ Script ran successfully.
 
 If you wish to simulate on-chain transactions pass a RPC URL.
 
-"#]
-    ]);
+"#]]);
 });
 
 forgetest_async!(assert_can_detect_target_contract_with_interfaces, |prj, cmd| {
@@ -1582,9 +1610,14 @@ Multiple functions with the same name `run` found in the ABI
 });
 
 forgetest_async!(can_decode_custom_errors, |prj, cmd| {
-    cmd.args(["init", "--force"]).arg(prj.root());
-    cmd.assert_non_empty_stdout();
-    cmd.forge_fuse();
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
 
     let script = prj
         .add_script(
@@ -1611,7 +1644,7 @@ contract CustomErrorScript is Script {
         )
         .unwrap();
 
-    cmd.arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
+    cmd.forge_fuse().arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
     cmd.assert_failure().stderr_eq(str![[r#"
 Error: 
 script failed: CustomError()

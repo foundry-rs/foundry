@@ -204,7 +204,7 @@ impl ExtTester {
         }
         test_cmd.env("FOUNDRY_INVARIANT_DEPTH", "15");
 
-        test_cmd.assert_non_empty_stdout();
+        test_cmd.assert_success();
     }
 }
 
@@ -950,15 +950,6 @@ impl TestCommand {
         fs::write(format!("{}.stderr", name.display()), &output.stderr).unwrap();
     }
 
-    /// Runs the command and asserts that it **succeeded** and something was printed to stdout.
-    #[track_caller]
-    pub fn assert_non_empty_stdout(&mut self) {
-        let out = self.execute();
-        if !out.status.success() || out.stdout.is_empty() {
-            self.make_panic(&out, false);
-        }
-    }
-
     /// Runs the command and asserts that it **failed** nothing was printed to stdout.
     #[track_caller]
     pub fn assert_empty_stdout(&mut self) {
@@ -978,11 +969,6 @@ impl TestCommand {
         } else {
             Err(self.make_error(out, false))
         }
-    }
-
-    #[track_caller]
-    fn make_panic(&self, out: &Output, expected_fail: bool) -> ! {
-        panic!("{}", self.make_error_message(out, expected_fail))
     }
 
     #[track_caller]

@@ -314,8 +314,19 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // checks that forge test repeatedly produces the same output
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_test_repeatedly, |_prj, cmd| {
-    cmd.arg("test");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+Compiling 24 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
+[PASS] test_Increment() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
 
     for _ in 0..5 {
         cmd.assert_success().stdout_eq(str![[r#"
