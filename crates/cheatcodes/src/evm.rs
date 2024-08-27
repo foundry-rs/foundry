@@ -26,8 +26,8 @@ use std::{
     path::Path,
 };
 
-mod opcode_utils;
-use opcode_utils::{get_memory_input_for_opcode, get_stack_inputs_for_opcode};
+mod record_debug_step;
+use record_debug_step::{get_memory_input_for_opcode, get_stack_inputs_for_opcode};
 
 mod fork;
 pub(crate) mod mapping;
@@ -716,7 +716,7 @@ impl Cheatcode for stopDebugTraceRecordingCall {
 
             let memory = get_memory_input_for_opcode(
                 opcode,
-                stack.clone(),
+                step.stack.clone().unwrap_or_default(),
                 step.memory.clone().unwrap_or_default().as_ref(),
             );
 

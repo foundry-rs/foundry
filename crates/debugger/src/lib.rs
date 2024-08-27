@@ -10,7 +10,7 @@ extern crate tracing;
 
 mod op;
 
-mod tui;
+pub mod tui;
 pub use tui::{Debugger, DebuggerBuilder, ExitReason};
 
 mod node;

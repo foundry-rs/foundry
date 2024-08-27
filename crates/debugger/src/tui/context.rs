@@ -17,7 +17,7 @@ pub(crate) struct DrawMemory {
 
 /// Used to keep track of which buffer is currently active to be drawn by the debugger.
 #[derive(Debug, PartialEq)]
-pub(crate) enum BufferKind {
+pub enum BufferKind {
     Memory,
     Calldata,
     Returndata,

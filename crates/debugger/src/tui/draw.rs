@@ -625,17 +625,17 @@ impl<'a> SourceLines<'a> {
 }
 
 /// Container for buffer access information.
-struct BufferAccess {
-    offset: usize,
-    len: usize,
+pub struct BufferAccess {
+    pub offset: usize,
+    pub len: usize,
 }
 
 /// Container for read and write buffer access information.
-struct BufferAccesses {
+pub struct BufferAccesses {
     /// The read buffer kind and access information.
-    read: Option<(BufferKind, BufferAccess)>,
+    pub read: Option<(BufferKind, BufferAccess)>,
     /// The only mutable buffer is the memory buffer, so don't store the buffer kind.
-    write: Option<BufferAccess>,
+    pub write: Option<BufferAccess>,
 }
 
 /// The memory_access variable stores the index on the stack that indicates the buffer
@@ -648,7 +648,7 @@ struct BufferAccesses {
 ///
 /// The return value is a tuple about accessed buffer region by the given opcode:
 ///    (read buffer, buffer read offset, buffer read len, write memory offset, write memory len)
-fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
+pub fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
     let buffer_access = match op {
         opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => {
             (Some((BufferKind::Memory, 1, 2)), None)

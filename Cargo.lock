@@ -3576,6 +3576,7 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
+ "foundry-debugger",
  "foundry-evm-core",
  "foundry-evm-traces",
  "foundry-wallets",
