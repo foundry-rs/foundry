@@ -292,7 +292,7 @@ contract GasWaster {
     }
 }
 contract DeployScript is Script {
-    function run() external returns (uint256 result, uint8) {
+    function run() external {
         vm.startBroadcast();
         GasWaster gasWaster = new GasWaster();
         gasWaster.wasteGas{gas: 500000}(200000);
@@ -311,28 +311,78 @@ contract DeployScript is Script {
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
     cmd.set_current_dir(prj.root());
 
-    let output = cmd
-        .args([
-            "script",
-            &deploy_contract,
-            "--root",
-            prj.root().to_str().unwrap(),
-            "--fork-url",
-            &handle.http_endpoint(),
-            "-vvvvv",
-            "--slow",
-            "--broadcast",
-            "--private-key",
-            &private_key,
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    cmd.args([
+        "script",
+        &deploy_contract,
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "-vvvvv",
+        "--slow",
+        "--broadcast",
+        "--private-key",
+        &private_key,
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to view
+ [FILE]:7:5:
+  |
+7 |     function wasteGas(uint256 minGas) public {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
 
-    println!("{}", output);
+Traces:
+  [81040] DeployScript::run()
+    ├─ [0] VM::startBroadcast()
+    │   └─ ← [Return] 
+    ├─ [45299] → new GasWaster@0x1c32f8818e38a50d37d1E98c72B9516a50985227
+    │   └─ ← [Return] 226 bytes of code
+    ├─ [226] GasWaster::wasteGas(200000 [2e5])
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
 
-    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
-    assert!(output.contains("Gas limit was set in script to 500000"));
+
+Script ran successfully.
+
+## Setting up 1 EVM.
+==========================
+Simulated On-chain Traces:
+
+Gas limit was set in script to 500000
+  [45299] → new GasWaster@0x1c32f8818e38a50d37d1E98c72B9516a50985227
+    └─ ← [Return] 226 bytes of code
+
+  [226] GasWaster::wasteGas(200000 [2e5])
+    └─ ← [Stop] 
+
+
+==========================
+
+Chain 1
+
+Estimated gas price: [..]
+
+Estimated total gas used for script: [..]
+
+Estimated amount required: [..]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Transactions saved to: [..]
+
+Sensitive values saved to: [..]
+
+
+"#]]);
 });
 
 // Tests that the run command can run functions with arguments
@@ -420,20 +470,24 @@ import "forge-std/Script.sol";
 
 contract HashChecker {
     bytes32 public lastHash;
+
     function update() public {
         bytes32 newHash = blockhash(block.number - 1);
         require(newHash != lastHash, "Hash didn't change");
         lastHash = newHash;
     }
 
-    function checkLastHash() public {
+    function checkLastHash() public view {
         require(lastHash != bytes32(0), "Hash shouldn't be zero");
     }
 }
+
 contract DeployScript is Script {
-    function run() external returns (uint256 result, uint8) {
+    HashChecker public hashChecker;
+
+    function run() external {
         vm.startBroadcast();
-        HashChecker hashChecker = new HashChecker();
+        hashChecker = new HashChecker();
     }
 }"#,
         )
@@ -448,27 +502,49 @@ contract DeployScript is Script {
         "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
     cmd.set_current_dir(prj.root());
 
-    let output = cmd
-        .args([
-            "script",
-            &deploy_contract,
-            "--root",
-            prj.root().to_str().unwrap(),
-            "--fork-url",
-            &handle.http_endpoint(),
-            "-vvvvv",
-            "--broadcast",
-            "--slow",
-            "--skip-simulation",
-            "--private-key",
-            &private_key,
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    cmd.args([
+        "script",
+        &deploy_contract,
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "-vvvvv",
+        "--broadcast",
+        "--slow",
+        "--skip-simulation",
+        "--private-key",
+        &private_key,
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [116040] DeployScript::run()
+    ├─ [0] VM::startBroadcast()
+    │   └─ ← [Return] 
+    ├─ [75723] → new HashChecker@0x1c32f8818e38a50d37d1E98c72B9516a50985227
+    │   └─ ← [Return] 378 bytes of code
+    └─ ← [Stop] 
 
-    assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
-    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+
+Script ran successfully.
+
+SKIPPING ON CHAIN SIMULATION.
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Transactions saved to: [..]
+
+Sensitive values saved to: [..]
+
+
+"#]]);
 
     let run_log = std::fs::read_to_string("broadcast/DeployScript.sol/1/run-latest.json").unwrap();
     let run_object: Value = serde_json::from_str(&run_log).unwrap();
@@ -484,9 +560,11 @@ import "forge-std/Script.sol";
 import { HashChecker } from "./DeployScript.sol";
 
 contract RunScript is Script {
-    function run() external returns (uint256 result, uint8) {
+    HashChecker public hashChecker;
+
+    function run() external {
         vm.startBroadcast();
-        HashChecker hashChecker = HashChecker(CONTRACT_ADDRESS);
+        hashChecker = HashChecker(CONTRACT_ADDRESS);
         uint numUpdates = 8;
         vm.roll(block.number - numUpdates);
         for(uint i = 0; i < numUpdates; i++) {
@@ -501,8 +579,7 @@ contract RunScript is Script {
     let run_script = prj.add_source("RunScript", &run_code).unwrap();
     let run_contract = run_script.display().to_string() + ":RunScript";
 
-    let output = cmd
-        .forge_fuse()
+    cmd.forge_fuse()
         .args([
             "script",
             &run_contract,
@@ -520,11 +597,82 @@ contract RunScript is Script {
             &private_key,
         ])
         .assert_success()
-        .get_output()
-        .stdout_lossy();
+        .stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [51327] RunScript::run()
+    ├─ [0] VM::startBroadcast()
+    │   └─ ← [Return] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [22394] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    │   └─ ← [Stop] 
+    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    │   └─ ← [Stop] 
+    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    │   └─ ← [Stop] 
+    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    │   └─ ← [Stop] 
+    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    │   └─ ← [Stop] 
+    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    │   └─ ← [Stop] 
+    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    │   └─ ← [Stop] 
+    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    │   └─ ← [Stop] 
+    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    └─ ← [Stop] 
 
-    assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
-    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+
+Script ran successfully.
+
+SKIPPING ON CHAIN SIMULATION.
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+Transactions saved to: [..]
+
+Sensitive values saved to: [..]
+
+
+"#]]);
 });
 
 forgetest_async!(can_deploy_script_without_lib, |prj, cmd| {
