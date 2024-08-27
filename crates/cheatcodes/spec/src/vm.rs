@@ -658,13 +658,13 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function pauseGasMetering() external;
 
-    /// Reset gas metering (i.e. gas usage is set to gas limit).
-    #[cheatcode(group = Evm, safety = Safe)]
-    function resetGasMetering() external;
-
     /// Resumes gas metering (i.e. gas usage is counted again). Noop if already on.
     #[cheatcode(group = Evm, safety = Safe)]
     function resumeGasMetering() external;
+
+    /// Reset gas metering (i.e. gas usage is set to gas limit).
+    #[cheatcode(group = Evm, safety = Safe)]
+    function resetGasMetering() external;
 
     // -------- Gas Measurement --------
 

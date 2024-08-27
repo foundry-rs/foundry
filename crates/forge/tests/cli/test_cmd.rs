@@ -1501,6 +1501,7 @@ contract B {
 contract ATest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
     B b;
+    uint256 a;
 
     function testResetGas() public {
         vm.resetGasMetering();
@@ -1563,6 +1564,13 @@ contract ATest is DSTest {
         vm.resetGasMetering();
     }
 
+    function testResetNegativeGas() public {
+        a = 100;
+        vm.resetGasMetering();
+
+        delete a;
+    }
+
     function _reset() internal {
         vm.resetGasMetering();
     }
@@ -1589,6 +1597,7 @@ contract ATest is DSTest {
 [PASS] testResetGas7() (gas: 49)
 [PASS] testResetGas8() (gas: 622)
 [PASS] testResetGas9() (gas: 40)
+[PASS] testResetNegativeGas() (gas: 146)
 ...
 "#]]);
 });
