@@ -2,7 +2,7 @@
 
 use alloy_chains::NamedChain;
 use alloy_primitives::{address, b256, Address, B256};
-use anvil::{Hardfork, NodeConfig};
+use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     casttest,
     rpc::{next_http_rpc_endpoint, next_rpc_endpoint, next_ws_rpc_endpoint},
@@ -1039,7 +1039,8 @@ casttest!(block_number_hash, |_prj, cmd| {
 
 casttest!(send_eip7702, async |_prj, cmd| {
     let (_api, handle) =
-        anvil::spawn(NodeConfig::test().with_hardfork(Some(Hardfork::PragueEOF))).await;
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into())))
+            .await;
     let endpoint = handle.http_endpoint();
     cmd.args([
         "send",
