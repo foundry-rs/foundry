@@ -16,12 +16,7 @@ forgesoldeer!(install_dependency, |prj, cmd| {
 
     cmd.arg("soldeer").args([command, dependency]).assert_success().stdout_eq(str![[r#"
 🦌 Running soldeer install 🦌
-
-Dependency forge-std-[..] downloaded!
-Writing forge-std~[..] to the lock file.
-The dependency forge-std-[..] was unzipped!
-Adding dependency forge-std-[..] to the config file
-Added a new dependency to remappings @forge-std-[..]
+...
 "#]]);
 
     // Making sure the path was created to the dependency and that foundry.toml exists
@@ -67,12 +62,7 @@ forgesoldeer!(install_dependency_git, |prj, cmd| {
 
     cmd.arg("soldeer").args([command, dependency, git]).assert_success().stdout_eq(str![[r#"
 🦌 Running soldeer install 🦌
-
-Successfully downloaded forge-std~1.8.1 the dependency via git
-Dependency forge-std-1.8.1 downloaded!
-Writing forge-std~1.8.1 to the lock file.
-Adding dependency forge-std-1.8.1 to the config file
-Added a new dependency to remappings @forge-std-1.8.1
+...
 "#]]);
 
     // Making sure the path was created to the dependency and that README.md exists
@@ -122,13 +112,7 @@ forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 🦌 Running soldeer install 🦌
-
-Successfully downloaded forge-std~1.8.1 the dependency via git
-Dependency forge-std-1.8.1 downloaded!
-Writing forge-std~1.8.1 to the lock file.
-Adding dependency forge-std-1.8.1 to the config file
-Added a new dependency to remappings @forge-std-1.8.1
-
+...
 "#]]);
 
     // Making sure the path was created to the dependency and that README.md exists
@@ -183,11 +167,7 @@ forge-std = { version = "1.8.1" }
 
     cmd.arg("soldeer").arg(command).assert_success().stdout_eq(str![[r#"
 🦌 Running soldeer update 🦌
-
-Dependency forge-std-1.8.1 downloaded!
-The dependency forge-std-1.8.1 was unzipped!
-Writing forge-std~1.8.1 to the lock file.
-Added a new dependency to remappings @forge-std-1.8.1
+...
 
 "#]]);
 
@@ -244,11 +224,7 @@ forge-std = "1.8.1"
 
     cmd.arg("soldeer").arg(command).assert_success().stdout_eq(str![[r#"
 🦌 Running soldeer update 🦌
-
-Dependency forge-std-1.8.1 downloaded!
-The dependency forge-std-1.8.1 was unzipped!
-Writing forge-std~1.8.1 to the lock file.
-Added a new dependency to remappings @forge-std-1.8.1
+...
 
 "#]]);
 

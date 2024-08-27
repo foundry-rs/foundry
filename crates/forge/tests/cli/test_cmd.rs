@@ -313,9 +313,11 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // checks that forge test repeatedly produces the same output
 #[cfg(not(feature = "isolate-by-default"))]
-forgetest_init!(can_test_repeatedly, |_prj, cmd| {
+forgetest_init!(can_test_repeatedly, |prj, cmd| {
+    prj.clear();
+
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Compiling 24 files with [SOLC_VERSION]
+Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 

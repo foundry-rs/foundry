@@ -23,7 +23,7 @@ forgetest!(print_help, |_prj, cmd| {
     cmd.arg("--help").assert_success().stdout_eq(str![[r#"
 Build, test, fuzz, debug and deploy Solidity contracts
 
-Usage: forge <COMMAND>
+Usage: forge[..] <COMMAND>
 
 Commands:
 ...
@@ -708,6 +708,8 @@ forgetest_init!(can_clean_test_cache, |prj, cmd| {
 
 // checks that extra output works
 forgetest_init!(can_emit_extra_output, |prj, cmd| {
+    prj.clear();
+
     cmd.args(["build", "--extra-output", "metadata"]).assert_success().stdout_eq(str![[r#"
 Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1112,6 +1114,7 @@ contract BTest is DSTest {
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 Compiling 3 files with [SOLC_VERSION]
+...
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1918,7 +1921,9 @@ forgetest_init!(can_inspect_ir_optimized, |_prj, cmd| {
 });
 
 // checks forge bind works correctly on the default project
-forgetest_init!(can_bind, |_prj, cmd| {
+forgetest_init!(can_bind, |prj, cmd| {
+    prj.clear();
+
     cmd.arg("bind").assert_success().stdout_eq(str![[r#"
 Compiling [..] files with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]

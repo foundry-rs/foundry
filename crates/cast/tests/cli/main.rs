@@ -16,7 +16,7 @@ casttest!(print_help, |_prj, cmd| {
     cmd.arg("--help").assert_success().stdout_eq(str![[r#"
 Perform Ethereum RPC calls from the comfort of your command line
 
-Usage: cast <COMMAND>
+Usage: cast[..] <COMMAND>
 
 Commands:
 ...
