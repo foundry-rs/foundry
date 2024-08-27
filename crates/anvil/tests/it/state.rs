@@ -1,5 +1,6 @@
 //! general eth api tests
 
+use alloy_primitives::Uint;
 use anvil::{spawn, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -20,4 +21,24 @@ async fn can_load_state() {
 
     let num2 = api.block_number().unwrap();
     assert_eq!(num, num2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_load_existing_state_legacy() {
+    let state_file = "test-data/state-dump-legacy.json";
+
+    let (api, _handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;
+
+    let block_number = api.block_number().unwrap();
+    assert_eq!(block_number, Uint::from(2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_load_existing_state() {
+    let state_file = "test-data/state-dump.json";
+
+    let (api, _handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;
+
+    let block_number = api.block_number().unwrap();
+    assert_eq!(block_number, Uint::from(2));
 }
