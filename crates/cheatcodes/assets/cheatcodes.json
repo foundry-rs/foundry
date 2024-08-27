@@ -6433,6 +6433,26 @@
     },
     {
       "func": {
+        "id": "pauseTracing",
+        "description": "Pauses collection of call traces. Useful in cases when you want to skip tracing of\ncomplex calls which are not useful for debugging.",
+        "declaration": "function pauseTracing() external view;",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "pauseTracing()",
+        "selector": "0xc94d1f90",
+        "selectorBytes": [
+          201,
+          77,
+          31,
+          144
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "prank_0",
         "description": "Sets the *next* call's `msg.sender` to be the input address.",
         "declaration": "function prank(address msgSender) external;",
@@ -7028,6 +7048,26 @@
         ]
       },
       "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "resumeTracing",
+        "description": "Unpauses collection of call traces.",
+        "declaration": "function resumeTracing() external view;",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "resumeTracing()",
+        "selector": "0x72a09ccb",
+        "selectorBytes": [
+          114,
+          160,
+          156,
+          203
+        ]
+      },
+      "group": "utilities",
       "status": "stable",
       "safety": "safe"
     },

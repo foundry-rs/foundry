@@ -1001,7 +1001,7 @@ impl Config {
 
     /// Returns configuration for a compiler to use when setting up a [Project].
     pub fn compiler(&self) -> Result<MultiCompiler, SolcError> {
-        Ok(MultiCompiler { solc: self.solc_compiler()?, vyper: self.vyper_compiler()? })
+        Ok(MultiCompiler { solc: Some(self.solc_compiler()?), vyper: self.vyper_compiler()? })
     }
 
     /// Returns configured [MultiCompilerSettings].
@@ -1351,6 +1351,7 @@ impl Config {
                 "evm.deployedBytecode".to_string(),
             ]),
             search_paths: None,
+            experimental_codegen: self.vyper.experimental_codegen,
         })
     }
 
@@ -5029,6 +5030,7 @@ mod tests {
                 [vyper]
                 optimize = "codesize"
                 path = "/path/to/vyper"
+                experimental_codegen = true
             "#,
             )?;
 
@@ -5037,7 +5039,8 @@ mod tests {
                 config.vyper,
                 VyperConfig {
                     optimize: Some(VyperOptimizationMode::Codesize),
-                    path: Some("/path/to/vyper".into())
+                    path: Some("/path/to/vyper".into()),
+                    experimental_codegen: Some(true),
                 }
             );
 

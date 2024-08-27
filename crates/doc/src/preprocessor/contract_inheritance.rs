@@ -7,6 +7,7 @@ use std::{collections::HashMap, path::PathBuf};
 pub const CONTRACT_INHERITANCE_ID: PreprocessorId = PreprocessorId("contract_inheritance");
 
 /// The contract inheritance preprocessor.
+///
 /// It matches the documents with inner [`ParseSource::Contract`](crate::ParseSource) elements,
 /// iterates over their [Base](solang_parser::pt::Base)s and attempts
 /// to link them with the paths of the other contract documents.
