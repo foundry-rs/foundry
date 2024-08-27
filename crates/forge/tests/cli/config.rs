@@ -361,8 +361,12 @@ contract Greeter {}
     let config = Config { solc: Some(OTHER_SOLC_VERSION.into()), ..Default::default() };
     prj.write_config(config);
 
-    let output = cmd.arg("build").assert_success().get_output().stdout_lossy();
-    assert!(output.contains("Compiler run successful!"));
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 // tests that `--use <solc>` works
@@ -376,21 +380,23 @@ contract Foo {}
     )
     .unwrap();
 
-    let output = cmd
-        .args(["build", "--use", OTHER_SOLC_VERSION])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(output.contains("Compiler run successful"));
+    cmd.args(["build", "--use", OTHER_SOLC_VERSION]).assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    let output = cmd
-        .forge_fuse()
+"#]]);
+
+    cmd.forge_fuse()
         .args(["build", "--force", "--use", &format!("solc:{OTHER_SOLC_VERSION}")])
         .root_arg()
         .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(output.contains("Compiler run successful"));
+        .stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
@@ -402,15 +408,17 @@ Error:
 
     // `OTHER_SOLC_VERSION` was installed in previous step, so we can use the path to this directly
     let local_solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
-    let output = cmd
-        .forge_fuse()
+    cmd.forge_fuse()
         .args(["build", "--force", "--use"])
         .arg(local_solc.solc)
         .root_arg()
         .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(output.contains("Compiler run successful"));
+        .stdout_eq(str![[r#"
+Compiling 1 files with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 // test to ensure yul optimizer can be set as intended
