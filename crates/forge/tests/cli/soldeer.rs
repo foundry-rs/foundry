@@ -278,7 +278,7 @@ Failed to run [..]
 "#]])
         .stdout_eq(str![[r#"
 🦌 Running [..]oldeer login 🦌
-
+...
 ℹ️  If you do not have an account, please go to soldeer.xyz to create one.
 📧 Please enter your email: 
 "#]]);
