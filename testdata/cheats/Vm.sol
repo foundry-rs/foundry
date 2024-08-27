@@ -346,6 +346,7 @@ interface Vm {
     function removeDir(string calldata path, bool recursive) external;
     function removeFile(string calldata path) external;
     function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);
+    function resetGasMetering() external;
     function resetNonce(address account) external;
     function resumeGasMetering() external;
     function resumeTracing() external view;

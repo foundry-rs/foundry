@@ -7013,6 +7013,26 @@
     },
     {
       "func": {
+        "id": "resetGasMetering",
+        "description": "Reset gas metering (i.e. gas usage is set to gas limit).",
+        "declaration": "function resetGasMetering() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "resetGasMetering()",
+        "selector": "0xbe367dd3",
+        "selectorBytes": [
+          190,
+          54,
+          125,
+          211
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "resetNonce",
         "description": "Resets the nonce of an account to 0 for EOAs and 1 for contract accounts.",
         "declaration": "function resetNonce(address account) external;",
