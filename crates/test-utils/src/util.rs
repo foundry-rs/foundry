@@ -1077,6 +1077,11 @@ fn test_redactions() -> snapbox::Redactions {
             ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
             ("[ADDRESS]", r"Address: 0x[0-9A-Fa-f]{40}"),
             ("[UPDATING_DEPENDENCIES]", r"Updating dependencies in .*"),
+            ("[SAVED_TRANSACTIONS]", r"Transactions saved to: .*\.json"),
+            ("[SAVED_SENSITIVE_VALUES]", r"Sensitive values saved to: .*\.json"),
+            ("[ESTIMATED_GAS_PRICE]", r"Estimated gas price:\s*(\d+(\.\d+)?)\s*gwei"),
+            ("[ESTIMATED_TOTAL_GAS_USED]", r"Estimated total gas used for script: \d+"),
+            ("[ESTIMATED_AMOUNT_REQUIRED]", r"Estimated amount required:\s*(\d+(\.\d+)?)\s*ETH"),
         ];
         for (placeholder, re) in redactions {
             r.insert(placeholder, Regex::new(re).expect(re)).expect(re);

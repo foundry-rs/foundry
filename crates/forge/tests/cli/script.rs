@@ -256,11 +256,11 @@ Gas limit was set in script to 500000
 
 Chain 1
 
-Estimated gas price: [..]
+[ESTIMATED_GAS_PRICE]
 
-Estimated total gas used for script: [..]
+[ESTIMATED_TOTAL_GAS_USED]
 
-Estimated amount required: [..]
+[ESTIMATED_AMOUNT_REQUIRED]
 
 ==========================
 
@@ -269,9 +269,9 @@ Estimated amount required: [..]
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
-Transactions saved to: [..]
+[SAVED_TRANSACTIONS]
 
-Sensitive values saved to: [..]
+[SAVED_SENSITIVE_VALUES]
 
 
 "#]]);
@@ -364,11 +364,11 @@ Gas limit was set in script to 500000
 
 Chain 1
 
-Estimated gas price: [..]
+[ESTIMATED_GAS_PRICE]
 
-Estimated total gas used for script: [..]
+[ESTIMATED_TOTAL_GAS_USED]
 
-Estimated amount required: [..]
+[ESTIMATED_AMOUNT_REQUIRED]
 
 ==========================
 
@@ -377,9 +377,9 @@ Estimated amount required: [..]
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
-Transactions saved to: [..]
+[SAVED_TRANSACTIONS]
 
-Sensitive values saved to: [..]
+[SAVED_SENSITIVE_VALUES]
 
 
 "#]]);
@@ -539,9 +539,9 @@ SKIPPING ON CHAIN SIMULATION.
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
-Transactions saved to: [..]
+[SAVED_TRANSACTIONS]
 
-Sensitive values saved to: [..]
+[SAVED_SENSITIVE_VALUES]
 
 
 "#]]);
@@ -667,9 +667,9 @@ SKIPPING ON CHAIN SIMULATION.
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
-Transactions saved to: [..]
+[SAVED_TRANSACTIONS]
 
-Sensitive values saved to: [..]
+[SAVED_SENSITIVE_VALUES]
 
 
 "#]]);
@@ -1088,19 +1088,19 @@ Script ran successfully.
 
 Chain 31337
 
-Estimated gas price: [..]
+[ESTIMATED_GAS_PRICE]
 
-Estimated total gas used for script: [..]
+[ESTIMATED_TOTAL_GAS_USED]
 
-Estimated amount required: [..]
+[ESTIMATED_AMOUNT_REQUIRED]
 
 ==========================
 
 SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
 
-Transactions saved to: [..]
+[SAVED_TRANSACTIONS]
 
-Sensitive values saved to: [..]
+[SAVED_SENSITIVE_VALUES]
 
 
 "#]]);
@@ -1203,19 +1203,19 @@ Script ran successfully.
 
 Chain 31337
 
-Estimated gas price: [..]
+[ESTIMATED_GAS_PRICE]
 
-Estimated total gas used for script: [..]
+[ESTIMATED_TOTAL_GAS_USED]
 
-Estimated amount required: [..]
+[ESTIMATED_AMOUNT_REQUIRED]
 
 ==========================
 
 SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
 
-Transactions saved to: [..]
+[SAVED_TRANSACTIONS]
 
-Sensitive values saved to: [..]
+[SAVED_SENSITIVE_VALUES]
 
 
 "#]]);
@@ -1674,11 +1674,11 @@ success: bool true
 
 Chain 31337
 
-Estimated gas price: [..]
+[ESTIMATED_GAS_PRICE]
 
-Estimated total gas used for script: [..]
+[ESTIMATED_TOTAL_GAS_USED]
 
-Estimated amount required: [..]
+[ESTIMATED_AMOUNT_REQUIRED]
 
 ==========================
 
@@ -1687,9 +1687,9 @@ Estimated amount required: [..]
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
-Transactions saved to: [..]
+[SAVED_TRANSACTIONS]
 
-Sensitive values saved to: [..]
+[SAVED_SENSITIVE_VALUES]
 
 
 "#]]);
@@ -1721,11 +1721,11 @@ success: bool true
 
 Chain 31337
 
-Estimated gas price: [..]
+[ESTIMATED_GAS_PRICE]
 
-Estimated total gas used for script: [..]
+[ESTIMATED_TOTAL_GAS_USED]
 
-Estimated amount required: [..]
+[ESTIMATED_AMOUNT_REQUIRED]
 
 ==========================
 
@@ -1734,9 +1734,9 @@ Estimated amount required: [..]
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
-Transactions saved to: [..]
+[SAVED_TRANSACTIONS]
 
-Sensitive values saved to: [..]
+[SAVED_SENSITIVE_VALUES]
 
 
 "#]]);
@@ -1787,11 +1787,11 @@ success: bool true
 
 Chain 31337
 
-Estimated gas price: [..]
+[ESTIMATED_GAS_PRICE]
 
-Estimated total gas used for script: [..]
+[ESTIMATED_TOTAL_GAS_USED]
 
-Estimated amount required: [..]
+[ESTIMATED_AMOUNT_REQUIRED]
 
 ==========================
 
@@ -1800,9 +1800,9 @@ Estimated amount required: [..]
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
-Transactions saved to: [..]
+[SAVED_TRANSACTIONS]
 
-Sensitive values saved to: [..]
+[SAVED_SENSITIVE_VALUES]
 
 
 "#]]);
