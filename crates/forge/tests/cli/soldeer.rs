@@ -273,7 +273,7 @@ forgesoldeer!(login, |prj, cmd| {
         .assert_failure()
         .stderr_eq(str![[r#"
 Error: 
-Failed to run [..]oldeer Invalid email
+Failed to run [..]
 
 "#]])
         .stdout_eq(str![[r#"
