@@ -61,10 +61,10 @@ contract Issue7457Test is DSTest, ITarget {
         target.emitAnonymousEventEmpty();
     }
 
-    function testFailEmitEventNonIndexed() public {
+    function testEmitEventNonIndexedReverts() public {
         vm.expectEmit(false, false, false, true);
+        vm.expectRevert("use vm.expectEmitAnonymous to match anonymous events");
         emit AnonymousEventNonIndexed(1);
-        target.emitAnonymousEventNonIndexed(1);
     }
 
     function testEmitEventNonIndexed() public {
