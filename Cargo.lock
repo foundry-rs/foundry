@@ -7927,15 +7927,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "simple-home-dir"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee786d36d89b647cb282c7253385e4c563f363b83e6cdc5c2737724980a8a6a6"
-dependencies = [
- "windows-sys 0.52.0",
-]
-
-[[package]]
 name = "simple_asn1"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8020,14 +8011,16 @@ dependencies = [
 [[package]]
 name = "soldeer"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43e87a81bf76b9ce0159712551a60955c952646605c5ab7dd1436100ac18a812"
 dependencies = [
  "chrono",
  "clap",
  "const-hex",
  "email-address-parser",
  "futures",
+ "home",
  "ignore",
- "once_cell",
  "regex",
  "reqwest",
  "rpassword",
@@ -8035,7 +8028,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "simple-home-dir",
  "thiserror",
  "tokio",
  "toml_edit 0.22.20",
