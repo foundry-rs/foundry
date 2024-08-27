@@ -49,7 +49,6 @@ use revm::{
     primitives::{BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SpecId, EOF_MAGIC_BYTES},
     EvmContext, InnerEvmContext, Inspector,
 };
-use revm_inspectors::tracing::types::CallTraceStep;
 use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::{
@@ -343,7 +342,6 @@ impl ArbitraryStorage {
 
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
-
 
 /// An EVM inspector that handles calls to various cheatcodes, each with their own behavior.
 ///

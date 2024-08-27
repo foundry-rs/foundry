@@ -638,6 +638,8 @@ pub struct BufferAccesses {
     pub write: Option<BufferAccess>,
 }
 
+/// A utility function to get the buffer access.
+///
 /// The memory_access variable stores the index on the stack that indicates the buffer
 /// offset/len accessed by the given opcode:
 ///    (read buffer, buffer read offset, buffer read len, write memory offset, write memory len)

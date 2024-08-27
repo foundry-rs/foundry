@@ -1,7 +1,8 @@
 //! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
 use crate::{
-    inspector::RecordDebugStepInfo, BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*
+    inspector::RecordDebugStepInfo, BroadcastableTransaction, Cheatcode, Cheatcodes,
+    CheatcodesExecutor, CheatsCtxt, Result, Vm::*,
 };
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
@@ -13,21 +14,19 @@ use foundry_evm_core::{
     backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
-use foundry_evm_traces::{CallTraceArena, TracingInspectorConfig};
+use foundry_evm_traces::TracingInspectorConfig;
 use rand::Rng;
 use revm::{
-    interpreter::InstructionResult,
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
 };
-use revm_inspectors::tracing::types::CallTraceStep;
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
 };
 
 mod record_debug_step;
-use record_debug_step::{get_memory_input_for_opcode, get_stack_inputs_for_opcode};
+use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
 
 mod fork;
 pub(crate) mod mapping;
@@ -681,61 +680,6 @@ impl Cheatcode for stopDebugTraceRecordingCall {
         ccx: &mut CheatsCtxt<DB>,
         executor: &mut E,
     ) -> Result {
-        // a depth first traverse to flatten the recorded steps.
-        fn flatten_call_trace(
-            root: usize,
-            arena: &CallTraceArena,
-            node_start_idx: usize,
-        ) -> Vec<&CallTraceStep> {
-            let mut out = Vec::new();
-            let mut nodes = Vec::new(); // Use a Vec as a stack
-            nodes.push(root);
-
-            while let Some(node_idx) = nodes.pop() {
-                // Pop from the end of the stack
-                let node = &arena.nodes()[node_idx];
-                if node_idx >= node_start_idx {
-                    for step in &node.trace.steps {
-                        out.push(step);
-                    }
-                }
-                // Push children onto the stack in reverse order so that the first child is
-                // processed first
-                for &child_idx in node.children.iter().rev() {
-                    nodes.push(child_idx);
-                }
-            }
-
-            out
-        }
-
-        // Function to convert CallTraceStep to DebugStep
-        fn convert_step(step: &&CallTraceStep) -> DebugStep {
-            let opcode = step.op.get();
-            let stack = get_stack_inputs_for_opcode(opcode, step.stack.clone().unwrap_or_default());
-
-            let memory = get_memory_input_for_opcode(
-                opcode,
-                step.stack.clone().unwrap_or_default(),
-                step.memory.clone().unwrap_or_default().as_ref(),
-            );
-
-            let is_out_of_gas = step.status == InstructionResult::OutOfGas ||
-                step.status == InstructionResult::MemoryOOG ||
-                step.status == InstructionResult::MemoryLimitOOG ||
-                step.status == InstructionResult::PrecompileOOG ||
-                step.status == InstructionResult::InvalidOperandOOG;
-
-            DebugStep {
-                stack,
-                memoryData: memory,
-                opcode: step.op.get(),
-                depth: step.depth,
-                isOutOfGas: is_out_of_gas,
-                contractAddr: step.contract,
-            }
-        }
-
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
             // No tracer
             return Ok(Default::default())
@@ -751,11 +695,11 @@ impl Cheatcode for stopDebugTraceRecordingCall {
 
         // Use the trace nodes to flatten the call trace
         let root = tracer.traces();
-        let steps = flatten_call_trace(
-            0, root, record_info.start_node_idx);
+        let steps = flatten_call_trace(0, root, record_info.start_node_idx);
 
         // store the recorded debug steps
-        let debug_steps: Vec<DebugStep> = steps.iter().map(convert_step).collect();
+        let debug_steps: Vec<DebugStep> =
+            steps.iter().map(convert_call_trace_to_debug_step).collect();
         ccx.state.recorded_debug_steps = Some(debug_steps);
 
         // return the length of the debug steps

@@ -1,27 +1,75 @@
 use alloy_primitives::U256;
 
-use alloy_rpc_types::serde_helpers::quantity::vec;
-use revm::interpreter::OpCode;
+use foundry_evm_traces::CallTraceArena;
+use revm::interpreter::{InstructionResult, OpCode};
 
-use foundry_debugger::tui::draw::get_buffer_accesses;
-use foundry_debugger::tui::context::BufferKind;
+use foundry_debugger::tui::{context::BufferKind, draw::get_buffer_accesses};
+use revm_inspectors::tracing::types::CallTraceStep;
+use spec::Vm::DebugStep;
+
+// A depth first traverse to flatten the recorded steps.
+pub(crate) fn flatten_call_trace(
+    root: usize,
+    arena: &CallTraceArena,
+    node_start_idx: usize,
+) -> Vec<&CallTraceStep> {
+    let mut out = Vec::new();
+    let mut nodes = Vec::new(); // Use a Vec as a stack
+    nodes.push(root);
+
+    while let Some(node_idx) = nodes.pop() {
+        // Pop from the end of the stack
+        let node = &arena.nodes()[node_idx];
+        if node_idx >= node_start_idx {
+            for step in &node.trace.steps {
+                out.push(step);
+            }
+        }
+        // Push children onto the stack in reverse order so that the first child is
+        // processed first
+        for &child_idx in node.children.iter().rev() {
+            nodes.push(child_idx);
+        }
+    }
+
+    out
+}
+
+// Function to convert CallTraceStep to DebugStep
+pub(crate) fn convert_call_trace_to_debug_step(step: &&CallTraceStep) -> DebugStep {
+    let opcode = step.op.get();
+    let stack = get_stack_inputs_for_opcode(opcode, step.stack.clone().unwrap_or_default());
+
+    let memory = get_memory_input_for_opcode(
+        opcode,
+        step.stack.clone().unwrap_or_default(),
+        step.memory.clone().unwrap_or_default().as_ref(),
+    );
+
+    let is_out_of_gas = step.status == InstructionResult::OutOfGas ||
+        step.status == InstructionResult::MemoryOOG ||
+        step.status == InstructionResult::MemoryLimitOOG ||
+        step.status == InstructionResult::PrecompileOOG ||
+        step.status == InstructionResult::InvalidOperandOOG;
+
+    DebugStep {
+        stack,
+        memoryData: memory,
+        opcode: step.op.get(),
+        depth: step.depth,
+        isOutOfGas: is_out_of_gas,
+        contractAddr: step.contract,
+    }
+}
 
 // The expected `stack` here is from the trace stack, where the top of the stack
 // is the last value of the vector
-pub(crate) fn get_memory_input_for_opcode(
-    opcode: u8,
-    stack: Vec<U256>,
-    memory: &[u8],
-) -> Vec<u8> {
+fn get_memory_input_for_opcode(opcode: u8, stack: Vec<U256>, memory: &[u8]) -> Vec<u8> {
     if let Some(accesses) = get_buffer_accesses(opcode, &stack) {
         if let Some((kind, access)) = accesses.read {
             return match kind {
-                BufferKind::Memory => get_slice_from_memory(
-                    memory,
-                    access.offset,
-                    access.len
-                ),
-                _ => vec![]
+                BufferKind::Memory => get_slice_from_memory(memory, access.offset, access.len),
+                _ => vec![],
             }
         }
     };
@@ -31,8 +79,7 @@ pub(crate) fn get_memory_input_for_opcode(
 
 // The expected `stack` here is from the trace stack, where the top of the stack
 // is the last value of the vector
-pub(crate) fn get_stack_inputs_for_opcode(opcode: u8, stack: Vec<U256>) -> Vec<U256> {
-
+fn get_stack_inputs_for_opcode(opcode: u8, stack: Vec<U256>) -> Vec<U256> {
     let Some(op) = OpCode::new(opcode) else {
         // unknown opcode
         return vec![]
@@ -44,7 +91,6 @@ pub(crate) fn get_stack_inputs_for_opcode(opcode: u8, stack: Vec<U256>) -> Vec<U
         inputs.push(peak_stack(&stack, i.into()));
     }
     inputs
-
 }
 
 fn peak_stack(stack: &[U256], i: usize) -> U256 {
