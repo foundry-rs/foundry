@@ -9,7 +9,7 @@ use foundry_evm_core::{
     InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_traces::{SparsedTraceArena, TraceMode};
+use foundry_evm_traces::{CallTraceArena, SparsedTraceArena, TraceMode};
 use revm::{
     inspectors::CustomPrintTracer,
     interpreter::{
@@ -316,64 +316,64 @@ impl CheatcodesExecutor for InspectorStackInner {
         Some(&mut self.tracer)
     }
 
-    fn start_steps_recording(&mut self, cheats: &mut Cheatcodes) {
-        // Ensure the tracer exists and configure it
-        let tracer = self.tracer.get_or_insert_with(Default::default);
-        // tracer.fuse();
-        tracer.update_config(|_config| TracingInspectorConfig::all());
-        // *tracer.config_mut() = TracingInspectorConfig::all();
+    // fn start_steps_recording(&mut self, cheats: &mut Cheatcodes) {
+    //     // Ensure the tracer exists and configure it
+    //     let tracer = self.tracer.get_or_insert_with(Default::default);
+    //     // tracer.fuse();
+    //     tracer.update_config(|_config| TracingInspectorConfig::all());
+    //     // *tracer.config_mut() = TracingInspectorConfig::all();
 
-        // Use the updated tracer directly and move the traces to avoid cloning
-        let nodes = tracer.traces().clone().into_nodes();
-        if let Some(last_node) = nodes.last() {
-            cheats.record_debug_steps_start_index = Some(last_node.idx);
-        }
-    }
+    //     // Use the updated tracer directly and move the traces to avoid cloning
+    //     let nodes = tracer.traces().clone().into_nodes();
+    //     if let Some(last_node) = nodes.last() {
+    //         cheats.record_debug_steps_start_index = Some(last_node.idx);
+    //     }
+    // }
 
-    fn stop_and_get_recorded_step(&mut self, cheats: &mut Cheatcodes) -> Vec<&CallTraceStep> {
-        // a depth first traverse to flatten the recorded steps.
-        fn flatten_call_trace(
-            root: usize,
-            arena: &CallTraceArena,
-            record_debug_steps_start_index: Option<usize>,
-        ) -> Vec<&CallTraceStep> {
-            let Some(node_start_idx) = record_debug_steps_start_index else {
-                return Default::default();
-            };
+    // fn stop_and_get_recorded_step(&mut self, cheats: &mut Cheatcodes) -> Vec<&CallTraceStep> {
+    //     // a depth first traverse to flatten the recorded steps.
+    //     fn flatten_call_trace(
+    //         root: usize,
+    //         arena: &CallTraceStep,
+    //         record_debug_steps_start_index: Option<usize>,
+    //     ) -> Vec<&CallTraceStep> {
+    //         let Some(node_start_idx) = record_debug_steps_start_index else {
+    //             return Default::default();
+    //         };
 
-            let mut out = Vec::new();
-            let mut nodes = Vec::new(); // Use a Vec as a stack
-            nodes.push(root);
+    //         let mut out = Vec::new();
+    //         let mut nodes = Vec::new(); // Use a Vec as a stack
+    //         nodes.push(root);
 
-            while let Some(node_idx) = nodes.pop() {
-                // Pop from the end of the stack
-                let node = &arena.nodes()[node_idx];
-                if node_idx >= node_start_idx {
-                    for step in &node.trace.steps {
-                        out.push(step);
-                    }
-                }
-                // Push children onto the stack in reverse order so that the first child is
-                // processed first
-                for &child_idx in node.children.iter().rev() {
-                    nodes.push(child_idx);
-                }
-            }
+    //         while let Some(node_idx) = nodes.pop() {
+    //             // Pop from the end of the stack
+    //             let node = &arena.nodes()[node_idx];
+    //             if node_idx >= node_start_idx {
+    //                 for step in &node.trace.steps {
+    //                     out.push(step);
+    //                 }
+    //             }
+    //             // Push children onto the stack in reverse order so that the first child is
+    //             // processed first
+    //             for &child_idx in node.children.iter().rev() {
+    //                 nodes.push(child_idx);
+    //             }
+    //         }
 
-            out
-        }
+    //         out
+    //     }
 
-        if let Some(tracer) = &mut self.tracer {
-            // Stop the tracer
-            tracer.update_config(|_config| TracingInspectorConfig::none());
+    //     if let Some(tracer) = &mut self.tracer {
+    //         // Stop the tracer
+    //         tracer.update_config(|_config| TracingInspectorConfig::none());
 
-            // Use the trace nodes to flatten the call trace
-            let root = tracer.traces();
-            return flatten_call_trace(0, root, cheats.record_debug_steps_start_index);
-        }
+    //         // Use the trace nodes to flatten the call trace
+    //         let root = tracer.traces();
+    //         return flatten_call_trace(0, root, cheats.record_debug_steps_start_index);
+    //     }
 
-        Vec::new()
-    }
+    //     Vec::new()
+    // }
 }
 
 impl InspectorStack {

@@ -1,7 +1,7 @@
 //! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
 use crate::{
-    BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*,
+    inspector::RecordDebugStepInfo, BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*
 };
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
@@ -13,6 +13,7 @@ use foundry_evm_core::{
     backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
+use foundry_evm_traces::{CallTraceArena, TracingInspectorConfig};
 use rand::Rng;
 use revm::{
     interpreter::InstructionResult,
@@ -649,7 +650,27 @@ impl Cheatcode for startDebugTraceRecordingCall {
         ccx: &mut CheatsCtxt<DB>,
         executor: &mut E,
     ) -> Result {
-        executor.start_steps_recording(ccx.state);
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
+            // No tracer
+            return Ok(Default::default())
+        };
+
+        let mut info = RecordDebugStepInfo {
+            // will be updated later
+            start_node_idx: 0,
+            // keep the original config to revert back later
+            original_tracer_config: *tracer.config(),
+        };
+
+        // turn on tracer configuration for recording
+        tracer.update_config(|_config| TracingInspectorConfig::all());
+
+        // track where the recording starts
+        if let Some(last_node) = tracer.traces().nodes().last() {
+            info.start_node_idx = last_node.idx;
+        }
+
+        ccx.state.record_debug_steps_info = Some(info);
         Ok(Default::default())
     }
 }
@@ -660,6 +681,34 @@ impl Cheatcode for stopDebugTraceRecordingCall {
         ccx: &mut CheatsCtxt<DB>,
         executor: &mut E,
     ) -> Result {
+        // a depth first traverse to flatten the recorded steps.
+        fn flatten_call_trace(
+            root: usize,
+            arena: &CallTraceArena,
+            node_start_idx: usize,
+        ) -> Vec<&CallTraceStep> {
+            let mut out = Vec::new();
+            let mut nodes = Vec::new(); // Use a Vec as a stack
+            nodes.push(root);
+
+            while let Some(node_idx) = nodes.pop() {
+                // Pop from the end of the stack
+                let node = &arena.nodes()[node_idx];
+                if node_idx >= node_start_idx {
+                    for step in &node.trace.steps {
+                        out.push(step);
+                    }
+                }
+                // Push children onto the stack in reverse order so that the first child is
+                // processed first
+                for &child_idx in node.children.iter().rev() {
+                    nodes.push(child_idx);
+                }
+            }
+
+            out
+        }
+
         // Function to convert CallTraceStep to DebugStep
         fn convert_step(step: &&CallTraceStep) -> DebugStep {
             let opcode = step.op.get();
@@ -687,12 +736,29 @@ impl Cheatcode for stopDebugTraceRecordingCall {
             }
         }
 
-        let steps = executor.stop_and_get_recorded_step(ccx.state);
-        let debug_steps: Vec<DebugStep> = steps.iter().map(convert_step).collect();
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
+            // No tracer
+            return Ok(Default::default())
+        };
+
+        let Some(record_info) = ccx.state.record_debug_steps_info else {
+            // No debug trace record info, have not start recording yet
+            return Ok(Default::default())
+        };
+
+        // Revert the tracer config to the one before recording
+        tracer.update_config(|_config| record_info.original_tracer_config);
+
+        // Use the trace nodes to flatten the call trace
+        let root = tracer.traces();
+        let steps = flatten_call_trace(
+            0, root, record_info.start_node_idx);
 
         // store the recorded debug steps
+        let debug_steps: Vec<DebugStep> = steps.iter().map(convert_step).collect();
         ccx.state.recorded_debug_steps = Some(debug_steps);
 
+        // return the length of the debug steps
         let length = ccx.state.recorded_debug_steps.as_ref().map_or(0, |v| v.len());
         let length_uint = Uint::<256, 4>::from(length);
         Ok(length_uint.abi_encode())
