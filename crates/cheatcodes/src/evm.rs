@@ -33,8 +33,6 @@ pub(crate) mod mapping;
 pub(crate) mod mock;
 pub(crate) mod prank;
 
-use crate::inspector::DebugStep as InspectorDebugStep;
-
 /// Records storage slots reads and writes.
 #[derive(Clone, Debug, Default)]
 pub struct RecordAccess {
@@ -662,8 +660,8 @@ impl Cheatcode for stopDebugTraceRecordingCall {
         ccx: &mut CheatsCtxt<DB>,
         executor: &mut E,
     ) -> Result {
-        // Function to convert CallTraceStep to InspectorDebugStep
-        fn convert_step(step: &&CallTraceStep) -> InspectorDebugStep {
+        // Function to convert CallTraceStep to DebugStep
+        fn convert_step(step: &&CallTraceStep) -> DebugStep {
             let opcode = step.op.get();
             let stack = get_stack_inputs_for_opcode(opcode, step.stack.clone().unwrap_or_default());
 
@@ -679,20 +677,18 @@ impl Cheatcode for stopDebugTraceRecordingCall {
                 step.status == InstructionResult::PrecompileOOG ||
                 step.status == InstructionResult::InvalidOperandOOG;
 
-            InspectorDebugStep {
-                step: DebugStep {
-                    stack,
-                    memoryData: memory,
-                    opcode: step.op.get(),
-                    depth: step.depth,
-                    isOutOfGas: is_out_of_gas,
-                    contractAddr: step.contract,
-                },
+            DebugStep {
+                stack,
+                memoryData: memory,
+                opcode: step.op.get(),
+                depth: step.depth,
+                isOutOfGas: is_out_of_gas,
+                contractAddr: step.contract,
             }
         }
 
         let steps = executor.stop_and_get_recorded_step(ccx.state);
-        let debug_steps: Vec<InspectorDebugStep> = steps.iter().map(convert_step).collect();
+        let debug_steps: Vec<DebugStep> = steps.iter().map(convert_step).collect();
 
         // store the recorded debug steps
         ccx.state.recorded_debug_steps = Some(debug_steps);
@@ -710,7 +706,7 @@ impl Cheatcode for getDebugTraceByIndexCall {
 
         if let Some(debug_steps) = state.recorded_debug_steps.as_ref() {
             if let Some(debug_step) = debug_steps.get(idx) {
-                return Ok(debug_step.step.abi_encode());
+                return Ok(debug_step.abi_encode());
             }
         }
 

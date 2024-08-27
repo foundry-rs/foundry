@@ -342,11 +342,6 @@ impl ArbitraryStorage {
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 
-#[derive(Debug, Clone)]
-pub struct DebugStep {
-    /// The debug step
-    pub step: crate::Vm::DebugStep,
-}
 
 /// An EVM inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -407,7 +402,7 @@ pub struct Cheatcodes {
     /// Recorded debug trace/steps during the call.
     /// This field stores a debug trace that were recorded during the call.
     /// It is empty if nothing were recorded.
-    pub recorded_debug_steps: Option<Vec<DebugStep>>,
+    pub recorded_debug_steps: Option<Vec<crate::Vm::DebugStep>>,
 
     /// The tracing node index where we start to record the debug trace steps.
     pub record_debug_steps_start_index: Option<usize>,
