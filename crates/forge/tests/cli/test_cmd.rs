@@ -1481,3 +1481,114 @@ Traces:
 ...
 "#]]);
 });
+
+forgetest_init!(gas_metering_reset, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    prj.add_source(
+        "ATest.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+contract B {
+    function a() public returns (uint256) {
+        return 100;
+    }
+}
+contract ATest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    B b;
+
+    function testResetGas() public {
+        vm.resetGasMetering();
+    }
+
+    function testResetGas1() public {
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas2() public {
+        b = new B();
+        b = new B();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas3() public {
+        vm.resetGasMetering();
+        b = new B();
+        b = new B();
+    }
+
+    function testResetGas4() public {
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+        b = new B();
+    }
+
+    function testResetGas5() public {
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas6() public {
+        vm.resetGasMetering();
+        b = new B();
+        b = new B();
+        _reset();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas7() public {
+        vm.resetGasMetering();
+        b = new B();
+        b = new B();
+        _reset();
+    }
+
+    function testResetGas8() public {
+        this.resetExternal();
+    }
+
+    function testResetGas9() public {
+        this.resetExternal();
+        vm.resetGasMetering();
+    }
+
+    function _reset() internal {
+        vm.resetGasMetering();
+    }
+
+    function resetExternal() external {
+        b = new B();
+        b = new B();
+        vm.resetGasMetering();
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+[PASS] testResetGas() (gas: 40)
+[PASS] testResetGas1() (gas: 40)
+[PASS] testResetGas2() (gas: 40)
+[PASS] testResetGas3() (gas: 134476)
+[PASS] testResetGas4() (gas: 56302)
+[PASS] testResetGas5() (gas: 40)
+[PASS] testResetGas6() (gas: 40)
+[PASS] testResetGas7() (gas: 49)
+[PASS] testResetGas8() (gas: 622)
+[PASS] testResetGas9() (gas: 40)
+...
+"#]]);
+});

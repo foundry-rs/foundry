@@ -375,7 +375,7 @@ impl InspectorStack {
     #[inline]
     pub fn set_gas_price(&mut self, gas_price: U256) {
         if let Some(cheatcodes) = &mut self.cheatcodes {
-            cheatcodes.gas_price = Some(gas_price);
+            cheatcodes.gas_metering.gas_price = Some(gas_price);
         }
     }
 

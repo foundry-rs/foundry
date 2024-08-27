@@ -217,12 +217,23 @@ pub struct BroadcastableTransaction {
 /// Holds gas metering state.
 #[derive(Clone, Debug, Default)]
 pub struct GasMetering {
+    /// Gas price used in the cheatcode handler to overwrite the gas price separately from the
+    /// gas price in the execution environment.
+    pub gas_price: Option<U256>,
+
     /// True if gas metering is paused.
     pub paused: bool,
-    /// True if gas metering was resumed during the test.
-    pub resumed: bool,
+    /// True if gas metering was resumed or reseted during the test.
+    /// Used to reconcile gas when frame ends (if spent less than refunded).
+    pub touched: bool,
+    /// True if gas metering should be reset to frame limit.
+    pub reset: bool,
     /// Stores frames paused gas.
     pub paused_frames: Vec<Gas>,
+
+    /// Cache of the amount of gas used in previous call.
+    /// This is used by the `lastCallGas` cheatcode.
+    pub last_call_gas: Option<crate::Vm::Gas>,
 }
 
 impl GasMetering {
@@ -230,8 +241,16 @@ impl GasMetering {
     pub fn resume(&mut self) {
         if self.paused {
             self.paused = false;
-            self.resumed = true;
+            self.touched = true;
         }
+        self.paused_frames.clear();
+    }
+
+    /// Reset gas to limit.
+    pub fn reset(&mut self) {
+        self.paused = false;
+        self.touched = true;
+        self.reset = true;
         self.paused_frames.clear();
     }
 }
@@ -264,12 +283,6 @@ pub struct Cheatcodes {
     /// execution block environment.
     pub block: Option<BlockEnv>,
 
-    /// The gas price
-    ///
-    /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
-    /// in the execution environment.
-    pub gas_price: Option<U256>,
-
     /// Address labels
     pub labels: HashMap<Address, String>,
 
@@ -294,10 +307,6 @@ pub struct Cheatcodes {
 
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
-
-    /// Cache of the amount of gas used in previous call.
-    /// This is used by the `lastCallGas` cheatcode.
-    pub last_call_gas: Option<crate::Vm::Gas>,
 
     /// Mocked calls
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
@@ -370,14 +379,12 @@ impl Cheatcodes {
             labels: config.labels.clone(),
             config,
             block: Default::default(),
-            gas_price: Default::default(),
             prank: Default::default(),
             expected_revert: Default::default(),
             fork_revert_diagnostic: Default::default(),
             accesses: Default::default(),
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
-            last_call_gas: Default::default(),
             mocked_calls: Default::default(),
             expected_calls: Default::default(),
             expected_emits: Default::default(),
@@ -980,7 +987,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(block) = self.block.take() {
             ecx.env.block = block;
         }
-        if let Some(gas_price) = self.gas_price.take() {
+        if let Some(gas_price) = self.gas_metering.gas_price.take() {
             ecx.env.tx.gas_price = gas_price;
         }
 
@@ -994,9 +1001,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         self.pc = interpreter.program_counter();
 
-        // `pauseGasMetering`: reset interpreter gas.
+        // `pauseGasMetering`: pause / resume interpreter gas.
         if self.gas_metering.paused {
             self.meter_gas(interpreter);
+        }
+
+        // `resetGasMetering`: reset interpreter gas.
+        if self.gas_metering.reset {
+            self.meter_gas_reset(interpreter);
         }
 
         // `record`: record storage reads and writes.
@@ -1026,7 +1038,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             self.meter_gas_end(interpreter);
         }
 
-        if self.gas_metering.resumed {
+        if self.gas_metering.touched {
             self.meter_gas_check(interpreter);
         }
     }
@@ -1143,7 +1155,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
         // retrieve the gas usage of the last call.
         let gas = outcome.result.gas;
-        self.last_call_gas = Some(crate::Vm::Gas {
+        self.gas_metering.last_call_gas = Some(crate::Vm::Gas {
             gasLimit: gas.limit(),
             gasTotalUsed: gas.spent(),
             gasMemoryUsed: 0,
@@ -1404,6 +1416,12 @@ impl Cheatcodes {
         if will_exit(interpreter.instruction_result) {
             self.gas_metering.paused_frames.pop();
         }
+    }
+
+    #[cold]
+    fn meter_gas_reset(&mut self, interpreter: &mut Interpreter) {
+        interpreter.gas = Gas::new(interpreter.gas().limit());
+        self.gas_metering.reset = false;
     }
 
     #[cold]
