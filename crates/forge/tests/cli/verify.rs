@@ -77,7 +77,7 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
     // give etherscan some time to verify the contract
     let retry = Retry::new(retries, Some(Duration::from_secs(30)));
     retry.run(|| -> eyre::Result<()> {
-        let output = cmd.unchecked_output();
+        let output = cmd.execute();
         let out = String::from_utf8_lossy(&output.stdout);
         println!("{out}");
         if out.contains("Contract successfully verified") {
@@ -97,7 +97,7 @@ fn await_verification_response(info: EnvExternalities, mut cmd: TestCommand) {
         let retry = Retry::new(5, Some(Duration::from_secs(60)));
         retry
             .run(|| -> eyre::Result<String> {
-                let output = cmd.unchecked_output();
+                let output = cmd.execute();
                 let out = String::from_utf8_lossy(&output.stdout);
                 utils::parse_verification_guid(&out).ok_or_else(|| {
                     eyre::eyre!(

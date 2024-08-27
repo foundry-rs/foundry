@@ -828,181 +828,43 @@ impl TestCommand {
         self
     }
 
-    /// Does not apply [`snapbox`] redactions to the command output.
-    pub fn with_no_redact(&mut self) -> &mut Self {
-        self.redact_output = false;
-        self
-    }
-
     /// Returns the `Config` as spit out by `forge config`
     #[track_caller]
     pub fn config(&mut self) -> Config {
         self.cmd.args(["config", "--json"]);
-        let output = self.output();
-        let c = lossy_string(&output.stdout);
-        let config = serde_json::from_str(c.as_ref()).unwrap();
+        let output = self.assert().success().get_output().stdout_lossy();
+        let config = serde_json::from_str(output.as_ref()).unwrap();
         self.forge_fuse();
         config
     }
 
     /// Runs `git init` inside the project's dir
     #[track_caller]
-    pub fn git_init(&self) -> Output {
+    pub fn git_init(&self) {
         let mut cmd = Command::new("git");
         cmd.arg("init").current_dir(self.project.root());
-        let output = cmd.output().unwrap();
-        self.ensure_success(&output).unwrap();
-        output
-    }
-
-    /// Returns a new [Command] that is inside the current project dir
-    pub fn cmd_in_current_dir(&self, program: &str) -> Command {
-        let mut cmd = Command::new(program);
-        cmd.current_dir(self.project.root());
-        cmd
+        let output = OutputAssert::new(cmd.output().unwrap());
+        output.success();
     }
 
     /// Runs `git add .` inside the project's dir
     #[track_caller]
-    pub fn git_add(&self) -> Result<()> {
-        let mut cmd = self.cmd_in_current_dir("git");
+    pub fn git_add(&self) {
+        let mut cmd = Command::new("git");
+        cmd.current_dir(self.project.root());
         cmd.arg("add").arg(".");
-        let output = cmd.output()?;
-        self.ensure_success(&output)
+        let output = OutputAssert::new(cmd.output().unwrap());
+        output.success();
     }
 
     /// Runs `git commit .` inside the project's dir
     #[track_caller]
-    pub fn git_commit(&self, msg: &str) -> Result<()> {
-        let mut cmd = self.cmd_in_current_dir("git");
+    pub fn git_commit(&self, msg: &str) {
+        let mut cmd = Command::new("git");
+        cmd.current_dir(self.project.root());
         cmd.arg("commit").arg("-m").arg(msg);
-        let output = cmd.output()?;
-        self.ensure_success(&output)
-    }
-
-    /// Executes the command and returns the `(stdout, stderr)` of the output as lossy `String`s.
-    ///
-    /// Does not expect the command to be successful.
-    #[track_caller]
-    pub fn unchecked_output_lossy(&mut self) -> (String, String) {
-        let output = self.unchecked_output();
-        (lossy_string(&output.stdout), lossy_string(&output.stderr))
-    }
-
-    /// Returns the output but does not expect that the command was successful
-    #[track_caller]
-    pub fn unchecked_output(&mut self) -> Output {
-        self.execute()
-    }
-
-    /// Gets the output of a command. If the command failed, then this panics.
-    #[track_caller]
-    pub fn output(&mut self) -> Output {
-        let output = self.execute();
-        self.ensure_success(&output).unwrap();
-        output
-    }
-
-    /// Executes command, applies stdin function and returns output
-    #[track_caller]
-    pub fn execute(&mut self) -> Output {
-        self.try_execute().unwrap()
-    }
-
-    #[track_caller]
-    pub fn try_execute(&mut self) -> std::io::Result<Output> {
-        eprintln!("executing {:?}", self.cmd);
-        let mut child =
-            self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
-        if let Some(fun) = self.stdin_fun.take() {
-            fun(child.stdin.take().unwrap());
-        }
-        child.wait_with_output()
-    }
-
-    /// Executes command and expects an successful result
-    #[track_caller]
-    pub fn ensure_execute_success(&mut self) -> Result<Output> {
-        let out = self.try_execute()?;
-        self.ensure_success(&out)?;
-        Ok(out)
-    }
-
-    /// Runs the command and prints its output
-    /// You have to pass --nocapture to cargo test or the print won't be displayed.
-    /// The full command would be: cargo test -- --nocapture
-    #[track_caller]
-    pub fn print_output(&mut self) {
-        let output = self.execute();
-        println!("stdout:\n{}", lossy_string(&output.stdout));
-        println!("\nstderr:\n{}", lossy_string(&output.stderr));
-    }
-
-    /// Writes the content of the output to new fixture files
-    #[track_caller]
-    pub fn write_fixtures(&mut self, name: impl AsRef<Path>) {
-        let name = name.as_ref();
-        if let Some(parent) = name.parent() {
-            fs::create_dir_all(parent).unwrap();
-        }
-        let output = self.execute();
-        fs::write(format!("{}.stdout", name.display()), &output.stdout).unwrap();
-        fs::write(format!("{}.stderr", name.display()), &output.stderr).unwrap();
-    }
-
-    /// Runs the command and asserts that it **failed** nothing was printed to stdout.
-    #[track_caller]
-    pub fn assert_empty_stdout(&mut self) {
-        self.assert_success().stdout_eq(str![[r#""#]]);
-    }
-
-    /// Runs the command and asserts that it **failed** nothing was printed to stderr.
-    #[track_caller]
-    pub fn assert_empty_stderr(&mut self) {
-        self.assert_failure().stderr_eq(str![[r#""#]]);
-    }
-
-    #[track_caller]
-    pub fn ensure_success(&self, out: &Output) -> Result<()> {
-        if out.status.success() {
-            Ok(())
-        } else {
-            Err(self.make_error(out, false))
-        }
-    }
-
-    #[track_caller]
-    fn make_error(&self, out: &Output, expected_fail: bool) -> eyre::Report {
-        eyre::eyre!("{}", self.make_error_message(out, expected_fail))
-    }
-
-    pub fn make_error_message(&self, out: &Output, expected_fail: bool) -> String {
-        let msg = if expected_fail {
-            "expected failure but command succeeded!"
-        } else {
-            "command failed but expected success!"
-        };
-        format!(
-            "\
---- {:?} ---
-{msg}
-
-status: {}
-
-paths:
-{}
-
-stdout:
-{}
-
-stderr:
-{}",
-            self.cmd,
-            out.status,
-            self.project.inner.paths(),
-            lossy_string(&out.stdout),
-            lossy_string(&out.stderr),
-        )
+        let output = OutputAssert::new(cmd.output().unwrap());
+        output.success();
     }
 
     /// Runs the command, returning a [`snapbox`] object to assert the command output.
@@ -1021,10 +883,45 @@ stderr:
         self.assert().success()
     }
 
+    /// Runs the command and asserts that it **failed** nothing was printed to stdout.
+    #[track_caller]
+    pub fn assert_empty_stdout(&mut self) {
+        self.assert_success().stdout_eq(str![[r#""#]]);
+    }
+
     /// Runs the command and asserts that it failed.
     #[track_caller]
     pub fn assert_failure(&mut self) -> OutputAssert {
         self.assert().failure()
+    }
+
+    /// Runs the command and asserts that it **failed** nothing was printed to stderr.
+    #[track_caller]
+    pub fn assert_empty_stderr(&mut self) {
+        self.assert_failure().stderr_eq(str![[r#""#]]);
+    }
+
+    /// Does not apply [`snapbox`] redactions to the command output.
+    pub fn with_no_redact(&mut self) -> &mut Self {
+        self.redact_output = false;
+        self
+    }
+
+    /// Executes command, applies stdin function and returns output
+    #[track_caller]
+    pub fn execute(&mut self) -> Output {
+        self.try_execute().unwrap()
+    }
+
+    #[track_caller]
+    pub fn try_execute(&mut self) -> std::io::Result<Output> {
+        eprintln!("executing {:?}", self.cmd);
+        let mut child =
+            self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
+        if let Some(fun) = self.stdin_fun.take() {
+            fun(child.stdin.take().unwrap());
+        }
+        child.wait_with_output()
     }
 }
 
@@ -1073,6 +970,6 @@ impl OutputExt for Output {
     }
 }
 
-fn lossy_string(bytes: &[u8]) -> String {
+pub fn lossy_string(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).replace("\r\n", "\n")
 }

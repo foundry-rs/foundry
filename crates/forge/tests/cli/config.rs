@@ -660,16 +660,12 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
     fs::write(prj.root().join("lib").join("forge-std").join("foundry.toml"), faulty_toml).unwrap();
 
-    cmd.forge_fuse().args(["config"]);
-    let output = cmd.execute();
-    assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr)
-            .lines()
-            .filter(|line| line.contains("unknown config section") && line.contains("[default]"))
-            .count(),
-        1,
-    );
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+warning: Found unknown config section in foundry.toml: [default]
+This notation for profiles has been deprecated and may result in the profile not being registered in future versions.
+Please use [profile.default] instead or run `forge config --fix`.
+
+"#]]);
 });
 
 forgetest_init!(can_skip_remappings_auto_detection, |prj, cmd| {

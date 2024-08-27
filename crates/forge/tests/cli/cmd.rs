@@ -291,7 +291,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
 forgetest!(can_init_quiet, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root()).arg("-q").assert_success().stdout_eq(str![[r#""#]]);
+    cmd.arg("init").arg(prj.root()).arg("-q").assert_empty_stdout();
 });
 
 // `forge init foobar` works with dir argument
@@ -615,7 +615,8 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.forge_fuse()
+    let output = cmd
+        .forge_fuse()
         .args([
             "clone",
             "--etherscan-api-key",
@@ -623,9 +624,12 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
             "--keep-directory-structure",
             "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
         ])
-        .arg(prj.root());
-    let out = cmd.unchecked_output();
-    if out.stdout_lossy().contains("502 Bad Gateway") {
+        .arg(prj.root())
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    if output.contains("502 Bad Gateway") {
         // etherscan nginx proxy issue, skip this test:
         //
         // stdout:
@@ -635,10 +639,9 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
         // Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad
         // Gateway</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
 
-        eprintln!("Skipping test due to 502 Bad Gateway: {}", cmd.make_error_message(&out, false));
-        return
+        eprintln!("Skipping test due to 502 Bad Gateway");
+        return;
     }
-    cmd.ensure_success(&out).unwrap();
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -698,8 +701,7 @@ forgetest_init!(can_clean_test_cache, |prj, cmd| {
     assert!(fuzz_cache_dir.exists());
     assert!(invariant_cache_dir.exists());
 
-    cmd.forge_fuse().arg("clean");
-    cmd.output();
+    cmd.forge_fuse().arg("clean").assert_empty_stdout();
     assert!(!fuzz_cache_dir.exists());
     assert!(!invariant_cache_dir.exists());
 });
@@ -925,8 +927,16 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 
-    cmd.arg("--check");
-    let _ = cmd.output();
+    cmd.arg("--check").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for src/ATest.t.sol:ATest
+[PASS] testExample() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // test that `forge build` does not print `(with warnings)` if file path is ignored
@@ -1259,8 +1269,8 @@ forgetest!(can_install_empty, |prj, cmd| {
     // create initial commit
     fs::write(prj.root().join("README.md"), "Initial commit").unwrap();
 
-    cmd.git_add().unwrap();
-    cmd.git_commit("Initial commit").unwrap();
+    cmd.git_add();
+    cmd.git_commit("Initial commit");
 
     cmd.forge_fuse().args(["install"]);
     cmd.assert_empty_stdout();

@@ -250,7 +250,7 @@ forgesoldeer!(login, |prj, cmd| {
     let command = "login";
 
     cmd.arg("soldeer").arg(command);
-    let output = cmd.unchecked_output();
+    let output = cmd.execute();
 
     // On login, we can only check if the prompt is displayed in the stdout
     let stdout = String::from_utf8(output.stdout).expect("Could not parse the output");
