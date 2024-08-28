@@ -54,7 +54,7 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Script ran successfully.
@@ -113,7 +113,7 @@ contract Demo {
 
     cmd.arg("script").arg(script).arg("--sig").arg("myFunction()").assert_success().stdout_eq(
         str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Script ran successfully.
@@ -218,7 +218,7 @@ contract DeployScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
 Warning (2018): Function state mutability can be restricted to view
@@ -231,7 +231,7 @@ Traces:
   [81040] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [45299] → new GasWaster@0x1c32f8818e38a50d37d1E98c72B9516a50985227
+    ├─ [45299] → new GasWaster@[..]
     │   └─ ← [Return] 226 bytes of code
     ├─ [226] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
@@ -245,7 +245,7 @@ Script ran successfully.
 Simulated On-chain Traces:
 
 Gas limit was set in script to 500000
-  [45299] → new GasWaster@0x1c32f8818e38a50d37d1E98c72B9516a50985227
+  [45299] → new GasWaster@[..]
     └─ ← [Return] 226 bytes of code
 
   [226] GasWaster::wasteGas(200000 [2e5])
@@ -326,7 +326,7 @@ contract DeployScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
 Warning (2018): Function state mutability can be restricted to view
@@ -339,7 +339,7 @@ Traces:
   [81040] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [45299] → new GasWaster@0x1c32f8818e38a50d37d1E98c72B9516a50985227
+    ├─ [45299] → new GasWaster@[..]
     │   └─ ← [Return] 226 bytes of code
     ├─ [226] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
@@ -353,7 +353,7 @@ Script ran successfully.
 Simulated On-chain Traces:
 
 Gas limit was set in script to 500000
-  [45299] → new GasWaster@0x1c32f8818e38a50d37d1E98c72B9516a50985227
+  [45299] → new GasWaster@[..]
     └─ ← [Return] 226 bytes of code
 
   [226] GasWaster::wasteGas(200000 [2e5])
@@ -412,7 +412,7 @@ contract Demo {
         .arg("2")
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Script ran successfully.
@@ -443,7 +443,7 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Script ran successfully.
@@ -518,14 +518,14 @@ contract DeployScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
   [116040] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [75723] → new HashChecker@0x1c32f8818e38a50d37d1E98c72B9516a50985227
+    ├─ [75723] → new HashChecker@[..]
     │   └─ ← [Return] 378 bytes of code
     └─ ← [Stop] 
 
@@ -598,7 +598,7 @@ contract RunScript is Script {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
@@ -609,51 +609,51 @@ Traces:
     │   └─ ← [Return] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [22394] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    ├─ [22394] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
-    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
-    │   └─ ← [Stop] 
-    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    ├─ [239] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    ├─ [494] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
-    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
-    │   └─ ← [Stop] 
-    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    ├─ [239] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    ├─ [494] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
-    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
-    │   └─ ← [Stop] 
-    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    ├─ [239] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    ├─ [494] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    ├─ [239] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::update()
+    ├─ [494] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] 0x1c32f8818e38a50d37d1E98c72B9516a50985227::checkLastHash() [staticcall]
+    ├─ [239] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [494] [..]::update()
+    │   └─ ← [Stop] 
+    ├─ [239] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [494] [..]::update()
+    │   └─ ← [Stop] 
+    ├─ [239] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [494] [..]::update()
+    │   └─ ← [Stop] 
+    ├─ [239] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 
@@ -1082,7 +1082,7 @@ contract Script0 is Script {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 ...
@@ -1203,7 +1203,7 @@ contract Script0 is Script {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 ...
@@ -1275,7 +1275,7 @@ contract Demo {
         .args(["--skip", "tests", "--skip", TEMPLATE_CONTRACT])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Script ran successfully.
@@ -1373,7 +1373,7 @@ contract ContractC {
         .args(["--tc", "ScriptTxOrigin"])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Script ran successfully.
@@ -1439,7 +1439,7 @@ contract NestedCreate is Script {
         .args(["--tc", "NestedCreate"])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Script ran successfully.
@@ -1470,7 +1470,7 @@ interface Interface {}
         .unwrap();
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Script ran successfully.
@@ -1498,7 +1498,7 @@ contract Script {
         .unwrap();
 
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Script ran successfully.
@@ -1692,7 +1692,7 @@ contract SimpleScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 ...
@@ -1805,7 +1805,7 @@ contract SimpleScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 ...
@@ -1918,7 +1918,7 @@ contract SimpleScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
 Warning (2018): Function state mutability can be restricted to view

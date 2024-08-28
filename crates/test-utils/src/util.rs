@@ -947,6 +947,7 @@ fn test_redactions() -> snapbox::Redactions {
             ("[AVG_GAS]", r"μ: \d+, ~: \d+"),
             ("[FILE]", r"-->.*\.sol"),
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
+            ("[COMPILING_FILES]", r"Compiling \d+ files?"),
             ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
             ("[ADDRESS]", r"Address: 0x[0-9A-Fa-f]{40}"),
             ("[UPDATING_DEPENDENCIES]", r"Updating dependencies in .*"),

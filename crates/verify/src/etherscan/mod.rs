@@ -567,7 +567,7 @@ mod tests {
         prj.add_source("Counter2", "contract Counter {}").unwrap();
 
         cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 

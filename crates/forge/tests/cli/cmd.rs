@@ -550,7 +550,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     Installed forge-std [..]
     Initialized forge project
 Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -598,7 +598,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     Installed forge-std [..]
     Initialized forge project
 Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -670,7 +670,7 @@ forgetest_init!(can_clean_config, |prj, cmd| {
     let config = Config { out: "custom-out".into(), ..Default::default() };
     prj.write_config(config);
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -711,7 +711,7 @@ forgetest_init!(can_emit_extra_output, |prj, cmd| {
     prj.clear();
 
     cmd.args(["build", "--extra-output", "metadata"]).assert_success().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -727,7 +727,7 @@ Compiler run successful!
         .root_arg()
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -743,7 +743,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
     cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -768,7 +768,7 @@ Compiler run successful!
         .root_arg()
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -800,7 +800,7 @@ contract Greeter {
     .unwrap();
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
 Warning (5667): Unused function parameter. Remove or comment out the variable name to silence this warning.
@@ -861,7 +861,7 @@ library FooLib {
     .unwrap();
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -917,7 +917,7 @@ contract ATest is DSTest {
     .unwrap();
 
     cmd.args(["snapshot"]).assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -962,7 +962,7 @@ contract A {
     .unwrap();
 
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -973,7 +973,7 @@ Compiler run successful!
     prj.write_config(Config { ignored_error_codes: vec![], ..Default::default() });
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
 Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
@@ -1003,7 +1003,7 @@ contract A {
     .unwrap();
 
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1014,7 +1014,7 @@ Compiler run successful!
     prj.write_config(config);
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
 Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
@@ -1043,7 +1043,7 @@ contract A {
 
     // there are no errors
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
 Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
@@ -1076,7 +1076,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
     prj.write_config(config);
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1113,7 +1113,7 @@ contract BTest is DSTest {
     .unwrap();
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
-Compiling 3 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 ...
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -1180,7 +1180,7 @@ contract CTest is DSTest {
     .unwrap();
 
     cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 4 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1410,7 +1410,7 @@ contract CounterCopy is Counter {
 
         // build and check output
         cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
-Compiling 3 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1861,7 +1861,7 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     .unwrap();
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
-Compiling 3 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1907,7 +1907,7 @@ contract MyTest is IMyTest {}
     .unwrap();
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
-Compiling 4 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1925,7 +1925,7 @@ forgetest_init!(can_bind, |prj, cmd| {
     prj.clear();
 
     cmd.arg("bind").assert_success().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Generating bindings for [..] contracts
@@ -1946,7 +1946,7 @@ forgetest_init!(can_install_missing_deps_test, |prj, cmd| {
 Missing dependencies found. Installing now...
 
 [UPDATING_DEPENDENCIES]
-Compiling 25 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1973,7 +1973,7 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
 Missing dependencies found. Installing now...
 
 [UPDATING_DEPENDENCIES]
-Compiling 27 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1993,7 +1993,7 @@ forgetest_init!(can_build_skip_contracts, |prj, cmd| {
     // Only builds the single template contract `src/*`
     cmd.args(["build", "--skip", "tests", "--skip", "scripts"]).assert_success().stdout_eq(str![[
         r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -2022,7 +2022,7 @@ function test_run() external {}
     cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**", "--force"])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -2032,7 +2032,7 @@ Compiler run successful!
         .args(["build", "--skip", "./test/**", "--skip", "./script/**", "--force"])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -2069,7 +2069,7 @@ function test_bar() external {}
     // Build 2 files within test dir
     prj.clear();
     cmd.args(["build", "test", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -2079,7 +2079,7 @@ Compiler run successful!
     prj.clear();
     cmd.forge_fuse();
     cmd.args(["build", "src", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -2089,7 +2089,7 @@ Compiler run successful!
     prj.clear();
     cmd.forge_fuse();
     cmd.args(["build", "src", "test", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 3 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -2099,7 +2099,7 @@ Compiler run successful!
     prj.clear();
     cmd.forge_fuse();
     cmd.args(["build", "test/Bar.sol", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -2111,7 +2111,7 @@ forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
     prj.clear_cache();
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 | Contract | Size (B) | Margin (B) |
@@ -2127,7 +2127,7 @@ forgetest_init!(can_build_names_repeatedly, |prj, cmd| {
     prj.clear_cache();
 
     cmd.args(["build", "--names"]).assert_success().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
   compiler version: [..]

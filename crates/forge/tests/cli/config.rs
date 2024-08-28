@@ -368,7 +368,7 @@ contract Greeter {}
     prj.write_config(config);
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -387,7 +387,7 @@ contract Foo {}
     .unwrap();
 
     cmd.args(["build", "--use", OTHER_SOLC_VERSION]).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -398,7 +398,7 @@ Compiler run successful!
         .root_arg()
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -420,7 +420,7 @@ Error:
         .root_arg()
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 

@@ -45,7 +45,7 @@ contract Dummy {
 // tests build output is as expected
 forgetest_init!(exact_build_output, |prj, cmd| {
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 

@@ -155,7 +155,7 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
     ]);
 
     cmd.assert().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -196,7 +196,7 @@ forgetest_async!(can_create_using_unlocked, |prj, cmd| {
     ]);
 
     cmd.assert().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -253,7 +253,7 @@ contract ConstructorContract {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -290,7 +290,7 @@ contract TupleArrayConstructorContract {
         ])
         .assert()
         .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -338,7 +338,7 @@ contract UniswapV2Swap {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
 Warning (2018): Function state mutability can be restricted to pure

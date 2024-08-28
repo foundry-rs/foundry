@@ -137,7 +137,7 @@ contract ATest is DSTest {
     .unwrap();
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -170,7 +170,7 @@ contract ATest is DSTest {
     .unwrap();
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -214,7 +214,7 @@ contract FailTest is DSTest {
     .unwrap();
 
     cmd.args(["test", "--match-path", "*src/ATest.t.sol"]).assert_success().stdout_eq(str![[r#"
-Compiling 3 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -261,7 +261,7 @@ contract FailTest is DSTest {
     let test_path = test_path.to_string_lossy();
 
     cmd.args(["test", "--match-path", test_path.as_ref()]).assert_success().stdout_eq(str![[r#"
-Compiling 3 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -298,7 +298,7 @@ contract MyTest is DSTest {
     .unwrap();
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -317,7 +317,7 @@ forgetest_init!(can_test_repeatedly, |prj, cmd| {
     prj.clear();
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -372,7 +372,7 @@ contract ContractTest is DSTest {
     prj.write_config(config);
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -389,7 +389,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     prj.write_config(config);
 
     cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -450,7 +450,7 @@ contract ContractTest is Test {
     .unwrap();
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -522,7 +522,7 @@ contract USDTCallingTest is Test {
     .unwrap();
 
     cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -568,7 +568,7 @@ contract CustomTypesTest is Test {
     .unwrap();
 
     cmd.args(["test", "-vvvv"]).assert_failure().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -771,7 +771,7 @@ contract CounterTest is Test {
 
     // make sure there are only 61 runs (with proptest shrinking same test results in 298 runs)
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -822,7 +822,7 @@ contract CounterTest is Test {
 
     // make sure invariant test exit early with 0 runs
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -870,7 +870,7 @@ contract ReplayFailuresTest is Test {
     .unwrap();
 
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -948,7 +948,7 @@ contract PrecompileLabelsTest is Test {
     .unwrap();
 
     cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1022,7 +1022,7 @@ forgetest_init!(should_show_logs_when_fuzz_test, |prj, cmd| {
     )
     .unwrap();
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1067,7 +1067,7 @@ forgetest_init!(should_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
     )
     .unwrap();
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1113,7 +1113,7 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
     )
     .unwrap();
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1153,7 +1153,7 @@ forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
     )
     .unwrap();
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1214,7 +1214,7 @@ contract SimpleContractTest is Test {
     )
     .unwrap();
     cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
-Compiling [..] files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
