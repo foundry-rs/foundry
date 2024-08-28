@@ -401,6 +401,7 @@ interface Vm {
     function sleep(uint256 duration) external;
     function snapshotState() external returns (uint256 snapshotId);
     function snapshotValue(string calldata name, uint256 value) external returns (bool success);
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external returns (bool success);
     function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);
     function startBroadcast() external;
     function startBroadcast(address signer) external;

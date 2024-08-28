@@ -499,11 +499,13 @@ interface Vm {
 
     // ----- Arbitrary Snapshots -----
 
-    // TODO: add group support
-
     /// Snapshot capture an arbitrary numerical value by name.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function snapshotValue(string calldata name, uint256 value) external returns (bool success);
+
+    /// Snapshot capture an arbitrary numerical value by name in a group.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external returns (bool success);
 
     // -------- Gas Snapshots --------
 
@@ -511,9 +513,17 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startSnapshotGas(string calldata name) external;
 
+    // /// Start a snapshot capture of the current gas usage by name in a group.
+    // #[cheatcode(group = Evm, safety = Unsafe)]
+    // function startSnapshotGas(string calldata group, string calldata name) external;
+
     /// Stop the snapshot capture of the current gas usage by name, capturing the gas used since the start.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopSnapshotGas(string calldata name) external returns (bool success, uint256 gasUsed);
+
+    // /// Stop the snapshot capture of the current gas usage by name in a group, capturing the gas used since the start.
+    // #[cheatcode(group = Evm, safety = Unsafe)]
+    // function stopSnapshotGas(string calldata group, string calldata name) external returns (bool success, uint256 gasUsed);
 
     // -------- State Snapshots --------
 

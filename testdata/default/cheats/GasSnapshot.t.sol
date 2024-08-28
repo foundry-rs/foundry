@@ -18,16 +18,39 @@ contract GasSnapshotTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testSnapshotValue() public {
+        string memory file = "snapshots/testSnapshotValue.json";
+        clear(file);
+
         uint256 a = 123;
 
-        bool success = vm.snapshotValue("testSnapshotValue", a);
-        assertTrue(success);
+        assertTrue(vm.snapshotValue("testSnapshotValue", a));
 
-        string memory value = vm.readFile("snapshots/testSnapshotValue.json");
+        string memory value = vm.readFile(file);
         assertEq(value, '"123"');
     }
 
+    function testSnapshotGroupValue() public {
+        string memory file = "snapshots/testSnapshotGroupValue.json";
+        clear(file);
+
+        uint256 a = 123;
+        uint256 b = 456;
+        uint256 c = 789;
+
+        assertTrue(vm.snapshotValue("testSnapshotGroupValue", "a", a));
+        assertTrue(vm.snapshotValue("testSnapshotGroupValue", "b", b));
+
+        assertEq(vm.readFile(file), '{"a":"123","b":"456"}');
+
+        assertTrue(vm.snapshotValue("testSnapshotGroupValue", "c", c));
+
+        assertEq(vm.readFile(file), '{"a":"123","b":"456","c":"789"}');
+    }
+
     function testSnapshotGasSection() public {
+        string memory file = "snapshots/testSnapshotGasSection.json";
+        clear(file);
+
         Flare a = new Flare();
 
         a.run(64);
@@ -43,9 +66,14 @@ contract GasSnapshotTest is DSTest {
         assertTrue(success);
         assertEq(gasUsed, 17_439_512); // 5_821_576 + 11_617_936 = 17_439_512 gas
 
-        string memory value = vm.readFile(
-            "snapshots/testSnapshotGasSection.json"
-        );
+        string memory value = vm.readFile(file);
         assertEq(value, '"17439512"');
+    }
+
+    // Remove file if it exists so each test can start with a clean slate.
+    function clear(string memory name) public {
+        if (vm.exists(name)) {
+            vm.removeFile(name);
+        }
     }
 }

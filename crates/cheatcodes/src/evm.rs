@@ -487,16 +487,38 @@ impl Cheatcode for readCallersCall {
     }
 }
 
-impl Cheatcode for snapshotValueCall {
+impl Cheatcode for snapshotValue_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name, value } = self;
 
         // Create the snapshot if it doesn't exist
         create_dir_all(ccx.state.config.paths.snapshots.clone())?;
 
-        // Write the snapshot to a file
+        // Write the snapshot to a file.
+        // Note that we always overwrite the snapshot if it already exists.
         let snapshot_path = ccx.state.config.paths.snapshots.join(format!("{}.{}", name, "json"));
         let result = write_json_file(&snapshot_path, &value.to_string()).is_ok();
+
+        Ok(result.abi_encode())
+    }
+}
+
+impl Cheatcode for snapshotValue_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { group, name, value } = self;
+
+        // Create the snapshot if it doesn't exist
+        create_dir_all(ccx.state.config.paths.snapshots.clone())?;
+
+        // Check if the snapshot already exists, if so, update the value in place.
+        // Otherwise, create a new snapshot.
+        let snapshot_path = &ccx.state.config.paths.snapshots.join(format!("{}.{}", group, "json"));
+        let mut snapshot: BTreeMap<String, String> =
+            read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
+        snapshot.insert(name.clone(), value.to_string());
+        write_json_file(&snapshot_path, &snapshot)?;
+
+        let result = write_json_file(&snapshot_path, &snapshot).is_ok();
 
         Ok(result.abi_encode())
     }
@@ -507,7 +529,7 @@ impl Cheatcode for startSnapshotGasCall {
         let Self { name } = self;
 
         if ccx.state.gas_metering.gas_records.iter().any(|record| record.name == *name) {
-            bail!("gas snapshot already exists: {name}");
+            bail!("gas snapshot already active: {name}");
         }
 
         // Initialize the gas record, starting at 0.

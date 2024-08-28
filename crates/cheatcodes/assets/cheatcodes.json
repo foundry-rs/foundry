@@ -8088,7 +8088,7 @@
     },
     {
       "func": {
-        "id": "snapshotValue",
+        "id": "snapshotValue_0",
         "description": "Snapshot capture an arbitrary numerical value by name.",
         "declaration": "function snapshotValue(string calldata name, uint256 value) external returns (bool success);",
         "visibility": "external",
@@ -8100,6 +8100,26 @@
           219,
           128,
           90
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotValue_1",
+        "description": "Snapshot capture an arbitrary numerical value by name in a group.",
+        "declaration": "function snapshotValue(string calldata group, string calldata name, uint256 value) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotValue(string,string,uint256)",
+        "selector": "0x6d2b27d8",
+        "selectorBytes": [
+          109,
+          43,
+          39,
+          216
         ]
       },
       "group": "evm",
