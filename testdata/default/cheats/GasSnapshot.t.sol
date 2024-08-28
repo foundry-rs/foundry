@@ -4,16 +4,6 @@ pragma solidity 0.8.18;
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
-contract Flare {
-    bytes32[] public data;
-
-    function run(uint256 n) public {
-        for (uint256 i = 0; i < n; i++) {
-            data.push(keccak256(abi.encodePacked(i)));
-        }
-    }
-}
-
 contract GasSnapshotTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
@@ -29,7 +19,7 @@ contract GasSnapshotTest is DSTest {
         assertEq(value, '"123"');
     }
 
-    function testSnapshotValueGroup() public {
+    function testSnapshotValueGroupSingle() public {
         string memory file = "snapshots/GasSnapshotTest.json";
         clear(file);
 
@@ -41,7 +31,7 @@ contract GasSnapshotTest is DSTest {
         assertEq(value, '{\n  "testSnapshotValue": "123"\n}');
     }
 
-    function testSnapshotGroupValue() public {
+    function testSnapshotValueGroupMultiple() public {
         string memory file = "snapshots/testSnapshotGroupValue.json";
         clear(file);
 
@@ -56,34 +46,135 @@ contract GasSnapshotTest is DSTest {
 
         assertTrue(vm.snapshotValue("testSnapshotGroupValue", "c", c));
 
-        assertEq(vm.readFile(file), '{\n  "a": "123",\n  "b": "456",\n  "c": "789"\n}');
+        // Expect:
+        // {
+        //   "a": "123",
+        //   "b": "456",
+        //   "c": "789"
+        // }
+        assertEq(
+            vm.readFile(file),
+            '{\n  "a": "123",\n  "b": "456",\n  "c": "789"\n}'
+        );
     }
 
     function testSnapshotGasSection() public {
         string memory file = "snapshots/testSnapshotGasSection.json";
         clear(file);
 
-        Flare a = new Flare();
+        Flare f = new Flare();
 
-        a.run(64);
+        f.run(1);
 
         vm.startSnapshotGas("testSnapshotGasSection");
 
-        a.run(256); // 5_821_576 gas
-        a.run(512); // 11_617_936 gas
+        f.run(256); // 5_821_576 gas
+        f.run(512); // 11_617_936 gas
 
-        (bool success, uint256 gasUsed) = vm.stopSnapshotGas("testSnapshotGasSection");
+        (bool success, uint256 gasUsed) = vm.stopSnapshotGas(
+            "testSnapshotGasSection"
+        );
         assertTrue(success);
         assertEq(gasUsed, 17_439_512); // 5_821_576 + 11_617_936 = 17_439_512 gas
 
-        string memory value = vm.readFile(file);
-        assertEq(value, '"17439512"');
+        // Expect: "17439512"
+        assertEq(vm.readFile(file), '"17439512"');
+    }
+
+    function testSnapshotOrdering() public {
+        string memory file = "snapshots/SnapshotOrdering.json";
+        clear(file);
+
+        uint256 a = 123;
+        uint256 b = 456;
+        uint256 c = 789;
+
+        vm.snapshotValue("SnapshotOrdering", "c", c);
+
+        // Expect:
+        // {
+        //   "c": "789"
+        // }
+        assertEq(vm.readFile(file), '{\n  "c": "789"\n}');
+
+        vm.snapshotValue("SnapshotOrdering", "a", a);
+
+        // Expect:
+        // {
+        //   "a": "123",
+        //   "c": "789"
+        // }
+        assertEq(vm.readFile(file), '{\n  "a": "123",\n  "c": "789"\n}');
+
+        vm.snapshotValue("SnapshotOrdering", "b", b);
+
+        // Expect:
+        // {
+        //   "a": "123",
+        //   "b": "456",
+        //   "c": "789"
+        // }
+        assertEq(
+            vm.readFile(file),
+            '{\n  "a": "123",\n  "b": "456",\n  "c": "789"\n}'
+        );
+    }
+
+    function testSnapshotCombination() public {
+        string memory file = "snapshots/SnapshotCombination.json";
+        clear(file);
+
+        uint256 a = 123;
+        uint256 b = 456;
+        uint256 c = 789;
+
+        vm.snapshotValue("SnapshotCombination", "c", c);
+        vm.snapshotValue("SnapshotCombination", "a", a);
+
+        Flare f = new Flare();
+
+        f.run(1);
+
+        vm.startSnapshotGas("SnapshotCombination", "z");
+
+        f.run(256); // 5_821_576 gas
+
+        (bool success, uint256 gasUsed) = vm.stopSnapshotGas(
+            "SnapshotCombination",
+            "z"
+        );
+        assertTrue(success);
+        assertEq(gasUsed, 5_821_576);
+
+        vm.snapshotValue("SnapshotCombination", "b", b);
+
+        // Expect:
+        // {
+        //   "a": "123",
+        //   "b": "456",
+        //   "c": "789",
+        //   "z": "5821576"
+        // }
+        assertEq(
+            vm.readFile(file),
+            '{\n  "a": "123",\n  "b": "456",\n  "c": "789",\n  "z": "5821576"\n}'
+        );
     }
 
     // Remove file if it exists so each test can start with a clean slate.
     function clear(string memory name) public {
         if (vm.exists(name)) {
             vm.removeFile(name);
+        }
+    }
+}
+
+contract Flare {
+    bytes32[] public data;
+
+    function run(uint256 n) public {
+        for (uint256 i = 0; i < n; i++) {
+            data.push(keccak256(abi.encodePacked(i)));
         }
     }
 }
