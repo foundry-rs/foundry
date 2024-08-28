@@ -1,6 +1,8 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Error, Result, Vm::*};
 use alloy_primitives::{address, hex, Address, Bytes, LogData as RawLog, U256};
 use alloy_sol_types::{SolError, SolValue};
+use foundry_common::ContractsByArtifact;
+use foundry_evm_core::decode::RevertDecoder;
 use revm::interpreter::{
     return_ok, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
 };
@@ -591,6 +593,7 @@ pub(crate) fn handle_expect_revert(
     partial_match: bool,
     status: InstructionResult,
     retdata: Bytes,
+    known_contracts: &Option<ContractsByArtifact>,
 ) -> Result<(Option<Address>, Bytes)> {
     let success_return = || {
         if is_create {
@@ -633,20 +636,25 @@ pub(crate) fn handle_expect_revert(
     {
         Ok(success_return())
     } else {
-        let stringify = |data: &[u8]| {
-            if let Ok(s) = String::abi_decode(data, true) {
-                return s;
-            }
-            if data.is_ascii() {
-                return std::str::from_utf8(data).unwrap().to_owned();
-            }
-            hex::encode_prefixed(data)
+        let (actual, expected) = if let Some(contracts) = known_contracts {
+            let decoder = RevertDecoder::new().with_abis(contracts.iter().map(|(_, c)| &c.abi));
+            (
+                &decoder.decode(actual_revert.as_slice(), Some(status)),
+                &decoder.decode(expected_revert, Some(status)),
+            )
+        } else {
+            let stringify = |data: &[u8]| {
+                if let Ok(s) = String::abi_decode(data, true) {
+                    return s;
+                }
+                if data.is_ascii() {
+                    return std::str::from_utf8(data).unwrap().to_owned();
+                }
+                hex::encode_prefixed(data)
+            };
+            (&stringify(&actual_revert), &stringify(expected_revert))
         };
-        Err(fmt_err!(
-            "Error != expected error: {} != {}",
-            stringify(&actual_revert),
-            stringify(expected_revert),
-        ))
+        Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))
     }
 }
 

@@ -645,6 +645,7 @@ impl Cheatcodes {
                     expected_revert.partial_match,
                     outcome.result.result,
                     outcome.result.output.clone(),
+                    &self.config.available_artifacts,
                 ) {
                     Ok((address, retdata)) => {
                         outcome.result.result = InstructionResult::Return;
@@ -1126,6 +1127,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         expected_revert.partial_match,
                         outcome.result.result,
                         outcome.result.output.clone(),
+                        &self.config.available_artifacts,
                     ) {
                         Err(error) => {
                             trace!(expected=?expected_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");

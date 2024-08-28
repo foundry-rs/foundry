@@ -1602,6 +1602,52 @@ contract ATest is DSTest {
 "#]]);
 });
 
+// https://github.com/foundry-rs/foundry/issues/8705
+forgetest_init!(test_expect_revert_decode, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+contract Counter {
+    uint256 public number;
+    error NumberNotEven(uint256 number);
+    error RandomError();
+    function setNumber(uint256 newNumber) public {
+        if (newNumber % 2 != 0) {
+            revert NumberNotEven(newNumber);
+        }
+        number = newNumber;
+    }
+}
+contract CounterTest is Test {
+    Counter public counter;
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(0);
+    }
+    function test_decode() public {
+        vm.expectRevert(Counter.RandomError.selector);
+        counter.setNumber(1);
+    }
+    function test_decode_with_args() public {
+        vm.expectRevert(abi.encodePacked(Counter.NumberNotEven.selector, uint(2)));
+        counter.setNumber(1);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL. Reason: Error != expected error: NumberNotEven(1) != RandomError()] test_decode() ([GAS])
+[FAIL. Reason: Error != expected error: NumberNotEven(1) != NumberNotEven(2)] test_decode_with_args() ([GAS])
+...
+"#]]);
+});
+
 // Tests that `expectPartialRevert` cheatcode partially matches revert data.
 forgetest_init!(test_expect_partial_revert, |prj, cmd| {
     prj.wipe_contracts();
@@ -1620,22 +1666,18 @@ contract Counter {
         revert WrongNumber(0);
     }
 }
-
 contract CounterTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
-
     function testExpectPartialRevertWithSelector() public {
         Counter counter = new Counter();
         vm.expectPartialRevert(Counter.WrongNumber.selector);
         counter.count();
     }
-
     function testExpectPartialRevertWith4Bytes() public {
         Counter counter = new Counter();
         vm.expectPartialRevert(bytes4(0x238ace70));
         counter.count();
     }
-
     function testExpectRevert() public {
         Counter counter = new Counter();
         vm.expectRevert(Counter.WrongNumber.selector);
@@ -1650,7 +1692,7 @@ contract CounterTest is DSTest {
 ...
 [PASS] testExpectPartialRevertWith4Bytes() ([GAS])
 [PASS] testExpectPartialRevertWithSelector() ([GAS])
-[FAIL. Reason: Error != expected error: 0x238ace700000000000000000000000000000000000000000000000000000000000000000 != 0x238ace70] testExpectRevert() ([GAS])
+[FAIL. Reason: Error != expected error: WrongNumber(0) != custom error 238ace70:] testExpectRevert() ([GAS])
 ...
 "#]]);
 });
