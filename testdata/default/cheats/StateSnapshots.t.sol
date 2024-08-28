@@ -98,20 +98,8 @@ contract StateSnapshotTest is DSTest {
 
         assert(vm.revertToState(snapshotId));
 
-        assertEq(
-            block.number,
-            num,
-            "snapshot revert for block.number unsuccessful"
-        );
-        assertEq(
-            block.timestamp,
-            time,
-            "snapshot revert for block.timestamp unsuccessful"
-        );
-        assertEq(
-            block.prevrandao,
-            prevrandao,
-            "snapshot revert for block.prevrandao unsuccessful"
-        );
+        assertEq(block.number, num, "snapshot revert for block.number unsuccessful");
+        assertEq(block.timestamp, time, "snapshot revert for block.timestamp unsuccessful");
+        assertEq(block.prevrandao, prevrandao, "snapshot revert for block.prevrandao unsuccessful");
     }
 }

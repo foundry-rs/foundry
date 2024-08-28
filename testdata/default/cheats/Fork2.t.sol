@@ -23,10 +23,7 @@ contract MyContract {
     }
 
     function ensureBlockHash() public view {
-        require(
-            blockhash(block.number - 1) == blockHash,
-            "Block Hash does not match"
-        );
+        require(blockhash(block.number - 1) == blockHash, "Block Hash does not match");
     }
 }
 
@@ -191,19 +188,11 @@ contract ForkTest is DSTest {
         string memory path = "fixtures/Rpc/eth_getLogs.json";
         string memory file = vm.readFile(path);
         bytes memory parsed = vm.parseJson(file);
-        EthGetLogsJsonParseable[] memory fixtureLogs = abi.decode(
-            parsed,
-            (EthGetLogsJsonParseable[])
-        );
+        EthGetLogsJsonParseable[] memory fixtureLogs = abi.decode(parsed, (EthGetLogsJsonParseable[]));
 
         bytes32[] memory topics = new bytes32[](1);
         topics[0] = withdrawalTopic;
-        Vm.EthGetLogs[] memory logs = vm.eth_getLogs(
-            blockNumber,
-            blockNumber,
-            weth,
-            topics
-        );
+        Vm.EthGetLogs[] memory logs = vm.eth_getLogs(blockNumber, blockNumber, weth, topics);
         assertEq(logs.length, 3);
 
         for (uint256 i = 0; i < logs.length; i++) {
@@ -215,24 +204,9 @@ contract ForkTest is DSTest {
             if (i == 1) i_str = "1";
             if (i == 2) i_str = "2";
 
-            assertEq(
-                log.blockNumber,
-                vm.parseJsonUint(
-                    file,
-                    string.concat("[", i_str, "].blockNumber")
-                )
-            );
-            assertEq(
-                log.logIndex,
-                vm.parseJsonUint(file, string.concat("[", i_str, "].logIndex"))
-            );
-            assertEq(
-                log.transactionIndex,
-                vm.parseJsonUint(
-                    file,
-                    string.concat("[", i_str, "].transactionIndex")
-                )
-            );
+            assertEq(log.blockNumber, vm.parseJsonUint(file, string.concat("[", i_str, "].blockNumber")));
+            assertEq(log.logIndex, vm.parseJsonUint(file, string.concat("[", i_str, "].logIndex")));
+            assertEq(log.transactionIndex, vm.parseJsonUint(file, string.concat("[", i_str, "].transactionIndex")));
 
             assertEq(log.blockHash, fixtureLogs[i].blockHash);
             assertEq(log.removed, fixtureLogs[i].removed);

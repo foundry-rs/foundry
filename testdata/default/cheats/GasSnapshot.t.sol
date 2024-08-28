@@ -56,10 +56,7 @@ contract GasSnapshotTest is DSTest {
 
         assertTrue(vm.snapshotValue("testSnapshotGroupValue", "c", c));
 
-        assertEq(
-            vm.readFile(file),
-            '{\n  "a": "123",\n  "b": "456",\n  "c": "789"\n}'
-        );
+        assertEq(vm.readFile(file), '{\n  "a": "123",\n  "b": "456",\n  "c": "789"\n}');
     }
 
     function testSnapshotGasSection() public {
@@ -75,9 +72,7 @@ contract GasSnapshotTest is DSTest {
         a.run(256); // 5_821_576 gas
         a.run(512); // 11_617_936 gas
 
-        (bool success, uint256 gasUsed) = vm.stopSnapshotGas(
-            "testSnapshotGasSection"
-        );
+        (bool success, uint256 gasUsed) = vm.stopSnapshotGas("testSnapshotGasSection");
         assertTrue(success);
         assertEq(gasUsed, 17_439_512); // 5_821_576 + 11_617_936 = 17_439_512 gas
 

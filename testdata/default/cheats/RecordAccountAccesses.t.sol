@@ -225,7 +225,7 @@ contract RecordAccountAccessesTest is DSTest {
         Proxy proxy = new Proxy(address(one));
 
         cheats.startStateDiffRecording();
-        (bool success, ) = address(proxy).call(abi.encodeCall(StorageAccessor.read, bytes32(uint256(1234))));
+        (bool success,) = address(proxy).call(abi.encodeCall(StorageAccessor.read, bytes32(uint256(1234))));
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
 
         assertEq(called.length, 2, "incorrect length");

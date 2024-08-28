@@ -7,12 +7,7 @@ import "cheats/Vm.sol";
 contract Emitter {
     uint256 public thing;
 
-    event Something(
-        uint256 indexed topic1,
-        uint256 indexed topic2,
-        uint256 indexed topic3,
-        uint256 data
-    );
+    event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
     event A(uint256 indexed topic1);
     event B(uint256 indexed topic1);
     event C(uint256 indexed topic1);
@@ -29,12 +24,7 @@ contract Emitter {
 
     event SomethingNonIndexed(uint256 data);
 
-    function emitEvent(
-        uint256 topic1,
-        uint256 topic2,
-        uint256 topic3,
-        uint256 data
-    ) public {
+    function emitEvent(uint256 topic1, uint256 topic2, uint256 topic3, uint256 data) public {
         emit Something(topic1, topic2, topic3, data);
     }
 
@@ -60,13 +50,7 @@ contract Emitter {
         emit Something(1, 2, 3, 4);
     }
 
-    function emitNested(
-        Emitter inner,
-        uint256 topic1,
-        uint256 topic2,
-        uint256 topic3,
-        uint256 data
-    ) public {
+    function emitNested(Emitter inner, uint256 topic1, uint256 topic2, uint256 topic3, uint256 data) public {
         inner.emitEvent(topic1, topic2, topic3, data);
     }
 
@@ -119,7 +103,7 @@ contract Emitter {
 /// Emulates `Emitter` in #760
 contract LowLevelCaller {
     function f() external returns (bool success) {
-        (success, ) = address(this).call(abi.encodeWithSignature("g()"));
+        (success,) = address(this).call(abi.encodeWithSignature("g()"));
     }
 
     function g() public {}
@@ -129,12 +113,7 @@ contract ExpectEmitTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     Emitter emitter;
 
-    event Something(
-        uint256 indexed topic1,
-        uint256 indexed topic2,
-        uint256 indexed topic3,
-        uint256 data
-    );
+    event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
     event SomethingElse(uint256 indexed topic1);
 
@@ -175,26 +154,15 @@ contract ExpectEmitTest is DSTest {
         uint128 topic3,
         uint128 data
     ) public {
-        uint256 transformedTopic1 = checkTopic1
-            ? uint256(topic1)
-            : uint256(topic1) + 1;
-        uint256 transformedTopic2 = checkTopic2
-            ? uint256(topic2)
-            : uint256(topic2) + 1;
-        uint256 transformedTopic3 = checkTopic3
-            ? uint256(topic3)
-            : uint256(topic3) + 1;
+        uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) : uint256(topic1) + 1;
+        uint256 transformedTopic2 = checkTopic2 ? uint256(topic2) : uint256(topic2) + 1;
+        uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) : uint256(topic3) + 1;
         uint256 transformedData = checkData ? uint256(data) : uint256(data) + 1;
 
         vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
 
         emit Something(topic1, topic2, topic3, data);
-        emitter.emitEvent(
-            transformedTopic1,
-            transformedTopic2,
-            transformedTopic3,
-            transformedData
-        );
+        emitter.emitEvent(transformedTopic1, transformedTopic2, transformedTopic3, transformedData);
     }
 
     /// The topics that are checked are altered to be incorrect
@@ -211,26 +179,15 @@ contract ExpectEmitTest is DSTest {
     ) public {
         vm.assume(checkTopic1 || checkTopic2 || checkTopic3 || checkData);
 
-        uint256 transformedTopic1 = checkTopic1
-            ? uint256(topic1) + 1
-            : uint256(topic1);
-        uint256 transformedTopic2 = checkTopic2
-            ? uint256(topic2) + 1
-            : uint256(topic2);
-        uint256 transformedTopic3 = checkTopic3
-            ? uint256(topic3) + 1
-            : uint256(topic3);
+        uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) + 1 : uint256(topic1);
+        uint256 transformedTopic2 = checkTopic2 ? uint256(topic2) + 1 : uint256(topic2);
+        uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) + 1 : uint256(topic3);
         uint256 transformedData = checkData ? uint256(data) + 1 : uint256(data);
 
         vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
 
         emit Something(topic1, topic2, topic3, data);
-        emitter.emitEvent(
-            transformedTopic1,
-            transformedTopic2,
-            transformedTopic3,
-            transformedData
-        );
+        emitter.emitEvent(transformedTopic1, transformedTopic2, transformedTopic3, transformedData);
     }
 
     /// The topics that are checked are altered to be incorrect
@@ -247,27 +204,15 @@ contract ExpectEmitTest is DSTest {
     ) public {
         Emitter inner = new Emitter();
 
-        uint256 transformedTopic1 = checkTopic1
-            ? uint256(topic1)
-            : uint256(topic1) + 1;
-        uint256 transformedTopic2 = checkTopic2
-            ? uint256(topic2)
-            : uint256(topic2) + 1;
-        uint256 transformedTopic3 = checkTopic3
-            ? uint256(topic3)
-            : uint256(topic3) + 1;
+        uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) : uint256(topic1) + 1;
+        uint256 transformedTopic2 = checkTopic2 ? uint256(topic2) : uint256(topic2) + 1;
+        uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) : uint256(topic3) + 1;
         uint256 transformedData = checkData ? uint256(data) : uint256(data) + 1;
 
         vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
 
         emit Something(topic1, topic2, topic3, data);
-        emitter.emitNested(
-            inner,
-            transformedTopic1,
-            transformedTopic2,
-            transformedTopic3,
-            transformedData
-        );
+        emitter.emitNested(inner, transformedTopic1, transformedTopic2, transformedTopic3, transformedData);
     }
 
     /// The topics that are checked are altered to be incorrect
@@ -285,27 +230,15 @@ contract ExpectEmitTest is DSTest {
         vm.assume(checkTopic1 || checkTopic2 || checkTopic3 || checkData);
         Emitter inner = new Emitter();
 
-        uint256 transformedTopic1 = checkTopic1
-            ? uint256(topic1) + 1
-            : uint256(topic1);
-        uint256 transformedTopic2 = checkTopic2
-            ? uint256(topic2) + 1
-            : uint256(topic2);
-        uint256 transformedTopic3 = checkTopic3
-            ? uint256(topic3) + 1
-            : uint256(topic3);
+        uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) + 1 : uint256(topic1);
+        uint256 transformedTopic2 = checkTopic2 ? uint256(topic2) + 1 : uint256(topic2);
+        uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) + 1 : uint256(topic3);
         uint256 transformedData = checkData ? uint256(data) + 1 : uint256(data);
 
         vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
 
         emit Something(topic1, topic2, topic3, data);
-        emitter.emitNested(
-            inner,
-            transformedTopic1,
-            transformedTopic2,
-            transformedTopic3,
-            transformedData
-        );
+        emitter.emitNested(inner, transformedTopic1, transformedTopic2, transformedTopic3, transformedData);
     }
 
     function testExpectEmitMultiple() public {
@@ -315,10 +248,7 @@ contract ExpectEmitTest is DSTest {
         emit Something(5, 6, 7, 8);
 
         emitter.emitMultiple(
-            [uint256(1), uint256(5)],
-            [uint256(2), uint256(6)],
-            [uint256(3), uint256(7)],
-            [uint256(4), uint256(8)]
+            [uint256(1), uint256(5)], [uint256(2), uint256(6)], [uint256(3), uint256(7)], [uint256(4), uint256(8)]
         );
     }
 
@@ -338,10 +268,7 @@ contract ExpectEmitTest is DSTest {
         emit Something(5, 6, 7, 8);
 
         emitter.emitMultiple(
-            [uint256(1), uint256(5)],
-            [uint256(2), uint256(6)],
-            [uint256(3), uint256(7)],
-            [uint256(4), uint256(8)]
+            [uint256(1), uint256(5)], [uint256(2), uint256(6)], [uint256(3), uint256(7)], [uint256(4), uint256(8)]
         );
     }
 
@@ -452,10 +379,7 @@ contract ExpectEmitTest is DSTest {
         emit Something(1, 2, 3, 4);
 
         emitter.emitMultiple(
-            [uint256(1), uint256(5)],
-            [uint256(2), uint256(6)],
-            [uint256(3), uint256(7)],
-            [uint256(4), uint256(8)]
+            [uint256(1), uint256(5)], [uint256(2), uint256(6)], [uint256(3), uint256(7)], [uint256(4), uint256(8)]
         );
     }
 
