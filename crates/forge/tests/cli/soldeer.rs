@@ -7,14 +7,17 @@ use std::{
 
 use foundry_test_utils::forgesoldeer;
 use std::io::Write;
+
 forgesoldeer!(install_dependency, |prj, cmd| {
     let command = "install";
     let dependency = "forge-std~1.8.1";
 
     let foundry_file = prj.root().join("foundry.toml");
 
-    cmd.arg("soldeer").args([command, dependency]);
-    cmd.execute();
+    cmd.arg("soldeer").args([command, dependency]).assert_success().stdout_eq(str![[r#"
+🦌 Running [..]oldeer install 🦌
+...
+"#]]);
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -53,8 +56,10 @@ forgesoldeer!(install_dependency_git, |prj, cmd| {
 
     let foundry_file = prj.root().join("foundry.toml");
 
-    cmd.arg("soldeer").args([command, dependency, git]);
-    cmd.execute();
+    cmd.arg("soldeer").args([command, dependency, git]).assert_success().stdout_eq(str![[r#"
+🦌 Running [..]oldeer install 🦌
+...
+"#]]);
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -93,8 +98,13 @@ forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
 
     let foundry_file = prj.root().join("foundry.toml");
 
-    cmd.arg("soldeer").args([command, dependency, git, rev_flag, commit]);
-    cmd.execute();
+    cmd.arg("soldeer")
+        .args([command, dependency, git, rev_flag, commit])
+        .assert_success()
+        .stdout_eq(str![[r#"
+🦌 Running [..]oldeer install 🦌
+...
+"#]]);
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -147,8 +157,11 @@ mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/
         eprintln!("Couldn't write to file: {e}");
     }
 
-    cmd.arg("soldeer").arg(command);
-    cmd.execute();
+    cmd.arg("soldeer").arg(command).assert_success().stdout_eq(str![[r#"
+🦌 Running [..]oldeer update 🦌
+...
+
+"#]]);
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -216,8 +229,11 @@ forge-std = "1.8.1"
         eprintln!("Couldn't write to file: {e}");
     }
 
-    cmd.arg("soldeer").arg(command);
-    cmd.execute();
+    cmd.arg("soldeer").arg(command).assert_success().stdout_eq(str![[r#"
+🦌 Running [..]oldeer update 🦌
+...
+
+"#]]);
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -252,12 +268,20 @@ forge-std = "1.8.1"
 forgesoldeer!(login, |prj, cmd| {
     let command = "login";
 
-    cmd.arg("soldeer").arg(command);
-    let output = cmd.unchecked_output();
+    cmd.arg("soldeer")
+        .arg(command)
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: 
+Failed to run [..]
 
-    // On login, we can only check if the prompt is displayed in the stdout
-    let stdout = String::from_utf8(output.stdout).expect("Could not parse the output");
-    assert!(stdout.contains("Please enter your email"));
+"#]])
+        .stdout_eq(str![[r#"
+🦌 Running [..]oldeer login 🦌
+...
+ℹ️  If you do not have an account, please go to soldeer.xyz to create one.
+📧 Please enter your email: 
+"#]]);
 });
 
 forgesoldeer!(install_dependency_with_remappings_config, |prj, cmd| {

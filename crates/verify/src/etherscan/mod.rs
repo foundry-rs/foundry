@@ -455,7 +455,7 @@ mod tests {
     use super::*;
     use clap::Parser;
     use foundry_common::fs;
-    use foundry_test_utils::forgetest_async;
+    use foundry_test_utils::{forgetest_async, str};
     use tempfile::tempdir;
 
     #[test]
@@ -566,7 +566,12 @@ mod tests {
         prj.add_source("Counter1", "contract Counter {}").unwrap();
         prj.add_source("Counter2", "contract Counter {}").unwrap();
 
-        cmd.args(["build", "--force"]).ensure_execute_success().unwrap();
+        cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
         let args = VerifyArgs::parse_from([
             "foundry-cli",

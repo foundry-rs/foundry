@@ -15,7 +15,7 @@
 ///     // adds `init` to forge's command arguments
 ///     cmd.arg("init");
 ///     // executes forge <args> and panics if the command failed or output is empty
-///     cmd.assert_non_empty_stdout();
+///     cmd.assert_success().stdout_eq(str![[r#""#]]);
 /// });
 /// ```
 ///
