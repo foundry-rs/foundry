@@ -102,8 +102,6 @@ interface Vm {
         uint64 gasLimit;
         /// The total gas used.
         uint64 gasTotalUsed;
-        /// DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>
-        // uint64 gasMemoryUsed;
         /// The amount of gas refunded.
         int64 gasRefunded;
         /// The amount of gas remaining.
@@ -498,6 +496,16 @@ interface Vm {
     /// Reads the current `msg.sender` and `tx.origin` from state and reports if there is any active caller modification.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
+
+    // ----- Arbitrary Snapshots -----
+
+    /// Snapshot capture arbitrary abi-encoded data .
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotData(string calldata name, bytes calldata data) external returns (bool success);
+
+    /// Snapshot capture an arbitrary numerical value.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotValue(string calldata name, uint256 value) external returns (bool success);
 
     // -------- Gas Snapshots --------
 

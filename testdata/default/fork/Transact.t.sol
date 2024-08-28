@@ -23,7 +23,7 @@ contract TransactOnForkTest is DSTest {
         uint256 fork = vm.createFork("mainnet", 17134913);
         vm.selectFork(fork);
         // a random transfer transaction in the next block: https://etherscan.io/tx/0xaf6201d435b216a858c580e20512a16136916d894aa33260650e164e3238c771
-        bytes32 tx = 0xaf6201d435b216a858c580e20512a16136916d894aa33260650e164e3238c771;
+        bytes32 transaction = 0xaf6201d435b216a858c580e20512a16136916d894aa33260650e164e3238c771;
 
         address sender = address(0x9B315A70FEe05a70A9F2c832E93a7095FEb32Bfe);
         address recipient = address(0xDB358B93157Df9b3B1eE9Ea5CDB7D0aE9a1D8110);
@@ -37,7 +37,7 @@ contract TransactOnForkTest is DSTest {
         uint256 expectedSenderBalance = sender.balance - transferAmount;
 
         // execute the transaction
-        vm.transact(tx);
+        vm.transact(transaction);
 
         // recipient received transfer
         assertEq(recipient.balance, expectedRecipientBalance);
@@ -52,7 +52,7 @@ contract TransactOnForkTest is DSTest {
         vm.selectFork(fork);
 
         // a random ERC20 USDT transfer transaction in the next block: https://etherscan.io/tx/0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c
-        bytes32 tx = 0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c;
+        bytes32 transaction = 0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c;
 
         address sender = address(0x2e09BB78B3D64d98Da44D1C776fa77dcd133ED54);
         address recipient = address(0x23a6B9711B711b1d404F2AA740bde350c67a6F06);
@@ -83,7 +83,7 @@ contract TransactOnForkTest is DSTest {
         vm.recordLogs();
 
         // execute the transaction
-        vm.transact(tx);
+        vm.transact(transaction);
 
         // extract recorded logs
         Vm.Log[] memory logs = vm.getRecordedLogs();

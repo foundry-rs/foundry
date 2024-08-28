@@ -8068,6 +8068,26 @@
     },
     {
       "func": {
+        "id": "snapshotData",
+        "description": "Snapshot capture arbitrary abi-encoded data .",
+        "declaration": "function snapshotData(string calldata name, bytes calldata data) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotData(string,bytes)",
+        "selector": "0xeb257170",
+        "selectorBytes": [
+          235,
+          37,
+          113,
+          112
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "snapshotState",
         "description": "Snapshot the current state of the evm.\nReturns the ID of the snapshot that was created.\nTo revert a snapshot use `revertTo`.",
         "declaration": "function snapshotState() external returns (uint256 snapshotId);",
@@ -8080,6 +8100,26 @@
           210,
           56,
           53
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotValue",
+        "description": "Snapshot capture an arbitrary numerical value.",
+        "declaration": "function snapshotValue(string calldata name, uint256 value) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotValue(string,uint256)",
+        "selector": "0x51db805a",
+        "selectorBytes": [
+          81,
+          219,
+          128,
+          90
         ]
       },
       "group": "evm",

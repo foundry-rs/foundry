@@ -500,7 +500,7 @@ async fn test_invariant_decode_custom_error() {
             vec![(
                 "invariant_decode_error()",
                 false,
-                Some("InvariantCustomError(111, \"custom\")".into()),
+                Some("CustomError(111, \"custom\")".into()),
                 None,
                 None,
             )],

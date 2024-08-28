@@ -13,7 +13,7 @@ contract MyContract {
     uint256 forkId;
     bytes32 blockHash;
 
-    constructor(uint256 _forkId) public {
+    constructor(uint256 _forkId) {
         forkId = _forkId;
         blockHash = blockhash(block.number - 1);
     }
@@ -23,7 +23,10 @@ contract MyContract {
     }
 
     function ensureBlockHash() public view {
-        require(blockhash(block.number - 1) == blockHash, "Block Hash does not match");
+        require(
+            blockhash(block.number - 1) == blockHash,
+            "Block Hash does not match"
+        );
     }
 }
 
@@ -98,14 +101,14 @@ contract ForkTest is DSTest {
     // test that we can "roll" blocks until a transaction
     function testCanRollForkUntilTransaction() public {
         // block to run transactions from
-        uint256 block = 16261704;
+        uint256 blockNumber = 16261704;
 
         // fork until previous block
-        uint256 fork = vm.createSelectFork("mainnet", block - 1);
+        uint256 fork = vm.createSelectFork("mainnet", blockNumber - 1);
 
         // block transactions in order: https://beaconcha.in/block/16261704#transactions
         // run transactions from current block until tx
-        bytes32 tx = 0x67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace;
+        bytes32 transaction = 0x67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace;
 
         // account that sends ether in 2 transaction before tx
         address account = 0xAe45a8240147E6179ec7c9f92c5A18F9a97B3fCA;
@@ -119,7 +122,7 @@ contract ForkTest is DSTest {
         uint256 newBalance = account.balance - transferAmount;
 
         // execute transactions in block until tx
-        vm.rollFork(tx);
+        vm.rollFork(transaction);
 
         // balance must be less than newBalance due to gas spent
         assert(account.balance < newBalance);
@@ -156,7 +159,7 @@ contract ForkTest is DSTest {
         DummyContract dummy = new DummyContract();
 
         // this will succeed since `dummy` is deployed on the currently active fork
-        string memory msg = dummy.hello();
+        string memory message = dummy.hello();
 
         address dummyAddress = address(dummy);
 
@@ -164,7 +167,7 @@ contract ForkTest is DSTest {
         assertEq(dummyAddress, address(dummy));
 
         // this will revert since `dummy` does not exists on the currently active fork
-        string memory msg2 = dummy.hello();
+        string memory message2 = dummy.hello();
     }
 
     struct EthGetLogsJsonParseable {
@@ -188,11 +191,19 @@ contract ForkTest is DSTest {
         string memory path = "fixtures/Rpc/eth_getLogs.json";
         string memory file = vm.readFile(path);
         bytes memory parsed = vm.parseJson(file);
-        EthGetLogsJsonParseable[] memory fixtureLogs = abi.decode(parsed, (EthGetLogsJsonParseable[]));
+        EthGetLogsJsonParseable[] memory fixtureLogs = abi.decode(
+            parsed,
+            (EthGetLogsJsonParseable[])
+        );
 
         bytes32[] memory topics = new bytes32[](1);
         topics[0] = withdrawalTopic;
-        Vm.EthGetLogs[] memory logs = vm.eth_getLogs(blockNumber, blockNumber, weth, topics);
+        Vm.EthGetLogs[] memory logs = vm.eth_getLogs(
+            blockNumber,
+            blockNumber,
+            weth,
+            topics
+        );
         assertEq(logs.length, 3);
 
         for (uint256 i = 0; i < logs.length; i++) {
@@ -204,9 +215,24 @@ contract ForkTest is DSTest {
             if (i == 1) i_str = "1";
             if (i == 2) i_str = "2";
 
-            assertEq(log.blockNumber, vm.parseJsonUint(file, string.concat("[", i_str, "].blockNumber")));
-            assertEq(log.logIndex, vm.parseJsonUint(file, string.concat("[", i_str, "].logIndex")));
-            assertEq(log.transactionIndex, vm.parseJsonUint(file, string.concat("[", i_str, "].transactionIndex")));
+            assertEq(
+                log.blockNumber,
+                vm.parseJsonUint(
+                    file,
+                    string.concat("[", i_str, "].blockNumber")
+                )
+            );
+            assertEq(
+                log.logIndex,
+                vm.parseJsonUint(file, string.concat("[", i_str, "].logIndex"))
+            );
+            assertEq(
+                log.transactionIndex,
+                vm.parseJsonUint(
+                    file,
+                    string.concat("[", i_str, "].transactionIndex")
+                )
+            );
 
             assertEq(log.blockHash, fixtureLogs[i].blockHash);
             assertEq(log.removed, fixtureLogs[i].removed);

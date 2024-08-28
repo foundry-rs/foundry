@@ -28,8 +28,8 @@ contract Issue8383Test is DSTest {
             _verifierCall(truncatedPayload);
         }
         if (uint256(keccak256(abi.encode(payload, "1"))) & 0x1f == 0) {
-            uint256 r = uint256(keccak256(abi.encode(payload, "2")));
-            payload = abi.encodePacked(payload, new bytes(r & 0xff));
+            uint256 z = uint256(keccak256(abi.encode(payload, "2")));
+            payload = abi.encodePacked(payload, new bytes(z & 0xff));
         }
         bytes32 payloadHash = keccak256(payload);
         if (_vectorTested[payloadHash]) return _vectorResult[payloadHash];

@@ -5,10 +5,10 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract ContractWithCustomError {
-    error InvariantCustomError(uint256, string);
+    error CustomError(uint256, string);
 
-    function revertWithInvariantCustomError() external {
-        revert InvariantCustomError(111, "custom");
+    function revertWithCustomError() external {
+        revert CustomError(111, "custom");
     }
 }
 
@@ -20,7 +20,7 @@ contract Handler is DSTest {
     }
 
     function revertTarget() external {
-        target.revertWithInvariantCustomError();
+        target.revertWithCustomError();
     }
 }
 
