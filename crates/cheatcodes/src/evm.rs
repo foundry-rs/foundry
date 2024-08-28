@@ -662,18 +662,17 @@ fn update_gas_snapshot<DB: DatabaseExt>(
     create_dir_all(ccx.state.config.paths.snapshots.clone())?;
 
     let snapshot_path = match &group {
-        Some(group_name) => ccx.state.config.paths.snapshots.join(format!("{}.json", group_name)),
-        None => ccx.state.config.paths.snapshots.join(format!("{}.json", name)),
+        Some(group_name) => ccx.state.config.paths.snapshots.join(format!("{group_name}.json")),
+        None => ccx.state.config.paths.snapshots.join(format!("{name}.json")),
     };
 
     let result = if group.is_some() {
         let mut snapshot: BTreeMap<String, String> =
             read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
-        snapshot.insert(name.clone(), value);
+        snapshot.insert(name, value);
         write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
     } else {
-        let snapshot = value.to_string();
-        write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
+        write_pretty_json_file(&snapshot_path, &value).is_ok()
     };
 
     Ok(result.abi_encode())
@@ -695,11 +694,7 @@ fn start_gas_snapshot<DB: DatabaseExt>(
         bail!("gas snapshot already active: {name} in group: {group_name}");
     }
 
-    ccx.state.gas_metering.gas_records.push(GasRecord {
-        group: group.clone(),
-        name: name.clone(),
-        gas_used: 0,
-    });
+    ccx.state.gas_metering.gas_records.push(GasRecord { group, name, gas_used: 0 });
 
     Ok(Default::default())
 }
@@ -721,10 +716,8 @@ fn stop_gas_snapshot<DB: DatabaseExt>(
         create_dir_all(ccx.state.config.paths.snapshots.clone())?;
 
         let snapshot_path = match &group {
-            Some(group_name) => {
-                ccx.state.config.paths.snapshots.join(format!("{}.json", group_name))
-            }
-            None => ccx.state.config.paths.snapshots.join(format!("{}.json", name)),
+            Some(group_name) => ccx.state.config.paths.snapshots.join(format!("{group_name}.json")),
+            None => ccx.state.config.paths.snapshots.join(format!("{name}.json")),
         };
 
         let result = if group.is_some() {

@@ -76,7 +76,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     /// Creates a new state snapshot at the current point of execution.
     ///
     /// A snapshot is associated with a new unique id that's created for the snapshot.
-    /// Snapshots can be reverted: [DatabaseExt::revert], however, depending on the
+    /// Snapshots can be reverted: [`DatabaseExt::revert_state_snapshot`], however, depending on the
     /// [RevertSnapshotAction], it will keep the snapshot alive or delete it.
     fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &Env) -> U256;
 
