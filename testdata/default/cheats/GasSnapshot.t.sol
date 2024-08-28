@@ -29,6 +29,18 @@ contract GasSnapshotTest is DSTest {
         assertEq(value, '"123"');
     }
 
+    function testSnapshotValueGroup() public {
+        string memory file = "snapshots/GasSnapshotTest.json";
+        clear(file);
+
+        uint256 a = 123;
+
+        assertTrue(vm.snapshotValue("GasSnapshotTest", "testSnapshotValue", a));
+
+        string memory value = vm.readFile(file);
+        assertEq(value, '{\n  "testSnapshotValue": "123"\n}');
+    }
+
     function testSnapshotGroupValue() public {
         string memory file = "snapshots/testSnapshotGroupValue.json";
         clear(file);
@@ -40,11 +52,14 @@ contract GasSnapshotTest is DSTest {
         assertTrue(vm.snapshotValue("testSnapshotGroupValue", "a", a));
         assertTrue(vm.snapshotValue("testSnapshotGroupValue", "b", b));
 
-        assertEq(vm.readFile(file), '{"a":"123","b":"456"}');
+        assertEq(vm.readFile(file), '{\n  "a": "123",\n  "b": "456"\n}');
 
         assertTrue(vm.snapshotValue("testSnapshotGroupValue", "c", c));
 
-        assertEq(vm.readFile(file), '{"a":"123","b":"456","c":"789"}');
+        assertEq(
+            vm.readFile(file),
+            '{\n  "a": "123",\n  "b": "456",\n  "c": "789"\n}'
+        );
     }
 
     function testSnapshotGasSection() public {

@@ -410,6 +410,7 @@ interface Vm {
     function startPrank(address msgSender) external;
     function startPrank(address msgSender, address txOrigin) external;
     function startSnapshotGas(string calldata name) external;
+    function startSnapshotGas(string calldata group, string calldata name) external;
     function startStateDiffRecording() external;
     function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
     function stopBroadcast() external;
@@ -417,6 +418,7 @@ interface Vm {
     function stopMappingRecording() external;
     function stopPrank() external;
     function stopSnapshotGas(string calldata name) external returns (bool success, uint256 gasUsed);
+    function stopSnapshotGas(string calldata group, string calldata name) external returns (bool success, uint256 gasUsed);
     function store(address target, bytes32 slot, bytes32 value) external;
     function toBase64URL(bytes calldata data) external pure returns (string memory);
     function toBase64URL(string calldata data) external pure returns (string memory);

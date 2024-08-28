@@ -8268,7 +8268,7 @@
     },
     {
       "func": {
-        "id": "startSnapshotGas",
+        "id": "startSnapshotGas_0",
         "description": "Start a snapshot capture of the current gas usage by name.",
         "declaration": "function startSnapshotGas(string calldata name) external;",
         "visibility": "external",
@@ -8280,6 +8280,26 @@
           173,
           157,
           123
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "startSnapshotGas_1",
+        "description": "Start a snapshot capture of the current gas usage by name in a group.",
+        "declaration": "function startSnapshotGas(string calldata group, string calldata name) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startSnapshotGas(string,string)",
+        "selector": "0x6cd0cc53",
+        "selectorBytes": [
+          108,
+          208,
+          204,
+          83
         ]
       },
       "group": "evm",
@@ -8408,7 +8428,7 @@
     },
     {
       "func": {
-        "id": "stopSnapshotGas",
+        "id": "stopSnapshotGas_0",
         "description": "Stop the snapshot capture of the current gas usage by name, capturing the gas used since the start.",
         "declaration": "function stopSnapshotGas(string calldata name) external returns (bool success, uint256 gasUsed);",
         "visibility": "external",
@@ -8420,6 +8440,26 @@
           59,
           40,
           5
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "stopSnapshotGas_1",
+        "description": "Stop the snapshot capture of the current gas usage by name in a group, capturing the gas used since the start.",
+        "declaration": "function stopSnapshotGas(string calldata group, string calldata name) external returns (bool success, uint256 gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopSnapshotGas(string,string)",
+        "selector": "0x0c9db707",
+        "selectorBytes": [
+          12,
+          157,
+          183,
+          7
         ]
       },
       "group": "evm",

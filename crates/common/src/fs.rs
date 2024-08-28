@@ -57,6 +57,15 @@ pub fn write_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
     writer.flush().map_err(|e| FsPathError::write(e, path))
 }
 
+/// Writes the object as a pretty JSON object.
+pub fn write_pretty_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
+    let file = create_file(path)?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(&mut writer, obj)
+        .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
+    writer.flush().map_err(|e| FsPathError::write(e, path))
+}
+
 /// Wrapper for `std::fs::write`
 pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
     let path = path.as_ref();

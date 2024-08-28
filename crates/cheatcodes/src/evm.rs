@@ -8,7 +8,7 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use foundry_common::fs::{create_dir_all, read_json_file, write_json_file};
+use foundry_common::fs::{create_dir_all, read_json_file, write_json_file, write_pretty_json_file};
 use foundry_evm_core::{
     backend::{DatabaseExt, RevertSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
@@ -65,6 +65,8 @@ pub struct DealRecord {
 /// Records the `snapshotGas` cheatcodes.
 #[derive(Clone, Debug)]
 pub struct GasRecord {
+    /// The group name of the gas snapshot.
+    pub group: Option<String>,
     /// The name of the gas snapshot.
     pub name: String,
     /// The total gas used in the gas snapshot.
@@ -490,80 +492,42 @@ impl Cheatcode for readCallersCall {
 impl Cheatcode for snapshotValue_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name, value } = self;
-
-        // Create the snapshot if it doesn't exist
-        create_dir_all(ccx.state.config.paths.snapshots.clone())?;
-
-        // Write the snapshot to a file.
-        // Note that we always overwrite the snapshot if it already exists.
-        let snapshot_path = ccx.state.config.paths.snapshots.join(format!("{}.{}", name, "json"));
-        let result = write_json_file(&snapshot_path, &value.to_string()).is_ok();
-
-        Ok(result.abi_encode())
+        update_gas_snapshot(ccx, None, name.to_string(), value.to_string())
     }
 }
 
 impl Cheatcode for snapshotValue_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name, value } = self;
-
-        // Create the snapshot if it doesn't exist
-        create_dir_all(ccx.state.config.paths.snapshots.clone())?;
-
-        // Check if the snapshot already exists, if so, update the value in place.
-        // Otherwise, create a new snapshot.
-        let snapshot_path = &ccx.state.config.paths.snapshots.join(format!("{}.{}", group, "json"));
-        let mut snapshot: BTreeMap<String, String> =
-            read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
-        snapshot.insert(name.clone(), value.to_string());
-        write_json_file(&snapshot_path, &snapshot)?;
-
-        let result = write_json_file(&snapshot_path, &snapshot).is_ok();
-
-        Ok(result.abi_encode())
+        update_gas_snapshot(ccx, Some(group), name.to_string(), value.to_string())
     }
 }
 
-impl Cheatcode for startSnapshotGasCall {
+impl Cheatcode for startSnapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
-
-        if ccx.state.gas_metering.gas_records.iter().any(|record| record.name == *name) {
-            bail!("gas snapshot already active: {name}");
-        }
-
-        // Initialize the gas record, starting at 0.
-        ccx.state.gas_metering.gas_records.push(GasRecord { name: name.clone(), gas_used: 0 });
-
-        Ok(Default::default())
+        start_gas_snapshot(ccx, None, name.to_string())
     }
 }
 
-impl Cheatcode for stopSnapshotGasCall {
+impl Cheatcode for startSnapshotGas_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { group, name } = self;
+        start_gas_snapshot(ccx, Some(group.clone()), name.to_string())
+    }
+}
+
+impl Cheatcode for stopSnapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
+        stop_gas_snapshot(ccx, None, name.to_string())
+    }
+}
 
-        if let Some(record) =
-            ccx.state.gas_metering.gas_records.iter_mut().find(|record| record.name == *name)
-        {
-            // Get the gas used since the snapshot was started.
-            let gas_used = record.gas_used;
-
-            // Create the snapshot if it doesn't exist
-            create_dir_all(ccx.state.config.paths.snapshots.clone())?;
-
-            // Write the snapshot to a file
-            let snapshot_path =
-                ccx.state.config.paths.snapshots.join(format!("{}.{}", name, "json"));
-            let result = write_json_file(&snapshot_path, &gas_used.to_string()).is_ok();
-
-            // Delete the snapshot after writing it
-            ccx.state.gas_metering.gas_records.retain(|record| record.name != *name);
-
-            Ok((result, gas_used).abi_encode_params())
-        } else {
-            bail!("no gas snapshot was started with the name: {name}");
-        }
+impl Cheatcode for stopSnapshotGas_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { group, name } = self;
+        stop_gas_snapshot(ccx, Some(group.clone()), name.to_string())
     }
 }
 
@@ -687,6 +651,115 @@ impl Cheatcode for setBlockhashCall {
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
     let account = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
     Ok(account.info.nonce.abi_encode())
+}
+
+fn update_gas_snapshot<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    group: Option<&String>,
+    name: String,
+    value: String,
+) -> Result {
+    // Create the snapshot if it doesn't exist
+    create_dir_all(ccx.state.config.paths.snapshots.clone())?;
+
+    if let Some(group) = group {
+        // Prepare the snapshot.
+        // Check if the snapshot already exists, if so, update the value in place.
+        // Otherwise, create a new snapshot.
+        let snapshot_path = &ccx.state.config.paths.snapshots.join(format!("{}.json", group));
+        let mut snapshot: BTreeMap<String, String> =
+            read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
+        snapshot.insert(name.clone(), value);
+
+        // Write the snapshot to a file, asserting that the write was successful.
+        let result = write_pretty_json_file(&snapshot_path, &snapshot).is_ok();
+
+        Ok(result.abi_encode())
+    } else {
+        // Prepare the snapshot.
+        // Check if the snapshot already exists, if so, update the value in place.
+        // Otherwise, create a new snapshot.
+        let snapshot_path = ccx.state.config.paths.snapshots.join(format!("{}.json", name));
+        let snapshot = value.to_string();
+
+        // Write the snapshot to a file, asserting that the write was successful.
+        let result = write_pretty_json_file(&snapshot_path, &snapshot).is_ok();
+
+        Ok(result.abi_encode())
+    }
+}
+
+fn start_gas_snapshot<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    group: Option<String>,
+    name: String,
+) -> Result {
+    if ccx.state.gas_metering.gas_records.iter().any(|record| match &group {
+        Some(g) => record.group.as_ref() == Some(g) && record.name == *name,
+        None => record.group.is_none() && record.name == *name,
+    }) {
+        let group_name = group.as_deref().unwrap_or("default");
+        bail!("gas snapshot already active: {name} in group: {group_name}");
+    }
+
+    // Initialize the gas record, starting at 0.
+    ccx.state.gas_metering.gas_records.push(GasRecord {
+        group: group.clone(),
+        name: name.clone(),
+        gas_used: 0,
+    });
+
+    Ok(Default::default())
+}
+
+fn stop_gas_snapshot<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    group: Option<String>,
+    name: String,
+) -> Result {
+    if let Some(record) = ccx
+        .state
+        .gas_metering
+        .gas_records
+        .iter_mut()
+        .find(|record| record.group == group && record.name == name)
+    {
+        // Get the gas used since the snapshot was started.
+        let gas_used = record.gas_used;
+
+        // Create the snapshot if it doesn't exist
+        create_dir_all(ccx.state.config.paths.snapshots.clone())?;
+
+        // Prepare the snapshot.
+        let snapshot_path = match &group {
+            Some(g) => ccx.state.config.paths.snapshots.join(format!("{}.json", g)),
+            None => ccx.state.config.paths.snapshots.join(format!("{}.json", name)),
+        };
+
+        // Depending on whether a group is provided, handle the snapshot differently.
+        // Check if the snapshot already exists, if so, update the value in place.
+        // Otherwise, create a new snapshot.
+        let result = if group.is_some() {
+            let mut snapshot: BTreeMap<String, String> =
+                read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
+            snapshot.insert(name.clone(), gas_used.to_string());
+            write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
+        } else {
+            let snapshot = gas_used.to_string();
+            write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
+        };
+
+        // Delete the snapshot after writing.
+        ccx.state
+            .gas_metering
+            .gas_records
+            .retain(|record| !(record.group == group && record.name == name));
+
+        Ok((result, gas_used).abi_encode_params())
+    } else {
+        let group_name = group.as_deref().unwrap_or("default");
+        bail!("no gas snapshot was started with the name: {name} in group: {group_name}");
+    }
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
