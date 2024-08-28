@@ -1647,3 +1647,52 @@ contract CounterTest is Test {
 ...
 "#]]);
 });
+
+// Tests that `expectPartialRevert` cheatcode partially matches revert data.
+forgetest_init!(test_expect_partial_revert, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+contract Counter {
+    error WrongNumber(uint256 number);
+    function count() public pure {
+        revert WrongNumber(0);
+    }
+}
+contract CounterTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    function testExpectPartialRevertWithSelector() public {
+        Counter counter = new Counter();
+        vm.expectPartialRevert(Counter.WrongNumber.selector);
+        counter.count();
+    }
+    function testExpectPartialRevertWith4Bytes() public {
+        Counter counter = new Counter();
+        vm.expectPartialRevert(bytes4(0x238ace70));
+        counter.count();
+    }
+    function testExpectRevert() public {
+        Counter counter = new Counter();
+        vm.expectRevert(Counter.WrongNumber.selector);
+        counter.count();
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[PASS] testExpectPartialRevertWith4Bytes() ([GAS])
+[PASS] testExpectPartialRevertWithSelector() ([GAS])
+[FAIL. Reason: Error != expected error: WrongNumber(0) != custom error 238ace70:] testExpectRevert() ([GAS])
+...
+"#]]);
+});
