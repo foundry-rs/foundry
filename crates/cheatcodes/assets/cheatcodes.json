@@ -475,7 +475,7 @@
         {
           "name": "gasRefunded",
           "ty": "int64",
-          "description": "DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>\n The amount of gas refunded."
+          "description": "The amount of gas refunded."
         },
         {
           "name": "gasRemaining",
@@ -8065,26 +8065,6 @@
       "group": "testing",
       "status": "stable",
       "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "snapshotData",
-        "description": "Snapshot capture arbitrary abi-encoded data .",
-        "declaration": "function snapshotData(string calldata name, bytes calldata data) external returns (bool success);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "snapshotData(string,bytes)",
-        "selector": "0xeb257170",
-        "selectorBytes": [
-          235,
-          37,
-          113,
-          112
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "unsafe"
     },
     {
       "func": {

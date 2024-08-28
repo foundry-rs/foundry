@@ -399,7 +399,6 @@ interface Vm {
     function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function skip(bool skipTest) external;
     function sleep(uint256 duration) external;
-    function snapshotData(string calldata name, bytes calldata data) external returns (bool success);
     function snapshotState() external returns (uint256 snapshotId);
     function snapshotValue(string calldata name, uint256 value) external returns (bool success);
     function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);

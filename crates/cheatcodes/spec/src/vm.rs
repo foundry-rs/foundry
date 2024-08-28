@@ -499,10 +499,6 @@ interface Vm {
 
     // ----- Arbitrary Snapshots -----
 
-    /// Snapshot capture arbitrary abi-encoded data .
-    #[cheatcode(group = Evm, safety = Unsafe)]
-    function snapshotData(string calldata name, bytes calldata data) external returns (bool success);
-
     /// Snapshot capture an arbitrary numerical value.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function snapshotValue(string calldata name, uint256 value) external returns (bool success);

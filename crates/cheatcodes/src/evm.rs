@@ -487,21 +487,6 @@ impl Cheatcode for readCallersCall {
     }
 }
 
-impl Cheatcode for snapshotDataCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { name, data } = self;
-
-        // Create the snapshot if it doesn't exist
-        create_dir_all(ccx.state.config.paths.snapshots.clone())?;
-
-        // Write the snapshot to a file
-        let snapshot_path = ccx.state.config.paths.snapshots.join(name).join(".json");
-        write_json_file(&snapshot_path, &data)?;
-
-        Ok(Default::default())
-    }
-}
-
 impl Cheatcode for snapshotValueCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name, value } = self;
