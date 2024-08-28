@@ -659,34 +659,24 @@ fn update_gas_snapshot<DB: DatabaseExt>(
     name: String,
     value: String,
 ) -> Result {
-    // Create the snapshot if it doesn't exist
     create_dir_all(ccx.state.config.paths.snapshots.clone())?;
 
-    if let Some(group) = group {
-        // Prepare the snapshot.
-        // Check if the snapshot already exists, if so, update the value in place.
-        // Otherwise, create a new snapshot.
-        let snapshot_path = &ccx.state.config.paths.snapshots.join(format!("{}.json", group));
+    let snapshot_path = match &group {
+        Some(group_name) => ccx.state.config.paths.snapshots.join(format!("{}.json", group_name)),
+        None => ccx.state.config.paths.snapshots.join(format!("{}.json", name)),
+    };
+
+    let result = if group.is_some() {
         let mut snapshot: BTreeMap<String, String> =
             read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
         snapshot.insert(name.clone(), value);
-
-        // Write the snapshot to a file, asserting that the write was successful.
-        let result = write_pretty_json_file(&snapshot_path, &snapshot).is_ok();
-
-        Ok(result.abi_encode())
+        write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
     } else {
-        // Prepare the snapshot.
-        // Check if the snapshot already exists, if so, update the value in place.
-        // Otherwise, create a new snapshot.
-        let snapshot_path = ccx.state.config.paths.snapshots.join(format!("{}.json", name));
         let snapshot = value.to_string();
+        write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
+    };
 
-        // Write the snapshot to a file, asserting that the write was successful.
-        let result = write_pretty_json_file(&snapshot_path, &snapshot).is_ok();
-
-        Ok(result.abi_encode())
-    }
+    Ok(result.abi_encode())
 }
 
 fn start_gas_snapshot<DB: DatabaseExt>(
@@ -694,15 +684,17 @@ fn start_gas_snapshot<DB: DatabaseExt>(
     group: Option<String>,
     name: String,
 ) -> Result {
-    if ccx.state.gas_metering.gas_records.iter().any(|record| match &group {
-        Some(g) => record.group.as_ref() == Some(g) && record.name == *name,
-        None => record.group.is_none() && record.name == *name,
-    }) {
+    if ccx
+        .state
+        .gas_metering
+        .gas_records
+        .iter()
+        .any(|record| record.group == group && record.name == *name)
+    {
         let group_name = group.as_deref().unwrap_or("default");
         bail!("gas snapshot already active: {name} in group: {group_name}");
     }
 
-    // Initialize the gas record, starting at 0.
     ccx.state.gas_metering.gas_records.push(GasRecord {
         group: group.clone(),
         name: name.clone(),
@@ -724,21 +716,17 @@ fn stop_gas_snapshot<DB: DatabaseExt>(
         .iter_mut()
         .find(|record| record.group == group && record.name == name)
     {
-        // Get the gas used since the snapshot was started.
         let gas_used = record.gas_used;
 
-        // Create the snapshot if it doesn't exist
         create_dir_all(ccx.state.config.paths.snapshots.clone())?;
 
-        // Prepare the snapshot.
         let snapshot_path = match &group {
-            Some(g) => ccx.state.config.paths.snapshots.join(format!("{}.json", g)),
+            Some(group_name) => {
+                ccx.state.config.paths.snapshots.join(format!("{}.json", group_name))
+            }
             None => ccx.state.config.paths.snapshots.join(format!("{}.json", name)),
         };
 
-        // Depending on whether a group is provided, handle the snapshot differently.
-        // Check if the snapshot already exists, if so, update the value in place.
-        // Otherwise, create a new snapshot.
         let result = if group.is_some() {
             let mut snapshot: BTreeMap<String, String> =
                 read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
@@ -749,7 +737,6 @@ fn stop_gas_snapshot<DB: DatabaseExt>(
             write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
         };
 
-        // Delete the snapshot after writing.
         ccx.state
             .gas_metering
             .gas_records
