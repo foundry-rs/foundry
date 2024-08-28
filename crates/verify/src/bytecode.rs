@@ -209,6 +209,10 @@ impl VerifyBytecodeArgs {
             check_explorer_args(source_code.clone())?
         };
 
+        // This fails only when the contract expects constructor args but NONE were provided OR
+        // retrieved from explorer (in case of predeploys).
+        crate::utils::check_args_len(&artifact, &constructor_args)?;
+
         if maybe_predeploy {
             if !self.json {
                 println!(
