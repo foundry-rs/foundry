@@ -642,6 +642,7 @@ impl Cheatcodes {
                     false,
                     true,
                     expected_revert.reason.as_deref(),
+                    expected_revert.partial_match,
                     outcome.result.result,
                     outcome.result.output.clone(),
                 ) {
@@ -1122,6 +1123,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         cheatcode_call,
                         false,
                         expected_revert.reason.as_deref(),
+                        expected_revert.partial_match,
                         outcome.result.result,
                         outcome.result.output.clone(),
                     ) {
