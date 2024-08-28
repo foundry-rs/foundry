@@ -45,7 +45,7 @@ contract Dummy {
 // tests build output is as expected
 forgetest_init!(exact_build_output, |prj, cmd| {
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
-Compiling 27 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -54,11 +54,15 @@ Compiler run successful!
 
 // tests build output is as expected
 forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
-    cmd.args(["build", "--sizes"]);
-    let stdout = cmd.stdout_lossy();
-    assert!(!stdout.contains("console"), "\n{stdout}");
-    assert!(!stdout.contains("std"), "\n{stdout}");
-    assert!(stdout.contains("Counter"), "\n{stdout}");
+    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![
+        r#"
+...
+| Contract | Size (B) | Margin (B) |
+|----------|----------|------------|
+| Counter  |      247 |     24,329 |
+...
+"#
+    ]);
 });
 
 // tests that skip key in config can be used to skip non-compilable contract

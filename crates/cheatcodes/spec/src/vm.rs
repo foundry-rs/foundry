@@ -501,10 +501,6 @@ interface Vm {
 
     // -------- Gas Snapshots --------
 
-    /// Gets the gas used in the last call.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function lastCallGas() external view returns (Gas memory gas);
-
     /// Start a snapshot capture of the current gas usage.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startSnapshotGas(string calldata name) external returns (bool success);
@@ -676,6 +672,16 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function resumeGasMetering() external;
 
+    /// Reset gas metering (i.e. gas usage is set to gas limit).
+    #[cheatcode(group = Evm, safety = Safe)]
+    function resetGasMetering() external;
+
+    // -------- Gas Measurement --------
+
+    /// Gets the gas used in the last call.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function lastCallGas() external view returns (Gas memory gas);
+
     // ======== Test Assertions and Utilities ========
 
     /// If the condition is false, discard this run's fuzz inputs and generate new ones.
@@ -795,13 +801,17 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert() external;
 
-    /// Expects an error on next call that starts with the revert data.
+    /// Expects an error on next call that exactly matches the revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes4 revertData) external;
 
     /// Expects an error on next call that exactly matches the revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes calldata revertData) external;
+
+    /// Expects an error on next call that starts with the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectPartialRevert(bytes4 revertData) external;
 
     /// Expects an error on next cheatcode call with any revert data.
     #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]

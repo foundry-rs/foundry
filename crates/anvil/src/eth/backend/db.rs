@@ -6,7 +6,7 @@ use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,
-    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt},
+    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
 };
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
@@ -359,10 +359,24 @@ pub struct SerializableAccountRecord {
     pub storage: BTreeMap<U256, U256>,
 }
 
+/// Defines a backwards-compatible enum for transactions.
+/// This is essential for maintaining compatibility with state dumps
+/// created before the changes introduced in PR #8411.
+///
+/// The enum can represent either a `TypedTransaction` or a `MaybeImpersonatedTransaction`,
+/// depending on the data being deserialized. This flexibility ensures that older state
+/// dumps can still be loaded correctly, even after the changes in #8411.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SerializableTransactionType {
+    TypedTransaction(TypedTransaction),
+    MaybeImpersonatedTransaction(MaybeImpersonatedTransaction),
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SerializableBlock {
     pub header: Header,
-    pub transactions: Vec<MaybeImpersonatedTransaction>,
+    pub transactions: Vec<SerializableTransactionType>,
     pub ommers: Vec<Header>,
 }
 
@@ -382,6 +396,21 @@ impl From<SerializableBlock> for Block {
             header: block.header,
             transactions: block.transactions.into_iter().map(Into::into).collect(),
             ommers: block.ommers.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<MaybeImpersonatedTransaction> for SerializableTransactionType {
+    fn from(transaction: MaybeImpersonatedTransaction) -> Self {
+        Self::MaybeImpersonatedTransaction(transaction)
+    }
+}
+
+impl From<SerializableTransactionType> for MaybeImpersonatedTransaction {
+    fn from(transaction: SerializableTransactionType) -> Self {
+        match transaction {
+            SerializableTransactionType::TypedTransaction(tx) => Self::new(tx),
+            SerializableTransactionType::MaybeImpersonatedTransaction(tx) => tx,
         }
     }
 }

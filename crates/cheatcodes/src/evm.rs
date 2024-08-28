@@ -218,7 +218,7 @@ impl Cheatcode for getRecordedLogsCall {
 impl Cheatcode for pauseGasMeteringCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        state.pause_gas_metering = true;
+        state.gas_metering.paused = true;
         Ok(Default::default())
     }
 }
@@ -226,9 +226,26 @@ impl Cheatcode for pauseGasMeteringCall {
 impl Cheatcode for resumeGasMeteringCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        state.pause_gas_metering = false;
-        state.paused_frame_gas = vec![];
+        state.gas_metering.resume();
         Ok(Default::default())
+    }
+}
+
+impl Cheatcode for resetGasMeteringCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        state.gas_metering.reset();
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for lastCallGasCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        let Some(last_call_gas) = &state.gas_metering.last_call_gas else {
+            bail!("no external call was made yet");
+        };
+        Ok(last_call_gas.abi_encode())
     }
 }
 
@@ -470,21 +487,12 @@ impl Cheatcode for readCallersCall {
     }
 }
 
-impl Cheatcode for lastCallGasCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        let Some(last_call_gas) = &state.last_call_gas else {
-            bail!("no external call was made yet");
-        };
-        Ok(last_call_gas.abi_encode())
-    }
-}
-
 impl Cheatcode for startSnapshotGasCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
-        let record = GasRecord { name: name.clone(), gas: ccx.state.last_call_gas.clone() };
-        ccx.state.recorded_gas.push(record);
+        let record =
+            GasRecord { name: name.clone(), gas: ccx.state.gas_metering.last_call_gas.clone() };
+        ccx.state.gas_metering.recorded_gas.push(record);
         Ok(Default::default())
     }
 }
@@ -494,11 +502,12 @@ impl Cheatcode for stopSnapshotGasCall {
         let Self { name } = self;
         let record = ccx
             .state
+            .gas_metering
             .recorded_gas
             .iter_mut()
             .find(|record| record.name == *name)
             .ok_or_else(|| fmt_err!("gas snapshot not found: {name}"))?;
-        let gas_end = ccx.state.last_call_gas.clone();
+        let gas_end = ccx.state.gas_metering.last_call_gas.clone();
 
         let gas_used = gas_end
             .as_ref()
@@ -514,7 +523,7 @@ impl Cheatcode for stopSnapshotGasCall {
         write_json_file(&snapshot_path, &gas_used)?;
 
         // Delete the snapshot after writing it
-        ccx.state.recorded_gas.retain(|record| record.name != *name);
+        ccx.state.gas_metering.recorded_gas.retain(|record| record.name != *name);
 
         Ok(Default::default())
     }
