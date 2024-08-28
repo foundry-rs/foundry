@@ -65,10 +65,10 @@ pub struct DealRecord {
 /// Records the `snapshotGas` cheatcodes.
 #[derive(Clone, Debug)]
 pub struct GasRecord {
-    /// The name of the snapshot.
+    /// The name of the gas snapshot.
     pub name: String,
-    /// The total gas used at the start of the snapshot.
-    pub gas: Option<Gas>,
+    /// The total gas used in the gas snapshot.
+    pub gas_used: u64,
 }
 
 impl Cheatcode for addrCall {
@@ -495,19 +495,24 @@ impl Cheatcode for snapshotValueCall {
         create_dir_all(ccx.state.config.paths.snapshots.clone())?;
 
         // Write the snapshot to a file
-        let snapshot_path = ccx.state.config.paths.snapshots.join(name).join(".json");
-        write_json_file(&snapshot_path, &value)?;
+        let snapshot_path = ccx.state.config.paths.snapshots.join(format!("{}.{}", name, "json"));
+        let result = write_json_file(&snapshot_path, &value.to_string()).is_ok();
 
-        Ok(Default::default())
+        Ok(result.abi_encode())
     }
 }
 
 impl Cheatcode for startSnapshotGasCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
-        let record =
-            GasRecord { name: name.clone(), gas: ccx.state.gas_metering.last_call_gas.clone() };
-        ccx.state.gas_metering.recorded_gas.push(record);
+
+        if ccx.state.gas_metering.gas_records.iter().any(|record| record.name == *name) {
+            bail!("gas snapshot already exists: {name}");
+        }
+
+        // Initialize the gas record, starting at 0.
+        ccx.state.gas_metering.gas_records.push(GasRecord { name: name.clone(), gas_used: 0 });
+
         Ok(Default::default())
     }
 }
@@ -515,32 +520,28 @@ impl Cheatcode for startSnapshotGasCall {
 impl Cheatcode for stopSnapshotGasCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
-        let record = ccx
-            .state
-            .gas_metering
-            .recorded_gas
-            .iter_mut()
-            .find(|record| record.name == *name)
-            .ok_or_else(|| fmt_err!("gas snapshot not found: {name}"))?;
-        let gas_end = ccx.state.gas_metering.last_call_gas.clone();
 
-        let gas_used = gas_end
-            .as_ref()
-            .zip(record.gas.as_ref())
-            .map(|(end, start)| end.gasTotalUsed - start.gasTotalUsed)
-            .unwrap_or_default();
+        if let Some(record) =
+            ccx.state.gas_metering.gas_records.iter_mut().find(|record| record.name == *name)
+        {
+            // Get the gas used since the snapshot was started.
+            let gas_used = record.gas_used;
 
-        // Create the snapshot if it doesn't exist
-        create_dir_all(ccx.state.config.paths.snapshots.clone())?;
+            // Create the snapshot if it doesn't exist
+            create_dir_all(ccx.state.config.paths.snapshots.clone())?;
 
-        // Write the snapshot to a file
-        let snapshot_path = ccx.state.config.paths.snapshots.join(name).join(".json");
-        write_json_file(&snapshot_path, &gas_used)?;
+            // Write the snapshot to a file
+            let snapshot_path =
+                ccx.state.config.paths.snapshots.join(format!("{}.{}", name, "json"));
+            let result = write_json_file(&snapshot_path, &gas_used.to_string()).is_ok();
 
-        // Delete the snapshot after writing it
-        ccx.state.gas_metering.recorded_gas.retain(|record| record.name != *name);
+            // Delete the snapshot after writing it
+            ccx.state.gas_metering.gas_records.retain(|record| record.name != *name);
 
-        Ok(Default::default())
+            Ok((result, gas_used).abi_encode_params())
+        } else {
+            bail!("no gas snapshot was started with the name: {name}");
+        }
     }
 }
 

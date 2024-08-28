@@ -8089,7 +8089,7 @@
     {
       "func": {
         "id": "snapshotValue",
-        "description": "Snapshot capture an arbitrary numerical value.",
+        "description": "Snapshot capture an arbitrary numerical value by name.",
         "declaration": "function snapshotValue(string calldata name, uint256 value) external returns (bool success);",
         "visibility": "external",
         "mutability": "",
@@ -8249,8 +8249,8 @@
     {
       "func": {
         "id": "startSnapshotGas",
-        "description": "Start a snapshot capture of the current gas usage.",
-        "declaration": "function startSnapshotGas(string calldata name) external returns (bool success);",
+        "description": "Start a snapshot capture of the current gas usage by name.",
+        "declaration": "function startSnapshotGas(string calldata name) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "startSnapshotGas(string)",
@@ -8389,8 +8389,8 @@
     {
       "func": {
         "id": "stopSnapshotGas",
-        "description": "Stop the snapshot capture of the current gas usage, capturing the gas used since the start.",
-        "declaration": "function stopSnapshotGas(string calldata name) external returns (Gas memory gas);",
+        "description": "Stop the snapshot capture of the current gas usage by name, capturing the gas used since the start.",
+        "declaration": "function stopSnapshotGas(string calldata name) external returns (bool success, uint256 gasUsed);",
         "visibility": "external",
         "mutability": "",
         "signature": "stopSnapshotGas(string)",

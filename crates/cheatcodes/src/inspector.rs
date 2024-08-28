@@ -231,8 +231,8 @@ pub struct GasMetering {
     /// This is used by the `lastCallGas` cheatcode.
     pub last_call_gas: Option<crate::Vm::Gas>,
 
-    /// Recorded gas
-    pub recorded_gas: Vec<GasRecord>,
+    /// Gas records for the active snapshots.
+    pub gas_records: Vec<GasRecord>,
 }
 
 impl GasMetering {
@@ -1170,6 +1170,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             gasTotalUsed: gas.spent(),
             gasRefunded: gas.refunded(),
             gasRemaining: gas.remaining(),
+        });
+
+        // Store the total gas used for all active gas records started by `startSnapshotGas`.
+        self.gas_metering.gas_records.iter_mut().for_each(|record| {
+            record.gas_used = record.gas_used.saturating_add(gas.spent());
         });
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
