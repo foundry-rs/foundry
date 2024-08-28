@@ -1,4 +1,5 @@
 # Compiler files
 cache/
 out/
+snapshots/
 .lock
