@@ -19,7 +19,12 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell};
+use foundry_common::{
+    compile::ProjectCompiler,
+    evm::EvmArgs,
+    fs::{self, create_dir_all, remove_dir_all, write_pretty_json_file},
+    shell,
+};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -592,7 +597,22 @@ impl TestArgs {
                 }
             }
 
-            println!("Gas snapshots: {:?}", gas_snapshots);
+            // Remove any existing gas snapshots.
+            remove_dir_all(&config.snapshot_path).unwrap_or_else(|e| {
+                eprintln!("Failed to remove gas snapshots: {e}");
+            });
+
+            // Create `snapshots` directory if it doesn't exist.
+            create_dir_all(&config.snapshot_path)?;
+
+            // Write gas snapshots to disk per group.
+            gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
+                write_pretty_json_file(
+                    &config.snapshot_path.join(format!("{group}.json")),
+                    &snapshots,
+                )
+                .unwrap_or_else(|e| eprintln!("Failed to write gas snapshots: {e}"));
+            });
 
             // Print suite summary.
             shell::println(suite_result.summary())?;

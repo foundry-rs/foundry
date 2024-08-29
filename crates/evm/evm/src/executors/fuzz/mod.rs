@@ -118,8 +118,15 @@ impl FuzzedExecutor {
                     if show_logs {
                         data.logs.extend(case.logs);
                     }
-                    // TODO: conditionally collect gas snapshots
-                    data.gas_snapshots.extend(case.gas_snapshots);
+
+                    // Collect gas snapshots.
+                    for (group, new_snapshots) in case.gas_snapshots.iter() {
+                        data.gas_snapshots
+                            .entry(group.clone())
+                            .or_insert_with(BTreeMap::new)
+                            .extend(new_snapshots.clone());
+                    }
+
                     // Collect and merge coverage if `forge snapshot` context.
                     match &mut data.coverage {
                         Some(prev) => prev.merge(case.coverage.unwrap()),
