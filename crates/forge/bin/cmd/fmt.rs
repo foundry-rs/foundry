@@ -125,17 +125,22 @@ impl FmtArgs {
                 )
             })?;
 
+            let diff = TextDiff::from_lines(&source, &output);
+            let diff_ratio = diff.ratio();
             if self.check || path.is_none() {
                 if self.raw {
                     print!("{output}");
                 }
 
                 let diff = TextDiff::from_lines(&source, &output);
-                if diff.ratio() < 1.0 {
+                if diff_ratio < 1.0 {
                     return Ok(Some(format_diff_summary(&name, &diff)))
                 }
             } else if let Some(path) = path {
-                fs::write(path, output)?;
+                // Write files to disk only if they were changed.
+                if diff_ratio < 1.0 {
+                    fs::write(path, output)?;
+                }
             }
             Ok(None)
         };
