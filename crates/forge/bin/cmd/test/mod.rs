@@ -463,6 +463,9 @@ impl TestArgs {
             )?);
         }
 
+        // Create the gas snapshot collector.
+        let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
+
         if self.decode_internal.is_some() {
             let sources =
                 ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
@@ -579,7 +582,17 @@ impl TestArgs {
                         }
                     }
                 }
+
+                // Collect gas snapshots.
+                for (group, new_snapshots) in result.gas_snapshots.iter() {
+                    gas_snapshots
+                        .entry(group.clone())
+                        .or_insert_with(BTreeMap::new)
+                        .extend(new_snapshots.clone());
+                }
             }
+
+            println!("Gas snapshots: {:?}", gas_snapshots);
 
             // Print suite summary.
             shell::println(suite_result.summary())?;

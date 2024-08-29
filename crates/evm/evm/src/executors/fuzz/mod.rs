@@ -14,7 +14,7 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::BTreeMap};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -36,6 +36,8 @@ pub struct FuzzTestData {
     pub coverage: Option<HitMaps>,
     // Stores logs for all fuzz cases
     pub logs: Vec<Log>,
+    // Stores gas snapshots for all fuzz cases
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
@@ -116,6 +118,8 @@ impl FuzzedExecutor {
                     if show_logs {
                         data.logs.extend(case.logs);
                     }
+                    // TODO: conditionally collect gas snapshots
+                    data.gas_snapshots.extend(case.gas_snapshots);
                     // Collect and merge coverage if `forge snapshot` context.
                     match &mut data.coverage {
                         Some(prev) => prev.merge(case.coverage.unwrap()),
@@ -153,6 +157,8 @@ impl FuzzedExecutor {
             (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
         };
 
+        let gas_snapshots = fuzz_result.gas_snapshots;
+
         let mut result = FuzzTestResult {
             first_case: fuzz_result.first_case.unwrap_or_default(),
             gas_by_case: fuzz_result.gas_by_case,
@@ -165,6 +171,7 @@ impl FuzzedExecutor {
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
             coverage: fuzz_result.coverage,
+            gas_snapshots,
         };
 
         match run_result {
@@ -224,6 +231,11 @@ impl FuzzedExecutor {
             .as_ref()
             .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
 
+        let gas_snapshots = call
+            .cheatcodes
+            .as_ref()
+            .map_or_else(Default::default, |cheats| cheats.gas_snapshots.clone());
+
         let success = self.executor.is_raw_call_mut_success(address, &mut call, should_fail);
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
@@ -232,6 +244,7 @@ impl FuzzedExecutor {
                 coverage: call.coverage,
                 breakpoints,
                 logs: call.logs,
+                gas_snapshots,
             }))
         } else {
             Ok(FuzzOutcome::CounterExample(CounterExampleOutcome {

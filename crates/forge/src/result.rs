@@ -377,6 +377,9 @@ pub struct TestResult {
 
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
+
+    /// Any captured gas snapshots along the test's execution which should be accumulated.
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl fmt::Display for TestResult {
@@ -477,9 +480,12 @@ impl TestResult {
             false => TestStatus::Failure,
         };
         self.reason = reason;
-        self.breakpoints = raw_call_result.cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
+        self.breakpoints =
+            raw_call_result.cheatcodes.clone().map(|c| c.breakpoints).unwrap_or_default();
         self.duration = Duration::default();
         self.gas_report_traces = Vec::new();
+        self.gas_snapshots =
+            raw_call_result.cheatcodes.map(|c| c.gas_snapshots).unwrap_or_default();
         self
     }
 
@@ -508,6 +514,7 @@ impl TestResult {
         self.duration = Duration::default();
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
         self.breakpoints = result.breakpoints.unwrap_or_default();
+        self.gas_snapshots = result.gas_snapshots;
         self
     }
 

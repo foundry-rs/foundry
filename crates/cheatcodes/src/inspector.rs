@@ -351,6 +351,10 @@ pub struct Cheatcodes {
     /// Gas metering state.
     pub gas_metering: GasMetering,
 
+    /// Contains gas snapshots made over the course of a test suite.
+    // **Note**: both must a BTreeMap to ensure the order of the keys is deterministic.
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
+
     /// Mapping slots.
     pub mapping_slots: Option<HashMap<Address, MappingSlots>>,
 
@@ -401,6 +405,7 @@ impl Cheatcodes {
             serialized_jsons: Default::default(),
             eth_deals: Default::default(),
             gas_metering: Default::default(),
+            gas_snapshots: Default::default(),
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),

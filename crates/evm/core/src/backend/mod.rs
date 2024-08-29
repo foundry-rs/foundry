@@ -1596,8 +1596,6 @@ pub struct BackendInner {
     /// Holds all created fork databases
     // Note: data is stored in an `Option` so we can remove it without reshuffling
     pub forks: Vec<Option<Fork>>,
-    /// Contains gas snapshots made over the course of a test suite.
-    pub gas_snapshots: Vec<BTreeMap<String, String>>,
     /// Contains state snapshots made at a certain point.
     pub state_snapshots: StateSnapshots<BackendStateSnapshot<BackendDatabaseSnapshot>>,
     /// Tracks whether there was a failure in a state snapshot that was reverted
@@ -1796,7 +1794,6 @@ impl Default for BackendInner {
             issued_local_fork_ids: Default::default(),
             created_forks: Default::default(),
             forks: vec![],
-            gas_snapshots: vec![],
             state_snapshots: Default::default(),
             has_state_snapshot_failure: false,
             caller: None,

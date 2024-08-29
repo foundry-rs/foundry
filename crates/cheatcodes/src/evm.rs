@@ -8,7 +8,7 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use foundry_common::fs::{create_dir_all, read_json_file, write_json_file};
+use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
     backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
@@ -492,14 +492,14 @@ impl Cheatcode for readCallersCall {
 impl Cheatcode for snapshotValue_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name, value } = self;
-        create_gas_snapshot(ccx, None, name.clone(), value.to_string())
+        create_value_snapshot(ccx, None, name.clone(), value.to_string())
     }
 }
 
 impl Cheatcode for snapshotValue_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name, value } = self;
-        create_gas_snapshot(ccx, Some(group.clone()), name.clone(), value.to_string())
+        create_value_snapshot(ccx, Some(group.clone()), name.clone(), value.to_string())
     }
 }
 
@@ -653,25 +653,22 @@ pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Add
     Ok(account.info.nonce.abi_encode())
 }
 
-// TODO: move to backend?
-
-fn create_gas_snapshot<DB: DatabaseExt>(
+fn create_value_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     group: Option<String>,
     name: String,
     value: String,
 ) -> Result {
-    let snapshot_dir = ccx.state.config.paths.snapshots.clone();
+    let cheatcodes = ccx.state.clone();
+    let group = group
+        .as_deref()
+        .unwrap_or(cheatcodes.config.running_contract.as_ref().expect("expected running contract"));
 
-    let group = group.as_deref().unwrap_or(
-        ccx.state.config.running_contract.as_deref().expect("expected running contract"),
-    );
-
-    let snapshot_path = snapshot_dir.join(format!("{group}.json"));
-
-    create_dir_all(snapshot_dir)?;
-
-    println!("{group} {name} {value} {:?}", snapshot_path);
+    ccx.state
+        .gas_snapshots
+        .entry(group.to_string())
+        .or_default()
+        .insert(name.clone(), value.clone());
 
     Ok(Default::default())
 }
@@ -720,16 +717,15 @@ fn stop_gas_snapshot<DB: DatabaseExt>(
         .iter_mut()
         .find(|record| record.group == group && record.name == name)
     {
-        let gas_used = record.gas_used;
+        let value = record.gas_used;
 
-        let snapshot_dir = ccx.state.config.paths.snapshots.clone();
-        let snapshot_path = snapshot_dir.join(format!("{group}.json"));
+        ccx.state
+            .gas_snapshots
+            .entry(group.to_string())
+            .or_default()
+            .insert(name.clone(), value.to_string());
 
-        create_dir_all(snapshot_dir)?;
-
-        println!("{group} {name} {gas_used} in {:?}", snapshot_path);
-
-        Ok(gas_used.abi_encode())
+        Ok(value.abi_encode())
     } else {
         bail!("no gas snapshot was started with the name: {name} in group: {group}");
     }

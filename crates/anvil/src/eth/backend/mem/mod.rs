@@ -678,7 +678,7 @@ impl Backend {
         self.blockchain.storage.read().total_difficulty
     }
 
-    /// Creates a new `evm_snapshot` at the current height
+    /// Creates a new `evm_snapshot` at the current height.
     ///
     /// Returns the id of the snapshot created
     pub async fn create_state_snapshot(&self) -> U256 {

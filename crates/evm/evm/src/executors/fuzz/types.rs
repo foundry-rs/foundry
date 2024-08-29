@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::executors::RawCallResult;
 use alloy_primitives::{Bytes, Log};
 use foundry_common::evm::Breakpoints;
@@ -17,8 +19,10 @@ pub struct CaseOutcome {
     pub coverage: Option<HitMaps>,
     /// Breakpoints char pc map
     pub breakpoints: Breakpoints,
-    /// logs of a single fuzz test case
+    /// Logs of a single fuzz test case
     pub logs: Vec<Log>,
+    /// Gas snapshots of a single fuzz test case
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 /// Returned by a single fuzz when a counterexample has been discovered
