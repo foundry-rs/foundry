@@ -1,6 +1,6 @@
 //! In-memory database.
 
-use crate::snapshot::Snapshots;
+use crate::state_snapshot::StateSnapshots;
 use alloy_primitives::{Address, B256, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -16,11 +16,12 @@ pub type FoundryEvmInMemoryDB = CacheDB<EmptyDBWrapper>;
 
 /// In-memory [`Database`] for Anvil.
 ///
-/// This acts like a wrapper type for [`FoundryEvmInMemoryDB`] but is capable of applying snapshots.
+/// This acts like a wrapper type for [`FoundryEvmInMemoryDB`] but is capable of applying state
+/// snapshots.
 #[derive(Debug)]
 pub struct MemDb {
     pub inner: FoundryEvmInMemoryDB,
-    pub snapshots: Snapshots<FoundryEvmInMemoryDB>,
+    pub snapshots: StateSnapshots<FoundryEvmInMemoryDB>,
 }
 
 impl Default for MemDb {

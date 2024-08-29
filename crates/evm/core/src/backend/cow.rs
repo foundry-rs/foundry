@@ -3,7 +3,7 @@
 use super::BackendError;
 use crate::{
     backend::{
-        diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId, RevertSnapshotAction,
+        diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId, RevertStateSnapshotAction,
     },
     fork::{CreateFork, ForkId},
     InspectorExt,
@@ -120,7 +120,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         id: U256,
         journaled_state: &JournaledState,
         current: &mut Env,
-        action: RevertSnapshotAction,
+        action: RevertStateSnapshotAction,
     ) -> Option<JournaledState> {
         self.backend_mut(current).revert_state_snapshot(id, journaled_state, current, action)
     }

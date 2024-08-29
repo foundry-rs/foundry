@@ -67,7 +67,7 @@ use anvil_rpc::error::RpcError;
 use alloy_chains::NamedChain;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
-    backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
+    backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
@@ -735,7 +735,7 @@ impl Backend {
                 ..Default::default()
             };
         }
-        Ok(self.db.write().await.revert_state_snapshot(id, RevertSnapshotAction::RevertRemove))
+        Ok(self.db.write().await.revert_state_snapshot(id, RevertStateSnapshotAction::RevertRemove))
     }
 
     pub fn list_snapshots(&self) -> BTreeMap<U256, (u64, B256)> {

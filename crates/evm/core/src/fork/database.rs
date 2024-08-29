@@ -1,8 +1,8 @@
 //! A revm database that forks off a remote client
 
 use crate::{
-    backend::{RevertSnapshotAction, StateSnapshot},
-    snapshot::Snapshots,
+    backend::{RevertStateSnapshotAction, StateSnapshot},
+    state_snapshot::StateSnapshots,
 };
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
@@ -37,8 +37,8 @@ pub struct ForkedDatabase {
     ///
     /// This exclusively stores the _unchanged_ remote client state
     db: BlockchainDb,
-    /// holds the snapshot state of a blockchain
-    snapshots: Arc<Mutex<Snapshots<ForkDbSnapshot>>>,
+    /// Holds the snapshot state of a blockchain
+    snapshots: Arc<Mutex<StateSnapshots<ForkDbSnapshot>>>,
 }
 
 impl ForkedDatabase {
@@ -60,7 +60,7 @@ impl ForkedDatabase {
         &mut self.cache_db
     }
 
-    pub fn snapshots(&self) -> &Arc<Mutex<Snapshots<ForkDbSnapshot>>> {
+    pub fn snapshots(&self) -> &Arc<Mutex<StateSnapshots<ForkDbSnapshot>>> {
         &self.snapshots
     }
 
@@ -111,7 +111,7 @@ impl ForkedDatabase {
     }
 
     /// Removes the snapshot from the tracked snapshot and sets it as the current state
-    pub fn revert_state_snapshot(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
+    pub fn revert_state_snapshot(&mut self, id: U256, action: RevertStateSnapshotAction) -> bool {
         let snapshot = { self.snapshots().lock().remove_at(id) };
         if let Some(snapshot) = snapshot {
             if action.is_keep() {

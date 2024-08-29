@@ -8,9 +8,9 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use foundry_common::fs::{create_dir_all, read_json_file, write_json_file, write_pretty_json_file};
+use foundry_common::fs::{create_dir_all, read_json_file, write_json_file};
 use foundry_evm_core::{
-    backend::{DatabaseExt, RevertSnapshotAction},
+    backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
 use revm::{
@@ -545,7 +545,7 @@ impl Cheatcode for revertToStateCall {
             *snapshotId,
             &ccx.ecx.journaled_state,
             &mut ccx.ecx.env,
-            RevertSnapshotAction::RevertKeep,
+            RevertStateSnapshotAction::RevertKeep,
         ) {
             // we reset the evm's journaled_state to the state of the snapshot previous state
             ccx.ecx.journaled_state = journaled_state;
@@ -564,7 +564,7 @@ impl Cheatcode for revertToStateAndDeleteCall {
             *snapshotId,
             &ccx.ecx.journaled_state,
             &mut ccx.ecx.env,
-            RevertSnapshotAction::RevertRemove,
+            RevertStateSnapshotAction::RevertRemove,
         ) {
             // we reset the evm's journaled_state to the state of the snapshot previous state
             ccx.ecx.journaled_state = journaled_state;

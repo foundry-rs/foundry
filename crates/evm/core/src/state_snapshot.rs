@@ -3,26 +3,26 @@
 use alloy_primitives::U256;
 use std::{collections::HashMap, ops::Add};
 
-/// Represents all snapshots
+/// Represents all state snapshots
 #[derive(Clone, Debug)]
-pub struct Snapshots<T> {
+pub struct StateSnapshots<T> {
     id: U256,
     snapshots: HashMap<U256, T>,
 }
 
-impl<T> Snapshots<T> {
+impl<T> StateSnapshots<T> {
     fn next_id(&mut self) -> U256 {
         let id = self.id;
         self.id = id.saturating_add(U256::from(1));
         id
     }
 
-    /// Returns the snapshot with the given id `id`
+    /// Returns the state snapshot with the given `id`.
     pub fn get(&self, id: U256) -> Option<&T> {
         self.snapshots.get(&id)
     }
 
-    /// Removes the snapshot with the given `id`.
+    /// Removes the state snapshot with the given `id`.
     ///
     /// This will also remove any snapshots taken after the snapshot with the `id`. e.g.: reverting
     /// to id 1 will delete snapshots with ids 1, 2, 3, etc.)
@@ -39,26 +39,26 @@ impl<T> Snapshots<T> {
         snapshot
     }
 
-    /// Removes all snapshots
+    /// Removes all state snapshots.
     pub fn clear(&mut self) {
         self.snapshots.clear();
     }
 
-    /// Removes the snapshot with the given `id`.
+    /// Removes the state snapshot with the given `id`.
     ///
     /// Does not remove snapshots after it.
     pub fn remove_at(&mut self, id: U256) -> Option<T> {
         self.snapshots.remove(&id)
     }
 
-    /// Inserts the new snapshot and returns the id
+    /// Inserts the new state snapshot and returns the id.
     pub fn insert(&mut self, snapshot: T) -> U256 {
         let id = self.next_id();
         self.snapshots.insert(id, snapshot);
         id
     }
 
-    /// Inserts the new snapshot at the given `id`.
+    /// Inserts the new state snapshot at the given `id`.
     ///
     ///  Does not auto-increment the next `id`.
     pub fn insert_at(&mut self, snapshot: T, id: U256) -> U256 {
@@ -67,7 +67,7 @@ impl<T> Snapshots<T> {
     }
 }
 
-impl<T> Default for Snapshots<T> {
+impl<T> Default for StateSnapshots<T> {
     fn default() -> Self {
         Self { id: U256::ZERO, snapshots: HashMap::new() }
     }

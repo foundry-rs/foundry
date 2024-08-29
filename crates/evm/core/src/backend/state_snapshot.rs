@@ -13,9 +13,9 @@ pub struct StateSnapshot {
     pub block_hashes: HashMap<U256, B256>,
 }
 
-/// Represents a snapshot taken during evm execution
+/// Represents a state snapshot taken during evm execution
 #[derive(Clone, Debug)]
-pub struct BackendSnapshot<T> {
+pub struct BackendStateSnapshot<T> {
     pub db: T,
     /// The journaled_state state at a specific point
     pub journaled_state: JournaledState,
@@ -23,7 +23,7 @@ pub struct BackendSnapshot<T> {
     pub env: Env,
 }
 
-impl<T> BackendSnapshot<T> {
+impl<T> BackendStateSnapshot<T> {
     /// Takes a new snapshot
     pub fn new(db: T, journaled_state: JournaledState, env: Env) -> Self {
         Self { db, journaled_state, env }
@@ -45,7 +45,7 @@ impl<T> BackendSnapshot<T> {
 ///
 /// Whether to remove the snapshot or keep it
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RevertSnapshotAction {
+pub enum RevertStateSnapshotAction {
     /// Remove the snapshot after reverting
     #[default]
     RevertRemove,
@@ -53,7 +53,7 @@ pub enum RevertSnapshotAction {
     RevertKeep,
 }
 
-impl RevertSnapshotAction {
+impl RevertStateSnapshotAction {
     /// Returns `true` if the action is to keep the snapshot
     pub fn is_keep(&self) -> bool {
         matches!(self, Self::RevertKeep)

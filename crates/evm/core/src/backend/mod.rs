@@ -3,7 +3,7 @@
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     fork::{CreateFork, ForkId, MultiFork},
-    snapshot::Snapshots,
+    state_snapshot::StateSnapshots,
     utils::{configure_tx_env, new_evm_with_inspector},
     InspectorExt,
 };
@@ -43,8 +43,8 @@ pub use cow::CowBackend;
 mod in_memory_db;
 pub use in_memory_db::{EmptyDBWrapper, FoundryEvmInMemoryDB, MemDb};
 
-mod snapshot;
-pub use snapshot::{BackendSnapshot, RevertSnapshotAction, StateSnapshot};
+mod state_snapshot;
+pub use state_snapshot::{BackendStateSnapshot, RevertStateSnapshotAction, StateSnapshot};
 
 // A `revm::Database` that is used in forking mode
 type ForkDB = CacheDB<SharedBackend>;
@@ -97,7 +97,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         id: U256,
         journaled_state: &JournaledState,
         env: &mut Env,
-        action: RevertSnapshotAction,
+        action: RevertStateSnapshotAction,
     ) -> Option<JournaledState>;
 
     /// Deletes the state snapshot with the given `id`.
@@ -556,7 +556,9 @@ impl Backend {
     }
 
     /// Returns all state snapshots created in this backend.
-    pub fn state_snapshots(&self) -> &Snapshots<BackendSnapshot<BackendDatabaseSnapshot>> {
+    pub fn state_snapshots(
+        &self,
+    ) -> &StateSnapshots<BackendStateSnapshot<BackendDatabaseSnapshot>> {
         &self.inner.state_snapshots
     }
 
@@ -905,7 +907,7 @@ impl Backend {
 impl DatabaseExt for Backend {
     fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
         trace!("create state snapshot");
-        let id = self.inner.state_snapshots.insert(BackendSnapshot::new(
+        let id = self.inner.state_snapshots.insert(BackendStateSnapshot::new(
             self.create_db_snapshot(),
             journaled_state.clone(),
             env.clone(),
@@ -919,7 +921,7 @@ impl DatabaseExt for Backend {
         id: U256,
         current_state: &JournaledState,
         current: &mut Env,
-        action: RevertSnapshotAction,
+        action: RevertStateSnapshotAction,
     ) -> Option<JournaledState> {
         trace!(?id, "revert state snapshot");
         if let Some(mut snapshot) = self.inner.state_snapshots.remove_at(id) {
@@ -942,7 +944,7 @@ impl DatabaseExt for Backend {
 
             // merge additional logs
             snapshot.merge(current_state);
-            let BackendSnapshot { db, mut journaled_state, env } = snapshot;
+            let BackendStateSnapshot { db, mut journaled_state, env } = snapshot;
             match db {
                 BackendDatabaseSnapshot::InMemory(mem_db) => {
                     self.mem_db = mem_db;
@@ -1588,14 +1590,16 @@ pub struct BackendInner {
     /// issued _local_ numeric identifier, that remains constant, even if the underlying fork
     /// backend changes.
     pub issued_local_fork_ids: HashMap<LocalForkId, ForkId>,
-    /// tracks all the created forks
-    /// Contains the index of the corresponding `ForkDB` in the `forks` vec
+    /// Tracks all the created forks.
+    /// Contains the index of the corresponding `ForkDB` in the `forks` vec.
     pub created_forks: HashMap<ForkId, ForkLookupIndex>,
     /// Holds all created fork databases
     // Note: data is stored in an `Option` so we can remove it without reshuffling
     pub forks: Vec<Option<Fork>>,
-    /// Contains snapshots made at a certain point
-    pub state_snapshots: Snapshots<BackendSnapshot<BackendDatabaseSnapshot>>,
+    /// Contains gas snapshots made over the course of a test suite.
+    pub gas_snapshots: Vec<BTreeMap<String, String>>,
+    /// Contains state snapshots made at a certain point.
+    pub state_snapshots: StateSnapshots<BackendStateSnapshot<BackendDatabaseSnapshot>>,
     /// Tracks whether there was a failure in a state snapshot that was reverted
     ///
     /// The Test contract contains a bool variable that is set to true when an `assert` function
@@ -1792,6 +1796,7 @@ impl Default for BackendInner {
             issued_local_fork_ids: Default::default(),
             created_forks: Default::default(),
             forks: vec![],
+            gas_snapshots: vec![],
             state_snapshots: Default::default(),
             has_state_snapshot_failure: false,
             caller: None,

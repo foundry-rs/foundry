@@ -17,7 +17,7 @@ use foundry_evm::{
 
 // reexport for convenience
 pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
-use foundry_evm::{backend::RevertSnapshotAction, revm::primitives::BlockEnv};
+use foundry_evm::{backend::RevertStateSnapshotAction, revm::primitives::BlockEnv};
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
@@ -79,7 +79,7 @@ impl Db for MemDb {
     }
 
     /// Reverts to a previous state snapshot
-    fn revert_state_snapshot(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
+    fn revert_state_snapshot(&mut self, id: U256, action: RevertStateSnapshotAction) -> bool {
         if let Some(snapshot) = self.snapshots.remove(id) {
             if action.is_keep() {
                 self.snapshots.insert_at(snapshot.clone(), id);
