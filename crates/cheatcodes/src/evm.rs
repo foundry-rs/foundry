@@ -492,7 +492,6 @@ impl Cheatcode for readCallersCall {
 impl Cheatcode for snapshotValue_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { value } = self;
-        // TODO: derive name, use Option<String>
         create_gas_snapshot(ccx, None, None, value.to_string())
     }
 }
@@ -535,7 +534,6 @@ impl Cheatcode for startSnapshotGas_2Call {
 impl Cheatcode for stopSnapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        // TODO: derive name, use Option<String>
         stop_gas_snapshot(ccx, None, None)
     }
 }
@@ -685,20 +683,16 @@ fn create_gas_snapshot<DB: DatabaseExt>(
     create_dir_all(ccx.state.config.paths.snapshots.clone())?;
 
     // TODO: derive from contract name, function name.
-    let snapshot_group_name = group.clone().or_else(|| Some("default".to_string()));
-    let snapshot_name = name.clone().or_else(|| Some("default".to_string()));
+    let snapshot_group_name = group.as_deref().unwrap_or("default");
+    let snapshot_name = name.as_deref().unwrap_or("default");
 
     let snapshot_path =
-        ccx.state.config.paths.snapshots.join(format!("{}.json", snapshot_group_name.unwrap()));
+        ccx.state.config.paths.snapshots.join(format!("{snapshot_group_name}.json"));
 
-    let result = if group.is_some() {
-        let mut snapshot: BTreeMap<String, String> =
-            read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
-        snapshot.insert(snapshot_name.unwrap(), value);
-        write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
-    } else {
-        write_pretty_json_file(&snapshot_path, &value).is_ok()
-    };
+    let mut snapshot: BTreeMap<String, String> =
+        read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
+    snapshot.insert(snapshot_name.to_string(), value);
+    let result = write_pretty_json_file(&snapshot_path, &snapshot).is_ok();
 
     Ok(result.abi_encode())
 }
@@ -754,15 +748,10 @@ fn stop_gas_snapshot<DB: DatabaseExt>(
         let snapshot_path =
             ccx.state.config.paths.snapshots.join(format!("{snapshot_group_name}.json"));
 
-        let result = if group.is_some() {
-            let mut snapshot: BTreeMap<String, String> =
-                read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
-            snapshot.insert(snapshot_name.to_string(), gas_used.to_string());
-            write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
-        } else {
-            let snapshot = gas_used.to_string();
-            write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
-        };
+        let mut snapshot: BTreeMap<String, String> =
+            read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
+        snapshot.insert(snapshot_name.to_string(), gas_used.to_string());
+        let result = write_pretty_json_file(&snapshot_path, &snapshot).is_ok();
 
         ccx.state.gas_metering.gas_records.retain(|record| {
             !(record.group == snapshot_group_name && record.name == snapshot_name)

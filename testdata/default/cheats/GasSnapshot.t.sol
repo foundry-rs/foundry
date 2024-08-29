@@ -7,7 +7,23 @@ import "cheats/Vm.sol";
 contract GasSnapshotTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function testSnapshotValue() public {
+    function testSnapshotValueDefault() public {
+        string memory file = "snapshots/default.json";
+        clear(file);
+
+        uint256 a = 123;
+
+        assertTrue(vm.snapshotValue(a));
+
+        // Expect:
+        // {
+        //   "default": "123"
+        // }
+        string memory value = vm.readFile(file);
+        assertEq(value, '{\n  "default": "123"\n}');
+    }
+
+    function testSnapshotValueWithGroupAndName() public {
         string memory file = "snapshots/testSnapshotValue.json";
         clear(file);
 
