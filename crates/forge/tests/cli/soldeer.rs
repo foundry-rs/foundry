@@ -24,8 +24,7 @@ forgesoldeer!(install_dependency, |prj, cmd| {
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents = 
-r#"[[dependencies]]
+    let lock_contents = r#"[[dependencies]]
 name = "forge-std"
 version = "1.8.1"
 source = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_8_1_23-03-2024_00:05:44_forge-std-v1.8.1.zip"
@@ -68,8 +67,7 @@ forgesoldeer!(install_dependency_git, |prj, cmd| {
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents =
-    r#"[[dependencies]]
+    let lock_contents = r#"[[dependencies]]
 name = "forge-std"
 version = "1.8.1"
 source = "https://gitlab.com/mario4582928/Mario.git"
@@ -114,8 +112,7 @@ forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents = 
-r#"[[dependencies]]
+    let lock_contents = r#"[[dependencies]]
 name = "forge-std"
 version = "1.8.1"
 source = "https://gitlab.com/mario4582928/Mario.git"
@@ -182,8 +179,7 @@ mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents = 
-r#"[[dependencies]]
+    let lock_contents = r#"[[dependencies]]
 name = "@tt"
 version = "1.6.1"
 source = "https://soldeer-revisions.s3.amazonaws.com/@openzeppelin-contracts/3_3_0-rc_2_22-01-2024_13:12:57_contracts.zip"
@@ -222,7 +218,6 @@ source = "https://soldeer-revisions.s3.amazonaws.com/solmate/6_7_0_22-01-2024_13
 checksum = "dd0f08cdaaaad1de0ac45993d4959351ba89c2d9325a0b5df5570357064f2c33"
 integrity = "ec330877af853f9d34b2b1bf692fb33c9f56450625f5c4abdcf0d3405839730e"
 "#;
-
 
     assert_data_eq!(lock_contents, read_file_to_string(&path_lock_file));
 
@@ -274,8 +269,7 @@ forge-std = "1.8.1"
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents = 
-r#"[[dependencies]]
+    let lock_contents = r#"[[dependencies]]
 name = "forge-std"
 version = "1.8.1"
 source = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_8_1_23-03-2024_00:05:44_forge-std-v1.8.1.zip"
@@ -340,8 +334,7 @@ remappings_regenerate = true
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents = 
-r#"[[dependencies]]
+    let lock_contents = r#"[[dependencies]]
 name = "forge-std"
 version = "1.8.1"
 source = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_8_1_23-03-2024_00:05:44_forge-std-v1.8.1.zip"
@@ -402,8 +395,7 @@ remappings_regenerate = true
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    let lock_contents = 
-r#"[[dependencies]]
+    let lock_contents = r#"[[dependencies]]
 name = "forge-std"
 version = "1.8.1"
 source = "https://soldeer-revisions.s3.amazonaws.com/forge-std/v1_8_1_23-03-2024_00:05:44_forge-std-v1.8.1.zip"
@@ -417,7 +409,7 @@ integrity = "6a52f0c34d935e508af46a6d12a3a741798252f20a66f6bbee86c23dd6ef7c8d"
     // Making sure the foundry contents are the right ones
     let remappings_content = r#"@custom-f@forge-std-1.8.1/=dependencies/forge-std-1.8.1/
 "#;
-let remappings_file = prj.root().join("remappings.txt");
+    let remappings_file = prj.root().join("remappings.txt");
     assert_data_eq!(read_file_to_string(&remappings_file), remappings_content);
 });
 
