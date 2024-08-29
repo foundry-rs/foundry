@@ -8089,7 +8089,27 @@
     {
       "func": {
         "id": "snapshotValue_0",
-        "description": "Snapshot capture an arbitrary numerical value by name.",
+        "description": "Snapshot capture an arbitrary numerical value.\nThe name is derived from the function name.\nThe group name is derived from the contract name.",
+        "declaration": "function snapshotValue(uint256 value) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotValue(uint256)",
+        "selector": "0xeaa943bf",
+        "selectorBytes": [
+          234,
+          169,
+          67,
+          191
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotValue_1",
+        "description": "Snapshot capture an arbitrary numerical value by name.\nThe group name is derived from the contract name.",
         "declaration": "function snapshotValue(string calldata name, uint256 value) external returns (bool success);",
         "visibility": "external",
         "mutability": "",
@@ -8108,7 +8128,7 @@
     },
     {
       "func": {
-        "id": "snapshotValue_1",
+        "id": "snapshotValue_2",
         "description": "Snapshot capture an arbitrary numerical value by name in a group.",
         "declaration": "function snapshotValue(string calldata group, string calldata name, uint256 value) external returns (bool success);",
         "visibility": "external",
@@ -8269,7 +8289,27 @@
     {
       "func": {
         "id": "startSnapshotGas_0",
-        "description": "Start a snapshot capture of the current gas usage by name.",
+        "description": "Start a snapshot capture of the current gas usage.\nThe name is derived from the function name.\nThe group name is derived from the contract name.",
+        "declaration": "function startSnapshotGas() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startSnapshotGas()",
+        "selector": "0x939251c0",
+        "selectorBytes": [
+          147,
+          146,
+          81,
+          192
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "startSnapshotGas_1",
+        "description": "Start a snapshot capture of the current gas usage by name.\nThe group name is derived from the contract name.",
         "declaration": "function startSnapshotGas(string calldata name) external;",
         "visibility": "external",
         "mutability": "",
@@ -8288,7 +8328,7 @@
     },
     {
       "func": {
-        "id": "startSnapshotGas_1",
+        "id": "startSnapshotGas_2",
         "description": "Start a snapshot capture of the current gas usage by name in a group.",
         "declaration": "function startSnapshotGas(string calldata group, string calldata name) external;",
         "visibility": "external",
@@ -8429,7 +8469,27 @@
     {
       "func": {
         "id": "stopSnapshotGas_0",
-        "description": "Stop the snapshot capture of the current gas usage by name, capturing the gas used since the start.",
+        "description": "Stop the snapshot capture of the current gas usage, capturing the gas used since the start.\nThe name is derived from the function name.\nThe group name is derived from the contract name.",
+        "declaration": "function stopSnapshotGas() external returns (bool success, uint256 gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopSnapshotGas()",
+        "selector": "0xf6402eda",
+        "selectorBytes": [
+          246,
+          64,
+          46,
+          218
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "stopSnapshotGas_1",
+        "description": "Stop the snapshot capture of the current gas usage by name, capturing the gas used since the start.\nThe group name is derived from the contract name.",
         "declaration": "function stopSnapshotGas(string calldata name) external returns (bool success, uint256 gasUsed);",
         "visibility": "external",
         "mutability": "",
@@ -8448,7 +8508,7 @@
     },
     {
       "func": {
-        "id": "stopSnapshotGas_1",
+        "id": "stopSnapshotGas_2",
         "description": "Stop the snapshot capture of the current gas usage by name in a group, capturing the gas used since the start.",
         "declaration": "function stopSnapshotGas(string calldata group, string calldata name) external returns (bool success, uint256 gasUsed);",
         "visibility": "external",

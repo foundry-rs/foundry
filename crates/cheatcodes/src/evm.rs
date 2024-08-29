@@ -66,7 +66,7 @@ pub struct DealRecord {
 #[derive(Clone, Debug)]
 pub struct GasRecord {
     /// The group name of the gas snapshot.
-    pub group: Option<String>,
+    pub group: String,
     /// The name of the gas snapshot.
     pub name: String,
     /// The total gas used in the gas snapshot.
@@ -491,43 +491,66 @@ impl Cheatcode for readCallersCall {
 
 impl Cheatcode for snapshotValue_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { name, value } = self;
-        update_gas_snapshot(ccx, None, name.to_string(), value.to_string())
+        let Self { value } = self;
+        // TODO: derive name, use Option<String>
+        create_gas_snapshot(ccx, None, None, value.to_string())
     }
 }
 
 impl Cheatcode for snapshotValue_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name, value } = self;
+        create_gas_snapshot(ccx, None, Some(name.clone()), value.to_string())
+    }
+}
+
+impl Cheatcode for snapshotValue_2Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name, value } = self;
-        update_gas_snapshot(ccx, Some(group), name.to_string(), value.to_string())
+        create_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()), value.to_string())
     }
 }
 
 impl Cheatcode for startSnapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { name } = self;
-        start_gas_snapshot(ccx, None, name.to_string())
+        let Self {} = self;
+        start_gas_snapshot(ccx, None, None)
     }
 }
 
 impl Cheatcode for startSnapshotGas_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name } = self;
+        start_gas_snapshot(ccx, None, Some(name.clone()))
+    }
+}
+
+impl Cheatcode for startSnapshotGas_2Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name } = self;
-        start_gas_snapshot(ccx, Some(group.clone()), name.to_string())
+        start_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
 }
 
 impl Cheatcode for stopSnapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { name } = self;
-        stop_gas_snapshot(ccx, None, name.to_string())
+        let Self {} = self;
+        // TODO: derive name, use Option<String>
+        stop_gas_snapshot(ccx, None, None)
     }
 }
 
 impl Cheatcode for stopSnapshotGas_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name } = self;
+        stop_gas_snapshot(ccx, None, Some(name.clone()))
+    }
+}
+
+impl Cheatcode for stopSnapshotGas_2Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name } = self;
-        stop_gas_snapshot(ccx, Some(group.clone()), name.to_string())
+        stop_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
 }
 
@@ -653,23 +676,25 @@ pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Add
     Ok(account.info.nonce.abi_encode())
 }
 
-fn update_gas_snapshot<DB: DatabaseExt>(
+fn create_gas_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
-    group: Option<&String>,
-    name: String,
+    group: Option<String>,
+    name: Option<String>,
     value: String,
 ) -> Result {
     create_dir_all(ccx.state.config.paths.snapshots.clone())?;
 
-    let snapshot_path = match &group {
-        Some(group_name) => ccx.state.config.paths.snapshots.join(format!("{group_name}.json")),
-        None => ccx.state.config.paths.snapshots.join(format!("{name}.json")),
-    };
+    // TODO: derive from contract name, function name.
+    let snapshot_group_name = group.clone().or_else(|| Some("default".to_string()));
+    let snapshot_name = name.clone().or_else(|| Some("default".to_string()));
+
+    let snapshot_path =
+        ccx.state.config.paths.snapshots.join(format!("{}.json", snapshot_group_name.unwrap()));
 
     let result = if group.is_some() {
         let mut snapshot: BTreeMap<String, String> =
             read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
-        snapshot.insert(name, value);
+        snapshot.insert(snapshot_name.unwrap(), value);
         write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
     } else {
         write_pretty_json_file(&snapshot_path, &value).is_ok()
@@ -681,20 +706,27 @@ fn update_gas_snapshot<DB: DatabaseExt>(
 fn start_gas_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     group: Option<String>,
-    name: String,
+    name: Option<String>,
 ) -> Result {
+    // TODO: derive from contract name, function name.
+    let snapshot_group_name = group.as_deref().unwrap_or("default");
+    let snapshot_name = name.as_deref().unwrap_or("default");
+
     if ccx
         .state
         .gas_metering
         .gas_records
         .iter()
-        .any(|record| record.group == group && record.name == *name)
+        .any(|record| record.group == snapshot_group_name && record.name == snapshot_name)
     {
-        let group_name = group.as_deref().unwrap_or("default");
-        bail!("gas snapshot already active: {name} in group: {group_name}");
+        bail!("gas snapshot already active: {snapshot_name} in group: {snapshot_group_name}");
     }
 
-    ccx.state.gas_metering.gas_records.push(GasRecord { group, name, gas_used: 0 });
+    ccx.state.gas_metering.gas_records.push(GasRecord {
+        group: snapshot_group_name.to_string(),
+        name: snapshot_name.to_string(),
+        gas_used: 0,
+    });
 
     Ok(Default::default())
 }
@@ -702,43 +734,43 @@ fn start_gas_snapshot<DB: DatabaseExt>(
 fn stop_gas_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     group: Option<String>,
-    name: String,
+    name: Option<String>,
 ) -> Result {
+    create_dir_all(ccx.state.config.paths.snapshots.clone())?;
+
+    // TODO: derive from contract name, function name.
+    let snapshot_group_name = group.as_deref().unwrap_or("default");
+    let snapshot_name = name.as_deref().unwrap_or("default");
+
     if let Some(record) = ccx
         .state
         .gas_metering
         .gas_records
         .iter_mut()
-        .find(|record| record.group == group && record.name == name)
+        .find(|record| record.group == snapshot_group_name && record.name == snapshot_name)
     {
         let gas_used = record.gas_used;
 
-        create_dir_all(ccx.state.config.paths.snapshots.clone())?;
-
-        let snapshot_path = match &group {
-            Some(group_name) => ccx.state.config.paths.snapshots.join(format!("{group_name}.json")),
-            None => ccx.state.config.paths.snapshots.join(format!("{name}.json")),
-        };
+        let snapshot_path =
+            ccx.state.config.paths.snapshots.join(format!("{snapshot_group_name}.json"));
 
         let result = if group.is_some() {
             let mut snapshot: BTreeMap<String, String> =
                 read_json_file(&snapshot_path).unwrap_or_else(|_| BTreeMap::new());
-            snapshot.insert(name.clone(), gas_used.to_string());
+            snapshot.insert(snapshot_name.to_string(), gas_used.to_string());
             write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
         } else {
             let snapshot = gas_used.to_string();
             write_pretty_json_file(&snapshot_path, &snapshot).is_ok()
         };
 
-        ccx.state
-            .gas_metering
-            .gas_records
-            .retain(|record| !(record.group == group && record.name == name));
+        ccx.state.gas_metering.gas_records.retain(|record| {
+            !(record.group == snapshot_group_name && record.name == snapshot_name)
+        });
 
         Ok((result, gas_used).abi_encode_params())
     } else {
-        let group_name = group.as_deref().unwrap_or("default");
-        bail!("no gas snapshot was started with the name: {name} in group: {group_name}");
+        bail!("no gas snapshot was started with the name: {snapshot_name} in group: {snapshot_group_name}");
     }
 }
 

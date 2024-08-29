@@ -13,25 +13,17 @@ contract GasSnapshotTest is DSTest {
 
         uint256 a = 123;
 
-        assertTrue(vm.snapshotValue("testSnapshotValue", a));
+        assertTrue(vm.snapshotValue("testSnapshotValue", "a", a));
 
+        // Expect:
+        // {
+        //   "a": "123"
+        // }
         string memory value = vm.readFile(file);
-        assertEq(value, '"123"');
+        assertEq(value, '{\n  "a": "123"\n}');
     }
 
-    function testSnapshotValueGroupSingle() public {
-        string memory file = "snapshots/GasSnapshotTest.json";
-        clear(file);
-
-        uint256 a = 123;
-
-        assertTrue(vm.snapshotValue("GasSnapshotTest", "testSnapshotValue", a));
-
-        string memory value = vm.readFile(file);
-        assertEq(value, '{\n  "testSnapshotValue": "123"\n}');
-    }
-
-    function testSnapshotValueGroupMultiple() public {
+    function testSnapshotValueGroup() public {
         string memory file = "snapshots/testSnapshotGroupValue.json";
         clear(file);
 
@@ -42,6 +34,11 @@ contract GasSnapshotTest is DSTest {
         assertTrue(vm.snapshotValue("testSnapshotGroupValue", "a", a));
         assertTrue(vm.snapshotValue("testSnapshotGroupValue", "b", b));
 
+        // Expect:
+        // {
+        //   "a": "123",
+        //   "b": "456"
+        // }
         assertEq(vm.readFile(file), '{\n  "a": "123",\n  "b": "456"\n}');
 
         assertTrue(vm.snapshotValue("testSnapshotGroupValue", "c", c));
@@ -52,10 +49,20 @@ contract GasSnapshotTest is DSTest {
         //   "b": "456",
         //   "c": "789"
         // }
-        assertEq(
-            vm.readFile(file),
-            '{\n  "a": "123",\n  "b": "456",\n  "c": "789"\n}'
-        );
+        assertEq(vm.readFile(file), '{\n  "a": "123",\n  "b": "456",\n  "c": "789"\n}');
+
+        // Overwrite a
+        uint256 a2 = 321;
+
+        assertTrue(vm.snapshotValue("testSnapshotGroupValue", "a", a2));
+
+        // Expect:
+        // {
+        //   "a": "321",
+        //   "b": "456",
+        //   "c": "789"
+        // }
+        assertEq(vm.readFile(file), '{\n  "a": "321",\n  "b": "456",\n  "c": "789"\n}');
     }
 
     function testSnapshotGasSection() public {
@@ -66,19 +73,20 @@ contract GasSnapshotTest is DSTest {
 
         f.run(1);
 
-        vm.startSnapshotGas("testSnapshotGasSection");
+        vm.startSnapshotGas("testSnapshotGasSection", "a");
 
         f.run(256); // 5_821_576 gas
         f.run(512); // 11_617_936 gas
 
-        (bool success, uint256 gasUsed) = vm.stopSnapshotGas(
-            "testSnapshotGasSection"
-        );
+        (bool success, uint256 gasUsed) = vm.stopSnapshotGas("testSnapshotGasSection", "a");
         assertTrue(success);
         assertEq(gasUsed, 17_439_512); // 5_821_576 + 11_617_936 = 17_439_512 gas
 
-        // Expect: "17439512"
-        assertEq(vm.readFile(file), '"17439512"');
+        // Expect:
+        // {
+        //   "a": "17439512"
+        // }
+        assertEq(vm.readFile(file), '{\n  "a": "17439512"\n}');
     }
 
     function testSnapshotOrdering() public {
@@ -114,10 +122,7 @@ contract GasSnapshotTest is DSTest {
         //   "b": "456",
         //   "c": "789"
         // }
-        assertEq(
-            vm.readFile(file),
-            '{\n  "a": "123",\n  "b": "456",\n  "c": "789"\n}'
-        );
+        assertEq(vm.readFile(file), '{\n  "a": "123",\n  "b": "456",\n  "c": "789"\n}');
     }
 
     function testSnapshotCombination() public {
@@ -139,10 +144,7 @@ contract GasSnapshotTest is DSTest {
 
         f.run(256); // 5_821_576 gas
 
-        (bool success, uint256 gasUsed) = vm.stopSnapshotGas(
-            "SnapshotCombination",
-            "z"
-        );
+        (bool success, uint256 gasUsed) = vm.stopSnapshotGas("SnapshotCombination", "z");
         assertTrue(success);
         assertEq(gasUsed, 5_821_576);
 
@@ -155,10 +157,7 @@ contract GasSnapshotTest is DSTest {
         //   "c": "789",
         //   "z": "5821576"
         // }
-        assertEq(
-            vm.readFile(file),
-            '{\n  "a": "123",\n  "b": "456",\n  "c": "789",\n  "z": "5821576"\n}'
-        );
+        assertEq(vm.readFile(file), '{\n  "a": "123",\n  "b": "456",\n  "c": "789",\n  "z": "5821576"\n}');
     }
 
     // Remove file if it exists so each test can start with a clean slate.
