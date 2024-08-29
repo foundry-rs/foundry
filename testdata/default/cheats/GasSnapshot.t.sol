@@ -8,7 +8,7 @@ contract GasSnapshotTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testSnapshotValueDefault() public {
-        string memory file = "snapshots/default.json";
+        string memory file = "snapshots/GasSnapshotTest.json";
         clear(file);
 
         uint256 a = 123;

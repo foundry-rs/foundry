@@ -674,6 +674,8 @@ pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Add
     Ok(account.info.nonce.abi_encode())
 }
 
+// TODO: move to backend?
+
 fn create_gas_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     group: Option<String>,
@@ -682,8 +684,9 @@ fn create_gas_snapshot<DB: DatabaseExt>(
 ) -> Result {
     create_dir_all(ccx.state.config.paths.snapshots.clone())?;
 
-    // TODO: derive from contract name, function name.
-    let snapshot_group_name = group.as_deref().unwrap_or("default");
+    let snapshot_group_name = group.as_deref().unwrap_or(
+        ccx.state.config.running_contract.as_deref().expect("expected running contract"),
+    );
     let snapshot_name = name.as_deref().unwrap_or("default");
 
     let snapshot_path =
@@ -702,8 +705,9 @@ fn start_gas_snapshot<DB: DatabaseExt>(
     group: Option<String>,
     name: Option<String>,
 ) -> Result {
-    // TODO: derive from contract name, function name.
-    let snapshot_group_name = group.as_deref().unwrap_or("default");
+    let snapshot_group_name = group.as_deref().unwrap_or(
+        ccx.state.config.running_contract.as_deref().expect("expected running contract"),
+    );
     let snapshot_name = name.as_deref().unwrap_or("default");
 
     if ccx
@@ -732,8 +736,9 @@ fn stop_gas_snapshot<DB: DatabaseExt>(
 ) -> Result {
     create_dir_all(ccx.state.config.paths.snapshots.clone())?;
 
-    // TODO: derive from contract name, function name.
-    let snapshot_group_name = group.as_deref().unwrap_or("default");
+    let snapshot_group_name = group.as_deref().unwrap_or(
+        ccx.state.config.running_contract.as_deref().expect("expected running contract"),
+    );
     let snapshot_name = name.as_deref().unwrap_or("default");
 
     if let Some(record) = ccx
