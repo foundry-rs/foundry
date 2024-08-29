@@ -588,12 +588,9 @@ impl TestArgs {
                     }
                 }
 
-                // Collect gas snapshots.
+                // Collect and merge gas snapshots.
                 for (group, new_snapshots) in result.gas_snapshots.iter() {
-                    gas_snapshots
-                        .entry(group.clone())
-                        .or_insert_with(BTreeMap::new)
-                        .extend(new_snapshots.clone());
+                    gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
                 }
             }
 

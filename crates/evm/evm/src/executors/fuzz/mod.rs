@@ -123,7 +123,7 @@ impl FuzzedExecutor {
                     for (group, new_snapshots) in case.gas_snapshots.iter() {
                         data.gas_snapshots
                             .entry(group.clone())
-                            .or_insert_with(BTreeMap::new)
+                            .or_default()
                             .extend(new_snapshots.clone());
                     }
 

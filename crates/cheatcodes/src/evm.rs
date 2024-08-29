@@ -664,11 +664,7 @@ fn create_value_snapshot<DB: DatabaseExt>(
         .as_deref()
         .unwrap_or(cheatcodes.config.running_contract.as_ref().expect("expected running contract"));
 
-    ccx.state
-        .gas_snapshots
-        .entry(group.to_string())
-        .or_default()
-        .insert(name.clone(), value.clone());
+    ccx.state.gas_snapshots.entry(group.to_string()).or_default().insert(name, value);
 
     Ok(Default::default())
 }
@@ -694,7 +690,7 @@ fn start_gas_snapshot<DB: DatabaseExt>(
 
     ccx.state.gas_metering.gas_records.push(GasRecord {
         group: group.to_string(),
-        name: name.to_string(),
+        name,
         gas_used: 0,
     });
 
