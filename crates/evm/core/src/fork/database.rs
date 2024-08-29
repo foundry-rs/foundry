@@ -92,7 +92,7 @@ impl ForkedDatabase {
         &self.db
     }
 
-    pub fn create_snapshot(&self) -> ForkDbSnapshot {
+    pub fn create_state_snapshot(&self) -> ForkDbSnapshot {
         let db = self.db.db();
         let snapshot = StateSnapshot {
             accounts: db.accounts.read().clone(),
@@ -102,8 +102,8 @@ impl ForkedDatabase {
         ForkDbSnapshot { local: self.cache_db.clone(), snapshot }
     }
 
-    pub fn insert_snapshot(&self) -> U256 {
-        let snapshot = self.create_snapshot();
+    pub fn insert_state_snapshot(&self) -> U256 {
+        let snapshot = self.create_state_snapshot();
         let mut snapshots = self.snapshots().lock();
         let id = snapshots.insert(snapshot);
         trace!(target: "backend::forkdb", "Created new snapshot {}", id);
@@ -111,7 +111,7 @@ impl ForkedDatabase {
     }
 
     /// Removes the snapshot from the tracked snapshot and sets it as the current state
-    pub fn revert_snapshot(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
+    pub fn revert_state_snapshot(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
         let snapshot = { self.snapshots().lock().remove_at(id) };
         if let Some(snapshot) = snapshot {
             if action.is_keep() {

@@ -71,16 +71,16 @@ impl Db for ForkedDatabase {
         }))
     }
 
-    fn snapshot(&mut self) -> U256 {
-        self.insert_snapshot()
+    fn snapshot_state(&mut self) -> U256 {
+        self.insert_state_snapshot()
     }
 
-    fn revert(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
-        self.revert_snapshot(id, action)
+    fn revert_state_snapshot(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
+        self.revert_state_snapshot(id, action)
     }
 
     fn current_state(&self) -> StateDb {
-        StateDb::new(self.create_snapshot())
+        StateDb::new(self.create_state_snapshot())
     }
 }
 

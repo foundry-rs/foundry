@@ -499,28 +499,16 @@ interface Vm {
 
     // ----- Arbitrary Snapshots -----
 
-    /// Snapshot capture an arbitrary numerical value.
-    /// The name is derived from the function name.
-    /// The group name is derived from the contract name.
-    #[cheatcode(group = Evm, safety = Unsafe)]
-    function snapshotValue(uint256 value) external returns (bool success);
-
     /// Snapshot capture an arbitrary numerical value by name.
     /// The group name is derived from the contract name.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function snapshotValue(string calldata name, uint256 value) external returns (bool success);
+    function snapshotValue(string calldata name, uint256 value) external;
 
     /// Snapshot capture an arbitrary numerical value by name in a group.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function snapshotValue(string calldata group, string calldata name, uint256 value) external returns (bool success);
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
 
     // -------- Gas Snapshots --------
-
-    /// Start a snapshot capture of the current gas usage.
-    /// The name is derived from the function name.
-    /// The group name is derived from the contract name.
-    #[cheatcode(group = Evm, safety = Unsafe)]
-    function startSnapshotGas() external;
 
     /// Start a snapshot capture of the current gas usage by name.
     /// The group name is derived from the contract name.
@@ -531,20 +519,14 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startSnapshotGas(string calldata group, string calldata name) external;
 
-    /// Stop the snapshot capture of the current gas usage, capturing the gas used since the start.
-    /// The name is derived from the function name.
-    /// The group name is derived from the contract name.
-    #[cheatcode(group = Evm, safety = Unsafe)]
-    function stopSnapshotGas() external returns (bool success, uint256 gasUsed);
-
     /// Stop the snapshot capture of the current gas usage by name, capturing the gas used since the start.
     /// The group name is derived from the contract name.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function stopSnapshotGas(string calldata name) external returns (bool success, uint256 gasUsed);
+    function stopSnapshotGas(string calldata name) external returns (uint256 gasUsed);
 
     /// Stop the snapshot capture of the current gas usage by name in a group, capturing the gas used since the start.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function stopSnapshotGas(string calldata group, string calldata name) external returns (bool success, uint256 gasUsed);
+    function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     // -------- State Snapshots --------
 

@@ -158,13 +158,13 @@ pub trait Db:
         Ok(true)
     }
 
-    /// Creates a new snapshot
-    fn snapshot(&mut self) -> U256;
+    /// Creates a new state snapshot
+    fn snapshot_state(&mut self) -> U256;
 
-    /// Reverts a snapshot
+    /// Reverts a state snapshot
     ///
     /// Returns `true` if the snapshot was reverted
-    fn revert(&mut self, snapshot: U256, action: RevertSnapshotAction) -> bool;
+    fn revert_state_snapshot(&mut self, snapshot: U256, action: RevertSnapshotAction) -> bool;
 
     /// Returns the state root if possible to compute
     fn maybe_state_root(&self) -> Option<B256> {
@@ -202,11 +202,11 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         Ok(None)
     }
 
-    fn snapshot(&mut self) -> U256 {
+    fn snapshot_state(&mut self) -> U256 {
         U256::ZERO
     }
 
-    fn revert(&mut self, _snapshot: U256, _action: RevertSnapshotAction) -> bool {
+    fn revert_state_snapshot(&mut self, _snapshot: U256, _action: RevertSnapshotAction) -> bool {
         false
     }
 

@@ -400,9 +400,8 @@ interface Vm {
     function skip(bool skipTest) external;
     function sleep(uint256 duration) external;
     function snapshotState() external returns (uint256 snapshotId);
-    function snapshotValue(uint256 value) external returns (bool success);
-    function snapshotValue(string calldata name, uint256 value) external returns (bool success);
-    function snapshotValue(string calldata group, string calldata name, uint256 value) external returns (bool success);
+    function snapshotValue(string calldata name, uint256 value) external;
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
     function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);
     function startBroadcast() external;
     function startBroadcast(address signer) external;
@@ -410,7 +409,6 @@ interface Vm {
     function startMappingRecording() external;
     function startPrank(address msgSender) external;
     function startPrank(address msgSender, address txOrigin) external;
-    function startSnapshotGas() external;
     function startSnapshotGas(string calldata name) external;
     function startSnapshotGas(string calldata group, string calldata name) external;
     function startStateDiffRecording() external;
@@ -419,9 +417,8 @@ interface Vm {
     function stopExpectSafeMemory() external;
     function stopMappingRecording() external;
     function stopPrank() external;
-    function stopSnapshotGas() external returns (bool success, uint256 gasUsed);
-    function stopSnapshotGas(string calldata name) external returns (bool success, uint256 gasUsed);
-    function stopSnapshotGas(string calldata group, string calldata name) external returns (bool success, uint256 gasUsed);
+    function stopSnapshotGas(string calldata name) external returns (uint256 gasUsed);
+    function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
     function store(address target, bytes32 slot, bytes32 value) external;
     function toBase64URL(bytes calldata data) external pure returns (string memory);
     function toBase64URL(string calldata data) external pure returns (string memory);

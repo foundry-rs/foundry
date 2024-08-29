@@ -965,7 +965,7 @@ impl DatabaseExt for Backend {
                         }
                         caller_account.into()
                     });
-                    self.inner.revert_snapshot(id, fork_id, idx, *fork);
+                    self.inner.revert_state_snapshot(id, fork_id, idx, *fork);
                     self.active_fork_ids = Some((id, idx))
                 }
             }
@@ -1689,7 +1689,7 @@ impl BackendInner {
     }
 
     /// Reverts the entire fork database
-    pub fn revert_snapshot(
+    pub fn revert_state_snapshot(
         &mut self,
         id: LocalForkId,
         fork_id: ForkId,
