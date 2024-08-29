@@ -749,4 +749,23 @@ mod tests {
         let value = parse_json_as(&Value::String("0x0000".into()), &DynSolType::Address);
         assert!(value.is_err());
     }
+
+    #[test]
+    fn test_json_parse_address_fail_if_not_an_address() {
+        let value = parse_json_as(&Value::String("this is a test".into()), &DynSolType::Address);
+        assert!(value.is_err());
+    }
+
+    #[test]
+    fn test_json_parse_address_fail_if_address_is_not_checksummed() {
+        // NOTE this address is not checksummed correctly
+        let value = parse_json_as(&Value::String("0x000000000000000000000000000000000000000a".into()), &DynSolType::Address);
+        assert!(value.is_err());
+    }
+
+    #[test]
+    fn test_json_parse_address_ok_on_address_zero() {
+        let value = parse_json_as(&Value::String("0x0000000000000000000000000000000000000000".into()), &DynSolType::Address);
+        assert!(value.is_ok());
+    }
 }
