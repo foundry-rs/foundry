@@ -30,7 +30,7 @@ use crate::{
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
     revm::{db::DatabaseRef, primitives::AccountInfo},
-    NodeConfig, PrecompileFactory,
+    ForkChoice, NodeConfig, PrecompileFactory,
 };
 use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
@@ -426,37 +426,51 @@ impl Backend {
                 .ok_or(BlockchainError::BlockNotFound)?;
             // update all settings related to the forked block
             {
-                let mut env = self.env.write();
-                env.cfg.chain_id = fork.chain_id();
+                if let Some(fork_url) = forking.json_rpc_url {
+                    // Set the fork block number
+                    let mut node_config = self.node_config.write().await;
+                    node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
 
-                env.block = BlockEnv {
-                    number: U256::from(fork_block_number),
-                    timestamp: U256::from(fork_block.header.timestamp),
-                    gas_limit: U256::from(fork_block.header.gas_limit),
-                    difficulty: fork_block.header.difficulty,
-                    prevrandao: Some(fork_block.header.mix_hash.unwrap_or_default()),
-                    // Keep previous `coinbase` and `basefee` value
-                    coinbase: env.block.coinbase,
-                    basefee: env.block.basefee,
-                    ..env.block.clone()
-                };
+                    let mut env = self.env.read().clone();
+                    let (forked_db, client_fork_config) =
+                        node_config.setup_fork_db_config(fork_url, &mut env, &self.fees).await;
 
-                self.time.reset(env.block.timestamp.to::<u64>());
+                    *self.db.write().await = Box::new(forked_db);
+                    let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
+                    *self.fork.write() = Some(fork);
+                    *self.env.write() = env;
+                } else {
+                    let mut env = self.env.write();
+                    env.cfg.chain_id = fork.chain_id();
+                    env.block = BlockEnv {
+                        number: U256::from(fork_block_number),
+                        timestamp: U256::from(fork_block.header.timestamp),
+                        gas_limit: U256::from(fork_block.header.gas_limit),
+                        difficulty: fork_block.header.difficulty,
+                        prevrandao: Some(fork_block.header.mix_hash.unwrap_or_default()),
+                        // Keep previous `coinbase` and `basefee` value
+                        coinbase: env.block.coinbase,
+                        basefee: env.block.basefee,
+                        ..env.block.clone()
+                    };
 
-                // this is the base fee of the current block, but we need the base fee of
-                // the next block
-                let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                    fork_block.header.gas_used,
-                    fork_block.header.gas_limit,
-                    fork_block.header.base_fee_per_gas.unwrap_or_default(),
-                );
+                    // this is the base fee of the current block, but we need the base fee of
+                    // the next block
+                    let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+                        fork_block.header.gas_used,
+                        fork_block.header.gas_limit,
+                        fork_block.header.base_fee_per_gas.unwrap_or_default(),
+                    );
 
-                self.fees.set_base_fee(next_block_base_fee);
+                    self.fees.set_base_fee(next_block_base_fee);
+                }
+
+                // reset the time to the timestamp of the forked block
+                self.time.reset(fork_block.header.timestamp);
 
                 // also reset the total difficulty
                 self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
             }
-
             // reset storage
             *self.blockchain.storage.write() = BlockchainStorage::forked(
                 fork.block_number(),
@@ -464,7 +478,7 @@ impl Backend {
                 fork.total_difficulty(),
             );
             self.states.write().clear();
-            self.db.write().await.clear();
+            // self.db.write().await.clear();
 
             self.apply_genesis().await?;
 
