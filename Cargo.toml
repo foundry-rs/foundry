@@ -159,7 +159,7 @@ foundry-linking = { path = "crates/linking" }
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.5.1", default-features = false }
 foundry-compilers = { version = "0.10.3", default-features = false }
-foundry-fork-db = "0.2"
+foundry-fork-db = "0.3"
 solang-parser = "=0.3.3"
 
 ## revm
