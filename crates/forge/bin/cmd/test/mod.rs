@@ -595,9 +595,10 @@ impl TestArgs {
             }
 
             // Remove any existing gas snapshots.
-            remove_dir_all(&config.snapshot_path).unwrap_or_else(|e| {
-                eprintln!("Failed to remove gas snapshots: {e}");
-            });
+            if config.snapshot_path.exists() {
+                remove_dir_all(&config.snapshot_path)
+                    .expect("Failed to remove gas snapshots directory");
+            }
 
             // Create `snapshots` directory if it doesn't exist.
             create_dir_all(&config.snapshot_path)?;
@@ -608,7 +609,7 @@ impl TestArgs {
                     &config.snapshot_path.join(format!("{group}.json")),
                     &snapshots,
                 )
-                .unwrap_or_else(|e| eprintln!("Failed to write gas snapshots: {e}"));
+                .expect("Failed to write gas snapshots to disk");
             });
 
             // Print suite summary.
