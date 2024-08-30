@@ -531,7 +531,7 @@ impl Cheatcode for stopSnapshotGas_1Call {
     }
 }
 
-impl Cheatcode for snapshotGasLastCallCall {
+impl Cheatcode for snapshotGasCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {

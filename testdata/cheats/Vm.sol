@@ -399,7 +399,7 @@ interface Vm {
     function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function skip(bool skipTest) external;
     function sleep(uint256 duration) external;
-    function snapshotGasLastCall(string calldata name) external;
+    function snapshotGas(string calldata name) external;
     function snapshotState() external returns (uint256 snapshotId);
     function snapshotValue(string calldata name, uint256 value) external;
     function snapshotValue(string calldata group, string calldata name, uint256 value) external;

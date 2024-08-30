@@ -510,6 +510,10 @@ interface Vm {
 
     // -------- Gas Snapshots --------
 
+    /// Snapshot capture the gas usage of the last call by name.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGas(string calldata name) external;
+
     /// Start a snapshot capture of the current gas usage by name.
     /// The group name is derived from the contract name.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -527,10 +531,6 @@ interface Vm {
     /// Stop the snapshot capture of the current gas usage by name in a group, capturing the gas used since the start.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
-
-    /// Snapshot capture the gas usage of the last call by name.
-    #[cheatcode(group = Evm, safety = Unsafe)]
-    function snapshotGasLastCall(string calldata name) external;
 
     // -------- State Snapshots --------
 
