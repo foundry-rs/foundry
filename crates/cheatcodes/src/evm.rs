@@ -531,6 +531,16 @@ impl Cheatcode for stopSnapshotGas_1Call {
     }
 }
 
+impl Cheatcode for snapshotGasLastCallCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name } = self;
+        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
+            bail!("no external call was made yet");
+        };
+        create_value_snapshot(ccx, None, name.clone(), last_call_gas.gasTotalUsed.to_string())
+    }
+}
+
 impl Cheatcode for snapshotStateCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;

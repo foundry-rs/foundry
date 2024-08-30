@@ -8068,6 +8068,26 @@
     },
     {
       "func": {
+        "id": "snapshotGasLastCall",
+        "description": "Snapshot capture the gas usage of the last call by name.",
+        "declaration": "function snapshotGasLastCall(string calldata name) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotGasLastCall(string)",
+        "selector": "0xdd9fca12",
+        "selectorBytes": [
+          221,
+          159,
+          202,
+          18
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "snapshotState",
         "description": "Snapshot the current state of the evm.\nReturns the ID of the snapshot that was created.\nTo revert a snapshot use `revertTo`.",
         "declaration": "function snapshotState() external returns (uint256 snapshotId);",

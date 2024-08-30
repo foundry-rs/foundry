@@ -528,6 +528,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
+    /// Snapshot capture the gas usage of the last call by name.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastCall(string calldata name) external;
+
     // -------- State Snapshots --------
 
     /// Snapshot the current state of the evm.
