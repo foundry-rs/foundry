@@ -33,7 +33,7 @@ integrity = "6a52f0c34d935e508af46a6d12a3a741798252f20a66f6bbee86c23dd6ef7c8d"
 "#;
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
-    assert_eq!(lock_contents, actual_lock_contents);
+    assert_data_eq!(lock_contents, actual_lock_contents);
 
     // Making sure the foundry contents are the right ones
     let foundry_contents = r#"[profile.default]
@@ -75,7 +75,7 @@ checksum = "22868f426bd4dd0e682b5ec5f9bd55507664240c"
 "#;
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
-    assert_eq!(lock_contents, actual_lock_contents);
+    assert_data_eq!(lock_contents, actual_lock_contents);
 
     // Making sure the foundry contents are the right ones
     let foundry_contents = r#"[profile.default]
@@ -120,7 +120,7 @@ checksum = "7a0663eaf7488732f39550be655bad6694974cb3"
 "#;
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
-    assert_eq!(lock_contents, actual_lock_contents);
+    assert_data_eq!(lock_contents, actual_lock_contents);
 
     // Making sure the foundry contents are the right ones
     let foundry_contents = r#"[profile.default]
@@ -278,7 +278,7 @@ integrity = "6a52f0c34d935e508af46a6d12a3a741798252f20a66f6bbee86c23dd6ef7c8d"
 "#;
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
-    assert_eq!(lock_contents, actual_lock_contents);
+    assert_data_eq!(lock_contents, actual_lock_contents);
 
     // Making sure the foundry contents are the right ones
     let foundry_contents = r#"[profile.default]
@@ -343,7 +343,7 @@ integrity = "6a52f0c34d935e508af46a6d12a3a741798252f20a66f6bbee86c23dd6ef7c8d"
 "#;
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
-    assert_eq!(lock_contents, actual_lock_contents);
+    assert_data_eq!(lock_contents, actual_lock_contents);
 
     // Making sure the foundry contents are the right ones
     let foundry_contents = r#"[profile.default]
@@ -404,7 +404,7 @@ integrity = "6a52f0c34d935e508af46a6d12a3a741798252f20a66f6bbee86c23dd6ef7c8d"
 "#;
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
-    assert_eq!(lock_contents, actual_lock_contents);
+    assert_data_eq!(lock_contents, actual_lock_contents);
 
     // Making sure the foundry contents are the right ones
     let remappings_content = r#"@custom-f@forge-std-1.8.1/=dependencies/forge-std-1.8.1/
