@@ -398,9 +398,9 @@ pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValu
         (Value::String(s), DynSolType::String) => Ok(DynSolValue::String(s.clone())),
         (Value::String(s), DynSolType::Address) => 
             match s.len() {
-                42 => match Address::parse_checksummed(s, None) {
+                42 => match s.parse::<Address>() {
                     Ok(address) => Ok(DynSolValue::Address(address)),
-                    Err(_) => Err(format!("could not parse address from string {s}").into())
+                    Err(err) => Err(err.to_string().into()),
                 }
                 _ => Err(format!("cannot parse address from wrongly sized string {s}, len={}", s.len()).into()),
             }
@@ -756,13 +756,6 @@ mod tests {
     #[test]
     fn test_json_parse_address_fail_if_not_an_address() {
         let value = parse_json_as(&Value::String("this is a test".into()), &DynSolType::Address);
-        assert!(value.is_err());
-    }
-
-    #[test]
-    fn test_json_parse_address_fail_if_address_is_not_checksummed() {
-        // NOTE this address is not checksummed correctly
-        let value = parse_json_as(&Value::String("0x000000000000000000000000000000000000000a".into()), &DynSolType::Address);
         assert!(value.is_err());
     }
 
