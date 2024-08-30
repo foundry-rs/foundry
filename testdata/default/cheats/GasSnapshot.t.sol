@@ -65,6 +65,14 @@ contract GasSnapshotTest is DSTest {
         uint256 gasUsed = vm.stopSnapshotGas("testSnapshotGasSection");
         assertEq(gasUsed, 17_439_512); // 5_821_576 + 11_617_936 = 17_439_512 gas
     }
+
+    function testSnapshotLastCallGas() public {
+        Flare f = new Flare();
+
+        f.run(1);
+
+        vm.snapshotGasLastCall("testSnapshotLastCallGas");
+    }
 }
 
 contract Flare {
