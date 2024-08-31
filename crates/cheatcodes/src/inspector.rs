@@ -219,10 +219,17 @@ pub struct BroadcastableTransaction {
 pub struct GasMetering {
     /// True if gas metering is paused.
     pub paused: bool,
-    /// True if gas metering was resumed during the test.
-    pub resumed: bool,
+    /// True if gas metering was resumed or reseted during the test.
+    /// Used to reconcile gas when frame ends (if spent less than refunded).
+    pub touched: bool,
+    /// True if gas metering should be reset to frame limit.
+    pub reset: bool,
     /// Stores frames paused gas.
     pub paused_frames: Vec<Gas>,
+
+    /// Cache of the amount of gas used in previous call.
+    /// This is used by the `lastCallGas` cheatcode.
+    pub last_call_gas: Option<crate::Vm::Gas>,
 }
 
 impl GasMetering {
@@ -230,8 +237,16 @@ impl GasMetering {
     pub fn resume(&mut self) {
         if self.paused {
             self.paused = false;
-            self.resumed = true;
+            self.touched = true;
         }
+        self.paused_frames.clear();
+    }
+
+    /// Reset gas to limit.
+    pub fn reset(&mut self) {
+        self.paused = false;
+        self.touched = true;
+        self.reset = true;
         self.paused_frames.clear();
     }
 }
@@ -264,7 +279,7 @@ pub struct Cheatcodes {
     /// execution block environment.
     pub block: Option<BlockEnv>,
 
-    /// The gas price
+    /// The gas price.
     ///
     /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
     /// in the execution environment.
@@ -294,10 +309,6 @@ pub struct Cheatcodes {
 
     /// Recorded logs
     pub recorded_logs: Option<Vec<crate::Vm::Log>>,
-
-    /// Cache of the amount of gas used in previous call.
-    /// This is used by the `lastCallGas` cheatcode.
-    pub last_call_gas: Option<crate::Vm::Gas>,
 
     /// Mocked calls
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
@@ -377,7 +388,6 @@ impl Cheatcodes {
             accesses: Default::default(),
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
-            last_call_gas: Default::default(),
             mocked_calls: Default::default(),
             expected_calls: Default::default(),
             expected_emits: Default::default(),
@@ -632,8 +642,10 @@ impl Cheatcodes {
                     false,
                     true,
                     expected_revert.reason.as_deref(),
+                    expected_revert.partial_match,
                     outcome.result.result,
                     outcome.result.output.clone(),
+                    &self.config.available_artifacts,
                 ) {
                     Ok((address, retdata)) => {
                         outcome.result.result = InstructionResult::Return;
@@ -994,9 +1006,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         self.pc = interpreter.program_counter();
 
-        // `pauseGasMetering`: reset interpreter gas.
+        // `pauseGasMetering`: pause / resume interpreter gas.
         if self.gas_metering.paused {
             self.meter_gas(interpreter);
+        }
+
+        // `resetGasMetering`: reset interpreter gas.
+        if self.gas_metering.reset {
+            self.meter_gas_reset(interpreter);
         }
 
         // `record`: record storage reads and writes.
@@ -1026,14 +1043,14 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             self.meter_gas_end(interpreter);
         }
 
-        if self.gas_metering.resumed {
+        if self.gas_metering.touched {
             self.meter_gas_check(interpreter);
         }
     }
 
-    fn log(&mut self, _interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>, log: &Log) {
         if !self.expected_emits.is_empty() {
-            expect::handle_expect_emit(self, log);
+            expect::handle_expect_emit(self, log, interpreter);
         }
 
         // `recordLogs`
@@ -1107,8 +1124,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         cheatcode_call,
                         false,
                         expected_revert.reason.as_deref(),
+                        expected_revert.partial_match,
                         outcome.result.result,
                         outcome.result.output.clone(),
+                        &self.config.available_artifacts,
                     ) {
                         Err(error) => {
                             trace!(expected=?expected_revert, ?error, status=?outcome.result.result, "Expected revert mismatch");
@@ -1143,7 +1162,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
         // retrieve the gas usage of the last call.
         let gas = outcome.result.gas;
-        self.last_call_gas = Some(crate::Vm::Gas {
+        self.gas_metering.last_call_gas = Some(crate::Vm::Gas {
             gasLimit: gas.limit(),
             gasTotalUsed: gas.spent(),
             gasMemoryUsed: 0,
@@ -1407,14 +1426,21 @@ impl Cheatcodes {
     }
 
     #[cold]
+    fn meter_gas_reset(&mut self, interpreter: &mut Interpreter) {
+        interpreter.gas = Gas::new(interpreter.gas().limit());
+        self.gas_metering.reset = false;
+    }
+
+    #[cold]
     fn meter_gas_check(&mut self, interpreter: &mut Interpreter) {
         if will_exit(interpreter.instruction_result) {
-            // Reconcile gas if spent is less than refunded.
-            // This can happen if gas was paused / resumed (https://github.com/foundry-rs/foundry/issues/4370).
+            // Reset gas if spent is less than refunded.
+            // This can happen if gas was paused / resumed or reset.
+            // https://github.com/foundry-rs/foundry/issues/4370
             if interpreter.gas.spent() <
                 u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
             {
-                interpreter.gas = Gas::new(interpreter.gas.remaining());
+                interpreter.gas = Gas::new(interpreter.gas.limit());
             }
         }
     }

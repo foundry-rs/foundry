@@ -4,7 +4,7 @@ use alloy_primitives::U256;
 use foundry_config::{Config, FuzzConfig};
 use foundry_test_utils::{
     rpc, str,
-    util::{OTHER_SOLC_VERSION, SOLC_VERSION},
+    util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
 use std::{path::PathBuf, str::FromStr};
@@ -128,7 +128,7 @@ forgetest!(can_fuzz_array_params, |prj, cmd| {
         r#"
 import "./test.sol";
 contract ATest is DSTest {
-    function testArray(uint64[2] calldata values) external {
+    function testArray(uint64[2] calldata) external {
         assertTrue(true);
     }
 }
@@ -136,8 +136,18 @@ contract ATest is DSTest {
     )
     .unwrap();
 
-    cmd.arg("test");
-    cmd.stdout_lossy().contains("[PASS]");
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/ATest.t.sol:ATest
+[PASS] testArray(uint64[2]) (runs: 256, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests that `bytecode_hash` will be sanitized
@@ -151,7 +161,7 @@ forgetest!(can_test_pre_bytecode_hash, |prj, cmd| {
 pragma solidity 0.5.17;
 import "./test.sol";
 contract ATest is DSTest {
-    function testArray(uint64[2] calldata values) external {
+    function testArray(uint64[2] calldata) external {
         assertTrue(true);
     }
 }
@@ -159,8 +169,18 @@ contract ATest is DSTest {
     )
     .unwrap();
 
-    cmd.arg("test");
-    cmd.stdout_lossy().contains("[PASS]");
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/ATest.t.sol:ATest
+[PASS] testArray(uint64[2]) (runs: 256, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests that using the --match-path option only runs files matching the path
@@ -194,7 +214,7 @@ contract FailTest is DSTest {
     .unwrap();
 
     cmd.args(["test", "--match-path", "*src/ATest.t.sol"]).assert_success().stdout_eq(str![[r#"
-Compiling 3 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -241,7 +261,7 @@ contract FailTest is DSTest {
     let test_path = test_path.to_string_lossy();
 
     cmd.args(["test", "--match-path", test_path.as_ref()]).assert_success().stdout_eq(str![[r#"
-Compiling 3 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -278,7 +298,7 @@ contract MyTest is DSTest {
     .unwrap();
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -293,9 +313,22 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // checks that forge test repeatedly produces the same output
 #[cfg(not(feature = "isolate-by-default"))]
-forgetest_init!(can_test_repeatedly, |_prj, cmd| {
-    cmd.arg("test");
-    cmd.assert_non_empty_stdout();
+forgetest_init!(can_test_repeatedly, |prj, cmd| {
+    prj.clear();
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
+[PASS] test_Increment() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
 
     for _ in 0..5 {
         cmd.assert_success().stdout_eq(str![[r#"
@@ -339,7 +372,7 @@ contract ContractTest is DSTest {
     prj.write_config(config);
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -356,7 +389,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     prj.write_config(config);
 
     cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -417,7 +450,7 @@ contract ContractTest is Test {
     .unwrap();
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Compiling 2 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -448,7 +481,7 @@ forgetest_init!(exit_code_error_on_fail_fast, |prj, cmd| {
     cmd.args(["test", "--fail-fast"]);
 
     // run command and assert error exit code
-    cmd.assert_err();
+    cmd.assert_empty_stderr();
 });
 
 forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
@@ -459,7 +492,7 @@ forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
     cmd.args(["test", "--fail-fast", "--json"]);
 
     // run command and assert error exit code
-    cmd.assert_err();
+    cmd.assert_empty_stderr();
 });
 
 // https://github.com/foundry-rs/foundry/pull/6531
@@ -489,7 +522,7 @@ contract USDTCallingTest is Test {
     .unwrap();
 
     cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -535,7 +568,7 @@ contract CustomTypesTest is Test {
     .unwrap();
 
     cmd.args(["test", "-vvvv"]).assert_failure().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -738,7 +771,7 @@ contract CounterTest is Test {
 
     // make sure there are only 61 runs (with proptest shrinking same test results in 298 runs)
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
-Compiling 23 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -789,7 +822,7 @@ contract CounterTest is Test {
 
     // make sure invariant test exit early with 0 runs
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
-Compiling 23 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -836,8 +869,29 @@ contract ReplayFailuresTest is Test {
     )
     .unwrap();
 
-    cmd.args(["test"]);
-    cmd.assert_err();
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 4 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
+[PASS] testA() ([GAS])
+[FAIL. Reason: revert: testB failed] testB() ([GAS])
+[PASS] testC() ([GAS])
+[FAIL. Reason: revert: testD failed] testD() ([GAS])
+Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 2 failed, 0 skipped (4 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
+[FAIL. Reason: revert: testB failed] testB() ([GAS])
+[FAIL. Reason: revert: testD failed] testD() ([GAS])
+
+Encountered a total of 2 failing tests, 2 tests succeeded
+
+"#]]);
+
     // Test failure filter should be persisted.
     assert!(prj.root().join("cache/test-failures").exists());
 
@@ -893,22 +947,52 @@ contract PrecompileLabelsTest is Test {
     )
     .unwrap();
 
-    let output = cmd.args(["test", "-vvvv"]).stdout_lossy();
-    assert!(output.contains("VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D]"));
-    assert!(output.contains("console: [0x000000000000000000636F6e736F6c652e6c6f67]"));
-    assert!(output.contains("Create2Deployer: [0x4e59b44847b379578588920cA78FbF26c0B4956C]"));
-    assert!(output.contains("DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38]"));
-    assert!(output.contains("DefaultTestContract: [0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84]"));
-    assert!(output.contains("ECRecover: [0x0000000000000000000000000000000000000001]"));
-    assert!(output.contains("SHA-256: [0x0000000000000000000000000000000000000002]"));
-    assert!(output.contains("RIPEMD-160: [0x0000000000000000000000000000000000000003]"));
-    assert!(output.contains("Identity: [0x0000000000000000000000000000000000000004]"));
-    assert!(output.contains("ModExp: [0x0000000000000000000000000000000000000005]"));
-    assert!(output.contains("ECAdd: [0x0000000000000000000000000000000000000006]"));
-    assert!(output.contains("ECMul: [0x0000000000000000000000000000000000000007]"));
-    assert!(output.contains("ECPairing: [0x0000000000000000000000000000000000000008]"));
-    assert!(output.contains("Blake2F: [0x0000000000000000000000000000000000000009]"));
-    assert!(output.contains("PointEvaluation: [0x000000000000000000000000000000000000000A]"));
+    cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Contract.t.sol:PrecompileLabelsTest
+[PASS] testPrecompileLabels() ([GAS])
+Traces:
+  [9474] PrecompileLabelsTest::testPrecompileLabels()
+    ├─ [0] VM::deal(VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(console: [0x000000000000000000636F6e736F6c652e6c6f67], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(Create2Deployer: [0x4e59b44847b379578588920cA78FbF26c0B4956C], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(DefaultTestContract: [0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(ECRecover: [0x0000000000000000000000000000000000000001], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(SHA-256: [0x0000000000000000000000000000000000000002], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(RIPEMD-160: [0x0000000000000000000000000000000000000003], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(Identity: [0x0000000000000000000000000000000000000004], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(ModExp: [0x0000000000000000000000000000000000000005], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(ECAdd: [0x0000000000000000000000000000000000000006], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(ECMul: [0x0000000000000000000000000000000000000007], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(ECPairing: [0x0000000000000000000000000000000000000008], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(Blake2F: [0x0000000000000000000000000000000000000009], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    ├─ [0] VM::deal(PointEvaluation: [0x000000000000000000000000000000000000000A], 1000000000000000000 [1e18])
+    │   └─ ← [Return] 
+    └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests that `forge test` with config `show_logs: true` for fuzz tests will
@@ -937,9 +1021,23 @@ forgetest_init!(should_show_logs_when_fuzz_test, |prj, cmd| {
      "#,
     )
     .unwrap();
-    cmd.args(["test", "-vv"]);
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
+[PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
+Logs:
+  inside fuzz test, x is: [..]
+  inside fuzz test, x is: [..]
+  inside fuzz test, x is: [..]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests that `forge test` with inline config `show_logs = true` for fuzz tests will
@@ -968,9 +1066,23 @@ forgetest_init!(should_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
      "#,
     )
     .unwrap();
-    cmd.args(["test", "-vv"]);
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
+[PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
+Logs:
+  inside fuzz test, x is: [..]
+  inside fuzz test, x is: [..]
+  inside fuzz test, x is: [..]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests that `forge test` with config `show_logs: false` for fuzz tests will not display
@@ -1000,9 +1112,18 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
      "#,
     )
     .unwrap();
-    cmd.args(["test", "-vv"]);
-    let stdout = cmd.stdout_lossy();
-    assert!(!stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
+[PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests that `forge test` with inline config `show_logs = false` for fuzz tests will not
@@ -1031,9 +1152,18 @@ forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
      "#,
     )
     .unwrap();
-    cmd.args(["test", "-vv"]);
-    let stdout = cmd.stdout_lossy();
-    assert!(!stdout.contains("inside fuzz test, x is:"), "\n{stdout}");
+    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
+[PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // tests internal functions trace
@@ -1084,7 +1214,7 @@ contract SimpleContractTest is Test {
     )
     .unwrap();
     cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
-Compiling 24 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
@@ -1211,29 +1341,37 @@ contract DeterministicRandomnessTest is Test {
 
     // Run the test twice with the same seed and verify the outputs are the same.
     let seed1 = "0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2";
-    cmd.args(["test", "--fuzz-seed", seed1, "-vv"]).assert_success();
-    let out1 = cmd.stdout_lossy();
+    let out1 = cmd
+        .args(["test", "--fuzz-seed", seed1, "-vv"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     let res1 = extract_test_result(&out1);
 
-    cmd.forge_fuse();
-    cmd.args(["test", "--fuzz-seed", seed1, "-vv"]).assert_success();
-    let out2 = cmd.stdout_lossy();
+    let out2 = cmd
+        .forge_fuse()
+        .args(["test", "--fuzz-seed", seed1, "-vv"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     let res2 = extract_test_result(&out2);
 
     assert_eq!(res1, res2);
 
     // Run the test with another seed and verify the output differs.
     let seed2 = "0xb1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2";
-    cmd.forge_fuse();
-    cmd.args(["test", "--fuzz-seed", seed2, "-vv"]).assert_success();
-    let out3 = cmd.stdout_lossy();
+    let out3 = cmd
+        .forge_fuse()
+        .args(["test", "--fuzz-seed", seed2, "-vv"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     let res3 = extract_test_result(&out3);
     assert_ne!(res3, res1);
 
     // Run the test without a seed and verify the outputs differs once again.
     cmd.forge_fuse();
-    cmd.args(["test", "-vv"]).assert_success();
-    let out4 = cmd.stdout_lossy();
+    let out4 = cmd.args(["test", "-vv"]).assert_success().get_output().stdout_lossy();
     let res4 = extract_test_result(&out4);
     assert_ne!(res4, res1);
     assert_ne!(res4, res3);
@@ -1390,7 +1528,7 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] test_negativeGas() (gas: 3252)
+[PASS] test_negativeGas() (gas: 0)
 ...
 "#]]);
 });
@@ -1478,6 +1616,221 @@ Traces:
     │   │   └─ ← [Stop] 
     │   └─ ← [Stop] 
     └─ ← [Stop] 
+...
+"#]]);
+});
+
+forgetest_init!(gas_metering_reset, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    prj.add_source(
+        "ATest.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+contract B {
+    function a() public returns (uint256) {
+        return 100;
+    }
+}
+contract ATest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    B b;
+    uint256 a;
+
+    function testResetGas() public {
+        vm.resetGasMetering();
+    }
+
+    function testResetGas1() public {
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas2() public {
+        b = new B();
+        b = new B();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas3() public {
+        vm.resetGasMetering();
+        b = new B();
+        b = new B();
+    }
+
+    function testResetGas4() public {
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+        b = new B();
+    }
+
+    function testResetGas5() public {
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+        b = new B();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas6() public {
+        vm.resetGasMetering();
+        b = new B();
+        b = new B();
+        _reset();
+        vm.resetGasMetering();
+    }
+
+    function testResetGas7() public {
+        vm.resetGasMetering();
+        b = new B();
+        b = new B();
+        _reset();
+    }
+
+    function testResetGas8() public {
+        this.resetExternal();
+    }
+
+    function testResetGas9() public {
+        this.resetExternal();
+        vm.resetGasMetering();
+    }
+
+    function testResetNegativeGas() public {
+        a = 100;
+        vm.resetGasMetering();
+
+        delete a;
+    }
+
+    function _reset() internal {
+        vm.resetGasMetering();
+    }
+
+    function resetExternal() external {
+        b = new B();
+        b = new B();
+        vm.resetGasMetering();
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+[PASS] testResetGas() (gas: 40)
+[PASS] testResetGas1() (gas: 40)
+[PASS] testResetGas2() (gas: 40)
+[PASS] testResetGas3() (gas: 134476)
+[PASS] testResetGas4() (gas: 56302)
+[PASS] testResetGas5() (gas: 40)
+[PASS] testResetGas6() (gas: 40)
+[PASS] testResetGas7() (gas: 49)
+[PASS] testResetGas8() (gas: 622)
+[PASS] testResetGas9() (gas: 40)
+[PASS] testResetNegativeGas() (gas: 0)
+...
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/8705
+forgetest_init!(test_expect_revert_decode, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+contract Counter {
+    uint256 public number;
+    error NumberNotEven(uint256 number);
+    error RandomError();
+    function setNumber(uint256 newNumber) public {
+        if (newNumber % 2 != 0) {
+            revert NumberNotEven(newNumber);
+        }
+        number = newNumber;
+    }
+}
+contract CounterTest is Test {
+    Counter public counter;
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(0);
+    }
+    function test_decode() public {
+        vm.expectRevert(Counter.RandomError.selector);
+        counter.setNumber(1);
+    }
+    function test_decode_with_args() public {
+        vm.expectRevert(abi.encodePacked(Counter.NumberNotEven.selector, uint(2)));
+        counter.setNumber(1);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL. Reason: Error != expected error: NumberNotEven(1) != RandomError()] test_decode() ([GAS])
+[FAIL. Reason: Error != expected error: NumberNotEven(1) != NumberNotEven(2)] test_decode_with_args() ([GAS])
+...
+"#]]);
+});
+
+// Tests that `expectPartialRevert` cheatcode partially matches revert data.
+forgetest_init!(test_expect_partial_revert, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+contract Counter {
+    error WrongNumber(uint256 number);
+    function count() public pure {
+        revert WrongNumber(0);
+    }
+}
+contract CounterTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    function testExpectPartialRevertWithSelector() public {
+        Counter counter = new Counter();
+        vm.expectPartialRevert(Counter.WrongNumber.selector);
+        counter.count();
+    }
+    function testExpectPartialRevertWith4Bytes() public {
+        Counter counter = new Counter();
+        vm.expectPartialRevert(bytes4(0x238ace70));
+        counter.count();
+    }
+    function testExpectRevert() public {
+        Counter counter = new Counter();
+        vm.expectRevert(Counter.WrongNumber.selector);
+        counter.count();
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[PASS] testExpectPartialRevertWith4Bytes() ([GAS])
+[PASS] testExpectPartialRevertWithSelector() ([GAS])
+[FAIL. Reason: Error != expected error: WrongNumber(0) != custom error 238ace70:] testExpectRevert() ([GAS])
 ...
 "#]]);
 });

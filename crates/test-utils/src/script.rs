@@ -1,4 +1,4 @@
-use crate::{init_tracing, TestCommand};
+use crate::{init_tracing, util::lossy_string, TestCommand};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use eyre::Result;
@@ -221,7 +221,9 @@ impl ScriptTester {
     }
 
     pub fn run(&mut self, expected: ScriptOutcome) -> &mut Self {
-        let (stdout, stderr) = self.cmd.unchecked_output_lossy();
+        let out = self.cmd.execute();
+        let (stdout, stderr) = (lossy_string(&out.stdout), lossy_string(&out.stderr));
+
         trace!(target: "tests", "STDOUT\n{stdout}\n\nSTDERR\n{stderr}");
 
         let output = if expected.is_err() { &stderr } else { &stdout };

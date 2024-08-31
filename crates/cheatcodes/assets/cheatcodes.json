@@ -4713,6 +4713,26 @@
     },
     {
       "func": {
+        "id": "expectPartialRevert",
+        "description": "Expects an error on next call that starts with the revert data.",
+        "declaration": "function expectPartialRevert(bytes4 revertData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectPartialRevert(bytes4)",
+        "selector": "0x11fb5b9c",
+        "selectorBytes": [
+          17,
+          251,
+          91,
+          156
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectRevert_0",
         "description": "Expects an error on next call with any revert data.",
         "declaration": "function expectRevert() external;",
@@ -4734,7 +4754,7 @@
     {
       "func": {
         "id": "expectRevert_1",
-        "description": "Expects an error on next call that starts with the revert data.",
+        "description": "Expects an error on next call that exactly matches the revert data.",
         "declaration": "function expectRevert(bytes4 revertData) external;",
         "visibility": "external",
         "mutability": "",
@@ -7008,6 +7028,26 @@
         ]
       },
       "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "resetGasMetering",
+        "description": "Reset gas metering (i.e. gas usage is set to gas limit).",
+        "declaration": "function resetGasMetering() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "resetGasMetering()",
+        "selector": "0xbe367dd3",
+        "selectorBytes": [
+          190,
+          54,
+          125,
+          211
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },

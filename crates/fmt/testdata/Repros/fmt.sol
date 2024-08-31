@@ -139,8 +139,7 @@ contract IfElseTest {
             number = 1;
         } else if (newNumber = 2) {
             //            number = 2;
-        }
-        else {
+        } else {
             newNumber = 3;
         }
     }

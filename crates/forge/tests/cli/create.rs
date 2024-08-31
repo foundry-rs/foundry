@@ -10,7 +10,7 @@ use foundry_compilers::artifacts::{remappings::Remapping, BytecodeHash};
 use foundry_config::Config;
 use foundry_test_utils::{
     forgetest, forgetest_async, str,
-    util::{TestCommand, TestProject},
+    util::{OutputExt, TestCommand, TestProject},
 };
 use std::str::FromStr;
 
@@ -104,12 +104,16 @@ where
 {
     if let Some(info) = info {
         let contract_path = f(&prj);
-        cmd.arg("create");
-        cmd.args(info.create_args()).arg(contract_path);
 
-        let out = cmd.stdout_lossy();
-        let _address = utils::parse_deployed_address(out.as_str())
-            .unwrap_or_else(|| panic!("Failed to parse deployer {out}"));
+        let output = cmd
+            .arg("create")
+            .args(info.create_args())
+            .arg(contract_path)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let _address = utils::parse_deployed_address(output.as_str())
+            .unwrap_or_else(|| panic!("Failed to parse deployer {output}"));
     }
 }
 
@@ -151,7 +155,7 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
     ]);
 
     cmd.assert().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -192,7 +196,7 @@ forgetest_async!(can_create_using_unlocked, |prj, cmd| {
     ]);
 
     cmd.assert().stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -249,7 +253,7 @@ contract ConstructorContract {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -286,7 +290,7 @@ contract TupleArrayConstructorContract {
         ])
         .assert()
         .stdout_eq(str![[r#"
-Compiling 1 files with [SOLC_VERSION]
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -323,15 +327,29 @@ contract UniswapV2Swap {
     )
     .unwrap();
 
-    cmd.forge_fuse().args([
-        "create",
-        "./src/UniswapV2Swap.sol:UniswapV2Swap",
-        "--rpc-url",
-        rpc.as_str(),
-        "--private-key",
-        pk.as_str(),
-    ]);
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "./src/UniswapV2Swap.sol:UniswapV2Swap",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:6:5:
+  |
+6 |     function pairInfo() public view returns (uint reserveA, uint reserveB, uint totalSupply) {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
 
-    let (stdout, _) = cmd.output_lossy();
-    assert!(stdout.contains("Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3"));
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+[TX_HASH]
+
+"#]]);
 });

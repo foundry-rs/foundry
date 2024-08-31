@@ -15,8 +15,9 @@ contract Handler is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function thisFunctionReverts() external {
-        if (block.number < 10) {}
-        else revert();
+        if (block.number < 10) {} else {
+            revert();
+        }
     }
 
     function advanceTime(uint256 blocks) external {

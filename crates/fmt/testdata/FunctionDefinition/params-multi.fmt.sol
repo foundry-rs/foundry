@@ -1,11 +1,9 @@
 // config: line_length = 60
-// config: multiline_func_header = "params_first"
+// config: multiline_func_header = "params_first_multi"
 interface FunctionInterfaces {
     function noParamsNoModifiersNoReturns();
 
-    function oneParam(
-        uint256 x
-    );
+    function oneParam(uint256 x);
 
     function oneModifier() modifier1;
 
@@ -337,9 +335,7 @@ contract FunctionDefinitions {
         a = 1;
     }
 
-    function oneParam(
-        uint256 x
-    ) {
+    function oneParam(uint256 x) {
         a = 1;
     }
 
@@ -701,9 +697,7 @@ contract FunctionOverrides is
         a = 1;
     }
 
-    function oneParam(
-        uint256 x
-    )
+    function oneParam(uint256 x)
         override(
             FunctionInterfaces,
             FunctionDefinitions,
