@@ -40,7 +40,6 @@ use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::Write,
     path::PathBuf,
     sync::{mpsc::channel, Arc},
     time::Instant,
@@ -82,9 +81,13 @@ pub struct TestArgs {
     #[arg(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
 
-    /// Generate flamegraph for a test function. Works similar to debug flag.
-    #[arg(long, value_name = "TEST_FUNCTION")]
-    flamegraph: Option<Regex>,
+    /// Generate flamegraph if a single test is executed.
+    #[arg(long, env = "FLAMEGRAPH")]
+    flamegraph: bool,
+
+    /// Generate flamechart if a single test is executed.
+    #[arg(long, env = "FLAMECHART")]
+    flamechart: bool,
 
     /// Whether to identify internal functions in traces.
     ///
@@ -314,22 +317,21 @@ impl TestArgs {
             .build(&output, project_root)?;
 
         let should_debug = self.debug.is_some();
-        let should_flamegraph = self.flamegraph.is_some();
 
-        if should_debug && should_flamegraph {
-            eyre::bail!("Cannot specify both --debug and --flamegraph.");
+        if self.flamegraph && self.flamechart {
+            eyre::bail!("Cannot specify both --flamegraph and --flamechart.");
         }
 
         // Determine print verbosity and executor verbosity.
         let verbosity = evm_opts.verbosity;
-        if (self.gas_report && evm_opts.verbosity < 3) || should_flamegraph {
+        if (self.gas_report && evm_opts.verbosity < 3) || self.flamegraph || self.flamechart {
             evm_opts.verbosity = 3;
         }
 
         let env = evm_opts.evm_env().await?;
 
         // Enable internal tracing for more informative flamegraph.
-        if self.flamegraph.is_some() {
+        if self.flamegraph || self.flamechart {
             self.decode_internal = Some(None);
         }
 
@@ -380,12 +382,12 @@ impl TestArgs {
             "decode-internal",
             self.decode_internal.as_ref().and_then(|v| v.as_ref()),
         )?;
-        maybe_override_mt("flamegraph", self.flamegraph.as_ref())?;
+        // maybe_override_mt("flamegraph", self.flamegraph.as_ref())?;
 
         let libraries = runner.libraries.clone();
         let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
 
-        if should_flamegraph {
+        if self.flamegraph || self.flamechart {
             let (suite_name, (test_name, test_result)) = outcome
                 .results
                 .iter_mut()
@@ -407,35 +409,35 @@ impl TestArgs {
                 )
                 .unwrap();
 
+            // Decode traces.
             let decoder = outcome.last_run_decoder.as_ref().unwrap();
-
             decode_trace_arena(arena, decoder).await?;
             let mut fst = folded_stack_trace::build(arena);
-            fst.reverse();
+
+            let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
+            let contract = suite_name.split(':').last().unwrap();
+            let test_name = test_name.trim_end_matches("()");
+            let file_name =
+                format!("{}/{label}_{contract}_{test_name}.svg", std::env::temp_dir().display());
+            let file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
+
+            let mut options = inferno::flamegraph::Options::default();
+            options.title = format!("{label} {contract}::{test_name}");
+            options.count_name = "gas".to_string();
+            if self.flamechart {
+                options.flame_chart = true;
+                fst.reverse();
+            }
 
             // Generate SVG.
-            let mut data = Vec::new();
-            let mut options = inferno::flamegraph::Options::default();
-            options.flame_chart = true;
-            inferno::flamegraph::from_lines(
-                &mut options,
-                fst.iter().map(|s| s.as_str()),
-                &mut data,
-            )?;
-            let svg_data = String::from_utf8(data)?;
-            let svg_data = svg_data.replace("samples", "gas");
+            inferno::flamegraph::from_lines(&mut options, fst.iter().map(|s| s.as_str()), file)
+                .wrap_err("failed to write svg")?;
 
-            // Write file to temporary location and open it in default program.
-            let file_name = format!(
-                "{tmp_dir}/flamegraph_{contract}_{test_name}.svg",
-                tmp_dir = std::env::temp_dir().display(),
-                contract = suite_name.split(':').last().unwrap(),
-                test_name = test_name.trim_end_matches("()")
-            );
-            let mut file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
-            file.write_all(svg_data.as_bytes()).wrap_err("failed to save flamegraph")?;
-            opener::open(&file_name).wrap_err("failed to open flamergpah")?;
-        } else if should_debug {
+            // Open SVG in default program.
+            opener::open(&file_name).wrap_err("failed to open flamegraph")?;
+        }
+
+        if should_debug {
             // Get first non-empty suite result. We will have only one such entry.
             let Some((_, test_result)) = outcome
                 .results
@@ -486,14 +488,15 @@ impl TestArgs {
         let num_filtered = runner.matching_test_functions(filter).count();
         if (self.debug.is_some() ||
             self.decode_internal.as_ref().map_or(false, |v| v.is_some()) ||
-            self.flamegraph.is_some()) &&
+            self.flamegraph ||
+            self.flamechart) &&
             num_filtered != 1
         {
             eyre::bail!(
                 "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to {action}.\n\n\
                  Use --match-contract and --match-path to further limit the search.\n\
                  Filter used:\n{filter}",
-                action = if self.flamegraph.is_some() {"generate a flamegraph"} else {"run the debugger"},
+                action = if self.flamegraph {"generate a flamegraph"} else if self.flamechart {"generate a flamechart"} else {"run the debugger"},
             );
         }
 
@@ -562,7 +565,8 @@ impl TestArgs {
             let identify_addresses = verbosity >= 3 ||
                 self.gas_report ||
                 self.debug.is_some() ||
-                self.flamegraph.is_some();
+                self.flamegraph ||
+                self.flamechart;
 
             // Print suite header.
             println!();
