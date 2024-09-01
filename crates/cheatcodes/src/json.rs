@@ -570,7 +570,7 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
             if let Some(mut val) = string.strip_prefix("0x") {
                 let s; 
                 if val.len() == 39 {
-                    return Err(format!("Cannot parse \"{val}\" as an address. If you want to specify bytes, prepend zeroes to the value.").into())
+                    return Err(format!("Cannot parse \"{val}\" as an address. If you want to specify address, prepend zero to the value.").into())
                 }
                 if val.len() % 2 != 0 {
                     s = format!("0{val}");
