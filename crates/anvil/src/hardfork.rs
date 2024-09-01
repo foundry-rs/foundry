@@ -1,9 +1,37 @@
 use alloy_rpc_types::BlockNumberOrTag;
+use eyre::bail;
 use foundry_evm::revm::primitives::SpecId;
 use std::str::FromStr;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ChainHardfork {
+    Ethereum(EthereumHardfork),
+    Optimism(OptimismHardfork),
+}
+
+impl From<EthereumHardfork> for ChainHardfork {
+    fn from(value: EthereumHardfork) -> Self {
+        Self::Ethereum(value)
+    }
+}
+
+impl From<OptimismHardfork> for ChainHardfork {
+    fn from(value: OptimismHardfork) -> Self {
+        Self::Optimism(value)
+    }
+}
+
+impl From<ChainHardfork> for SpecId {
+    fn from(fork: ChainHardfork) -> Self {
+        match fork {
+            ChainHardfork::Ethereum(hardfork) => hardfork.into(),
+            ChainHardfork::Optimism(hardfork) => hardfork.into(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Hardfork {
+pub enum EthereumHardfork {
     Frontier,
     Homestead,
     Dao,
@@ -27,7 +55,7 @@ pub enum Hardfork {
     Latest,
 }
 
-impl Hardfork {
+impl EthereumHardfork {
     /// Get the first block number of the hardfork.
     pub fn fork_block(&self) -> u64 {
         match *self {
@@ -53,8 +81,8 @@ impl Hardfork {
     }
 }
 
-impl FromStr for Hardfork {
-    type Err = String;
+impl FromStr for EthereumHardfork {
+    type Err = eyre::Report;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.to_lowercase();
@@ -79,40 +107,40 @@ impl FromStr for Hardfork {
             "prague" | "18" => Self::Prague,
             "pragueeof" | "19" | "prague-eof" => Self::PragueEOF,
             "latest" => Self::Latest,
-            _ => return Err(format!("Unknown hardfork {s}")),
+            _ => bail!("Unknown hardfork {s}"),
         };
         Ok(hardfork)
     }
 }
 
-impl From<Hardfork> for SpecId {
-    fn from(fork: Hardfork) -> Self {
+impl From<EthereumHardfork> for SpecId {
+    fn from(fork: EthereumHardfork) -> Self {
         match fork {
-            Hardfork::Frontier => Self::FRONTIER,
-            Hardfork::Homestead => Self::HOMESTEAD,
-            Hardfork::Dao => Self::HOMESTEAD,
-            Hardfork::Tangerine => Self::TANGERINE,
-            Hardfork::SpuriousDragon => Self::SPURIOUS_DRAGON,
-            Hardfork::Byzantium => Self::BYZANTIUM,
-            Hardfork::Constantinople => Self::CONSTANTINOPLE,
-            Hardfork::Petersburg => Self::PETERSBURG,
-            Hardfork::Istanbul => Self::ISTANBUL,
-            Hardfork::Muirglacier => Self::MUIR_GLACIER,
-            Hardfork::Berlin => Self::BERLIN,
-            Hardfork::London => Self::LONDON,
-            Hardfork::ArrowGlacier => Self::LONDON,
-            Hardfork::GrayGlacier => Self::GRAY_GLACIER,
-            Hardfork::Paris => Self::MERGE,
-            Hardfork::Shanghai => Self::SHANGHAI,
-            Hardfork::Cancun | Hardfork::Latest => Self::CANCUN,
-            Hardfork::Prague => Self::PRAGUE,
+            EthereumHardfork::Frontier => Self::FRONTIER,
+            EthereumHardfork::Homestead => Self::HOMESTEAD,
+            EthereumHardfork::Dao => Self::HOMESTEAD,
+            EthereumHardfork::Tangerine => Self::TANGERINE,
+            EthereumHardfork::SpuriousDragon => Self::SPURIOUS_DRAGON,
+            EthereumHardfork::Byzantium => Self::BYZANTIUM,
+            EthereumHardfork::Constantinople => Self::CONSTANTINOPLE,
+            EthereumHardfork::Petersburg => Self::PETERSBURG,
+            EthereumHardfork::Istanbul => Self::ISTANBUL,
+            EthereumHardfork::Muirglacier => Self::MUIR_GLACIER,
+            EthereumHardfork::Berlin => Self::BERLIN,
+            EthereumHardfork::London => Self::LONDON,
+            EthereumHardfork::ArrowGlacier => Self::LONDON,
+            EthereumHardfork::GrayGlacier => Self::GRAY_GLACIER,
+            EthereumHardfork::Paris => Self::MERGE,
+            EthereumHardfork::Shanghai => Self::SHANGHAI,
+            EthereumHardfork::Cancun | EthereumHardfork::Latest => Self::CANCUN,
+            EthereumHardfork::Prague => Self::PRAGUE,
             // TODO: switch to latest after activation
-            Hardfork::PragueEOF => Self::PRAGUE_EOF,
+            EthereumHardfork::PragueEOF => Self::PRAGUE_EOF,
         }
     }
 }
 
-impl<T: Into<BlockNumberOrTag>> From<T> for Hardfork {
+impl<T: Into<BlockNumberOrTag>> From<T> for EthereumHardfork {
     fn from(block: T) -> Self {
         let num = match block.into() {
             BlockNumberOrTag::Earliest => 0,
@@ -140,19 +168,64 @@ impl<T: Into<BlockNumberOrTag>> From<T> for Hardfork {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum OptimismHardfork {
+    Bedrock,
+    Regolith,
+    Canyon,
+    Ecotone,
+    Fjord,
+    Granite,
+    #[default]
+    Latest,
+}
+
+impl FromStr for OptimismHardfork {
+    type Err = eyre::Report;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.to_lowercase();
+        let hardfork = match s.as_str() {
+            "bedrock" => Self::Bedrock,
+            "regolith" => Self::Regolith,
+            "canyon" => Self::Canyon,
+            "ecotone" => Self::Ecotone,
+            "fjord" => Self::Fjord,
+            "granite" => Self::Granite,
+            "latest" => Self::Latest,
+            _ => bail!("Unknown hardfork {s}"),
+        };
+        Ok(hardfork)
+    }
+}
+
+impl From<OptimismHardfork> for SpecId {
+    fn from(fork: OptimismHardfork) -> Self {
+        match fork {
+            OptimismHardfork::Bedrock => Self::BEDROCK,
+            OptimismHardfork::Regolith => Self::REGOLITH,
+            OptimismHardfork::Canyon => Self::CANYON,
+            OptimismHardfork::Ecotone => Self::ECOTONE,
+            OptimismHardfork::Fjord => Self::FJORD,
+            OptimismHardfork::Granite => Self::GRANITE,
+            OptimismHardfork::Latest => Self::LATEST,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::Hardfork;
+    use crate::EthereumHardfork;
 
     #[test]
     fn test_hardfork_blocks() {
-        let hf: Hardfork = 12_965_000u64.into();
-        assert_eq!(hf, Hardfork::London);
+        let hf: EthereumHardfork = 12_965_000u64.into();
+        assert_eq!(hf, EthereumHardfork::London);
 
-        let hf: Hardfork = 4370000u64.into();
-        assert_eq!(hf, Hardfork::Byzantium);
+        let hf: EthereumHardfork = 4370000u64.into();
+        assert_eq!(hf, EthereumHardfork::Byzantium);
 
-        let hf: Hardfork = 12244000u64.into();
-        assert_eq!(hf, Hardfork::Berlin);
+        let hf: EthereumHardfork = 12244000u64.into();
+        assert_eq!(hf, EthereumHardfork::Berlin);
     }
 }

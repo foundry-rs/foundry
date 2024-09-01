@@ -13,7 +13,7 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
-use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
+use anvil::{eth::api::CLIENT_VERSION, spawn, EthereumHardfork, NodeConfig};
 use anvil_core::eth::EthRequest;
 use foundry_evm::revm::primitives::SpecId;
 use std::{
@@ -23,7 +23,8 @@ use std::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
-    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
     let provider = handle.http_provider();
 
     let gas_price = U256::from(1337);
@@ -33,7 +34,8 @@ async fn can_set_gas_price() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_block_gas_limit() {
-    let (api, _) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
+    let (api, _) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
 
     let block_gas_limit = U256::from(1337);
     assert!(api.evm_set_block_gas_limit(block_gas_limit).unwrap());
