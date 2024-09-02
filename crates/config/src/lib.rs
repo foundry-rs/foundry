@@ -2,6 +2,7 @@
 //!
 //! Foundry configuration.
 
+#![allow(elided_named_lifetimes)]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
@@ -1075,9 +1076,18 @@ impl Config {
 
     /// Resolves the given alias to a matching rpc url
     ///
-    /// Returns:
-    ///    - the matching, resolved url of  `rpc_endpoints` if `maybe_alias` is an alias
-    ///    - None otherwise
+    /// # Returns
+    ///
+    /// In order of resolution:
+    ///
+    /// - the matching, resolved url of `rpc_endpoints` if `maybe_alias` is an alias
+    /// - a mesc resolved url if `maybe_alias` is a known alias in mesc
+    /// - `None` otherwise
+    ///
+    /// # Note on mesc
+    ///
+    /// The endpoint is queried for in mesc under the `foundry` profile, allowing users to customize
+    /// endpoints for Foundry specifically.
     ///
     /// # Example
     ///
@@ -1093,7 +1103,15 @@ impl Config {
         maybe_alias: &str,
     ) -> Option<Result<Cow<'_, str>, UnresolvedEnvVarError>> {
         let mut endpoints = self.rpc_endpoints.clone().resolved();
-        Some(endpoints.remove(maybe_alias)?.map(Cow::Owned))
+        if let Some(endpoint) = endpoints.remove(maybe_alias) {
+            return Some(endpoint.map(Cow::Owned))
+        }
+
+        if let Ok(Some(endpoint)) = mesc::get_endpoint_by_query(maybe_alias, Some("foundry")) {
+            return Some(Ok(Cow::Owned(endpoint.url)))
+        }
+
+        None
     }
 
     /// Returns the configured rpc, or the fallback url
