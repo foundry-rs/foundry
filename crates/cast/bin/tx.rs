@@ -253,7 +253,7 @@ where
             let has_auth = self.auth.is_some();
             // We only allow user to omit the recipient address if transaction is an EIP-7702 tx
             // without a value.
-            if !(has_auth && !has_value) {
+            if !has_auth || has_value {
                 eyre::bail!("Must specify a recipient address or contract code to deploy");
             }
         }
