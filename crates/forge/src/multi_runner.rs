@@ -1,5 +1,7 @@
 //! Forge test runner for multiple contracts.
 
+#![allow(elided_named_lifetimes)]
+
 use crate::{
     progress::TestsProgress, result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner,
     TestFilter, TestOptions,
