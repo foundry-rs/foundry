@@ -62,12 +62,9 @@ contract GasSnapshotTest is DSTest {
     function testSnapshotGasSectionName() public {
         Flare f = new Flare();
 
-        f.run(1);
-
         vm.startSnapshotGas("testSnapshotGasSectionName");
 
-        f.run(256); // 5_821_576 gas
-        f.run(512); // 11_617_936 gas
+        f.run(256);
 
         uint256 gasUsed = vm.stopSnapshotGas("testSnapshotGasSectionName");
         assertGt(gasUsed, 0);
@@ -77,12 +74,9 @@ contract GasSnapshotTest is DSTest {
     function testSnapshotGasSectionGroupName() public {
         Flare f = new Flare();
 
-        f.run(1);
-
         vm.startSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
 
-        f.run(256); // 5_821_576 gas
-        f.run(512); // 11_617_936 gas
+        f.run(256);
 
         uint256 gasUsed = vm.stopSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
         assertGt(gasUsed, 0);
