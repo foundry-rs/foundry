@@ -46,7 +46,10 @@ use alloy_rpc_types::{
             GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
             GethDebugTracingOptions, GethTrace, NoopFrame,
         },
-        parity::LocalizedTransactionTrace,
+        parity::{
+            Action::{Call, Create, Reward, Selfdestruct},
+            LocalizedTransactionTrace,
+        },
     },
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
@@ -2439,6 +2442,76 @@ impl Backend {
         self.new_block_listeners
             .lock()
             .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
+    }
+
+    /// Reorg the chain to a common height and execute blocks to build new chain.
+    ///
+    /// The state of the chain is rewound using `rewind` to the common block, including the db,
+    /// storage, and env.
+    ///
+    /// Finally, `do_mine_block` is called to create the new chain.
+    pub async fn reorg(
+        &self,
+        depth: u64,
+        tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction>>>,
+        common_block: Block,
+    ) -> Result<(), BlockchainError> {
+        // Get the database at the common block
+        let common_state = {
+            let mut state = self.states.write();
+            let state_db = state
+                .get(&common_block.header.hash_slow())
+                .ok_or(BlockchainError::DataUnavailable)?;
+            let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+            db_full.clone()
+        };
+
+        {
+            // Set state to common state
+            self.db.write().await.clear();
+            for (address, acc) in common_state {
+                for (key, value) in acc.storage {
+                    self.db.write().await.set_storage_at(address, key, value)?;
+                }
+                self.db.write().await.insert_account(address, acc.info);
+            }
+        }
+
+        {
+            // Rewind the storage back to the common ancestor
+            self.blockchain
+                .storage
+                .write()
+                .rewind(common_block.header.number, common_block.header.hash_slow());
+
+            // Set environment back to common block
+            let mut env = self.env.write();
+            env.block = BlockEnv {
+                number: U256::from(common_block.header.number),
+                timestamp: U256::from(common_block.header.timestamp),
+                gas_limit: U256::from(common_block.header.gas_limit),
+                difficulty: common_block.header.difficulty,
+                prevrandao: Some(common_block.header.mix_hash),
+                coinbase: env.block.coinbase,
+                basefee: env.block.basefee,
+                ..env.block.clone()
+            };
+            self.time.reset(env.block.timestamp.to::<u64>());
+        }
+
+        // Create the new reorged chain, filling the blocks with transactions if supplied
+        for i in 0..depth {
+            let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
+            let outcome = self.do_mine_block(to_be_mined).await;
+            node_info!(
+                "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
+                outcome.block_number,
+                outcome.included.len(),
+                outcome.invalid.len()
+            );
+        }
+
+        Ok(())
     }
 }
 

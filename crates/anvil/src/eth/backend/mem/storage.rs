@@ -271,6 +271,20 @@ impl BlockchainStorage {
         }
     }
 
+    /// Rewind the chain state back to a given block number and block hash.
+    pub fn rewind(&mut self, block_number: u64, block_hash: B256) {
+        let best_num: u64 = self.best_number.try_into().unwrap_or(0);
+        for i in (block_number + 1)..=best_num {
+            if let Some(hash) = self.hashes.remove(&U64::from(i)) {
+                if let Some(block) = self.blocks.remove(&hash) {
+                    self.remove_block_transactions_by_number(block.header.number);
+                }
+            }
+        }
+        self.best_hash = block_hash;
+        self.best_number = U64::from(block_number);
+    }
+
     #[allow(unused)]
     pub fn empty() -> Self {
         Self {
@@ -296,6 +310,8 @@ impl BlockchainStorage {
         if let Some(block) = self.blocks.get_mut(&block_hash) {
             for tx in block.transactions.iter() {
                 self.transactions.remove(&tx.hash());
+                // TODO(edwardjes): should the logs of the transaction have log.removed set to true
+                // and not deleted?
             }
             block.transactions.clear();
         }
