@@ -37,7 +37,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         libs: vec!["lib-test".into()],
         cache: true,
         cache_path: "test-cache".into(),
-        snapshot_path: "test-snapshot".into(),
+        snapshots: "snapshots".into(),
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
