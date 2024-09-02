@@ -630,8 +630,7 @@ impl TestArgs {
                             for (key, (previous_snapshot, snapshot)) in &diff {
                                 println!(
                                     "{}",
-                                    format!("- [{}] {} → {}", key, previous_snapshot, snapshot)
-                                        .red()
+                                    format!("- [{key}] {previous_snapshot} → {snapshot}").red()
                                 );
                             }
 
