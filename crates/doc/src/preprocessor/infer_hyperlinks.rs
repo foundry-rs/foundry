@@ -1,3 +1,5 @@
+#![allow(elided_named_lifetimes)]
+
 use super::{Preprocessor, PreprocessorId};
 use crate::{Comments, Document, ParseItem, ParseSource};
 use forge_fmt::solang_ext::SafeUnwrap;
