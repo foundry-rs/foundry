@@ -144,9 +144,29 @@ impl RevertDecoder {
                 let e = Vm::expectRevert_2Call::abi_decode_raw(data, false).ok()?;
                 return self.maybe_decode(&e.revertData[..], status);
             }
+            // `expectRevert(bytes,address)`
+            Vm::expectRevert_5Call::SELECTOR => {
+                let e = Vm::expectRevert_5Call::abi_decode_raw(data, false).ok()?;
+                return self.maybe_decode(&e.revertData[..], status);
+            }
             // `expectRevert(bytes4)`
             Vm::expectRevert_1Call::SELECTOR => {
                 let e = Vm::expectRevert_1Call::abi_decode_raw(data, false).ok()?;
+                return self.maybe_decode(&e.revertData[..], status);
+            }
+            // `expectRevert(bytes4,address)`
+            Vm::expectRevert_4Call::SELECTOR => {
+                let e = Vm::expectRevert_4Call::abi_decode_raw(data, false).ok()?;
+                return self.maybe_decode(&e.revertData[..], status);
+            }
+            // `expectPartialRevert(bytes4)`
+            Vm::expectPartialRevert_0Call::SELECTOR => {
+                let e = Vm::expectPartialRevert_0Call::abi_decode_raw(data, false).ok()?;
+                return self.maybe_decode(&e.revertData[..], status);
+            }
+            // `expectPartialRevert(bytes4,address)`
+            Vm::expectPartialRevert_1Call::SELECTOR => {
+                let e = Vm::expectPartialRevert_1Call::abi_decode_raw(data, false).ok()?;
                 return self.maybe_decode(&e.revertData[..], status);
             }
             _ => {}

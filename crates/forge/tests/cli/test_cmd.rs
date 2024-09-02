@@ -1834,3 +1834,73 @@ contract CounterTest is DSTest {
 ...
 "#]]);
 });
+
+// Tests `expectRevert` with specific reverter address.
+forgetest_init!(test_expect_revert_with_reverter, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    prj.add_source(
+        "Reverter.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+contract Reverter {
+    error CustomError();
+    function withRevert() public pure {
+        revert CustomError();
+    }
+    function withNoRevert() public pure {}
+}
+contract ReverterTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    error CustomError();
+    function test_match_reverters() public {
+        Reverter reverter = new Reverter();
+        vm.expectRevert(address(reverter));
+        reverter.withRevert();
+        vm.expectRevert(CustomError.selector, address(reverter));
+        reverter.withRevert();
+        vm.expectPartialRevert(CustomError.selector, address(reverter));
+        reverter.withRevert();
+    }
+    function test_next_call_fail() public {
+        Reverter reverter = new Reverter();
+        vm.expectRevert(address(reverter));
+        reverter.withNoRevert();
+    }
+    function test_wrong_reverter_fail_1() public {
+        Reverter reverter = new Reverter();
+        Reverter bReverter = new Reverter();
+        vm.expectRevert(address(bReverter));
+        reverter.withRevert();
+    }
+    function test_wrong_reverter_fail_2() public {
+        Reverter reverter = new Reverter();
+        Reverter bReverter = new Reverter();
+        vm.expectRevert(CustomError.selector, address(bReverter));
+        reverter.withRevert();
+    }
+    function test_wrong_reverter_fail_3() public {
+        Reverter reverter = new Reverter();
+        Reverter bReverter = new Reverter();
+        vm.expectPartialRevert(CustomError.selector, address(bReverter));
+        reverter.withRevert();
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[PASS] test_match_reverters() ([GAS])
+[FAIL. Reason: next call did not revert as expected] test_next_call_fail() ([GAS])
+[FAIL. Reason: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b] test_wrong_reverter_fail_1() ([GAS])
+[FAIL. Reason: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b] test_wrong_reverter_fail_2() ([GAS])
+[FAIL. Reason: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0x2e234DAe75C793f67A35089C9d99245E1C58470b] test_wrong_reverter_fail_3() ([GAS])
+...
+"#]]);
+});

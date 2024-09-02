@@ -641,10 +641,10 @@ impl Cheatcodes {
                 return match expect::handle_expect_revert(
                     false,
                     true,
-                    expected_revert.reason.as_deref(),
-                    expected_revert.partial_match,
+                    &expected_revert,
                     outcome.result.result,
                     outcome.result.output.clone(),
+                    None,
                     &self.config.available_artifacts,
                 ) {
                     Ok((address, retdata)) => {
@@ -1123,10 +1123,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     return match expect::handle_expect_revert(
                         cheatcode_call,
                         false,
-                        expected_revert.reason.as_deref(),
-                        expected_revert.partial_match,
+                        &expected_revert,
                         outcome.result.result,
                         outcome.result.output.clone(),
+                        Some(call.target_address),
                         &self.config.available_artifacts,
                     ) {
                         Err(error) => {
