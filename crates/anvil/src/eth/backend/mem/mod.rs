@@ -46,10 +46,7 @@ use alloy_rpc_types::{
             GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
             GethDebugTracingOptions, GethTrace, NoopFrame,
         },
-        parity::{
-            Action::{Call, Create, Reward, Selfdestruct},
-            LocalizedTransactionTrace,
-        },
+        parity::LocalizedTransactionTrace,
     },
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,

@@ -16,7 +16,7 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
-use anvil::{eth::api::CLIENT_VERSION, spawn, EthereumHardfork, Hardfork, NodeConfig};
+use anvil::{eth::api::CLIENT_VERSION, spawn, EthereumHardfork, NodeConfig};
 use anvil_core::{
     eth::EthRequest,
     types::{ReorgOptions, TransactionData},
