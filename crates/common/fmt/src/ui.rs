@@ -338,7 +338,7 @@ to                   {}
 transactionIndex     {}
 type                 {}
 value                {}
-yParity              {}{}",
+yParity              {}",
                 self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
@@ -356,7 +356,6 @@ yParity              {}{}",
                 self.transaction_type.unwrap(),
                 self.value.pretty(),
                 self.signature.map(|s| s.v).pretty(),
-                self.other.pretty()
             ),
             Some(2) => format!(
                 "
@@ -377,7 +376,7 @@ to                   {}
 transactionIndex     {}
 type                 {}
 value                {}
-yParity              {}{}",
+yParity              {}",
                 self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
@@ -396,7 +395,6 @@ yParity              {}{}",
                 self.transaction_type.unwrap(),
                 self.value.pretty(),
                 self.signature.map(|s| s.v).pretty(),
-                self.other.pretty()
             ),
             Some(3) => format!(
                 "
@@ -419,7 +417,7 @@ to                   {}
 transactionIndex     {}
 type                 {}
 value                {}
-yParity              {}{}",
+yParity              {}",
                 self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
                 self.blob_versioned_hashes.as_deref().unwrap_or(&[]).pretty(),
                 self.block_hash.pretty(),
@@ -440,7 +438,6 @@ yParity              {}{}",
                 self.transaction_type.unwrap(),
                 self.value.pretty(),
                 self.signature.map(|s| s.v).pretty(),
-                self.other.pretty()
             ),
             Some(4) => format!(
                 "
@@ -462,7 +459,7 @@ to                   {}
 transactionIndex     {}
 type                 {}
 value                {}
-yParity              {}{}",
+yParity              {}",
                 self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
                 self.authorization_list
                     .as_ref()
@@ -485,7 +482,6 @@ yParity              {}{}",
                 self.transaction_type.unwrap(),
                 self.value.pretty(),
                 self.signature.map(|s| s.v).pretty(),
-                self.other.pretty()
             ),
             _ => format!(
                 "
@@ -502,7 +498,7 @@ s                    {}
 to                   {}
 transactionIndex     {}
 v                    {}
-value                {}{}",
+value                {}",
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.from.pretty(),
@@ -517,7 +513,6 @@ value                {}{}",
                 self.transaction_index.pretty(),
                 self.signature.map(|s| s.v).pretty(),
                 self.value.pretty(),
-                self.other.pretty()
             ),
         }
     }
@@ -570,12 +565,7 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
         "transactionIndex" | "transaction_index" => Some(transaction.transaction_index.pretty()),
         "v" => transaction.signature.map(|s| s.v.pretty()),
         "value" => Some(transaction.value.pretty()),
-        other => {
-            if let Some(value) = transaction.other.get(other) {
-                return Some(value.to_string().trim_matches('"').to_string())
-            }
-            None
-        }
+        _ => None,
     }
 }
 
@@ -601,13 +591,7 @@ pub fn get_pretty_block_attr(block: &Block, attr: &str) -> Option<String> {
         "stateRoot" | "state_root" => Some(block.header.state_root.pretty()),
         "timestamp" => Some(block.header.timestamp.pretty()),
         "totalDifficulty" | "total_difficult" => Some(block.header.total_difficulty.pretty()),
-        other => {
-            if let Some(value) = block.other.get(other) {
-                let val = EthValue::from(value.clone());
-                return Some(val.pretty())
-            }
-            None
-        }
+        _ => None,
     }
 }
 
@@ -633,7 +617,7 @@ size                 {}
 stateRoot            {}
 timestamp            {} ({})
 withdrawalsRoot      {}
-totalDifficulty      {}{}",
+totalDifficulty      {}",
         block.header.base_fee_per_gas.pretty(),
         block.header.difficulty.pretty(),
         block.header.extra_data.pretty(),
@@ -657,7 +641,6 @@ totalDifficulty      {}{}",
             .to_rfc2822(),
         block.header.withdrawals_root.pretty(),
         block.header.total_difficulty.pretty(),
-        block.other.pretty()
     )
 }
 
