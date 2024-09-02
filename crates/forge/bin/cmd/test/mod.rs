@@ -22,7 +22,7 @@ use foundry_cli::{
 use foundry_common::{
     compile::ProjectCompiler,
     evm::EvmArgs,
-    fs::{self, create_dir_all, remove_dir_all, write_pretty_json_file},
+    fs::{self, create_dir_all, read_json_file, remove_dir_all, write_pretty_json_file},
     shell,
 };
 use foundry_compilers::{
@@ -596,6 +596,55 @@ impl TestArgs {
                 // Collect and merge gas snapshots.
                 for (group, new_snapshots) in result.gas_snapshots.iter() {
                     gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
+                }
+            }
+
+            // Check for differences in gas snapshots if `FORGE_SNAPSHOT_CHECK` is set.
+            // Exiting early with code 1 if differences are found.
+            if std::env::var("FORGE_SNAPSHOT_CHECK").is_ok() {
+                let differences_found = gas_snapshots.clone().into_iter().fold(
+                    false,
+                    |mut found, (group, snapshots)| {
+                        let previous_snapshots: BTreeMap<String, String> =
+                            read_json_file(&config.snapshots.join(format!("{group}.json")))
+                                .expect("Failed to read gas snapshots from disk");
+
+                        let diff: BTreeMap<_, _> = snapshots
+                            .iter()
+                            .filter_map(|(k, v)| {
+                                previous_snapshots.get(k).and_then(|previous_snapshot| {
+                                    if previous_snapshot != v {
+                                        Some((k.clone(), (previous_snapshot.clone(), v.clone())))
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect();
+
+                        if !diff.is_empty() {
+                            println!(
+                                "{}",
+                                format!("\n[{group}] Failed to match gas snapshots:").red().bold()
+                            );
+
+                            for (key, (old_value, new_value)) in &diff {
+                                println!(
+                                    "{}",
+                                    format!("- [{}] {} → {}", key, old_value, new_value).red()
+                                );
+                            }
+
+                            found = true;
+                        }
+
+                        found
+                    },
+                );
+
+                if differences_found {
+                    println!();
+                    eyre::bail!("Gas snapshots differ from previous run");
                 }
             }
 
