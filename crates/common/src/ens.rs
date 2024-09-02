@@ -1,6 +1,6 @@
 //! ENS Name resolving utilities.
 
-#![allow(missing_docs)]
+#![allow(missing_docs, elided_named_lifetimes)]
 
 use self::EnsResolver::EnsResolverInstance;
 use alloy_primitives::{address, Address, Keccak256, B256};

@@ -231,6 +231,7 @@ itertools = "0.13"
 jsonpath_lib = "0.3"
 k256 = "0.13"
 parking_lot = "0.12"
+mesc = "0.2.1"
 rand = "0.8"
 rustc-hash = "2.0"
 semver = "1"
@@ -258,7 +259,7 @@ reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
 tower-http = "0.5"
 # soldeer
-soldeer = "0.3.1"
+soldeer = "=0.3.1"
 proptest = "1"
 comfy-table = "7"
 
