@@ -8068,7 +8068,7 @@
     },
     {
       "func": {
-        "id": "snapshotGas",
+        "id": "snapshotGas_0",
         "description": "Snapshot capture the gas usage of the last call by name.",
         "declaration": "function snapshotGas(string calldata name) external;",
         "visibility": "external",
@@ -8080,6 +8080,26 @@
           91,
           146,
           107
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotGas_1",
+        "description": "Snapshot capture the gas usage of the last call by name in a group.",
+        "declaration": "function snapshotGas(string calldata group, string calldata name) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotGas(string,string)",
+        "selector": "0x700bd230",
+        "selectorBytes": [
+          112,
+          11,
+          210,
+          48
         ]
       },
       "group": "evm",

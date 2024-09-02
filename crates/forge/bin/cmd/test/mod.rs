@@ -473,9 +473,6 @@ impl TestArgs {
             )?);
         }
 
-        // Create the gas snapshot collector.
-        let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
-
         if self.decode_internal.is_some() {
             let sources =
                 ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
@@ -486,6 +483,8 @@ impl TestArgs {
         let mut gas_report = self
             .gas_report
             .then(|| GasReport::new(config.gas_reports.clone(), config.gas_reports_ignore.clone()));
+
+        let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
 
         let mut outcome = TestOutcome::empty(self.allow_failure);
 

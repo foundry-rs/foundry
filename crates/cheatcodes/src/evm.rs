@@ -492,52 +492,67 @@ impl Cheatcode for readCallersCall {
 impl Cheatcode for snapshotValue_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name, value } = self;
-        create_value_snapshot(ccx, None, name.clone(), value.to_string())
+        create_value_snapshot(ccx, None, Some(name.clone()), value.to_string())
     }
 }
 
 impl Cheatcode for snapshotValue_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name, value } = self;
-        create_value_snapshot(ccx, Some(group.clone()), name.clone(), value.to_string())
+        create_value_snapshot(ccx, Some(group.clone()), Some(name.clone()), value.to_string())
     }
 }
 
 impl Cheatcode for startSnapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
-        start_gas_snapshot(ccx, None, name.clone())
+        start_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
 impl Cheatcode for startSnapshotGas_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name } = self;
-        start_gas_snapshot(ccx, Some(group.clone()), name.clone())
+        start_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
 }
 
 impl Cheatcode for stopSnapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
-        stop_gas_snapshot(ccx, None, name.clone())
+        stop_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
 impl Cheatcode for stopSnapshotGas_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name } = self;
-        stop_gas_snapshot(ccx, Some(group.clone()), name.clone())
+        stop_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
 }
 
-impl Cheatcode for snapshotGasCall {
+impl Cheatcode for snapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
         };
-        create_value_snapshot(ccx, None, name.clone(), last_call_gas.gasTotalUsed.to_string())
+        create_value_snapshot(ccx, None, Some(name.clone()), last_call_gas.gasTotalUsed.to_string())
+    }
+}
+
+impl Cheatcode for snapshotGas_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name, group } = self;
+        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
+            bail!("no external call was made yet");
+        };
+        create_value_snapshot(
+            ccx,
+            Some(group.clone()),
+            Some(name.clone()),
+            last_call_gas.gasTotalUsed.to_string(),
+        )
     }
 }
 
@@ -666,15 +681,17 @@ pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Add
 fn create_value_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     group: Option<String>,
-    name: String,
+    name: Option<String>,
     value: String,
 ) -> Result {
     let cheatcodes = ccx.state.clone();
     let group = group
         .as_deref()
-        .unwrap_or(cheatcodes.config.running_contract.as_ref().expect("expected running contract"));
+        .unwrap_or(cheatcodes.config.running_contract.as_ref().expect("expected running contract"))
+        .to_string();
+    let name = name.as_deref().unwrap_or("default").to_string();
 
-    ccx.state.gas_snapshots.entry(group.to_string()).or_default().insert(name, value);
+    ccx.state.gas_snapshots.entry(group).or_default().insert(name, value);
 
     Ok(Default::default())
 }
@@ -682,11 +699,12 @@ fn create_value_snapshot<DB: DatabaseExt>(
 fn start_gas_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     group: Option<String>,
-    name: String,
+    name: Option<String>,
 ) -> Result {
     let group = group.as_deref().unwrap_or(
         ccx.state.config.running_contract.as_deref().expect("expected running contract"),
     );
+    let name = name.as_deref().unwrap_or("default").to_string();
 
     if ccx
         .state
@@ -710,11 +728,12 @@ fn start_gas_snapshot<DB: DatabaseExt>(
 fn stop_gas_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     group: Option<String>,
-    name: String,
+    name: Option<String>,
 ) -> Result {
     let group = group.as_deref().unwrap_or(
         ccx.state.config.running_contract.as_deref().expect("expected running contract"),
     );
+    let name = name.as_deref().unwrap_or("default").to_string();
 
     if let Some(record) = ccx
         .state

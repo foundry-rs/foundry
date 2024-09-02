@@ -12,6 +12,7 @@ contract GasSnapshotTest is DSTest {
     //     vm.snapshotValue(a, b);
     // }
 
+    // Writes to `GasSnapshotTest` group with custom names.
     function testSnapshotValueDefaultGroup1() public {
         uint256 a = 123;
         uint256 b = 456;
@@ -22,6 +23,7 @@ contract GasSnapshotTest is DSTest {
         vm.snapshotValue("c", c);
     }
 
+    // Writes to same `GasSnapshotTest` group with custom names.
     function testSnapshotValueDefaultGroup2() public {
         uint256 d = 123;
         uint256 e = 456;
@@ -32,6 +34,8 @@ contract GasSnapshotTest is DSTest {
         vm.snapshotValue("f", f);
     }
 
+    // Writes to `CustomGroup` group with custom names.
+    // Asserts that the order of the values is alphabetical.
     function testSnapshotValueCustomGroup1() public {
         uint256 o = 123;
         uint256 i = 456;
@@ -42,6 +46,8 @@ contract GasSnapshotTest is DSTest {
         vm.snapshotValue("CustomGroup", "o", o);
     }
 
+    // Writes to `CustomGroup` group with custom names.
+    // Asserts that the order of the values is alphabetical.
     function testSnapshotValueCustomGroup2() public {
         uint256 x = 123;
         uint256 e = 456;
@@ -52,26 +58,55 @@ contract GasSnapshotTest is DSTest {
         vm.snapshotValue("CustomGroup", "e", e);
     }
 
-    function testSnapshotGasSection() public {
+    // Writes to `GasSnapshotTest` group with `testSnapshotGasSection` name.
+    function testSnapshotGasSectionName() public {
         Flare f = new Flare();
 
         f.run(1);
 
-        vm.startSnapshotGas("testSnapshotGasSection");
+        vm.startSnapshotGas("testSnapshotGasSectionName");
 
         f.run(256); // 5_821_576 gas
         f.run(512); // 11_617_936 gas
 
-        uint256 gasUsed = vm.stopSnapshotGas("testSnapshotGasSection");
+        uint256 gasUsed = vm.stopSnapshotGas("testSnapshotGasSectionName");
         assertEq(gasUsed, 17_439_512); // 5_821_576 + 11_617_936 = 17_439_512 gas
     }
 
-    function testSnapshotGas() public {
+    // Writes to `CustomGroup` group with `testSnapshotGasSection` name.
+    function testSnapshotGasSectionGroupName() public {
         Flare f = new Flare();
 
         f.run(1);
 
-        vm.snapshotGas("testSnapshotLastCallGas");
+        vm.startSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
+
+        f.run(256); // 5_821_576 gas
+        f.run(512); // 11_617_936 gas
+
+        uint256 gasUsed = vm.stopSnapshotGas(
+            "CustomGroup",
+            "testSnapshotGasSectionGroupName"
+        );
+        assertEq(gasUsed, 17_439_512); // 5_821_576 + 11_617_936 = 17_439_512 gas
+    }
+
+    // Writes to `GasSnapshotTest` group with `testSnapshotGas` name.
+    function testSnapshotGasName() public {
+        Flare f = new Flare();
+
+        f.run(1);
+
+        vm.snapshotGas("testSnapshotGasName");
+    }
+
+    // Writes to `CustomGroup` group with `testSnapshotGas` name.
+    function testSnapshotGasGroupName() public {
+        Flare f = new Flare();
+
+        f.run(1);
+
+        vm.snapshotGas("CustomGroup", "testSnapshotGasGroupName");
     }
 }
 
