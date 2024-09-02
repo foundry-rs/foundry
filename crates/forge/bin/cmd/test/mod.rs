@@ -607,7 +607,7 @@ impl TestArgs {
                     |mut found, (group, snapshots)| {
                         let previous_snapshots: BTreeMap<String, String> =
                             read_json_file(&config.snapshots.join(format!("{group}.json")))
-                                .expect("Failed to read gas snapshots from disk");
+                                .expect("Failed to read snapshots from disk");
 
                         let diff: BTreeMap<_, _> = snapshots
                             .iter()
@@ -625,13 +625,14 @@ impl TestArgs {
                         if !diff.is_empty() {
                             println!(
                                 "{}",
-                                format!("\n[{group}] Failed to match gas snapshots:").red().bold()
+                                format!("\n[{group}] Failed to match snapshots:").red().bold()
                             );
 
-                            for (key, (old_value, new_value)) in &diff {
+                            for (key, (previous_snapshot, snapshot)) in &diff {
                                 println!(
                                     "{}",
-                                    format!("- [{}] {} → {}", key, old_value, new_value).red()
+                                    format!("- [{}] {} → {}", key, previous_snapshot, snapshot)
+                                        .red()
                                 );
                             }
 
@@ -644,7 +645,7 @@ impl TestArgs {
 
                 if differences_found {
                     println!();
-                    eyre::bail!("Gas snapshots differ from previous run");
+                    eyre::bail!("Snapshots differ from previous run");
                 }
             }
 
