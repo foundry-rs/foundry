@@ -7,11 +7,6 @@ import "cheats/Vm.sol";
 contract GasSnapshotTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    // /// forge-config: default.fuzz.runs = 10
-    // function testFuzzSnapshotValue1(string memory a, uint256 b) public {
-    //     vm.snapshotValue(a, b);
-    // }
-
     // Writes to `GasSnapshotTest` group with custom names.
     function testSnapshotValueDefaultGroup1() public {
         uint256 a = 123;
