@@ -194,7 +194,7 @@ impl FoldedStackTraceBuilder {
             let TraceEntry { names, gas } = &right[0];
             if names.len() > 1 {
                 let parent_trace_to_match = &names[..names.len() - 1];
-                for parent in left {
+                for parent in left.iter_mut().rev() {
                     if parent.names == parent_trace_to_match {
                         parent.gas -= gas;
                         break;
