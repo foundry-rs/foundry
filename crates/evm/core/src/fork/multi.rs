@@ -5,6 +5,7 @@
 
 use super::CreateFork;
 use alloy_primitives::U256;
+use alloy_provider::network::{AnyNetwork, BlockResponse, HeaderResponse};
 use alloy_transport::layers::RetryBackoffService;
 use foundry_common::provider::{
     runtime_transport::RuntimeTransport, ProviderBuilder, RetryProvider,
@@ -518,13 +519,13 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
     );
 
     // Initialise the fork environment.
-    let (env, block) = fork.evm_opts.fork_evm_env(&fork.url).await?;
+    let (env, block) = fork.evm_opts.fork_evm_env::<AnyNetwork>(&fork.url).await?;
     fork.env = env;
     let meta = BlockchainDbMeta::new(fork.env.clone(), fork.url.clone());
 
     // We need to use the block number from the block because the env's number can be different on
     // some L2s (e.g. Arbitrum).
-    let number = block.header.number.unwrap_or(meta.block_env.number.to());
+    let number = block.header().number();
 
     // Determine the cache path if caching is enabled.
     let cache_path = if fork.enable_caching {

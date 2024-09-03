@@ -1,8 +1,9 @@
 use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::Provider;
-use alloy_rpc_types::Block;
+use alloy_provider::{Network, Provider};
+use alloy_rpc_types::{Block, Transaction};
+use alloy_serde::WithOtherFields;
 use eyre::WrapErr;
 use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::{Chain, Config};
@@ -75,7 +76,7 @@ impl EvmOpts {
     /// id, )
     pub async fn evm_env(&self) -> eyre::Result<revm::primitives::Env> {
         if let Some(ref fork_url) = self.fork_url {
-            Ok(self.fork_evm_env(fork_url).await?.0)
+            Ok(self.fork_evm_env::<alloy_provider::network::AnyNetwork>(fork_url).await?.0)
         } else {
             Ok(self.local_evm_env())
         }
@@ -83,10 +84,11 @@ impl EvmOpts {
 
     /// Returns the `revm::Env` that is configured with settings retrieved from the endpoint.
     /// And the block that was used to configure the environment.
-    pub async fn fork_evm_env(
+    pub async fn fork_evm_env<N: Network>(
         &self,
         fork_url: impl AsRef<str>,
-    ) -> eyre::Result<(revm::primitives::Env, Block)> {
+    ) -> eyre::Result<(revm::primitives::Env, WithOtherFields<Block<WithOtherFields<Transaction>>>)>
+    {
         let fork_url = fork_url.as_ref();
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())

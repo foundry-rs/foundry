@@ -2,6 +2,10 @@ pub use crate::ic::*;
 use crate::{constants::DEFAULT_CREATE2_DEPLOYER, precompiles::ALPHANET_P256, InspectorExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Selector, TxKind, U256};
+use alloy_provider::{
+    network::{BlockResponse, HeaderResponse},
+    Network,
+};
 use alloy_rpc_types::{Block, Transaction};
 use foundry_config::NamedChain;
 use revm::{
@@ -24,9 +28,12 @@ pub use revm::primitives::EvmState as StateChangeset;
 /// - applies chain specifics: on Arbitrum `block.number` is the L1 block
 ///
 /// Should be called with proper chain id (retrieved from provider if not provided).
-pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::Env, block: &Block) {
+pub fn apply_chain_and_block_specific_env_changes<N: Network>(
+    env: &mut revm::primitives::Env,
+    block: &N::BlockResponse,
+) {
     if let Ok(chain) = NamedChain::try_from(env.cfg.chain_id) {
-        let block_number = block.header.number.unwrap_or_default();
+        let block_number = block.header().number();
 
         match chain {
             NamedChain::Mainnet => {
@@ -43,10 +50,14 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
             NamedChain::ArbitrumTestnet => {
                 // on arbitrum `block.number` is the L1 block which is included in the
                 // `l1BlockNumber` field
-                if let Some(l1_block_number) = block.other.get("l1BlockNumber").cloned() {
-                    if let Ok(l1_block_number) = serde_json::from_value::<U256>(l1_block_number) {
-                        env.block.number = l1_block_number;
-                    }
+                if let Some(l1_block_number) = block
+                    .other_fields()
+                    .and_then(|other| other.get("l1BlockNumber").cloned())
+                    .and_then(|l1_block_number| {
+                        serde_json::from_value::<U256>(l1_block_number).ok()
+                    })
+                {
+                    env.block.number = l1_block_number;
                 }
             }
             _ => {}
@@ -54,7 +65,7 @@ pub fn apply_chain_and_block_specific_env_changes(env: &mut revm::primitives::En
     }
 
     // if difficulty is `0` we assume it's past merge
-    if block.header.difficulty.is_zero() {
+    if block.header().difficulty().is_zero() {
         env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
     }
 }
