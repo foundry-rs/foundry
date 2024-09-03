@@ -70,7 +70,10 @@ forgesoldeer!(install_dependency_git, |prj, cmd| {
 
     let foundry_file = prj.root().join("foundry.toml");
 
-    cmd.arg("soldeer").args([command, dependency, git]).assert_success().stdout_eq(str![[r#"
+    cmd.arg("soldeer")
+        .args([command, dependency, git])
+        .assert_success()
+        .stdout_eq(str![[r#"
 🦌 Running Soldeer install 🦌
 No config file found. If you wish to proceed, please select how you want Soldeer to be configured:
 1. Using foundry.toml
@@ -83,7 +86,8 @@ Adding dependency forge-std-1.8.1 to the config file
 Writing forge-std~1.8.1 to the lock file.
 Added forge-std~1.8.1 to remappings
 
-"#]]).stdout_eq(str![[r#"
+"#]])
+        .stdout_eq(str![[r#"
 🦌 Running Soldeer install 🦌
 No config file found. If you wish to proceed, please select how you want Soldeer to be configured:
 1. Using foundry.toml
@@ -140,7 +144,10 @@ forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
 
     let foundry_file = prj.root().join("foundry.toml");
 
-    cmd.arg("soldeer").args([command, dependency, git, rev_flag, commit]).assert_success().stdout_eq(str![[r#"
+    cmd.arg("soldeer")
+        .args([command, dependency, git, rev_flag, commit])
+        .assert_success()
+        .stdout_eq(str![[r#"
 🦌 Running Soldeer install 🦌
 No config file found. If you wish to proceed, please select how you want Soldeer to be configured:
 1. Using foundry.toml
