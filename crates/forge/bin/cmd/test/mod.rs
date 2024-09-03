@@ -417,8 +417,7 @@ impl TestArgs {
             let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
             let contract = suite_name.split(':').last().unwrap();
             let test_name = test_name.trim_end_matches("()");
-            let file_name =
-                format!("{}/{label}_{contract}_{test_name}.svg", std::env::temp_dir().display());
+            let file_name = format!("cache/{label}_{contract}_{test_name}.svg");
             let file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
 
             let mut options = inferno::flamegraph::Options::default();
@@ -432,9 +431,12 @@ impl TestArgs {
             // Generate SVG.
             inferno::flamegraph::from_lines(&mut options, fst.iter().map(|s| s.as_str()), file)
                 .wrap_err("failed to write svg")?;
+            println!("\nSaved to {file_name}");
 
             // Open SVG in default program.
-            opener::open(&file_name).wrap_err("failed to open flamegraph")?;
+            if opener::open(&file_name).is_err() {
+                println!("\nFailed to open {file_name}. Please open it manually.");
+            }
         }
 
         if should_debug {
