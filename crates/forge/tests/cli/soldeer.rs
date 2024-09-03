@@ -13,7 +13,20 @@ forgesoldeer!(install_dependency, |prj, cmd| {
 
     let foundry_file = prj.root().join("foundry.toml");
 
-    cmd.arg("soldeer").args([command, dependency]).assert_success();
+    cmd.arg("soldeer").args([command, dependency]).assert_success().stdout_eq(str![[r#"
+🦌 Running Soldeer install 🦌
+No config file found. If you wish to proceed, please select how you want Soldeer to be configured:
+1. Using foundry.toml
+2. Using soldeer.toml
+(Press 1 or 2), default is foundry.toml
+Started HTTP download of forge-std~1.8.1
+Dependency forge-std~1.8.1 downloaded!
+Adding dependency forge-std-1.8.1 to the config file
+The dependency forge-std~1.8.1 was unzipped!
+Writing forge-std~1.8.1 to the lock file.
+Added forge-std~1.8.1 to remappings
+
+"#]]);
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -57,7 +70,33 @@ forgesoldeer!(install_dependency_git, |prj, cmd| {
 
     let foundry_file = prj.root().join("foundry.toml");
 
-    cmd.arg("soldeer").args([command, dependency, git]).assert_success();
+    cmd.arg("soldeer").args([command, dependency, git]).assert_success().stdout_eq(str![[r#"
+🦌 Running Soldeer install 🦌
+No config file found. If you wish to proceed, please select how you want Soldeer to be configured:
+1. Using foundry.toml
+2. Using soldeer.toml
+(Press 1 or 2), default is foundry.toml
+Started GIT download of forge-std~1.8.1
+Successfully downloaded forge-std~1.8.1 the dependency via git
+Dependency forge-std~1.8.1 downloaded!
+Adding dependency forge-std-1.8.1 to the config file
+Writing forge-std~1.8.1 to the lock file.
+Added forge-std~1.8.1 to remappings
+
+"#]]).stdout_eq(str![[r#"
+🦌 Running Soldeer install 🦌
+No config file found. If you wish to proceed, please select how you want Soldeer to be configured:
+1. Using foundry.toml
+2. Using soldeer.toml
+(Press 1 or 2), default is foundry.toml
+Started GIT download of forge-std~1.8.1
+Successfully downloaded forge-std~1.8.1 the dependency via git
+Dependency forge-std~1.8.1 downloaded!
+Adding dependency forge-std-1.8.1 to the config file
+Writing forge-std~1.8.1 to the lock file.
+Added forge-std~1.8.1 to remappings
+
+"#]]);
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -101,7 +140,20 @@ forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
 
     let foundry_file = prj.root().join("foundry.toml");
 
-    cmd.arg("soldeer").args([command, dependency, git, rev_flag, commit]).assert_success();
+    cmd.arg("soldeer").args([command, dependency, git, rev_flag, commit]).assert_success().stdout_eq(str![[r#"
+🦌 Running Soldeer install 🦌
+No config file found. If you wish to proceed, please select how you want Soldeer to be configured:
+1. Using foundry.toml
+2. Using soldeer.toml
+(Press 1 or 2), default is foundry.toml
+Started GIT download of forge-std~1.8.1
+Successfully downloaded forge-std~1.8.1 the dependency via git
+Dependency forge-std~1.8.1 downloaded!
+Adding dependency forge-std-1.8.1 to the config file
+Writing forge-std~1.8.1 to the lock file.
+Added forge-std~1.8.1 to remappings
+
+"#]]);
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -158,7 +210,34 @@ mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/
         eprintln!("Couldn't write to file: {e}");
     }
 
-    cmd.arg("soldeer").arg(command).assert_success();
+    cmd.arg("soldeer").arg(command).assert_success().stdout_eq(str![[r#"
+🦌 Running Soldeer update 🦌
+Started HTTP download of @tt~1.6.1
+Started GIT download of mario~1.0
+Started GIT download of mario-custom-branch~1.0
+Started GIT download of mario-custom-tag~1.0
+Started HTTP download of forge-std~1.8.1
+Started HTTP download of solmate~6.7.0
+Dependency @tt~1.6.1 downloaded!
+Dependency solmate~6.7.0 downloaded!
+Dependency forge-std~1.8.1 downloaded!
+Successfully downloaded mario-custom-branch~1.0 the dependency via git
+Dependency mario-custom-branch~1.0 downloaded!
+Successfully downloaded mario-custom-tag~1.0 the dependency via git
+Dependency mario-custom-tag~1.0 downloaded!
+Successfully downloaded mario~1.0 the dependency via git
+Dependency mario~1.0 downloaded!
+The dependency @tt~1.6.1 was unzipped!
+The dependency forge-std~1.8.1 was unzipped!
+The dependency solmate~6.7.0 was unzipped!
+Writing @tt~1.6.1 to the lock file.
+Writing forge-std~1.8.1 to the lock file.
+Writing mario~1.0 to the lock file.
+Writing mario-custom-branch~1.0 to the lock file.
+Writing mario-custom-tag~1.0 to the lock file.
+Writing solmate~6.7.0 to the lock file.
+
+"#]]);
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -259,7 +338,14 @@ forge-std = "1.8.1"
         eprintln!("Couldn't write to file: {e}");
     }
 
-    cmd.arg("soldeer").arg(command).assert_success();
+    cmd.arg("soldeer").arg(command).assert_success().stdout_eq(str![[r#"
+🦌 Running Soldeer update 🦌
+Started HTTP download of forge-std~1.8.1
+Dependency forge-std~1.8.1 downloaded!
+The dependency forge-std~1.8.1 was unzipped!
+Writing forge-std~1.8.1 to the lock file.
+
+"#]]);
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -323,7 +409,20 @@ remappings_regenerate = true
         eprintln!("Couldn't write to file: {e}");
     }
 
-    cmd.arg("soldeer").args([command, dependency]).assert_success();
+    cmd.arg("soldeer").args([command, dependency]).assert_success().stdout_eq(str![[r#"
+🦌 Running Soldeer install 🦌
+No config file found. If you wish to proceed, please select how you want Soldeer to be configured:
+1. Using foundry.toml
+2. Using soldeer.toml
+(Press 1 or 2), default is foundry.toml
+Started HTTP download of forge-std~1.8.1
+Dependency forge-std~1.8.1 downloaded!
+Adding dependency forge-std-1.8.1 to the config file
+The dependency forge-std~1.8.1 was unzipped!
+Writing forge-std~1.8.1 to the lock file.
+Added all dependencies to remapppings
+
+"#]]);
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -384,7 +483,20 @@ remappings_regenerate = true
         eprintln!("Couldn't write to file: {e}");
     }
 
-    cmd.arg("soldeer").args([command, dependency]).assert_success();
+    cmd.arg("soldeer").args([command, dependency]).assert_success().stdout_eq(str![[r#"
+🦌 Running Soldeer install 🦌
+No config file found. If you wish to proceed, please select how you want Soldeer to be configured:
+1. Using foundry.toml
+2. Using soldeer.toml
+(Press 1 or 2), default is foundry.toml
+Started HTTP download of forge-std~1.8.1
+Dependency forge-std~1.8.1 downloaded!
+Adding dependency forge-std-1.8.1 to the config file
+The dependency forge-std~1.8.1 was unzipped!
+Writing forge-std~1.8.1 to the lock file.
+Added all dependencies to remapppings
+
+"#]]);
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
