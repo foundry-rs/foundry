@@ -4,7 +4,7 @@ use alloy_provider::{
     network::{BlockResponse, HeaderResponse},
     Network, Provider,
 };
-use alloy_rpc_types::{Block, BlockNumberOrTag};
+use alloy_rpc_types::BlockNumberOrTag;
 use alloy_transport::Transport;
 use eyre::WrapErr;
 use foundry_common::NON_ARCHIVE_NODE_WARNING;

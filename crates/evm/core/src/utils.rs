@@ -6,7 +6,7 @@ use alloy_provider::{
     network::{BlockResponse, HeaderResponse},
     Network,
 };
-use alloy_rpc_types::{Block, Transaction};
+use alloy_rpc_types::Transaction;
 use foundry_config::NamedChain;
 use revm::{
     db::WrapDatabaseRef,

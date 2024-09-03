@@ -157,7 +157,7 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.7.0", default-features = false }
+foundry-block-explorers = { version = "0.7.1", default-features = false }
 foundry-compilers = { version = "0.11.0", default-features = false }
 foundry-fork-db = "0.3"
 solang-parser = "=0.3.3"
@@ -264,8 +264,6 @@ proptest = "1"
 comfy-table = "7"
 
 [patch.crates-io]
-foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "76afacc" }
-
 ## alloy
 alloy-consensus = { git = "https://github.com/alloy-rs/alloy.git", rev = "fb42b9f", default-features = false }
 alloy-contract = { git = "https://github.com/alloy-rs/alloy.git", rev = "fb42b9f", default-features = false }
