@@ -7,7 +7,7 @@ use forge::{
     fuzz::CounterExample,
     result::{SuiteResult, TestStatus},
 };
-use foundry_test_utils::Filter;
+use foundry_test_utils::{forgetest_init, str, Filter};
 use std::collections::BTreeMap;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -176,3 +176,29 @@ async fn test_scrape_bytecode() {
         }
     }
 }
+
+// tests that inline max-test-rejects config is properly applied
+forgetest_init!(test_inline_max_test_rejects, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InlineMaxRejectsTest is Test {
+    /// forge-config: default.fuzz.max-test-rejects = 1
+    function test_fuzz_bound(uint256 a) public {
+        vm.assume(a == 0);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL. Reason: The `vm.assume` cheatcode rejected too many inputs (1 allowed)] test_fuzz_bound(uint256) (runs: 0, [AVG_GAS])
+...
+"#]]);
+});
