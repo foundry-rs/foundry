@@ -102,7 +102,7 @@ impl EvmFoldedStackTraceBuilder {
     /// Exits all the previous internal calls that should end before starting step_idx.
     fn exit_previous_steps(&mut self, step_exits: &mut Vec<usize>, step_idx: usize) {
         let initial_length = step_exits.len();
-        step_exits.retain(|&number| number >= step_idx);
+        step_exits.retain(|&number| number > step_idx);
 
         let num_exits = initial_length - step_exits.len();
         for _ in 0..num_exits {
