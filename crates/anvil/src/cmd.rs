@@ -1,7 +1,8 @@
 use crate::{
     config::{ForkChoice, DEFAULT_MNEMONIC},
     eth::{backend::db::SerializableState, pool::transactions::TransactionOrder, EthApi},
-    AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
+    hardfork::OptimismHardfork,
+    AccountGenerator, EthereumHardfork, NodeConfig, CHAIN_ID,
 };
 use alloy_genesis::Genesis;
 use alloy_primitives::{utils::Unit, B256, U256};
@@ -79,8 +80,8 @@ pub struct NodeArgs {
     ///
     /// Choose the hardfork by name, e.g. `shanghai`, `paris`, `london`, etc...
     /// [default: latest]
-    #[arg(long, value_parser = Hardfork::from_str)]
-    pub hardfork: Option<Hardfork>,
+    #[arg(long)]
+    pub hardfork: Option<String>,
 
     /// Block time in seconds for interval mining.
     #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS", value_parser = duration_from_secs_f64)]
@@ -196,7 +197,7 @@ const IPC_HELP: &str = "Launch an ipc server at the given path or default path =
 const DEFAULT_DUMP_INTERVAL: Duration = Duration::from_secs(60);
 
 impl NodeArgs {
-    pub fn into_node_config(self) -> NodeConfig {
+    pub fn into_node_config(self) -> eyre::Result<NodeConfig> {
         let genesis_balance = Unit::ETHER.wei().saturating_mul(U256::from(self.balance));
         let compute_units_per_second = if self.evm_opts.no_rate_limit {
             Some(u64::MAX)
@@ -204,11 +205,22 @@ impl NodeArgs {
             self.evm_opts.compute_units_per_second
         };
 
-        NodeConfig::default()
+        let hardfork = match &self.hardfork {
+            Some(hf) => {
+                if self.evm_opts.optimism {
+                    Some(OptimismHardfork::from_str(hf)?.into())
+                } else {
+                    Some(EthereumHardfork::from_str(hf)?.into())
+                }
+            }
+            None => None,
+        };
+
+        Ok(NodeConfig::default()
             .with_gas_limit(self.evm_opts.gas_limit)
             .disable_block_gas_limit(self.evm_opts.disable_block_gas_limit)
             .with_gas_price(self.evm_opts.gas_price)
-            .with_hardfork(self.hardfork)
+            .with_hardfork(hardfork)
             .with_blocktime(self.block_time)
             .with_no_mining(self.no_mining)
             .with_mixed_mining(self.mixed_mining, self.block_time)
@@ -255,7 +267,7 @@ impl NodeArgs {
             .with_alphanet(self.evm_opts.alphanet)
             .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
-            .with_memory_limit(self.evm_opts.memory_limit)
+            .with_memory_limit(self.evm_opts.memory_limit))
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -295,7 +307,7 @@ impl NodeArgs {
         let dump_interval =
             self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
 
-        let (api, mut handle) = crate::try_spawn(self.into_node_config()).await?;
+        let (api, mut handle) = crate::try_spawn(self.into_node_config()?).await?;
 
         // sets the signal handler to gracefully shutdown.
         let mut fork = api.get_fork();
@@ -739,6 +751,8 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 
 #[cfg(test)]
 mod tests {
+    use crate::EthereumHardfork;
+
     use super::*;
     use std::{env, net::Ipv4Addr};
 
@@ -773,9 +787,25 @@ mod tests {
     }
 
     #[test]
-    fn can_parse_hardfork() {
+    fn can_parse_ethereum_hardfork() {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "berlin"]);
-        assert_eq!(args.hardfork, Some(Hardfork::Berlin));
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, Some(EthereumHardfork::Berlin.into()));
+    }
+
+    #[test]
+    fn can_parse_optimism_hardfork() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--optimism", "--hardfork", "Regolith"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, Some(OptimismHardfork::Regolith.into()));
+    }
+
+    #[test]
+    fn cant_parse_invalid_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "Regolith"]);
+        let config = args.into_node_config();
+        assert!(config.is_err());
     }
 
     #[test]

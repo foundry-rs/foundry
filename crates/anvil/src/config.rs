@@ -11,8 +11,9 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::{PoolTransaction, TransactionOrder},
     },
+    hardfork::{ChainHardfork, OptimismHardfork},
     mem::{self, in_memory_db::MemDb},
-    FeeManager, Hardfork, PrecompileFactory,
+    EthereumHardfork, FeeManager, PrecompileFactory,
 };
 use alloy_genesis::Genesis;
 use alloy_network::AnyNetwork;
@@ -64,7 +65,6 @@ pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test
 /// The default IPC endpoint
 pub const DEFAULT_IPC_ENDPOINT: &str =
     if cfg!(unix) { "/tmp/anvil.ipc" } else { r"\\.\pipe\anvil.ipc" };
-
 /// `anvil 0.1.0 (f01b232bc 2022-04-13T23:28:39.493201+00:00)`
 pub const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -100,7 +100,7 @@ pub struct NodeConfig {
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// The hardfork to use
-    pub hardfork: Option<Hardfork>,
+    pub hardfork: Option<ChainHardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
     pub genesis_accounts: Vec<PrivateKeySigner>,
     /// Native token balance of every genesis account in the genesis block
@@ -475,11 +475,17 @@ impl NodeConfig {
     }
 
     /// Returns the hardfork to use
-    pub fn get_hardfork(&self) -> Hardfork {
+    pub fn get_hardfork(&self) -> ChainHardfork {
         if self.alphanet {
-            return Hardfork::PragueEOF;
+            return ChainHardfork::Ethereum(EthereumHardfork::PragueEOF);
         }
-        self.hardfork.unwrap_or_default()
+        if let Some(hardfork) = self.hardfork {
+            return hardfork;
+        }
+        if self.enable_optimism {
+            return OptimismHardfork::default().into();
+        }
+        EthereumHardfork::default().into()
     }
 
     /// Sets a custom code size limit
@@ -621,7 +627,7 @@ impl NodeConfig {
 
     /// Sets the hardfork
     #[must_use]
-    pub fn with_hardfork(mut self, hardfork: Option<Hardfork>) -> Self {
+    pub fn with_hardfork(mut self, hardfork: Option<ChainHardfork>) -> Self {
         self.hardfork = hardfork;
         self
     }
@@ -1093,9 +1099,9 @@ impl NodeConfig {
                 let chain_id =
                     provider.get_chain_id().await.expect("Failed to fetch network chain ID");
                 if alloy_chains::NamedChain::Mainnet == chain_id {
-                    let hardfork: Hardfork = fork_block_number.into();
+                    let hardfork: EthereumHardfork = fork_block_number.into();
                     env.handler_cfg.spec_id = hardfork.into();
-                    self.hardfork = Some(hardfork);
+                    self.hardfork = Some(ChainHardfork::Ethereum(hardfork));
                 }
                 Some(U256::from(chain_id))
             } else {

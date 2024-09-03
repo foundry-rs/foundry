@@ -1246,7 +1246,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             })?;
 
             write_chunk!(self, "}}")?;
-            return Ok(true)
+            return Ok(false)
         }
 
         // Determine writable statements by excluding statements from disabled start / end lines.
