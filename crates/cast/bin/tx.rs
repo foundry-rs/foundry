@@ -103,29 +103,14 @@ corresponds to the sender, or let foundry automatically detect it by not specify
     Ok(())
 }
 
-/// Ensures the transaction is either a contract deployment or a recipient address is specified
-pub async fn resolve_tx_kind<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
-    provider: &P,
-    code: &Option<String>,
-    to: &Option<NameOrAddress>,
-) -> Result<TxKind> {
-    if code.is_some() {
-        Ok(TxKind::Create)
-    } else if let Some(to) = to {
-        Ok(TxKind::Call(to.resolve(provider).await?))
-    } else {
-        eyre::bail!("Must specify a recipient address or contract code to deploy");
-    }
-}
-
 /// Initial state.
 #[derive(Debug)]
 pub struct InitState;
 
 /// State with known [TxKind].
 #[derive(Debug)]
-pub struct TxKindState {
-    kind: TxKind,
+pub struct ToState {
+    to: Option<Address>,
 }
 
 /// State with known input for the transaction.
@@ -211,8 +196,9 @@ where
     }
 
     /// Sets [TxKind] for this builder and changes state to [TxKindState].
-    pub fn with_tx_kind(self, kind: TxKind) -> CastTxBuilder<T, P, TxKindState> {
-        CastTxBuilder {
+    pub async fn with_to(self, to: Option<NameOrAddress>) -> Result<CastTxBuilder<T, P, ToState>> {
+        let to = if let Some(to) = to { Some(to.resolve(&self.provider).await?) } else { None };
+        Ok(CastTxBuilder {
             provider: self.provider,
             tx: self.tx,
             legacy: self.legacy,
@@ -220,13 +206,13 @@ where
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
-            state: TxKindState { kind },
+            state: ToState { to },
             _t: self._t,
-        }
+        })
     }
 }
 
-impl<T, P> CastTxBuilder<T, P, TxKindState>
+impl<T, P> CastTxBuilder<T, P, ToState>
 where
     P: Provider<T, AnyNetwork>,
     T: Transport + Clone,
@@ -244,7 +230,7 @@ where
             parse_function_args(
                 &sig,
                 args,
-                self.state.kind.to().cloned(),
+                self.state.to,
                 self.chain,
                 &self.provider,
                 self.etherscan_api_key.as_deref(),
@@ -254,13 +240,23 @@ where
             (Vec::new(), None)
         };
 
-        let input = if let Some(code) = code {
+        let input = if let Some(code) = &code {
             let mut code = hex::decode(code)?;
             code.append(&mut args);
             code
         } else {
             args
         };
+
+        if self.state.to.is_none() && code.is_none() {
+            let has_value = self.tx.value.map_or(false, |v| !v.is_zero());
+            let has_auth = self.auth.is_some();
+            // We only allow user to omit the recipient address if transaction is an EIP-7702 tx
+            // without a value.
+            if !has_auth || has_value {
+                eyre::bail!("Must specify a recipient address or contract code to deploy");
+            }
+        }
 
         Ok(CastTxBuilder {
             provider: self.provider,
@@ -270,7 +266,7 @@ where
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
-            state: InputState { kind: self.state.kind, input, func },
+            state: InputState { kind: self.state.to.into(), input, func },
             _t: self._t,
         })
     }
