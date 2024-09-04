@@ -1115,11 +1115,11 @@ casttest!(interface_no_constructor, |prj, cmd| {
     let path = prj.root().join("interface.json");
     fs::write(&path, interface).unwrap();
     // Call `cast find-block`
-    cmd.args(["interface"]).arg(&path).assert_success().stdout_eq(str![[
+    cmd.arg("interface").arg(&path).assert_success().stdout_eq(str![[
         r#"// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
-interface Interface {
+interface IIntegrationManager {
     type SpendAssetsHandleType is uint8;
 
     function getIntegrationManager() external view returns (address integrationManager_);
@@ -1144,11 +1144,15 @@ interface Interface {
 // tests that fetches WETH interface from etherscan
 // <https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2>
 casttest!(fetch_weth_interface_from_etherscan, |_prj, cmd| {
-    let weth_address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
-    let api_key = "ZUB97R31KSYX7NYVW6224Q6EYY6U56H591";
-    cmd.args(["interface", "--etherscan-api-key", api_key, weth_address])
-        .assert_success()
-        .stdout_eq(str![[r#"// SPDX-License-Identifier: UNLICENSED
+    cmd.args([
+        "interface",
+        "--etherscan-api-key",
+        &next_mainnet_etherscan_api_key(),
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
 interface WETH9 {

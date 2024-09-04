@@ -1,5 +1,3 @@
-#![allow(elided_named_lifetimes)]
-
 use super::{Preprocessor, PreprocessorId};
 use crate::{Comments, Document, ParseItem, ParseSource};
 use forge_fmt::solang_ext::SafeUnwrap;
@@ -228,7 +226,7 @@ impl<'a> InlineLink<'a> {
         })
     }
 
-    fn captures(s: &'a str) -> impl Iterator<Item = Self> + '_ {
+    fn captures(s: &'a str) -> impl Iterator<Item = Self> + 'a {
         RE_INLINE_LINK.captures(s).map(Self::from_capture).into_iter().flatten()
     }
 

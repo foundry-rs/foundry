@@ -1,5 +1,5 @@
 use crate::{
-    abi::{MulticallContract, SimpleStorage},
+    abi::{Multicall, SimpleStorage},
     fork::fork_config,
     utils::http_provider_with_signer,
 };
@@ -155,7 +155,7 @@ async fn test_call_tracer_debug_trace_call() {
     let deployer: EthereumWallet = wallets[0].clone().into();
     let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
 
-    let multicall_contract = MulticallContract::deploy(&provider).await.unwrap();
+    let multicall_contract = Multicall::deploy(&provider).await.unwrap();
 
     let simple_storage_contract =
         SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
@@ -163,7 +163,7 @@ async fn test_call_tracer_debug_trace_call() {
     let set_value = simple_storage_contract.setValue("bar".to_string());
     let set_value_calldata = set_value.calldata();
 
-    let internal_call_tx_builder = multicall_contract.aggregate(vec![MulticallContract::Call {
+    let internal_call_tx_builder = multicall_contract.aggregate(vec![Multicall::Call {
         target: *simple_storage_contract.address(),
         callData: set_value_calldata.to_owned(),
     }]);

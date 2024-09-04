@@ -612,7 +612,7 @@ mod tests {
     use super::*;
     use alloy_primitives::hex;
     use foundry_compilers::Artifact;
-    use foundry_test_utils::rpc::next_etherscan_api_key;
+    use foundry_test_utils::rpc::next_mainnet_etherscan_api_key;
     use std::collections::BTreeMap;
 
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
@@ -690,7 +690,7 @@ mod tests {
         // create folder if not exists
         std::fs::create_dir_all(&data_folder).unwrap();
         // create metadata.json and creation_data.json
-        let client = Client::new(Chain::mainnet(), next_etherscan_api_key()).unwrap();
+        let client = Client::new(Chain::mainnet(), next_mainnet_etherscan_api_key()).unwrap();
         let meta = client.contract_source_code(address).await.unwrap();
         // dump json
         let json = serde_json::to_string_pretty(&meta).unwrap();

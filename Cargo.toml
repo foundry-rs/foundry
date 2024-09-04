@@ -166,7 +166,7 @@ solang-parser = "=0.3.3"
 # no default features to avoid c-kzg
 revm = { version = "14.0.1", default-features = false }
 revm-primitives = { version = "9.0.1", default-features = false }
-revm-inspectors = { version = "0.5", features = ["serde"] }
+revm-inspectors = { version = "0.6", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
@@ -194,7 +194,7 @@ alloy-transport-http = { version = "0.3.1", default-features = false }
 alloy-transport-ipc = { version = "0.3.1", default-features = false }
 alloy-transport-ws = { version = "0.3.1", default-features = false }
 
-# alloy-core
+## alloy-core
 alloy-dyn-abi = "0.8.0"
 alloy-json-abi = "0.8.0"
 alloy-primitives = { version = "0.8.0", features = ["getrandom", "rand"] }
@@ -204,7 +204,7 @@ alloy-sol-types = "0.8.0"
 syn-solidity = "0.8.0"
 
 alloy-chains = "0.1"
-alloy-rlp = "0.3.8"
+alloy-rlp = "0.3"
 alloy-trie = "0.5.0"
 
 ## misc
@@ -265,37 +265,5 @@ proptest = "1"
 comfy-table = "7"
 
 [patch.crates-io]
-## alloy
-alloy-consensus = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-contract = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-eips = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-genesis = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-network = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-provider = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-pubsub = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = true }
-alloy-serde = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-signer = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-signer-aws = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-signer-gcp = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-signer-ledger = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-signer-local = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-signer-trezor = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-transport = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-transport-http = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy.git", rev = "06e0ae9", default-features = false }
-
-# alloy-core
-alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "6bd4aed" }
-alloy-json-abi = { git = "https://github.com/alloy-rs/core", rev = "6bd4aed" }
-alloy-primitives = { git = "https://github.com/alloy-rs/core", rev = "6bd4aed", features = [
-    "getrandom",
-    "rand",
-] }
-alloy-sol-macro-expander = { git = "https://github.com/alloy-rs/core", rev = "6bd4aed" }
-alloy-sol-macro-input = { git = "https://github.com/alloy-rs/core", rev = "6bd4aed" }
-alloy-sol-types = { git = "https://github.com/alloy-rs/core", rev = "6bd4aed" }
-syn-solidity = { git = "https://github.com/alloy-rs/core", rev = "6bd4aed" }
+# https://github.com/alloy-rs/core/issues/717
+alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core", rev = "6bd4aed" }
