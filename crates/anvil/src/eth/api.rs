@@ -1954,7 +1954,8 @@ impl EthApi {
         let common_block =
             self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
 
-        // Convert the transaction requests to pool transactions, so that they later may be mined
+        // Convert the transaction requests to pool transactions if they exist, otherwise use empty
+        // hashmap
         let block_pool_txs = if tx_block_pairs.is_empty() {
             HashMap::new()
         } else {
