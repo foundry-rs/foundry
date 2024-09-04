@@ -2475,7 +2475,7 @@ impl Backend {
         }
 
         {
-            // Rewind the storage back to the common ancestor
+            // Unwind the storage back to the common ancestor
             self.blockchain
                 .storage
                 .write()
