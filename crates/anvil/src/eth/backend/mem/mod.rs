@@ -2479,7 +2479,7 @@ impl Backend {
             self.blockchain
                 .storage
                 .write()
-                .rewind(common_block.header.number, common_block.header.hash_slow());
+                .unwind_to(common_block.header.number, common_block.header.hash_slow());
 
             // Set environment back to common block
             let mut env = self.env.write();
