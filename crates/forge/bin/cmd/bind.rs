@@ -107,7 +107,7 @@ impl BindArgs {
         if self.ethers {
             eprintln!(
                 "Warning: `--ethers` bindings are deprecated and will be removed in the future. \
-                 Consider using `--alloy` instead."
+                 Consider using `--alloy` (default) instead."
             );
         }
 
