@@ -265,5 +265,30 @@ proptest = "1"
 comfy-table = "7"
 
 [patch.crates-io]
+# https://github.com/alloy-rs/alloy/pull/1229
+alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-contract = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-eips = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-network = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-provider = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-serde = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-signer-aws = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-signer-gcp = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-signer-ledger = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-signer-local = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-signer-trezor = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5" }
+
 # https://github.com/alloy-rs/core/issues/717
 alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core", rev = "6bd4aed" }
+# https://github.com/cdump/evmole/pull/11
+evmole = { git = "https://github.com/danipopes/evmole", branch = "bump-alloy" }
