@@ -104,10 +104,10 @@ impl BindArgs {
             let _ = ProjectCompiler::new().compile(&project)?;
         }
 
-        if !self.alloy {
+        if self.ethers {
             eprintln!(
-                "Warning: `--ethers` (default) bindings are deprecated and will be removed in the future. \
-                 Consider using `--alloy` instead."
+                "Warning: `--ethers` bindings are deprecated and will be removed in the future. \
+                 Consider using `--alloy` (default) instead."
             );
         }
 
@@ -191,7 +191,7 @@ impl BindArgs {
     fn get_json_files(&self, artifacts: &Path) -> Result<impl Iterator<Item = (String, PathBuf)>> {
         let filter = self.get_filter()?;
         let alloy_filter = self.get_alloy_filter()?;
-        let is_alloy = self.alloy;
+        let is_alloy = !self.ethers;
         Ok(json_files(artifacts)
             .filter_map(|path| {
                 // Ignore the build info JSON.
@@ -264,7 +264,7 @@ impl BindArgs {
 
     /// Check that the existing bindings match the expected abigen output
     fn check_existing_bindings(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
-        if !self.alloy {
+        if self.ethers {
             return self.check_ethers(artifacts, bindings_root);
         }
 
@@ -316,7 +316,7 @@ impl BindArgs {
 
     /// Generate the bindings
     fn generate_bindings(&self, artifacts: &Path, bindings_root: &Path) -> Result<()> {
-        if !self.alloy {
+        if self.ethers {
             return self.generate_ethers(artifacts, bindings_root);
         }
 
