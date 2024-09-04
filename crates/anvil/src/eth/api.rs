@@ -1955,7 +1955,9 @@ impl EthApi {
             self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
 
         // Convert the transaction requests to pool transactions, so that they later may be mined
-        let block_pool_txs = if !tx_block_pairs.is_empty() {
+        let block_pool_txs = if tx_block_pairs.is_empty() {
+            HashMap::new()
+        } else {
             let mut pairs = tx_block_pairs;
 
             // Check the maximum block supplied number will not exceed the reorged chain height
@@ -1981,9 +1983,6 @@ impl EthApi {
                     TransactionData::JSON(req) => WithOtherFields::new(req),
                     TransactionData::Raw(bytes) => {
                         let mut data = bytes.as_ref();
-                        if data.is_empty() {
-                            return Err(BlockchainError::EmptyRawTransactionData);
-                        }
                         let decoded = TypedTransaction::decode_2718(&mut data)
                             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
                         let request =
@@ -2036,8 +2035,6 @@ impl EthApi {
             }
 
             txs
-        } else {
-            HashMap::new()
         };
 
         self.backend.reorg(depth, block_pool_txs, common_block).await?;
