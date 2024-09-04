@@ -219,19 +219,19 @@ mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/
 
     cmd.arg("soldeer").arg(command).assert_success().stdout_eq(str![[r#"
 🦌 Running Soldeer update 🦌
-Started HTTP download of @tt~1.6.1
 Started GIT download of mario~1.0
+Started HTTP download of @tt~1.6.1
 Started GIT download of mario-custom-branch~1.0
 Started GIT download of mario-custom-tag~1.0
 Started HTTP download of solmate~6.7.0
 Started HTTP download of forge-std~1.8.1
-Dependency @tt~1.6.1 downloaded!
 Dependency solmate~6.7.0 downloaded!
-Successfully downloaded mario-custom-tag~1.0 the dependency via git
-Dependency mario-custom-tag~1.0 downloaded!
 Dependency forge-std~1.8.1 downloaded!
+Dependency @tt~1.6.1 downloaded!
 Successfully downloaded mario~1.0 the dependency via git
 Dependency mario~1.0 downloaded!
+Successfully downloaded mario-custom-tag~1.0 the dependency via git
+Dependency mario-custom-tag~1.0 downloaded!
 Successfully downloaded mario-custom-branch~1.0 the dependency via git
 Dependency mario-custom-branch~1.0 downloaded!
 The dependency @tt~1.6.1 was unzipped!
