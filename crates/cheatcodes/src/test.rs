@@ -3,24 +3,14 @@
 use chrono::DateTime;
 use std::env;
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Error, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::Address;
 use alloy_sol_types::SolValue;
-use foundry_evm_core::constants::{MAGIC_ASSUME, MAGIC_SKIP};
+use foundry_evm_core::constants::MAGIC_SKIP;
 
 pub(crate) mod assert;
+pub(crate) mod assume;
 pub(crate) mod expect;
-
-impl Cheatcode for assumeCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { condition } = self;
-        if *condition {
-            Ok(Default::default())
-        } else {
-            Err(Error::from(MAGIC_ASSUME))
-        }
-    }
-}
 
 impl Cheatcode for breakpoint_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {

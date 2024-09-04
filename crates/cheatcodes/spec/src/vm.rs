@@ -678,6 +678,10 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function assume(bool condition) external pure;
 
+    /// Discard this run's fuzz inputs and generate new ones if next call reverted.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeNoRevert() external pure;
+
     /// Writes a breakpoint to jump to in the debugger.
     #[cheatcode(group = Testing, safety = Safe)]
     function breakpoint(string calldata char) external;

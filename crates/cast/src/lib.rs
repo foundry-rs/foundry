@@ -1043,7 +1043,7 @@ impl SimpleCast {
                 if MAX {
                     let mut max = U256::MAX;
                     if n < 255 {
-                        max &= U256::from(1).wrapping_shl(n);
+                        max &= U256::from(1).wrapping_shl(n).wrapping_sub(U256::from(1));
                     }
                     Ok(max.to_string())
                 } else {
