@@ -66,18 +66,18 @@ pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
         block: BlockEnv {
             number: U256::from(block.header().number()),
             timestamp: U256::from(block.header().timestamp()),
-            coinbase: block.header().miner(),
+            coinbase: block.header().coinbase(),
             difficulty: block.header().difficulty(),
             prevrandao: block.header().mix_hash(),
             basefee: U256::from(block.header().base_fee_per_gas().unwrap_or_default()),
-            gas_limit: U256::from(block.header().gas()),
+            gas_limit: U256::from(block.header().gas_limit()),
             ..Default::default()
         },
         tx: TxEnv {
             caller: origin,
             gas_price: U256::from(gas_price.unwrap_or(fork_gas_price)),
             chain_id: Some(override_chain_id.unwrap_or(rpc_chain_id)),
-            gas_limit: block.header().gas() as u64,
+            gas_limit: block.header().gas_limit() as u64,
             ..Default::default()
         },
     };
