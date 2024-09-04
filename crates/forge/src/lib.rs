@@ -115,6 +115,7 @@ impl TestOptions {
             .unwrap();
         self.fuzzer_with_cases(
             fuzz_config.runs,
+            fuzz_config.max_test_rejects,
             Some(Box::new(FileFailurePersistence::Direct(failure_persist_path.leak()))),
         )
     }
@@ -128,7 +129,7 @@ impl TestOptions {
     /// - `test_fn` is the name of the test function declared inside the test contract.
     pub fn invariant_runner(&self, contract_id: &str, test_fn: &str) -> TestRunner {
         let invariant = self.invariant_config(contract_id, test_fn);
-        self.fuzzer_with_cases(invariant.runs, None)
+        self.fuzzer_with_cases(invariant.runs, invariant.max_assume_rejects, None)
     }
 
     /// Returns a "fuzz" configuration setup. Parameters are used to select tight scoped fuzz
@@ -156,12 +157,13 @@ impl TestOptions {
     pub fn fuzzer_with_cases(
         &self,
         cases: u32,
+        max_global_rejects: u32,
         file_failure_persistence: Option<Box<dyn FailurePersistence>>,
     ) -> TestRunner {
         let config = proptest::test_runner::Config {
             failure_persistence: file_failure_persistence,
             cases,
-            max_global_rejects: self.fuzz.max_test_rejects,
+            max_global_rejects,
             // Disable proptest shrink: for fuzz tests we provide single counterexample,
             // for invariant tests we shrink outside proptest.
             max_shrink_iters: 0,
