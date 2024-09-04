@@ -1,7 +1,7 @@
 //! tests for custom anvil endpoints
 
 use crate::{
-    abi::{Greeter, MulticallContract, BUSD},
+    abi::{Greeter, Multicall, BUSD},
     fork::fork_config,
     utils::http_provider_with_signer,
 };
@@ -612,21 +612,21 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     api.evm_revert(snapshot_id).await.unwrap();
 
     let multicall_contract =
-        MulticallContract::new(address!("eefba1e63905ef1d7acba5a8513c70307c1ce441"), &provider);
+        Multicall::new(address!("eefba1e63905ef1d7acba5a8513c70307c1ce441"), &provider);
 
-    let MulticallContract::getCurrentBlockTimestampReturn { timestamp } =
+    let Multicall::getCurrentBlockTimestampReturn { timestamp } =
         multicall_contract.getCurrentBlockTimestamp().call().await.unwrap();
     assert_eq!(timestamp, U256::from(latest_block.header.timestamp));
 
-    let MulticallContract::getCurrentBlockDifficultyReturn { difficulty } =
+    let Multicall::getCurrentBlockDifficultyReturn { difficulty } =
         multicall_contract.getCurrentBlockDifficulty().call().await.unwrap();
     assert_eq!(difficulty, U256::from(latest_block.header.difficulty));
 
-    let MulticallContract::getCurrentBlockGasLimitReturn { gaslimit } =
+    let Multicall::getCurrentBlockGasLimitReturn { gaslimit } =
         multicall_contract.getCurrentBlockGasLimit().call().await.unwrap();
     assert_eq!(gaslimit, U256::from(latest_block.header.gas_limit));
 
-    let MulticallContract::getCurrentBlockCoinbaseReturn { coinbase } =
+    let Multicall::getCurrentBlockCoinbaseReturn { coinbase } =
         multicall_contract.getCurrentBlockCoinbase().call().await.unwrap();
     assert_eq!(coinbase, latest_block.header.miner);
 }
