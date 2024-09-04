@@ -305,25 +305,24 @@ async fn main() -> Result<()> {
             println!("{}", SimpleCast::disassemble(&bytecode)?);
         }
         CastSubcommand::Selectors { bytecode, resolve } => {
-            let selectors_and_args = SimpleCast::extract_selectors(&bytecode)?;
-            if resolve {
-                let selectors_it = selectors_and_args.iter().map(|r| &r.0);
-                let resolve_results =
-                    decode_selectors(SelectorType::Function, selectors_it).await?;
+            let functions = SimpleCast::extract_functions(&bytecode)?;
+            let max_args_len = functions.iter().map(|r| r.1.len()).max().unwrap_or(0);
+            let max_mutability_len = functions.iter().map(|r| r.2.len()).max().unwrap_or(0);
 
-                let max_args_len = selectors_and_args.iter().map(|r| r.1.len()).max().unwrap_or(0);
-                for ((selector, arguments), func_names) in
-                    selectors_and_args.into_iter().zip(resolve_results.into_iter())
-                {
-                    let resolved = match func_names {
-                        Some(v) => v.join("|"),
-                        None => String::new(),
-                    };
-                    println!("{selector}\t{arguments:max_args_len$}\t{resolved}");
-                }
+            let resolve_results = if resolve {
+                let selectors_it = functions.iter().map(|r| &r.0);
+                let ds = decode_selectors(SelectorType::Function, selectors_it).await?;
+                ds.into_iter().map(|v| v.unwrap_or_default().join("|")).collect()
             } else {
-                for (selector, arguments) in selectors_and_args {
-                    println!("{selector}\t{arguments}");
+                vec![]
+            };
+            for (pos, (selector, arguments, state_mutability)) in functions.into_iter().enumerate()
+            {
+                if resolve {
+                    let resolved = &resolve_results[pos];
+                    println!("{selector}\t{arguments:max_args_len$}\t{state_mutability:max_mutability_len$}\t{resolved}");
+                } else {
+                    println!("{selector}\t{arguments:max_args_len$}\t{state_mutability}");
                 }
             }
         }
