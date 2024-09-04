@@ -1841,6 +1841,12 @@ forgetest_init!(test_assume_no_revert, |prj, cmd| {
     prj.insert_vm();
     prj.clear();
 
+    let config = Config {
+        fuzz: { FuzzConfig { runs: 100, seed: Some(U256::from(100)), ..Default::default() } },
+        ..Default::default()
+    };
+    prj.write_config(config);
+
     prj.add_source(
         "Counter.t.sol",
         r#"pragma solidity 0.8.24;
@@ -1909,7 +1915,7 @@ contract CounterRevertTest is DSTest {
 [FAIL. Reason: assertion failed; counterexample: [..]] test_assume_no_revert_fail_assert(uint256) [..]
 [FAIL. Reason: CheckError(); counterexample: [..]] test_assume_no_revert_fail_in_2nd_call(uint256) [..]
 [FAIL. Reason: CheckError(); counterexample: [..]] test_assume_no_revert_fail_in_3rd_call(uint256) [..]
-[PASS] test_assume_no_revert_pass(uint256) (runs: 256, [..])
+[PASS] test_assume_no_revert_pass(uint256) [..]
 ...
 "#]]);
 });
