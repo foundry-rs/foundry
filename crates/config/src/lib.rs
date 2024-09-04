@@ -2,7 +2,6 @@
 //!
 //! Foundry configuration.
 
-#![allow(elided_named_lifetimes)]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
@@ -1128,7 +1127,7 @@ impl Config {
     pub fn get_rpc_url_or<'a>(
         &'a self,
         fallback: impl Into<Cow<'a, str>>,
-    ) -> Result<Cow<'_, str>, UnresolvedEnvVarError> {
+    ) -> Result<Cow<'a, str>, UnresolvedEnvVarError> {
         if let Some(url) = self.get_rpc_url() {
             url
         } else {

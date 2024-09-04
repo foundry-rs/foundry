@@ -1127,9 +1127,9 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.81"
+version = "0.1.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e0c28dcc82d7c8ead5cb13beb15405b57b8546e93215673ff8ca0349a028107"
+checksum = "a27b8a3a6e1a44fa4c8baf1f653e4172e81486d4941f2237e20dc2d0cf4ddff1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3127,10 +3127,11 @@ dependencies = [
 
 [[package]]
 name = "evmole"
-version = "0.3.8"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ffb1f458e6901be6a6aaa485ce3a5d81478644edde1ffbe95da114ad9c94467"
+checksum = "d55794094e85dd9d2a4a44de6554015c7d0d7193a28756f2ee3432bb763003a7"
 dependencies = [
+ "alloy-dyn-abi",
  "ruint",
 ]
 

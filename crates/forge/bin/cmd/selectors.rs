@@ -330,7 +330,7 @@ impl SelectorsSubcommands {
                     for error in abi.errors() {
                         if error.selector().as_slice().starts_with(selector_bytes.as_slice()) {
                             table.add_row([
-                                "Event",
+                                "Error",
                                 &error.signature(),
                                 &hex::encode_prefixed(error.selector()),
                                 contract.as_str(),
