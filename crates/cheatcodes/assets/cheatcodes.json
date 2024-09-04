@@ -3528,6 +3528,46 @@
     },
     {
       "func": {
+        "id": "deleteSnapshot",
+        "description": "`deleteSnapshot` is being deprecated in favor of `deleteStateSnapshot`. It will be removed in future versions.",
+        "declaration": "function deleteSnapshot(uint256 snapshotId) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deleteSnapshot(uint256)",
+        "selector": "0xa6368557",
+        "selectorBytes": [
+          166,
+          54,
+          133,
+          87
+        ]
+      },
+      "group": "evm",
+      "status": "deprecated",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "deleteSnapshots",
+        "description": "`deleteSnapshots` is being deprecated in favor of `deleteStateSnapshots`. It will be removed in future versions.",
+        "declaration": "function deleteSnapshots() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deleteSnapshots()",
+        "selector": "0x421ae469",
+        "selectorBytes": [
+          66,
+          26,
+          228,
+          105
+        ]
+      },
+      "group": "evm",
+      "status": "deprecated",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "deleteStateSnapshot",
         "description": "Removes the snapshot with the given ID created by `snapshot`.\nTakes the snapshot ID to delete.\nReturns `true` if the snapshot was successfully deleted.\nReturns `false` if the snapshot does not exist.",
         "declaration": "function deleteStateSnapshot(uint256 snapshotId) external returns (bool success);",
@@ -7108,6 +7148,46 @@
     },
     {
       "func": {
+        "id": "revertTo",
+        "description": "`revertTo` is being deprecated in favor of `revertToState`. It will be removed in future versions.",
+        "declaration": "function revertTo(uint256 snapshotId) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "revertTo(uint256)",
+        "selector": "0x44d7f0a4",
+        "selectorBytes": [
+          68,
+          215,
+          240,
+          164
+        ]
+      },
+      "group": "evm",
+      "status": "deprecated",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "revertToAndDelete",
+        "description": "`revertToAndDelete` is being deprecated in favor of `revertToStateAndDelete`. It will be removed in future versions.",
+        "declaration": "function revertToAndDelete(uint256 snapshotId) external returns (bool success);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "revertToAndDelete(uint256)",
+        "selector": "0x03e0aca9",
+        "selectorBytes": [
+          3,
+          224,
+          172,
+          169
+        ]
+      },
+      "group": "evm",
+      "status": "deprecated",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "revertToState",
         "description": "Revert the state of the EVM to a previous snapshot\nTakes the snapshot ID to revert to.\nReturns `true` if the snapshot was successfully reverted.\nReturns `false` if the snapshot does not exist.\n**Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteStateSnapshot`.",
         "declaration": "function revertToState(uint256 snapshotId) external returns (bool success);",
@@ -8068,6 +8148,26 @@
     },
     {
       "func": {
+        "id": "snapshot",
+        "description": "`snapshot` is being deprecated in favor of `snapshotState`. It will be removed in future versions.",
+        "declaration": "function snapshot() external returns (uint256 snapshotId);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshot()",
+        "selector": "0x9711715a",
+        "selectorBytes": [
+          151,
+          17,
+          113,
+          90
+        ]
+      },
+      "group": "evm",
+      "status": "deprecated",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "snapshotGas_0",
         "description": "Snapshot capture the gas usage of the last call by name.",
         "declaration": "function snapshotGas(string calldata name) external;",
@@ -8109,7 +8209,7 @@
     {
       "func": {
         "id": "snapshotState",
-        "description": "Snapshot the current state of the evm.\nReturns the ID of the snapshot that was created.\nTo revert a snapshot use `revertTo`.",
+        "description": "Snapshot the current state of the evm.\nReturns the ID of the snapshot that was created.\nTo revert a snapshot use `revertToState`.",
         "declaration": "function snapshotState() external returns (uint256 snapshotId);",
         "visibility": "external",
         "mutability": "",

@@ -492,42 +492,42 @@ impl Cheatcode for readCallersCall {
 impl Cheatcode for snapshotValue_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name, value } = self;
-        create_value_snapshot(ccx, None, Some(name.clone()), value.to_string())
+        inner_create_value_snapshot(ccx, None, Some(name.clone()), value.to_string())
     }
 }
 
 impl Cheatcode for snapshotValue_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name, value } = self;
-        create_value_snapshot(ccx, Some(group.clone()), Some(name.clone()), value.to_string())
+        inner_create_value_snapshot(ccx, Some(group.clone()), Some(name.clone()), value.to_string())
     }
 }
 
 impl Cheatcode for startSnapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
-        start_gas_snapshot(ccx, None, Some(name.clone()))
+        inner_start_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
 impl Cheatcode for startSnapshotGas_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name } = self;
-        start_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
+        inner_start_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
 }
 
 impl Cheatcode for stopSnapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
-        stop_gas_snapshot(ccx, None, Some(name.clone()))
+        inner_stop_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
 impl Cheatcode for stopSnapshotGas_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name } = self;
-        stop_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
+        inner_stop_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
 }
 
@@ -537,7 +537,12 @@ impl Cheatcode for snapshotGas_0Call {
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
         };
-        create_value_snapshot(ccx, None, Some(name.clone()), last_call_gas.gasTotalUsed.to_string())
+        inner_create_value_snapshot(
+            ccx,
+            None,
+            Some(name.clone()),
+            last_call_gas.gasTotalUsed.to_string(),
+        )
     }
 }
 
@@ -547,7 +552,7 @@ impl Cheatcode for snapshotGas_1Call {
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
         };
-        create_value_snapshot(
+        inner_create_value_snapshot(
             ccx,
             Some(group.clone()),
             Some(name.clone()),
@@ -556,63 +561,77 @@ impl Cheatcode for snapshotGas_1Call {
     }
 }
 
+// Deprecated in favor of `snapshotStateCall`
+impl Cheatcode for snapshotCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        inner_snapshot_state(ccx)
+    }
+}
+
 impl Cheatcode for snapshotStateCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.db.snapshot_state(&ccx.ecx.journaled_state, &ccx.ecx.env).abi_encode())
+        inner_snapshot_state(ccx)
+    }
+}
+
+// Deprecated in favor of `revertToStateCall`
+impl Cheatcode for revertToCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { snapshotId } = self;
+        inner_revert_to_state(ccx, *snapshotId)
     }
 }
 
 impl Cheatcode for revertToStateCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = if let Some(journaled_state) = ccx.ecx.db.revert_state_snapshot(
-            *snapshotId,
-            &ccx.ecx.journaled_state,
-            &mut ccx.ecx.env,
-            RevertStateSnapshotAction::RevertKeep,
-        ) {
-            // we reset the evm's journaled_state to the state of the snapshot previous state
-            ccx.ecx.journaled_state = journaled_state;
-            true
-        } else {
-            false
-        };
-        Ok(result.abi_encode())
+        inner_revert_to_state(ccx, *snapshotId)
+    }
+}
+
+// Deprecated in favor of `revertToStateAndDeleteCall`
+impl Cheatcode for revertToAndDeleteCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { snapshotId } = self;
+        inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
 }
 
 impl Cheatcode for revertToStateAndDeleteCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = if let Some(journaled_state) = ccx.ecx.db.revert_state_snapshot(
-            *snapshotId,
-            &ccx.ecx.journaled_state,
-            &mut ccx.ecx.env,
-            RevertStateSnapshotAction::RevertRemove,
-        ) {
-            // we reset the evm's journaled_state to the state of the snapshot previous state
-            ccx.ecx.journaled_state = journaled_state;
-            true
-        } else {
-            false
-        };
-        Ok(result.abi_encode())
+        inner_revert_to_state_and_delete(ccx, *snapshotId)
+    }
+}
+
+// Deprecated in favor of `deleteStateSnapshotCall`
+impl Cheatcode for deleteSnapshotCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { snapshotId } = self;
+        inner_delete_state_snapshot(ccx, *snapshotId)
     }
 }
 
 impl Cheatcode for deleteStateSnapshotCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = ccx.ecx.db.delete_state_snapshot(*snapshotId);
-        Ok(result.abi_encode())
+        inner_delete_state_snapshot(ccx, *snapshotId)
     }
 }
+
+// Deprecated in favor of `deleteStateSnapshotsCall`
+impl Cheatcode for deleteSnapshotsCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        inner_delete_state_snapshots(ccx)
+    }
+}
+
 impl Cheatcode for deleteStateSnapshotsCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        ccx.ecx.db.delete_state_snapshots();
-        Ok(Default::default())
+        inner_delete_state_snapshots(ccx)
     }
 }
 
@@ -678,7 +697,59 @@ pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Add
     Ok(account.info.nonce.abi_encode())
 }
 
-fn create_value_snapshot<DB: DatabaseExt>(
+fn inner_snapshot_state<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result {
+    Ok(ccx.ecx.db.snapshot_state(&ccx.ecx.journaled_state, &ccx.ecx.env).abi_encode())
+}
+
+fn inner_revert_to_state<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, snapshot_id: U256) -> Result {
+    let result = if let Some(journaled_state) = ccx.ecx.db.revert_state_snapshot(
+        snapshot_id,
+        &ccx.ecx.journaled_state,
+        &mut ccx.ecx.env,
+        RevertStateSnapshotAction::RevertKeep,
+    ) {
+        // we reset the evm's journaled_state to the state of the snapshot previous state
+        ccx.ecx.journaled_state = journaled_state;
+        true
+    } else {
+        false
+    };
+    Ok(result.abi_encode())
+}
+
+fn inner_revert_to_state_and_delete<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    snapshot_id: U256,
+) -> Result {
+    let result = if let Some(journaled_state) = ccx.ecx.db.revert_state_snapshot(
+        snapshot_id,
+        &ccx.ecx.journaled_state,
+        &mut ccx.ecx.env,
+        RevertStateSnapshotAction::RevertRemove,
+    ) {
+        // we reset the evm's journaled_state to the state of the snapshot previous state
+        ccx.ecx.journaled_state = journaled_state;
+        true
+    } else {
+        false
+    };
+    Ok(result.abi_encode())
+}
+
+fn inner_delete_state_snapshot<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    snapshot_id: U256,
+) -> Result {
+    let result = ccx.ecx.db.delete_state_snapshot(snapshot_id);
+    Ok(result.abi_encode())
+}
+
+fn inner_delete_state_snapshots<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result {
+    ccx.ecx.db.delete_state_snapshots();
+    Ok(Default::default())
+}
+
+fn inner_create_value_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     group: Option<String>,
     name: Option<String>,
@@ -696,7 +767,7 @@ fn create_value_snapshot<DB: DatabaseExt>(
     Ok(Default::default())
 }
 
-fn start_gas_snapshot<DB: DatabaseExt>(
+fn inner_start_gas_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     group: Option<String>,
     name: Option<String>,
@@ -725,7 +796,7 @@ fn start_gas_snapshot<DB: DatabaseExt>(
     Ok(Default::default())
 }
 
-fn stop_gas_snapshot<DB: DatabaseExt>(
+fn inner_stop_gas_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     group: Option<String>,
     name: Option<String>,

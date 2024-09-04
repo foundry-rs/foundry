@@ -172,6 +172,8 @@ interface Vm {
     function createWallet(uint256 privateKey) external returns (Wallet memory wallet);
     function createWallet(uint256 privateKey, string calldata walletLabel) external returns (Wallet memory wallet);
     function deal(address account, uint256 newBalance) external;
+    function deleteSnapshot(uint256 snapshotId) external returns (bool success);
+    function deleteSnapshots() external;
     function deleteStateSnapshot(uint256 snapshotId) external returns (bool success);
     function deleteStateSnapshots() external;
     function deployCode(string calldata artifactPath) external returns (address deployedAddress);
@@ -351,6 +353,8 @@ interface Vm {
     function resetNonce(address account) external;
     function resumeGasMetering() external;
     function resumeTracing() external view;
+    function revertTo(uint256 snapshotId) external returns (bool success);
+    function revertToAndDelete(uint256 snapshotId) external returns (bool success);
     function revertToState(uint256 snapshotId) external returns (bool success);
     function revertToStateAndDelete(uint256 snapshotId) external returns (bool success);
     function revokePersistent(address account) external;
@@ -399,6 +403,7 @@ interface Vm {
     function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function skip(bool skipTest) external;
     function sleep(uint256 duration) external;
+    function snapshot() external returns (uint256 snapshotId);
     function snapshotGas(string calldata name) external;
     function snapshotGas(string calldata group, string calldata name) external;
     function snapshotState() external returns (uint256 snapshotId);
