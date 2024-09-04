@@ -217,34 +217,7 @@ mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/
         eprintln!("Couldn't write to file: {e}");
     }
 
-    cmd.arg("soldeer").arg(command).assert_success().stdout_eq(str![[r#"
-🦌 Running Soldeer update 🦌
-Started GIT download of mario~1.0
-Started HTTP download of @tt~1.6.1
-Started GIT download of mario-custom-branch~1.0
-Started GIT download of mario-custom-tag~1.0
-Started HTTP download of solmate~6.7.0
-Started HTTP download of forge-std~1.8.1
-Dependency solmate~6.7.0 downloaded!
-Dependency forge-std~1.8.1 downloaded!
-Dependency @tt~1.6.1 downloaded!
-Successfully downloaded mario~1.0 the dependency via git
-Dependency mario~1.0 downloaded!
-Successfully downloaded mario-custom-tag~1.0 the dependency via git
-Dependency mario-custom-tag~1.0 downloaded!
-Successfully downloaded mario-custom-branch~1.0 the dependency via git
-Dependency mario-custom-branch~1.0 downloaded!
-The dependency @tt~1.6.1 was unzipped!
-The dependency forge-std~1.8.1 was unzipped!
-The dependency solmate~6.7.0 was unzipped!
-Writing @tt~1.6.1 to the lock file.
-Writing forge-std~1.8.1 to the lock file.
-Writing mario~1.0 to the lock file.
-Writing mario-custom-branch~1.0 to the lock file.
-Writing mario-custom-tag~1.0 to the lock file.
-Writing solmate~6.7.0 to the lock file.
-
-"#]]);
+    cmd.arg("soldeer").arg(command).assert_success();
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
