@@ -58,7 +58,7 @@ pub fn find_git_root(relative_to: &Path) -> io::Result<Option<PathBuf>> {
 ///
 /// will still detect `repo` as root.
 ///
-/// Returns `cwd` bounded to `repo` if no `foundry.toml` is found in the tree.
+/// Returns `repo` or `cwd` if no `foundry.toml` is found in the tree.
 ///
 /// # Panics
 ///
@@ -79,13 +79,13 @@ pub fn try_find_project_root(cwd: Option<&Path>) -> io::Result<PathBuf> {
         None => &std::env::current_dir()?,
     };
     let boundary = find_git_root(cwd)?;
-    Ok(cwd
+    let found = cwd
         .ancestors()
         // Don't look outside of the git repo if it exists.
         .take_while(|p| if let Some(boundary) = &boundary { p.starts_with(boundary) } else { true })
         .find(|p| p.join(Config::FILE_NAME).is_file())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| boundary.unwrap_or_else(|| cwd.to_path_buf())))
+        .map(Path::to_path_buf);
+    Ok(found.or(boundary).unwrap_or_else(|| cwd.to_path_buf()))
 }
 
 /// Returns all [`Remapping`]s contained in the `remappings` str separated by newlines
