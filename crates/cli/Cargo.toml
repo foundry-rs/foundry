@@ -28,6 +28,7 @@ alloy-primitives.workspace = true
 alloy-provider.workspace = true
 alloy-transport.workspace = true
 alloy-chains.workspace = true
+alloy-rpc-types = { workspace = true, features = ["eth"] }
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 color-eyre.workspace = true
@@ -37,6 +38,7 @@ futures.workspace = true
 indicatif = "0.17"
 regex = { version = "1", default-features = false }
 serde.workspace = true
+serde_json.workspace = true
 strsim = "0.11"
 strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros"] }

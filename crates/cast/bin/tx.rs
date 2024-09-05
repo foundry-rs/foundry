@@ -187,6 +187,10 @@ where
             if let Some(priority_fee) = tx_opts.priority_gas_price {
                 tx.set_max_priority_fee_per_gas(priority_fee.to());
             }
+
+            if let Some(access_list) = tx_opts.access_list {
+                tx.set_access_list(access_list);
+            }
         }
 
         if let Some(max_blob_fee) = tx_opts.blob_gas_price {
@@ -328,8 +332,8 @@ where
             self.tx.max_fee_per_blob_gas = Some(self.provider.get_blob_base_fee().await?)
         }
 
-        if !self.legacy &&
-            (self.tx.max_fee_per_gas.is_none() || self.tx.max_priority_fee_per_gas.is_none())
+        if !self.legacy
+            && (self.tx.max_fee_per_gas.is_none() || self.tx.max_priority_fee_per_gas.is_none())
         {
             let estimate = self.provider.estimate_eip1559_fees(None).await?;
 
