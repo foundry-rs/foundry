@@ -734,7 +734,7 @@ async fn test_fork_init_base_fee() {
 
     let block = provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
     // <https://etherscan.io/block/13184859>
-    assert_eq!(block.header.number.unwrap(), 13184859u64);
+    assert_eq!(block.header.number, 13184859u64);
     let init_base_fee = block.header.base_fee_per_gas.unwrap();
     assert_eq!(init_base_fee, 63739886069u128);
 
@@ -850,7 +850,7 @@ async fn test_fork_uncles_fetch() {
     let count = provider.get_uncle_count(block_with_uncles.into()).await.unwrap();
     assert_eq!(count as usize, block.uncles.len());
 
-    let hash = BlockId::hash(block.header.hash.unwrap());
+    let hash = BlockId::hash(block.header.hash);
     let count = provider.get_uncle_count(hash).await.unwrap();
     assert_eq!(count as usize, block.uncles.len());
 
@@ -861,15 +861,15 @@ async fn test_fork_uncles_fetch() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(*uncle_hash, uncle.header.hash.unwrap());
+        assert_eq!(*uncle_hash, uncle.header.hash);
 
         // Try with block hash
         let uncle = provider
-            .get_uncle(BlockId::hash(block.header.hash.unwrap()), uncle_idx as u64)
+            .get_uncle(BlockId::hash(block.header.hash), uncle_idx as u64)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(*uncle_hash, uncle.header.hash.unwrap());
+        assert_eq!(*uncle_hash, uncle.header.hash);
     }
 }
 
@@ -905,11 +905,8 @@ async fn test_fork_block_transaction_count() {
         api.block_transaction_count_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(latest_txs.to::<u64>(), 1);
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    let latest_txs = api
-        .block_transaction_count_by_hash(latest_block.header.hash.unwrap())
-        .await
-        .unwrap()
-        .unwrap();
+    let latest_txs =
+        api.block_transaction_count_by_hash(latest_block.header.hash).await.unwrap().unwrap();
     assert_eq!(latest_txs.to::<u64>(), 1);
 
     // check txs count on an older block: 420000 has 3 txs on mainnet
@@ -1173,7 +1170,7 @@ async fn test_arbitrum_fork_block_number() {
 
     // test block by number API call returns proper block number and `l1BlockNumber` is set
     let block_by_number = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    assert_eq!(block_by_number.header.number.unwrap(), initial_block_number + 1);
+    assert_eq!(block_by_number.header.number, initial_block_number + 1);
     assert!(block_by_number.other.get("l1BlockNumber").is_some());
 
     // revert to recorded snapshot and check block number
@@ -1283,7 +1280,7 @@ async fn test_immutable_fork_transaction_hash() {
         let tx = api
             .backend
             .mined_block_by_number(BlockNumberOrTag::Number(fork_block_number))
-            .and_then(|b| b.header.hash)
+            .map(|b| b.header.hash)
             .and_then(|hash| {
                 api.backend.mined_transaction_by_block_hash_and_index(hash, expected.1.into())
             })

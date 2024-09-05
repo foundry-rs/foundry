@@ -5,7 +5,10 @@ use alloy_primitives::{b256, B256};
 use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     casttest, file,
-    rpc::{next_http_rpc_endpoint, next_rpc_endpoint, next_ws_rpc_endpoint},
+    rpc::{
+        next_http_rpc_endpoint, next_mainnet_etherscan_api_key, next_rpc_endpoint,
+        next_ws_rpc_endpoint,
+    },
     str,
     util::OutputExt,
 };

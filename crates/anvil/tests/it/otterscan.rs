@@ -18,10 +18,10 @@ async fn erigon_get_header_by_number() {
     api.mine_one().await;
 
     let res0 = api.erigon_get_header_by_number(0.into()).await.unwrap().unwrap();
-    assert_eq!(res0.header.number, Some(0));
+    assert_eq!(res0.header.number, 0);
 
     let res1 = api.erigon_get_header_by_number(1.into()).await.unwrap().unwrap();
-    assert_eq!(res1.header.number, Some(1));
+    assert_eq!(res1.header.number, 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -73,7 +73,7 @@ fn test_verify_bytecode_with_ignore(
     ignore: &str,
     chain: &str,
 ) {
-    let etherscan_key = next_etherscan_api_key();
+    let etherscan_key = next_mainnet_etherscan_api_key();
     let rpc_url = next_http_archive_rpc_endpoint();
 
     // fetch and flatten source code

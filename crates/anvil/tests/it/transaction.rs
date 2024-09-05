@@ -557,8 +557,7 @@ async fn call_past_state() {
         .unwrap()
         .unwrap()
         .header
-        .hash
-        .unwrap();
+        .hash;
     let value = contract.getValue().block(BlockId::Hash(hash.into())).call().await.unwrap();
     assert_eq!(value._0, "initial value");
 }

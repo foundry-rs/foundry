@@ -292,13 +292,13 @@ async fn test_set_next_timestamp() {
 
     let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
-    assert_eq!(block.header.number.unwrap(), 1);
+    assert_eq!(block.header.number, 1);
     assert_eq!(block.header.timestamp, next_timestamp.as_secs());
 
     api.evm_mine(None).await.unwrap();
 
     let next = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
-    assert_eq!(next.header.number.unwrap(), 2);
+    assert_eq!(next.header.number, 2);
 
     assert!(next.header.timestamp > block.header.timestamp);
 }
@@ -441,7 +441,7 @@ async fn can_get_node_info() {
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
         current_block_timestamp: 1,
-        current_block_hash: block.header.hash.unwrap(),
+        current_block_hash: block.header.hash,
         hard_fork: hard_fork.to_string(),
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
@@ -474,7 +474,7 @@ async fn can_get_metadata() {
         provider.get_block(BlockId::from(block_number), false.into()).await.unwrap().unwrap();
 
     let expected_metadata = Metadata {
-        latest_block_hash: block.header.hash.unwrap(),
+        latest_block_hash: block.header.hash,
         latest_block_number: block_number,
         chain_id,
         client_version: CLIENT_VERSION.to_string(),
@@ -500,7 +500,7 @@ async fn can_get_metadata_on_fork() {
         provider.get_block(BlockId::from(block_number), false.into()).await.unwrap().unwrap();
 
     let expected_metadata = Metadata {
-        latest_block_hash: block.header.hash.unwrap(),
+        latest_block_hash: block.header.hash,
         latest_block_number: block_number,
         chain_id,
         client_version: CLIENT_VERSION.to_string(),
@@ -508,7 +508,7 @@ async fn can_get_metadata_on_fork() {
         forked_network: Some(ForkedNetwork {
             chain_id,
             fork_block_number: block_number,
-            fork_block_hash: block.header.hash.unwrap(),
+            fork_block_hash: block.header.hash,
         }),
         snapshots: Default::default(),
     };
