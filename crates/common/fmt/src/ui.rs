@@ -6,7 +6,7 @@ use alloy_rpc_types::{
     AccessListItem, AnyTransactionReceipt, Block, BlockTransactions, Log, Transaction,
     TransactionReceipt,
 };
-use alloy_serde::OtherFields;
+use alloy_serde::{OtherFields, WithOtherFields};
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -570,7 +570,10 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
 }
 
 /// Returns the `UiFmt::pretty()` formatted attribute of the given block
-pub fn get_pretty_block_attr(block: &Block, attr: &str) -> Option<String> {
+pub fn get_pretty_block_attr(
+    block: &WithOtherFields<Block<WithOtherFields<Transaction>>>,
+    attr: &str,
+) -> Option<String> {
     match attr {
         "baseFeePerGas" | "base_fee_per_gas" => Some(block.header.base_fee_per_gas.pretty()),
         "difficulty" => Some(block.header.difficulty.pretty()),
@@ -591,7 +594,13 @@ pub fn get_pretty_block_attr(block: &Block, attr: &str) -> Option<String> {
         "stateRoot" | "state_root" => Some(block.header.state_root.pretty()),
         "timestamp" => Some(block.header.timestamp.pretty()),
         "totalDifficulty" | "total_difficult" => Some(block.header.total_difficulty.pretty()),
-        _ => None,
+        other => {
+            if let Some(value) = block.other.get(other) {
+                let val = EthValue::from(value.clone());
+                return Some(val.pretty())
+            }
+            None
+        }
     }
 }
 
@@ -1042,6 +1051,8 @@ value                0".to_string();
         );
 
         let block: Block = serde_json::from_value(json).unwrap();
+
+        // let block: WithOtherFields<Block> = WithOtherFields::new(block);
 
         assert_eq!(None, get_pretty_block_attr(&block, ""));
         assert_eq!(Some("7".to_string()), get_pretty_block_attr(&block, "baseFeePerGas"));

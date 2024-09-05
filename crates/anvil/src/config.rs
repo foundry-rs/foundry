@@ -1199,7 +1199,7 @@ latest block number: {latest_block}"
             }
         }
 
-        let block_hash = block.header.hash.unwrap_or_default();
+        let block_hash = block.header.hash;
 
         let chain_id = if let Some(chain_id) = self.chain_id {
             chain_id
@@ -1289,18 +1289,19 @@ async fn derive_block_and_transactions(
                 .ok_or(eyre::eyre!("Failed to get fork block by number"))?;
 
             // Filter out transactions that are after the fork transaction
-            let filtered_transactions: Vec<&Transaction> = transaction_block
-                .transactions
-                .as_transactions()
-                .ok_or(eyre::eyre!("Failed to get transactions from full fork block"))?
-                .iter()
-                .take_while_inclusive(|&transaction| transaction.hash != transaction_hash.0)
-                .collect();
+            let filtered_transactions: Vec<&alloy_serde::WithOtherFields<Transaction>> =
+                transaction_block
+                    .transactions
+                    .as_transactions()
+                    .ok_or(eyre::eyre!("Failed to get transactions from full fork block"))?
+                    .iter()
+                    .take_while_inclusive(|&transaction| transaction.hash != transaction_hash.0)
+                    .collect();
 
             // Convert the transactions to PoolTransactions
             let force_transactions = filtered_transactions
                 .iter()
-                .map(|&transaction| PoolTransaction::try_from(transaction.clone()))
+                .map(|&transaction| PoolTransaction::try_from(transaction.clone().inner))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok((transaction_block_number.saturating_sub(1), Some(force_transactions)))
         }
@@ -1461,7 +1462,7 @@ async fn find_latest_fork_block<P: Provider<T, AnyNetwork>, T: Transport + Clone
     // leeway
     for _ in 0..2 {
         if let Some(block) = provider.get_block(num.into(), false.into()).await? {
-            if block.header.hash.is_some() {
+            if !block.header.hash.is_zero() {
                 break;
             }
         }
