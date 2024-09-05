@@ -65,8 +65,6 @@ pub struct TransactionOpts {
     pub auth: Option<String>,
 
     /// EIP-2930 access list.
-    ///
-    /// Examples: '[{"address":"0x528e26b25a34a4a5d0dbda1d57d318153d2ed582","storageKeys":["0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103","0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"]},{"address":"0x1f4479ccb333fcba58e68f04e38f3ab070983b31","storageKeys":[]}]'
     #[arg(long, conflicts_with = "legacy", value_parser = parse_access_list)]
     pub access_list: Option<AccessList>,
 }
