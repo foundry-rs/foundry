@@ -38,7 +38,7 @@ ethers-contract-abigen = { workspace = true, features = ["providers"] }
 
 revm-inspectors.workspace = true
 
-comfy-table = "7"
+comfy-table.workspace = true
 eyre.workspace = true
 proptest.workspace = true
 rayon.workspace = true
@@ -79,7 +79,6 @@ dunce.workspace = true
 futures.workspace = true
 indicatif = "0.17"
 itertools.workspace = true
-once_cell.workspace = true
 parking_lot.workspace = true
 regex = { version = "1", default-features = false }
 reqwest = { workspace = true, features = ["json"] }
@@ -115,7 +114,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 anvil.workspace = true
 foundry-test-utils.workspace = true
 
-mockall = "0.12"
+mockall = "0.13"
 criterion = "0.5"
 globset = "0.4"
 paste = "1.0"

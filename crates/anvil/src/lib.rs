@@ -48,7 +48,7 @@ mod config;
 pub use config::{AccountGenerator, ForkChoice, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 
 mod hardfork;
-pub use hardfork::Hardfork;
+pub use hardfork::EthereumHardfork;
 
 /// ethereum related implementations
 pub mod eth;
@@ -142,13 +142,19 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
         no_mining,
         transaction_order,
         genesis,
+        mixed_mining,
         ..
     } = config.clone();
 
     let pool = Arc::new(Pool::default());
 
     let mode = if let Some(block_time) = block_time {
-        MiningMode::interval(block_time)
+        if mixed_mining {
+            let listener = pool.add_ready_listener();
+            MiningMode::mixed(max_transactions, listener, block_time)
+        } else {
+            MiningMode::interval(block_time)
+        }
     } else if no_mining {
         MiningMode::None
     } else {

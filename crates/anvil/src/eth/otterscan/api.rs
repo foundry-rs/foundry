@@ -39,8 +39,9 @@ pub fn mentions_address(trace: LocalizedTransactionTrace, address: Address) -> O
     }
 }
 
-/// Converts the list of traces for a transaction into the expected Otterscan format, as
-/// specified in the [`ots_traceTransaction`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_tracetransaction) spec
+/// Converts the list of traces for a transaction into the expected Otterscan format.
+///
+/// Follows format specified in the [`ots_traceTransaction`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_tracetransaction) spec.
 pub fn batch_build_ots_traces(traces: Vec<LocalizedTransactionTrace>) -> Vec<TraceEntry> {
     traces
         .into_iter()
@@ -349,8 +350,10 @@ impl EthApi {
         if block.transactions.is_uncle() {
             return Err(BlockchainError::DataUnavailable);
         }
-        let receipts_futs =
-            block.transactions.hashes().map(|hash| async { self.transaction_receipt(*hash).await });
+        let receipts_futs = block
+            .transactions
+            .hashes()
+            .map(|hash| async move { self.transaction_receipt(hash).await });
 
         // fetch all receipts
         let receipts = join_all(receipts_futs)
@@ -398,7 +401,7 @@ impl EthApi {
             BlockTransactions::Uncle => unreachable!(),
         };
 
-        let receipt_futs = block.transactions.hashes().map(|hash| self.transaction_receipt(*hash));
+        let receipt_futs = block.transactions.hashes().map(|hash| self.transaction_receipt(hash));
 
         let receipts = join_all(receipt_futs)
             .await

@@ -1,11 +1,14 @@
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, TransactionBuilder};
-use alloy_primitives::{hex, Address, Bytes, TxKind};
+use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{TransactionInput, TransactionRequest};
+use alloy_rlp::Decodable;
+use alloy_rpc_types::{Authorization, TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
+use alloy_signer::Signer;
 use alloy_transport::Transport;
+use cast::revm::primitives::SignedAuthorization;
 use eyre::Result;
 use foundry_cli::{
     opts::TransactionOpts,
@@ -13,6 +16,73 @@ use foundry_cli::{
 };
 use foundry_common::ens::NameOrAddress;
 use foundry_config::{Chain, Config};
+use foundry_wallets::{WalletOpts, WalletSigner};
+
+/// Different sender kinds used by [`CastTxBuilder`].
+pub enum SenderKind<'a> {
+    /// An address without signer. Used for read-only calls and transactions sent through unlocked
+    /// accounts.
+    Address(Address),
+    /// A refersnce to a signer.
+    Signer(&'a WalletSigner),
+    /// An owned signer.
+    OwnedSigner(WalletSigner),
+}
+
+impl SenderKind<'_> {
+    /// Resolves the name to an Ethereum Address.
+    pub fn address(&self) -> Address {
+        match self {
+            Self::Address(addr) => *addr,
+            Self::Signer(signer) => signer.address(),
+            Self::OwnedSigner(signer) => signer.address(),
+        }
+    }
+
+    /// Resolves the sender from the wallet options.
+    ///
+    /// This function prefers the `from` field and may return a different address from the
+    /// configured signer
+    /// If from is specified, returns it
+    /// If from is not specified, but there is a signer configured, returns the signer's address
+    /// If from is not specified and there is no signer configured, returns zero address
+    pub async fn from_wallet_opts(opts: WalletOpts) -> Result<Self> {
+        if let Some(from) = opts.from {
+            Ok(from.into())
+        } else if let Ok(signer) = opts.signer().await {
+            Ok(Self::OwnedSigner(signer))
+        } else {
+            Ok(Address::ZERO.into())
+        }
+    }
+
+    /// Returns the signer if available.
+    pub fn as_signer(&self) -> Option<&WalletSigner> {
+        match self {
+            Self::Signer(signer) => Some(signer),
+            Self::OwnedSigner(signer) => Some(signer),
+            _ => None,
+        }
+    }
+}
+
+impl From<Address> for SenderKind<'_> {
+    fn from(addr: Address) -> Self {
+        Self::Address(addr)
+    }
+}
+
+impl<'a> From<&'a WalletSigner> for SenderKind<'a> {
+    fn from(signer: &'a WalletSigner) -> Self {
+        Self::Signer(signer)
+    }
+}
+
+impl From<WalletSigner> for SenderKind<'_> {
+    fn from(signer: WalletSigner) -> Self {
+        Self::OwnedSigner(signer)
+    }
+}
 
 /// Prevents a misconfigured hwlib from sending a transaction that defies user-specified --from
 pub fn validate_from_address(
@@ -33,29 +103,14 @@ corresponds to the sender, or let foundry automatically detect it by not specify
     Ok(())
 }
 
-/// Ensures the transaction is either a contract deployment or a recipient address is specified
-pub async fn resolve_tx_kind<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
-    provider: &P,
-    code: &Option<String>,
-    to: &Option<NameOrAddress>,
-) -> Result<TxKind> {
-    if code.is_some() {
-        Ok(TxKind::Create)
-    } else if let Some(to) = to {
-        Ok(TxKind::Call(to.resolve(provider).await?))
-    } else {
-        eyre::bail!("Must specify a recipient address or contract code to deploy");
-    }
-}
-
 /// Initial state.
 #[derive(Debug)]
 pub struct InitState;
 
 /// State with known [TxKind].
 #[derive(Debug)]
-pub struct TxKindState {
-    kind: TxKind,
+pub struct ToState {
+    to: Option<Address>,
 }
 
 /// State with known input for the transaction.
@@ -76,6 +131,7 @@ pub struct CastTxBuilder<T, P, S> {
     tx: WithOtherFields<TransactionRequest>,
     legacy: bool,
     blob: bool,
+    auth: Option<String>,
     chain: Chain,
     etherscan_api_key: Option<String>,
     state: S,
@@ -133,27 +189,30 @@ where
             blob: tx_opts.blob,
             chain,
             etherscan_api_key,
+            auth: tx_opts.auth,
             state: InitState,
             _t: std::marker::PhantomData,
         })
     }
 
     /// Sets [TxKind] for this builder and changes state to [TxKindState].
-    pub fn with_tx_kind(self, kind: TxKind) -> CastTxBuilder<T, P, TxKindState> {
-        CastTxBuilder {
+    pub async fn with_to(self, to: Option<NameOrAddress>) -> Result<CastTxBuilder<T, P, ToState>> {
+        let to = if let Some(to) = to { Some(to.resolve(&self.provider).await?) } else { None };
+        Ok(CastTxBuilder {
             provider: self.provider,
             tx: self.tx,
             legacy: self.legacy,
             blob: self.blob,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
-            state: TxKindState { kind },
+            auth: self.auth,
+            state: ToState { to },
             _t: self._t,
-        }
+        })
     }
 }
 
-impl<T, P> CastTxBuilder<T, P, TxKindState>
+impl<T, P> CastTxBuilder<T, P, ToState>
 where
     P: Provider<T, AnyNetwork>,
     T: Transport + Clone,
@@ -171,7 +230,7 @@ where
             parse_function_args(
                 &sig,
                 args,
-                self.state.kind.to().cloned(),
+                self.state.to,
                 self.chain,
                 &self.provider,
                 self.etherscan_api_key.as_deref(),
@@ -181,13 +240,23 @@ where
             (Vec::new(), None)
         };
 
-        let input = if let Some(code) = code {
+        let input = if let Some(code) = &code {
             let mut code = hex::decode(code)?;
             code.append(&mut args);
             code
         } else {
             args
         };
+
+        if self.state.to.is_none() && code.is_none() {
+            let has_value = self.tx.value.map_or(false, |v| !v.is_zero());
+            let has_auth = self.auth.is_some();
+            // We only allow user to omit the recipient address if transaction is an EIP-7702 tx
+            // without a value.
+            if !has_auth || has_value {
+                eyre::bail!("Must specify a recipient address or contract code to deploy");
+            }
+        }
 
         Ok(CastTxBuilder {
             provider: self.provider,
@@ -196,7 +265,8 @@ where
             blob: self.blob,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
-            state: InputState { kind: self.state.kind, input, func },
+            auth: self.auth,
+            state: InputState { kind: self.state.to.into(), input, func },
             _t: self._t,
         })
     }
@@ -211,31 +281,32 @@ where
     /// to be broadcasted.
     pub async fn build(
         self,
-        from: impl Into<NameOrAddress>,
+        sender: impl Into<SenderKind<'_>>,
     ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
-        self._build(from, true).await
+        self._build(sender, true).await
     }
 
     /// Builds [TransactionRequest] without filling missing fields. Used for read-only calls such as
     /// eth_call, eth_estimateGas, etc
     pub async fn build_raw(
         self,
-        from: impl Into<NameOrAddress>,
+        sender: impl Into<SenderKind<'_>>,
     ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
-        self._build(from, false).await
+        self._build(sender, false).await
     }
 
     async fn _build(
         mut self,
-        from: impl Into<NameOrAddress>,
+        sender: impl Into<SenderKind<'_>>,
         fill: bool,
     ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
-        let from = from.into().resolve(&self.provider).await?;
+        let sender = sender.into();
+        let from = sender.address();
 
         self.tx.set_kind(self.state.kind);
 
         // we set both fields to the same value because some nodes only accept the legacy `data` field: <https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249>
-        let input = Bytes::from(self.state.input);
+        let input = Bytes::copy_from_slice(&self.state.input);
         self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) };
 
         self.tx.set_from(from);
@@ -269,15 +340,46 @@ where
             }
         }
 
+        let nonce = if let Some(nonce) = self.tx.nonce {
+            nonce
+        } else {
+            let nonce = self.provider.get_transaction_count(from).await?;
+            self.tx.nonce = Some(nonce);
+            nonce
+        };
+
+        self.resolve_auth(sender, nonce).await?;
+
         if self.tx.gas.is_none() {
             self.tx.gas = Some(self.provider.estimate_gas(&self.tx).await?);
         }
 
-        if self.tx.nonce.is_none() {
-            self.tx.nonce = Some(self.provider.get_transaction_count(from).await?);
-        }
-
         Ok((self.tx, self.state.func))
+    }
+
+    /// Parses the passed --auth value and sets the authorization list on the transaction.
+    async fn resolve_auth(&mut self, sender: SenderKind<'_>, nonce: u64) -> Result<()> {
+        let Some(auth) = &self.auth else { return Ok(()) };
+
+        let auth = hex::decode(auth)?;
+        let auth = if let Ok(address) = Address::try_from(auth.as_slice()) {
+            let auth =
+                Authorization { chain_id: U256::from(self.chain.id()), nonce: nonce + 1, address };
+
+            let Some(signer) = sender.as_signer() else {
+                eyre::bail!("No signer available to sign authorization");
+            };
+            let signature = signer.sign_hash(&auth.signature_hash()).await?;
+
+            auth.into_signed(signature)
+        } else if let Ok(auth) = SignedAuthorization::decode(&mut auth.as_ref()) {
+            auth
+        } else {
+            eyre::bail!("Failed to decode authorization");
+        };
+        self.tx.set_authorization_list(vec![auth]);
+
+        Ok(())
     }
 }
 

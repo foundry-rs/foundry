@@ -291,7 +291,7 @@ impl CompiledState {
                 s.transactions
                     .iter()
                     .skip(s.receipts.len())
-                    .map(|t| t.transaction.from.expect("from is missing in script artifact"))
+                    .map(|t| t.transaction.from().expect("from is missing in script artifact"))
             });
 
             let available_signers = self

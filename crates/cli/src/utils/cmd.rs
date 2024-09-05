@@ -163,14 +163,22 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return matches! (
             chain,
-            NamedChain::Arbitrum |
-                NamedChain::ArbitrumTestnet |
+            NamedChain::Acala |
+                NamedChain::AcalaMandalaTestnet |
+                NamedChain::AcalaTestnet |
+                NamedChain::Arbitrum |
                 NamedChain::ArbitrumGoerli |
                 NamedChain::ArbitrumSepolia |
-                NamedChain::Moonbeam |
-                NamedChain::Moonriver |
+                NamedChain::ArbitrumTestnet |
+                NamedChain::Karura |
+                NamedChain::KaruraTestnet |
+                NamedChain::Mantle |
+                NamedChain::MantleSepolia |
+                NamedChain::MantleTestnet |
                 NamedChain::Moonbase |
-                NamedChain::MoonbeamDev
+                NamedChain::Moonbeam |
+                NamedChain::MoonbeamDev |
+                NamedChain::Moonriver
         );
     }
     false

@@ -1,7 +1,9 @@
 //! Wrappers for transactions.
 
+use alloy_consensus::{Transaction, TxEnvelope};
+use alloy_primitives::{Address, TxKind, U256};
 use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_rpc_types::{AnyTransactionReceipt, BlockId};
+use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::Result;
@@ -142,5 +144,90 @@ mod tests {
 
         assert_eq!(extract_revert_reason(error_string_1), Some("Transaction too old".to_string()));
         assert_eq!(extract_revert_reason(error_string_2), None);
+    }
+}
+
+/// Used for broadcasting transactions
+/// A transaction can either be a [`TransactionRequest`] waiting to be signed
+/// or a [`TxEnvelope`], already signed
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TransactionMaybeSigned {
+    Signed {
+        #[serde(flatten)]
+        tx: TxEnvelope,
+        from: Address,
+    },
+    Unsigned(WithOtherFields<TransactionRequest>),
+}
+
+impl TransactionMaybeSigned {
+    /// Creates a new (unsigned) transaction for broadcast
+    pub fn new(tx: WithOtherFields<TransactionRequest>) -> Self {
+        Self::Unsigned(tx)
+    }
+
+    /// Creates a new signed transaction for broadcast.
+    pub fn new_signed(
+        tx: TxEnvelope,
+    ) -> core::result::Result<Self, alloy_primitives::SignatureError> {
+        let from = tx.recover_signer()?;
+        Ok(Self::Signed { tx, from })
+    }
+
+    pub fn as_unsigned_mut(&mut self) -> Option<&mut WithOtherFields<TransactionRequest>> {
+        match self {
+            Self::Unsigned(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    pub fn from(&self) -> Option<Address> {
+        match self {
+            Self::Signed { from, .. } => Some(*from),
+            Self::Unsigned(tx) => tx.from,
+        }
+    }
+
+    pub fn input(&self) -> Option<&[u8]> {
+        match self {
+            Self::Signed { tx, .. } => Some(tx.input()),
+            Self::Unsigned(tx) => tx.input.input().map(|i| i.as_ref()),
+        }
+    }
+
+    pub fn to(&self) -> Option<TxKind> {
+        match self {
+            Self::Signed { tx, .. } => Some(tx.to()),
+            Self::Unsigned(tx) => tx.to,
+        }
+    }
+
+    pub fn value(&self) -> Option<U256> {
+        match self {
+            Self::Signed { tx, .. } => Some(tx.value()),
+            Self::Unsigned(tx) => tx.value,
+        }
+    }
+
+    pub fn gas(&self) -> Option<u128> {
+        match self {
+            Self::Signed { tx, .. } => Some(tx.gas_limit()),
+            Self::Unsigned(tx) => tx.gas,
+        }
+    }
+}
+
+impl From<TransactionRequest> for TransactionMaybeSigned {
+    fn from(tx: TransactionRequest) -> Self {
+        Self::new(WithOtherFields::new(tx))
+    }
+}
+
+impl TryFrom<TxEnvelope> for TransactionMaybeSigned {
+    type Error = alloy_primitives::SignatureError;
+
+    fn try_from(tx: TxEnvelope) -> core::result::Result<Self, Self::Error> {
+        Self::new_signed(tx)
     }
 }

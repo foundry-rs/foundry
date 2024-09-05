@@ -23,9 +23,10 @@ pub use item::{ParseItem, ParseSource};
 mod comment;
 pub use comment::{Comment, CommentTag, Comments, CommentsRef};
 
-/// The documentation parser. This type implements a [Visitor] trait. While walking the parse tree,
-/// [Parser] will collect relevant source items and corresponding doc comments. The resulting
-/// [ParseItem]s can be accessed by calling [Parser::items].
+/// The documentation parser. This type implements a [Visitor] trait.
+///
+/// While walking the parse tree, [Parser] will collect relevant source items and corresponding
+/// doc comments. The resulting [ParseItem]s can be accessed by calling [Parser::items].
 #[derive(Debug, Default)]
 pub struct Parser {
     /// Initial comments from solang parser.

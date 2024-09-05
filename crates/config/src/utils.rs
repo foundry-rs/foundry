@@ -296,7 +296,10 @@ impl FromStr for Numeric {
 
 /// Returns the [SpecId] derived from [EvmVersion]
 #[inline]
-pub fn evm_spec_id(evm_version: &EvmVersion) -> SpecId {
+pub fn evm_spec_id(evm_version: &EvmVersion, alphanet: bool) -> SpecId {
+    if alphanet {
+        return SpecId::PRAGUE_EOF;
+    }
     match evm_version {
         EvmVersion::Homestead => SpecId::HOMESTEAD,
         EvmVersion::TangerineWhistle => SpecId::TANGERINE,
@@ -310,6 +313,7 @@ pub fn evm_spec_id(evm_version: &EvmVersion) -> SpecId {
         EvmVersion::Paris => SpecId::MERGE,
         EvmVersion::Shanghai => SpecId::SHANGHAI,
         EvmVersion::Cancun => SpecId::CANCUN,
+        EvmVersion::Prague => SpecId::PRAGUE_EOF,
     }
 }
 

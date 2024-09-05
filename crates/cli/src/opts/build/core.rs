@@ -58,7 +58,12 @@ pub struct CoreBuildArgs {
     /// Specify the solc version, or a path to a local solc, to build with.
     ///
     /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
-    #[arg(long = "use", help_heading = "Compiler options", value_name = "SOLC_VERSION")]
+    #[arg(
+        long = "use",
+        alias = "compiler-version",
+        help_heading = "Compiler options",
+        value_name = "SOLC_VERSION"
+    )]
     #[serde(skip)]
     pub use_solc: Option<String>,
 

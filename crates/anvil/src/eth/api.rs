@@ -31,7 +31,7 @@ use crate::{
     revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::{transaction::eip4844::TxEip4844Variant, TxEnvelope};
+use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, TxEnvelope};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::eip2718::Decodable2718;
@@ -43,11 +43,12 @@ use alloy_rpc_types::{
     request::TransactionRequest,
     state::StateOverride,
     trace::{
+        filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace,
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
-    AccessList, AccessListWithGasUsed, Block, BlockId, BlockNumberOrTag as BlockNumber,
+    AccessList, AccessListResult, Block, BlockId, BlockNumberOrTag as BlockNumber,
     BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
     Transaction,
 };
@@ -63,7 +64,7 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::Work,
+    types::{ReorgOptions, TransactionData, Work},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
@@ -78,7 +79,12 @@ use foundry_evm::{
 };
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
-use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    sync::Arc,
+    time::Duration,
+};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -154,6 +160,9 @@ impl EthApi {
         match request {
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
             EthRequest::Web3Sha3(content) => self.sha3(content).to_rpc_result(),
+            EthRequest::EthGetAccount(addr, block) => {
+                self.get_account(addr, block).await.to_rpc_result()
+            }
             EthRequest::EthGetBalance(addr, block) => {
                 self.balance(addr, block).await.to_rpc_result()
             }
@@ -292,6 +301,7 @@ impl EthApi {
             }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
+            EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
             }
@@ -434,6 +444,9 @@ impl EthApi {
             }
             EthRequest::RemovePoolTransactions(address) => {
                 self.anvil_remove_pool_transactions(address).await.to_rpc_result()
+            }
+            EthRequest::Reorg(reorg_options) => {
+                self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
         }
     }
@@ -654,6 +667,29 @@ impl EthApi {
         }
 
         self.backend.get_balance(address, Some(block_request)).await
+    }
+
+    /// Returns the ethereum account.
+    ///
+    /// Handler for ETH RPC call: `eth_getAccount`
+    pub async fn get_account(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+    ) -> Result<Account> {
+        node_info!("eth_getAccount");
+        let block_request = self.block_request(block_number).await?;
+
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(fork.get_account(address, number).await?)
+                }
+            }
+        }
+
+        self.backend.get_account_at_block(address, Some(block_request)).await
     }
 
     /// Returns content of the storage at given address.
@@ -967,6 +1003,7 @@ impl EthApi {
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
+
         let transaction = TypedTransaction::decode_2718(&mut data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
@@ -1056,7 +1093,7 @@ impl EthApi {
         &self,
         mut request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
-    ) -> Result<AccessListWithGasUsed> {
+    ) -> Result<AccessListResult> {
         node_info!("eth_createAccessList");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
@@ -1089,9 +1126,10 @@ impl EthApi {
                 )?;
                 ensure_return_ok(exit, &out)?;
 
-                Ok(AccessListWithGasUsed {
+                Ok(AccessListResult {
                     access_list: AccessList(access_list.0),
                     gas_used: U256::from(gas_used),
+                    error: None,
                 })
             })
             .await?
@@ -1188,10 +1226,7 @@ impl EthApi {
     /// Returns block receipts by block number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockReceipts`
-    pub async fn block_receipts(
-        &self,
-        number: BlockNumber,
-    ) -> Result<Option<Vec<ReceiptResponse>>> {
+    pub async fn block_receipts(&self, number: BlockId) -> Result<Option<Vec<ReceiptResponse>>> {
         node_info!("eth_getBlockReceipts");
         self.backend.block_receipts(number).await
     }
@@ -1556,6 +1591,17 @@ impl EthApi {
         node_info!("trace_block");
         self.backend.trace_block(block).await
     }
+
+    /// Returns filtered traces over blocks
+    ///
+    /// Handler for RPC call: `trace_filter`
+    pub async fn trace_filter(
+        &self,
+        filter: TraceFilter,
+    ) -> Result<Vec<LocalizedTransactionTrace>> {
+        node_info!("trace_filter");
+        self.backend.trace_filter(filter).await
+    }
 }
 
 // == impl EthApi anvil endpoints ==
@@ -1875,6 +1921,124 @@ impl EthApi {
     pub async fn anvil_remove_pool_transactions(&self, address: Address) -> Result<()> {
         node_info!("anvil_removePoolTransactions");
         self.pool.remove_transactions_by_address(address);
+        Ok(())
+    }
+
+    /// Reorg the chain to a specific depth and mine new blocks back to the cannonical height.
+    ///
+    /// e.g depth = 3
+    ///     A  -> B  -> C  -> D  -> E
+    ///     A  -> B  -> C' -> D' -> E'
+    ///
+    /// Depth specifies the height to reorg the chain back to. Depth must not exceed the current
+    /// chain height, i.e. can't reorg past the genesis block.
+    ///
+    /// Optionally supply a list of transaction and block pairs that will populate the reorged
+    /// blocks. The maximum block number of the pairs must not exceed the specified depth.
+    ///
+    /// Handler for RPC call: `anvil_reorg`
+    pub async fn anvil_reorg(&self, options: ReorgOptions) -> Result<()> {
+        node_info!("anvil_reorg");
+        let depth = options.depth;
+        let tx_block_pairs = options.tx_block_pairs;
+
+        // Check reorg depth doesn't exceed current chain height
+        let current_height = self.backend.best_number();
+        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
+            RpcError::invalid_params(format!(
+                "Reorg depth must not exceed current chain height: current height {current_height}, depth {depth}"
+            )),
+        ))?;
+
+        // Get the common ancestor block
+        let common_block =
+            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
+
+        // Convert the transaction requests to pool transactions if they exist, otherwise use empty
+        // hashmap
+        let block_pool_txs = if tx_block_pairs.is_empty() {
+            HashMap::new()
+        } else {
+            let mut pairs = tx_block_pairs;
+
+            // Check the maximum block supplied number will not exceed the reorged chain height
+            if let Some((_, num)) = pairs.iter().find(|(_, num)| *num >= depth) {
+                return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
+                    "Block number for reorg tx will exceed the reorged chain height. Block number {num} must not exceed (depth-1) {}",
+                    depth-1
+                ))));
+            }
+
+            // Sort by block number to make it easier to manage new nonces
+            pairs.sort_by_key(|a| a.1);
+
+            // Manage nonces for each signer
+            // address -> cumulative nonce
+            let mut nonces: HashMap<Address, u64> = HashMap::new();
+
+            let mut txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::new();
+            for pair in pairs {
+                let (tx_data, block_index) = pair;
+
+                let mut tx_req = match tx_data {
+                    TransactionData::JSON(req) => WithOtherFields::new(req),
+                    TransactionData::Raw(bytes) => {
+                        let mut data = bytes.as_ref();
+                        let decoded = TypedTransaction::decode_2718(&mut data)
+                            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+                        let request =
+                            TransactionRequest::try_from(decoded.clone()).map_err(|_| {
+                                BlockchainError::RpcError(RpcError::invalid_params(
+                                    "Failed to convert raw transaction",
+                                ))
+                            })?;
+                        WithOtherFields::new(request)
+                    }
+                };
+
+                let from = tx_req.from.map(Ok).unwrap_or_else(|| {
+                    self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
+                })?;
+
+                // Get the nonce at the common block
+                let curr_nonce = nonces.entry(from).or_insert(
+                    self.get_transaction_count(from, Some(common_block.header.number.into()))
+                        .await?,
+                );
+
+                // Estimate gas
+                if tx_req.gas.is_none() {
+                    if let Ok(gas) = self.estimate_gas(tx_req.clone(), None, None).await {
+                        tx_req.gas = Some(gas.to());
+                    }
+                }
+
+                // Build typed transaction request
+                let typed = self.build_typed_tx_request(tx_req, *curr_nonce)?;
+
+                // Increment nonce
+                *curr_nonce += 1;
+
+                // Handle signer and convert to pending transaction
+                let pending = if self.is_impersonated(from) {
+                    let bypass_signature = self.impersonated_signature(&typed);
+                    let transaction = sign::build_typed_transaction(typed, bypass_signature)?;
+                    self.ensure_typed_transaction_supported(&transaction)?;
+                    PendingTransaction::with_impersonated(transaction, from)
+                } else {
+                    let transaction = self.sign_request(&from, typed)?;
+                    self.ensure_typed_transaction_supported(&transaction)?;
+                    PendingTransaction::new(transaction)?
+                };
+
+                let pooled = PoolTransaction::new(pending);
+                txs.entry(block_index).or_default().push(Arc::new(pooled));
+            }
+
+            txs
+        };
+
+        self.backend.reorg(depth, block_pool_txs, common_block).await?;
         Ok(())
     }
 
@@ -2614,7 +2778,7 @@ impl EthApi {
 
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
-                if fork.predates_fork_inclusive(number) {
+                if fork.predates_fork(number) {
                     return Ok(fork.get_nonce(address, number).await?)
                 }
             }
@@ -2669,6 +2833,7 @@ impl EthApi {
             TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
             TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
             TypedTransaction::EIP4844(_) => self.backend.ensure_eip4844_active(),
+            TypedTransaction::EIP7702(_) => self.backend.ensure_eip7702_active(),
             TypedTransaction::Deposit(_) => self.backend.ensure_op_deposits_active(),
             TypedTransaction::Legacy(_) => Ok(()),
         }

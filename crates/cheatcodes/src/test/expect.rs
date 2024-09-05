@@ -1,7 +1,11 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Error, Result, Vm::*};
 use alloy_primitives::{address, hex, Address, Bytes, LogData as RawLog, U256};
 use alloy_sol_types::{SolError, SolValue};
-use revm::interpreter::{return_ok, InstructionResult};
+use foundry_common::ContractsByArtifact;
+use foundry_evm_core::decode::RevertDecoder;
+use revm::interpreter::{
+    return_ok, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+};
 use spec::Vm;
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -68,12 +72,14 @@ pub enum ExpectedRevertKind {
 
 #[derive(Clone, Debug)]
 pub struct ExpectedRevert {
-    /// The expected data returned by the revert, None being any
+    /// The expected data returned by the revert, None being any.
     pub reason: Option<Vec<u8>>,
-    /// The depth at which the revert is expected
+    /// The depth at which the revert is expected.
     pub depth: u64,
     /// The type of expected revert.
     pub kind: ExpectedRevertKind,
+    /// If true then only the first 4 bytes of expected data returned by the revert are checked.
+    pub partial_match: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -282,41 +288,66 @@ impl Cheatcode for expectEmitAnonymous_3Call {
 impl Cheatcode for expectRevert_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), false)
+        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), false, false)
     }
 }
 
 impl Cheatcode for expectRevert_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.ecx.journaled_state.depth(), false)
+        expect_revert(
+            ccx.state,
+            Some(revertData.as_ref()),
+            ccx.ecx.journaled_state.depth(),
+            false,
+            false,
+        )
     }
 }
 
 impl Cheatcode for expectRevert_2Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.ecx.journaled_state.depth(), false)
+        expect_revert(ccx.state, Some(revertData), ccx.ecx.journaled_state.depth(), false, false)
+    }
+}
+
+impl Cheatcode for expectPartialRevertCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { revertData } = self;
+        expect_revert(
+            ccx.state,
+            Some(revertData.as_ref()),
+            ccx.ecx.journaled_state.depth(),
+            false,
+            true,
+        )
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), true)
+        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), true, false)
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.ecx.journaled_state.depth(), true)
+        expect_revert(
+            ccx.state,
+            Some(revertData.as_ref()),
+            ccx.ecx.journaled_state.depth(),
+            true,
+            false,
+        )
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_2Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.ecx.journaled_state.depth(), true)
+        expect_revert(ccx.state, Some(revertData), ccx.ecx.journaled_state.depth(), true, false)
     }
 }
 
@@ -444,7 +475,11 @@ fn expect_emit(
     Ok(Default::default())
 }
 
-pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives::Log) {
+pub(crate) fn handle_expect_emit(
+    state: &mut Cheatcodes,
+    log: &alloy_primitives::Log,
+    interpreter: &mut Interpreter,
+) {
     // Fill or check the expected emits.
     // We expect for emit checks to be filled as they're declared (from oldest to newest),
     // so we fill them and push them to the back of the queue.
@@ -473,11 +508,19 @@ pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives:
     let Some(expected) = &event_to_fill_or_check.log else {
         // Unless the caller is trying to match an anonymous event, the first topic must be
         // filled.
-        // TODO: failing this check should probably cause a warning
         if event_to_fill_or_check.anonymous || log.topics().first().is_some() {
             event_to_fill_or_check.log = Some(log.data.clone());
+            state.expected_emits.push_back(event_to_fill_or_check);
+        } else {
+            interpreter.instruction_result = InstructionResult::Revert;
+            interpreter.next_action = InterpreterAction::Return {
+                result: InterpreterResult {
+                    output: Error::encode("use vm.expectEmitAnonymous to match anonymous events"),
+                    gas: interpreter.gas,
+                    result: InstructionResult::Revert,
+                },
+            };
         }
-        state.expected_emits.push_back(event_to_fill_or_check);
         return
     };
 
@@ -524,6 +567,7 @@ fn expect_revert(
     reason: Option<&[u8]>,
     depth: u64,
     cheatcode: bool,
+    partial_match: bool,
 ) -> Result {
     ensure!(
         state.expected_revert.is_none(),
@@ -537,15 +581,19 @@ fn expect_revert(
         } else {
             ExpectedRevertKind::Default
         },
+        partial_match,
     });
     Ok(Default::default())
 }
 
 pub(crate) fn handle_expect_revert(
+    is_cheatcode: bool,
     is_create: bool,
     expected_revert: Option<&[u8]>,
+    partial_match: bool,
     status: InstructionResult,
     retdata: Bytes,
+    known_contracts: &Option<ContractsByArtifact>,
 ) -> Result<(Option<Address>, Bytes)> {
     let success_return = || {
         if is_create {
@@ -555,9 +603,9 @@ pub(crate) fn handle_expect_revert(
         }
     };
 
-    ensure!(!matches!(status, return_ok!()), "call did not revert as expected");
+    ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
 
-    // If None, accept any revert
+    // If None, accept any revert.
     let Some(expected_revert) = expected_revert else {
         return Ok(success_return());
     };
@@ -568,7 +616,12 @@ pub(crate) fn handle_expect_revert(
 
     let mut actual_revert: Vec<u8> = retdata.into();
 
-    // Try decoding as known errors
+    // Compare only the first 4 bytes if partial match.
+    if partial_match && actual_revert.get(..4) == expected_revert.get(..4) {
+        return Ok(success_return())
+    }
+
+    // Try decoding as known errors.
     if matches!(
         actual_revert.get(..4).map(|s| s.try_into().unwrap()),
         Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
@@ -578,20 +631,30 @@ pub(crate) fn handle_expect_revert(
         }
     }
 
-    if actual_revert == expected_revert {
+    if actual_revert == expected_revert ||
+        (is_cheatcode && memchr::memmem::find(&actual_revert, expected_revert).is_some())
+    {
         Ok(success_return())
     } else {
-        let stringify = |data: &[u8]| {
-            String::abi_decode(data, false)
-                .ok()
-                .or_else(|| std::str::from_utf8(data).ok().map(ToOwned::to_owned))
-                .unwrap_or_else(|| hex::encode_prefixed(data))
+        let (actual, expected) = if let Some(contracts) = known_contracts {
+            let decoder = RevertDecoder::new().with_abis(contracts.iter().map(|(_, c)| &c.abi));
+            (
+                &decoder.decode(actual_revert.as_slice(), Some(status)),
+                &decoder.decode(expected_revert, Some(status)),
+            )
+        } else {
+            let stringify = |data: &[u8]| {
+                if let Ok(s) = String::abi_decode(data, true) {
+                    return s;
+                }
+                if data.is_ascii() {
+                    return std::str::from_utf8(data).unwrap().to_owned();
+                }
+                hex::encode_prefixed(data)
+            };
+            (&stringify(&actual_revert), &stringify(expected_revert))
         };
-        Err(fmt_err!(
-            "Error != expected error: {} != {}",
-            stringify(&actual_revert),
-            stringify(expected_revert),
-        ))
+        Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))
     }
 }
 

@@ -9,10 +9,8 @@ contract Issue3703Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function setUp() public {
-        uint256 fork = vm.createSelectFork(
-            "https://polygon-mainnet.g.alchemy.com/v2/bVjX9v-FpmUhf5R_oHIgwJx2kXvYPRbx",
-            bytes32(0xbed0c8c1b9ff8bf0452979d170c52893bb8954f18a904aa5bcbd0f709be050b9)
-        );
+        uint256 fork =
+            vm.createSelectFork("polygon", bytes32(0xbed0c8c1b9ff8bf0452979d170c52893bb8954f18a904aa5bcbd0f709be050b9));
     }
 
     function poolState(address poolAddr, uint256 expectedSqrtPriceX96, uint256 expectedLiquidity) private {

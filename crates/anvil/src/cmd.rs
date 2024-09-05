@@ -1,7 +1,8 @@
 use crate::{
     config::{ForkChoice, DEFAULT_MNEMONIC},
     eth::{backend::db::SerializableState, pool::transactions::TransactionOrder, EthApi},
-    AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
+    hardfork::OptimismHardfork,
+    AccountGenerator, EthereumHardfork, NodeConfig, CHAIN_ID,
 };
 use alloy_genesis::Genesis;
 use alloy_primitives::{utils::Unit, B256, U256};
@@ -79,8 +80,8 @@ pub struct NodeArgs {
     ///
     /// Choose the hardfork by name, e.g. `shanghai`, `paris`, `london`, etc...
     /// [default: latest]
-    #[arg(long, value_parser = Hardfork::from_str)]
-    pub hardfork: Option<Hardfork>,
+    #[arg(long)]
+    pub hardfork: Option<String>,
 
     /// Block time in seconds for interval mining.
     #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS", value_parser = duration_from_secs_f64)]
@@ -97,6 +98,9 @@ pub struct NodeArgs {
     /// Disable auto and interval mining, and mine on demand instead.
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
     pub no_mining: bool,
+
+    #[arg(long, visible_alias = "mixed-mining", requires = "block_time")]
+    pub mixed_mining: bool,
 
     /// The hosts the server will listen on.
     #[arg(
@@ -159,8 +163,16 @@ pub struct NodeArgs {
 
     /// Don't keep full chain history.
     /// If a number argument is specified, at most this number of states is kept in memory.
+    ///
+    /// If enabled, no state will be persisted on disk, so `max_persisted_states` will be 0.
     #[arg(long)]
     pub prune_history: Option<Option<usize>>,
+
+    /// Max number of states to persist on disk.
+    ///
+    /// Note that `prune_history` will overwrite `max_persisted_states` to 0.
+    #[arg(long)]
+    pub max_persisted_states: Option<usize>,
 
     /// Number of blocks with transactions to keep in memory.
     #[arg(long)]
@@ -185,7 +197,7 @@ const IPC_HELP: &str = "Launch an ipc server at the given path or default path =
 const DEFAULT_DUMP_INTERVAL: Duration = Duration::from_secs(60);
 
 impl NodeArgs {
-    pub fn into_node_config(self) -> NodeConfig {
+    pub fn into_node_config(self) -> eyre::Result<NodeConfig> {
         let genesis_balance = Unit::ETHER.wei().saturating_mul(U256::from(self.balance));
         let compute_units_per_second = if self.evm_opts.no_rate_limit {
             Some(u64::MAX)
@@ -193,13 +205,25 @@ impl NodeArgs {
             self.evm_opts.compute_units_per_second
         };
 
-        NodeConfig::default()
+        let hardfork = match &self.hardfork {
+            Some(hf) => {
+                if self.evm_opts.optimism {
+                    Some(OptimismHardfork::from_str(hf)?.into())
+                } else {
+                    Some(EthereumHardfork::from_str(hf)?.into())
+                }
+            }
+            None => None,
+        };
+
+        Ok(NodeConfig::default()
             .with_gas_limit(self.evm_opts.gas_limit)
             .disable_block_gas_limit(self.evm_opts.disable_block_gas_limit)
             .with_gas_price(self.evm_opts.gas_price)
-            .with_hardfork(self.hardfork)
+            .with_hardfork(hardfork)
             .with_blocktime(self.block_time)
             .with_no_mining(self.no_mining)
+            .with_mixed_mining(self.mixed_mining, self.block_time)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
             .with_genesis_timestamp(self.timestamp)
@@ -234,13 +258,16 @@ impl NodeArgs {
             .with_auto_impersonate(self.evm_opts.auto_impersonate)
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm_opts.code_size_limit)
+            .disable_code_size_limit(self.evm_opts.disable_code_size_limit)
             .set_pruned_history(self.prune_history)
             .with_init_state(self.load_state.or_else(|| self.state.and_then(|s| s.state)))
             .with_transaction_block_keeper(self.transaction_block_keeper)
+            .with_max_persisted_states(self.max_persisted_states)
             .with_optimism(self.evm_opts.optimism)
+            .with_alphanet(self.evm_opts.alphanet)
             .with_disable_default_create2_deployer(self.evm_opts.disable_default_create2_deployer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
-            .with_memory_limit(self.evm_opts.memory_limit)
+            .with_memory_limit(self.evm_opts.memory_limit))
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -280,7 +307,7 @@ impl NodeArgs {
         let dump_interval =
             self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
 
-        let (api, mut handle) = crate::try_spawn(self.into_node_config()).await?;
+        let (api, mut handle) = crate::try_spawn(self.into_node_config()?).await?;
 
         // sets the signal handler to gracefully shutdown.
         let mut fork = api.get_fork();
@@ -482,10 +509,19 @@ pub struct AnvilEvmArgs {
     )]
     pub disable_block_gas_limit: bool,
 
-    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. By
-    /// default, it is 0x6000 (~25kb).
+    /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests. To
+    /// disable entirely, use `--disable-code-size-limit`. By default, it is 0x6000 (~25kb).
     #[arg(long, value_name = "CODE_SIZE", help_heading = "Environment config")]
     pub code_size_limit: Option<usize>,
+
+    /// Disable EIP-170: Contract code size limit.
+    #[arg(
+        long,
+        value_name = "DISABLE_CODE_SIZE_LIMIT",
+        conflicts_with = "code_size_limit",
+        help_heading = "Environment config"
+    )]
+    pub disable_code_size_limit: bool,
 
     /// The gas price.
     #[arg(long, help_heading = "Environment config")]
@@ -527,6 +563,10 @@ pub struct AnvilEvmArgs {
     /// The memory limit per EVM execution in bytes.
     #[arg(long)]
     pub memory_limit: Option<u64>,
+
+    /// Enable Alphanet features
+    #[arg(long, visible_alias = "alphanet")]
+    pub alphanet: bool,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
@@ -711,6 +751,8 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 
 #[cfg(test)]
 mod tests {
+    use crate::EthereumHardfork;
+
     use super::*;
     use std::{env, net::Ipv4Addr};
 
@@ -745,9 +787,25 @@ mod tests {
     }
 
     #[test]
-    fn can_parse_hardfork() {
+    fn can_parse_ethereum_hardfork() {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "berlin"]);
-        assert_eq!(args.hardfork, Some(Hardfork::Berlin));
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, Some(EthereumHardfork::Berlin.into()));
+    }
+
+    #[test]
+    fn can_parse_optimism_hardfork() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--optimism", "--hardfork", "Regolith"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, Some(OptimismHardfork::Regolith.into()));
+    }
+
+    #[test]
+    fn cant_parse_invalid_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "Regolith"]);
+        let config = args.into_node_config();
+        assert!(config.is_err());
     }
 
     #[test]
@@ -777,12 +835,33 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_max_persisted_states_config() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--max-persisted-states", "500"]);
+        assert_eq!(args.max_persisted_states, (Some(500)));
+    }
+
+    #[test]
     fn can_parse_disable_block_gas_limit() {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--disable-block-gas-limit"]);
         assert!(args.evm_opts.disable_block_gas_limit);
 
         let args =
             NodeArgs::try_parse_from(["anvil", "--disable-block-gas-limit", "--gas-limit", "100"]);
+        assert!(args.is_err());
+    }
+
+    #[test]
+    fn can_parse_disable_code_size_limit() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--disable-code-size-limit"]);
+        assert!(args.evm_opts.disable_code_size_limit);
+
+        let args = NodeArgs::try_parse_from([
+            "anvil",
+            "--disable-code-size-limit",
+            "--code-size-limit",
+            "100",
+        ]);
+        // can't be used together
         assert!(args.is_err());
     }
 

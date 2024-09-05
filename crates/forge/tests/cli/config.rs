@@ -137,16 +137,20 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         bind_json: Default::default(),
         fs_permissions: Default::default(),
         labels: Default::default(),
-        prague: true,
         isolate: true,
         unchecked_cheatcode_artifacts: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         vyper: Default::default(),
         skip: vec![],
         dependencies: Default::default(),
+        soldeer: Default::default(),
         warnings: vec![],
         assertions_revert: true,
         legacy_assertions: false,
+        extra_args: vec![],
+        eof_version: None,
+        alphanet: false,
+        transaction_timeout: 120,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -156,10 +160,10 @@ forgetest!(can_extract_config_values, |prj, cmd| {
 
 // tests config gets printed to std out
 forgetest!(can_show_config, |prj, cmd| {
-    cmd.arg("config");
     let expected =
         Config::load_with_root(prj.root()).to_string_pretty().unwrap().trim().to_string();
-    assert_eq!(expected, cmd.stdout_lossy().trim().to_string());
+    let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
+    assert_eq!(expected, output);
 });
 
 // checks that config works
@@ -184,9 +188,9 @@ forgetest_init!(can_override_config, |prj, cmd| {
         Remapping::from(profile.remappings[0].clone()).to_string()
     );
 
-    cmd.arg("config");
-    let expected = profile.to_string_pretty().unwrap();
-    assert_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
+    let expected = profile.to_string_pretty().unwrap().trim().to_string();
+    let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
+    assert_eq!(expected, output);
 
     // remappings work
     let remappings_txt =
@@ -232,9 +236,16 @@ forgetest_init!(can_override_config, |prj, cmd| {
     std::env::remove_var("DAPP_REMAPPINGS");
     pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
 
-    cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
-    let expected = profile.into_basic().to_string_pretty().unwrap();
-    assert_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
+    let expected = profile.into_basic().to_string_pretty().unwrap().trim().to_string();
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--basic"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+    assert_eq!(expected, output);
 });
 
 forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
@@ -251,13 +262,18 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
     // the loaded config has resolved, absolute paths
     assert_eq!("forge-std/=lib/forge-std/src/", Remapping::from(r.clone()).to_string());
 
-    cmd.arg("config");
-    let expected = profile.to_string_pretty().unwrap();
-    assert_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
+    let expected = profile.to_string_pretty().unwrap().trim().to_string();
+    let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
+    assert_eq!(expected, output);
 
     let install = |cmd: &mut TestCommand, dep: &str| {
-        cmd.forge_fuse().args(["install", dep, "--no-commit"]);
-        cmd.assert_non_empty_stdout();
+        cmd.forge_fuse().args(["install", dep, "--no-commit"]).assert_success().stdout_eq(str![[
+            r#"
+Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmate"), tag: None)
+    Installed solmate
+
+"#
+        ]]);
     };
 
     install(&mut cmd, "transmissions11/solmate");
@@ -284,9 +300,16 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
     );
     pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
 
-    cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
-    let expected = profile.into_basic().to_string_pretty().unwrap();
-    assert_eq!(expected.trim().to_string(), cmd.stdout_lossy().trim().to_string());
+    let expected = profile.into_basic().to_string_pretty().unwrap().trim().to_string();
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--basic"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+    assert_eq!(expected, output);
 });
 
 forgetest_init!(can_detect_config_vals, |prj, _cmd| {
@@ -344,9 +367,12 @@ contract Greeter {}
     let config = Config { solc: Some(OTHER_SOLC_VERSION.into()), ..Default::default() };
     prj.write_config(config);
 
-    cmd.arg("build");
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(cmd.stdout_lossy().contains("Compiler run successful!"));
+"#]]);
 });
 
 // tests that `--use <solc>` works
@@ -360,25 +386,45 @@ contract Foo {}
     )
     .unwrap();
 
-    cmd.args(["build", "--use", OTHER_SOLC_VERSION]);
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiler run successful"));
+    cmd.args(["build", "--use", OTHER_SOLC_VERSION]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     cmd.forge_fuse()
         .args(["build", "--force", "--use", &format!("solc:{OTHER_SOLC_VERSION}")])
-        .root_arg();
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiler run successful"));
+        .root_arg()
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     // fails to use solc that does not exist
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
-    assert!(cmd.stderr_lossy().contains("`solc` this/solc/does/not/exist does not exist"));
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: 
+`solc` this/solc/does/not/exist does not exist
+
+"#]]);
 
     // `OTHER_SOLC_VERSION` was installed in previous step, so we can use the path to this directly
     let local_solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
-    cmd.forge_fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiler run successful"));
+    cmd.forge_fuse()
+        .args(["build", "--force", "--use"])
+        .arg(local_solc.solc)
+        .root_arg()
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 // test to ensure yul optimizer can be set as intended
@@ -397,11 +443,17 @@ contract Foo {
     )
     .unwrap();
 
-    cmd.arg("build");
-    cmd.unchecked_output().stderr_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_set_yul_optimizer.stderr"),
-    );
+    cmd.arg("build").assert_failure().stderr_eq(str![[r#"
+Error: 
+Compiler run failed:
+Error (6553): The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction.
+ [FILE]:6:8:
+  |
+6 |        assembly {
+  |        ^ (Relevant source part starts here and spans across multiple lines).
+
+
+"#]]);
 
     // disable yul optimizer explicitly
     let config = Config {
@@ -561,8 +613,13 @@ forgetest!(can_update_libs_section, |prj, cmd| {
     let init = Config { libs: vec!["node_modules".into()], ..Default::default() };
     prj.write_config(init);
 
-    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]);
-    cmd.assert_non_empty_stdout();
+    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]).assert_success().stdout_eq(str![
+        [r#"
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+
+"#]
+    ]);
 
     let config = cmd.forge_fuse().config();
     // `lib` was added automatically
@@ -570,8 +627,14 @@ forgetest!(can_update_libs_section, |prj, cmd| {
     assert_eq!(config.libs, expected);
 
     // additional install don't edit `libs`
-    cmd.forge_fuse().args(["install", "dapphub/ds-test", "--no-commit"]);
-    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse()
+        .args(["install", "dapphub/ds-test", "--no-commit"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Installing ds-test in [..] (url: Some("https://github.com/dapphub/ds-test"), tag: None)
+    Installed ds-test
+
+"#]]);
 
     let config = cmd.forge_fuse().config();
     assert_eq!(config.libs, expected);
@@ -582,8 +645,13 @@ forgetest!(can_update_libs_section, |prj, cmd| {
 forgetest!(config_emit_warnings, |prj, cmd| {
     cmd.git_init();
 
-    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]);
-    cmd.assert_non_empty_stdout();
+    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]).assert_success().stdout_eq(str![
+        [r#"
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+
+"#]
+    ]);
 
     let faulty_toml = r"[default]
     src = 'src'
@@ -593,16 +661,12 @@ forgetest!(config_emit_warnings, |prj, cmd| {
     fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
     fs::write(prj.root().join("lib").join("forge-std").join("foundry.toml"), faulty_toml).unwrap();
 
-    cmd.forge_fuse().args(["config"]);
-    let output = cmd.execute();
-    assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr)
-            .lines()
-            .filter(|line| line.contains("unknown config section") && line.contains("[default]"))
-            .count(),
-        1,
-    );
+    cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
+warning: Found unknown config section in foundry.toml: [default]
+This notation for profiles has been deprecated and may result in the profile not being registered in future versions.
+Please use [profile.default] instead or run `forge config --fix`.
+
+"#]]);
 });
 
 forgetest_init!(can_skip_remappings_auto_detection, |prj, cmd| {
@@ -695,8 +759,11 @@ forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
 
 // tests if evm version is normalized for config output
 forgetest!(normalize_config_evm_version, |_prj, cmd| {
-    cmd.args(["config", "--use", "0.8.0", "--json"]);
-    let output = cmd.stdout_lossy();
+    let output = cmd
+        .args(["config", "--use", "0.8.0", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Istanbul);
 });

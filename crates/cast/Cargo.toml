@@ -68,7 +68,7 @@ foundry-cli.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
 clap_complete_fig = "4"
-comfy-table = "7"
+comfy-table.workspace = true
 dunce.workspace = true
 indicatif = "0.17"
 itertools.workspace = true
@@ -79,12 +79,13 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "signal"] }
 tracing.workspace = true
 yansi.workspace = true
-evmole = "0.3.1"
+evmole = "0.4.1"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
+anvil.workspace = true
 foundry-test-utils.workspace = true
 async-trait.workspace = true
 criterion = "0.5"

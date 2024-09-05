@@ -9,7 +9,7 @@ use foundry_evm_core::{
     InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_traces::{CallTraceArena, TraceMode};
+use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     inspectors::CustomPrintTracer,
     interpreter::{
@@ -58,6 +58,8 @@ pub struct InspectorStackBuilder {
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
+    /// Whether to enable Alphanet features.
+    pub alphanet: bool,
 }
 
 impl InspectorStackBuilder {
@@ -140,6 +142,14 @@ impl InspectorStackBuilder {
         self
     }
 
+    /// Set whether to enable Alphanet features.
+    /// For description of call isolation, see [`InspectorStack::enable_isolation`].
+    #[inline]
+    pub fn alphanet(mut self, yes: bool) -> Self {
+        self.alphanet = yes;
+        self
+    }
+
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     pub fn build(self) -> InspectorStack {
         let Self {
@@ -153,6 +163,7 @@ impl InspectorStackBuilder {
             print,
             chisel_state,
             enable_isolation,
+            alphanet,
         } = self;
         let mut stack = InspectorStack::new();
 
@@ -172,6 +183,7 @@ impl InspectorStackBuilder {
         stack.tracing(trace_mode);
 
         stack.enable_isolation(enable_isolation);
+        stack.alphanet(alphanet);
 
         // environment, must come after all of the inspectors
         if let Some(block) = block {
@@ -232,7 +244,7 @@ macro_rules! call_inspectors_adjust_depth {
 pub struct InspectorData {
     pub logs: Vec<Log>,
     pub labels: HashMap<Address, String>,
-    pub traces: Option<CallTraceArena>,
+    pub traces: Option<SparsedTraceArena>,
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
@@ -284,6 +296,7 @@ pub struct InspectorStackInner {
     pub printer: Option<CustomPrintTracer>,
     pub tracer: Option<TracingInspector>,
     pub enable_isolation: bool,
+    pub alphanet: bool,
 
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -304,6 +317,10 @@ impl CheatcodesExecutor for InspectorStackInner {
         cheats: &'a mut Cheatcodes,
     ) -> impl InspectorExt<DB> + 'a {
         InspectorStackRefMut { cheatcodes: Some(cheats), inner: self }
+    }
+
+    fn tracing_inspector(&mut self) -> Option<&mut Option<TracingInspector>> {
+        Some(&mut self.tracer)
     }
 }
 
@@ -392,6 +409,12 @@ impl InspectorStack {
         self.enable_isolation = yes;
     }
 
+    /// Set whether to enable call isolation.
+    #[inline]
+    pub fn alphanet(&mut self, yes: bool) {
+        self.alphanet = yes;
+    }
+
     /// Set whether to enable the log collector.
     #[inline]
     pub fn collect_logs(&mut self, yes: bool) {
@@ -418,9 +441,27 @@ impl InspectorStack {
     #[inline]
     pub fn collect(self) -> InspectorData {
         let Self {
-            cheatcodes,
+            mut cheatcodes,
             inner: InspectorStackInner { chisel_state, coverage, log_collector, tracer, .. },
         } = self;
+
+        let traces = tracer.map(|tracer| tracer.into_traces()).map(|arena| {
+            let ignored = cheatcodes
+                .as_mut()
+                .map(|cheatcodes| {
+                    let mut ignored = std::mem::take(&mut cheatcodes.ignored_traces.ignored);
+
+                    // If the last pause call was not resumed, ignore the rest of the trace
+                    if let Some(last_pause_call) = cheatcodes.ignored_traces.last_pause_call {
+                        ignored.insert(last_pause_call, (arena.nodes().len(), 0));
+                    }
+
+                    ignored
+                })
+                .unwrap_or_default();
+
+            SparsedTraceArena { arena, ignored }
+        });
 
         InspectorData {
             logs: log_collector.map(|logs| logs.logs).unwrap_or_default(),
@@ -428,7 +469,7 @@ impl InspectorStack {
                 .as_ref()
                 .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
-            traces: tracer.map(|tracer| tracer.into_traces()),
+            traces,
             coverage: coverage.map(|coverage| coverage.maps),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
@@ -504,7 +545,6 @@ impl<'a> InspectorStackRefMut<'a> {
             .journaled_state
             .load_account(caller, &mut ecx.db)
             .expect("failed to load caller")
-            .0
             .info
             .nonce;
 
@@ -646,7 +686,7 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         call_inspectors_adjust_depth!(
-            [&mut self.tracer, &mut self.chisel_state, &mut self.printer],
+            [&mut self.tracer, &mut self.cheatcodes, &mut self.chisel_state, &mut self.printer],
             |inspector| inspector.step_end(interpreter, ecx),
             self,
             ecx
@@ -915,6 +955,10 @@ impl<'a, DB: DatabaseExt> InspectorExt<DB> for InspectorStackRefMut<'a> {
             inspector, input
         ));
     }
+
+    fn is_alphanet(&self) -> bool {
+        self.inner.alphanet
+    }
 }
 
 impl<DB: DatabaseExt> Inspector<DB> for InspectorStack {
@@ -999,6 +1043,10 @@ impl<DB: DatabaseExt> InspectorExt<DB> for InspectorStack {
         inputs: &mut CreateInputs,
     ) -> bool {
         self.as_mut().should_use_create2_factory(ecx, inputs)
+    }
+
+    fn is_alphanet(&self) -> bool {
+        self.alphanet
     }
 }
 

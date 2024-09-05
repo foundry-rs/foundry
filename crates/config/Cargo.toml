@@ -31,7 +31,7 @@ globset = "0.4"
 glob = "0.3"
 Inflector = "0.11"
 number_prefix = "0.4"
-once_cell.workspace = true
+mesc.workspace = true
 regex = "1"
 reqwest.workspace = true
 semver = { workspace = true, features = ["serde"] }

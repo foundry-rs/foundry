@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{hex, keccak256, Address, B256};
+use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use cast::{Cast, SimpleCast};
@@ -12,7 +12,7 @@ use foundry_cli::{handler, prompt, stdin, utils};
 use foundry_common::{
     abi::get_event,
     ens::{namehash, ProviderEnsExt},
-    fmt::{format_tokens, format_uint_exp},
+    fmt::{format_uint_exp, print_tokens},
     fs,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, decode_selectors,
@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::ToAscii { hexdata } => {
             let value = stdin::unwrap(hexdata, false)?;
-            println!("{}", SimpleCast::to_ascii(&value)?);
+            println!("{}", SimpleCast::to_ascii(value.trim())?);
         }
         CastSubcommand::ToUtf8 { hexdata } => {
             let value = stdin::unwrap(hexdata, false)?;
@@ -163,10 +163,9 @@ async fn main() -> Result<()> {
         }
 
         // ABI encoding & decoding
-        CastSubcommand::AbiDecode { sig, calldata, input } => {
+        CastSubcommand::AbiDecode { sig, calldata, input, json } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            let tokens = format_tokens(&tokens);
-            tokens.for_each(|t| println!("{t}"));
+            print_tokens(&tokens, json)
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
             if !packed {
@@ -175,10 +174,9 @@ async fn main() -> Result<()> {
                 println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?);
             }
         }
-        CastSubcommand::CalldataDecode { sig, calldata } => {
+        CastSubcommand::CalldataDecode { sig, calldata, json } => {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
-            let tokens = format_tokens(&tokens);
-            tokens.for_each(|t| println!("{t}"));
+            print_tokens(&tokens, json)
         }
         CastSubcommand::CalldataEncode { sig, args } => {
             println!("{}", SimpleCast::calldata_encode(sig, &args)?);
@@ -307,25 +305,24 @@ async fn main() -> Result<()> {
             println!("{}", SimpleCast::disassemble(&bytecode)?);
         }
         CastSubcommand::Selectors { bytecode, resolve } => {
-            let selectors_and_args = SimpleCast::extract_selectors(&bytecode)?;
-            if resolve {
-                let selectors_it = selectors_and_args.iter().map(|r| &r.0);
-                let resolve_results =
-                    decode_selectors(SelectorType::Function, selectors_it).await?;
+            let functions = SimpleCast::extract_functions(&bytecode)?;
+            let max_args_len = functions.iter().map(|r| r.1.len()).max().unwrap_or(0);
+            let max_mutability_len = functions.iter().map(|r| r.2.len()).max().unwrap_or(0);
 
-                let max_args_len = selectors_and_args.iter().map(|r| r.1.len()).max().unwrap_or(0);
-                for ((selector, arguments), func_names) in
-                    selectors_and_args.into_iter().zip(resolve_results.into_iter())
-                {
-                    let resolved = match func_names {
-                        Some(v) => v.join("|"),
-                        None => String::new(),
-                    };
-                    println!("{selector}\t{arguments:max_args_len$}\t{resolved}");
-                }
+            let resolve_results = if resolve {
+                let selectors_it = functions.iter().map(|r| &r.0);
+                let ds = decode_selectors(SelectorType::Function, selectors_it).await?;
+                ds.into_iter().map(|v| v.unwrap_or_default().join("|")).collect()
             } else {
-                for (selector, arguments) in selectors_and_args {
-                    println!("{selector}\t{arguments}");
+                vec![]
+            };
+            for (pos, (selector, arguments, state_mutability)) in functions.into_iter().enumerate()
+            {
+                if resolve {
+                    let resolved = &resolve_results[pos];
+                    println!("{selector}\t{arguments:max_args_len$}\t{state_mutability:max_mutability_len$}\t{resolved}");
+                } else {
+                    println!("{selector}\t{arguments:max_args_len$}\t{state_mutability}");
                 }
             }
         }
@@ -398,7 +395,7 @@ async fn main() -> Result<()> {
             println!(
                 "{}",
                 Cast::new(provider)
-                    .receipt(tx_hash, field, confirmations, cast_async, json)
+                    .receipt(tx_hash, field, confirmations, None, cast_async, json)
                     .await?
             );
         }
@@ -425,7 +422,7 @@ async fn main() -> Result<()> {
                 println!("{sig}");
             }
         }
-        CastSubcommand::FourByteDecode { calldata } => {
+        CastSubcommand::FourByteDecode { calldata, json } => {
             let calldata = stdin::unwrap_line(calldata)?;
             let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{sig}\"", i + 1));
@@ -440,9 +437,7 @@ async fn main() -> Result<()> {
             };
 
             let tokens = SimpleCast::calldata_decode(sig, &calldata, true)?;
-            for token in format_tokens(&tokens) {
-                println!("{token}");
-            }
+            print_tokens(&tokens, json)
         }
         CastSubcommand::FourByteEvent { topic } => {
             let topic = stdin::unwrap_line(topic)?;
@@ -519,6 +514,14 @@ async fn main() -> Result<()> {
                 }
             };
         }
+        CastSubcommand::HashMessage { message } => {
+            let message = stdin::unwrap_line(message)?;
+            let input = match message.strip_prefix("0x") {
+                Some(hex_str) => hex::decode(hex_str)?,
+                None => message.as_bytes().to_vec(),
+            };
+            println!("{}", eip191_hash_message(input));
+        }
         CastSubcommand::SigEvent { event_string } => {
             let event_string = stdin::unwrap_line(event_string)?;
             let parsed_event = get_event(&event_string)?;
@@ -566,6 +569,10 @@ async fn main() -> Result<()> {
             let tx = SimpleCast::decode_raw_transaction(&tx)?;
 
             println!("{}", serde_json::to_string_pretty(&tx)?);
+        }
+        CastSubcommand::DecodeEof { eof } => {
+            let eof = stdin::unwrap_line(eof)?;
+            println!("{}", SimpleCast::decode_eof(&eof)?);
         }
     };
     Ok(())

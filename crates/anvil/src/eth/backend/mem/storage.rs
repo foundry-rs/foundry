@@ -1,7 +1,7 @@
 //! In-memory blockchain storage
 use crate::eth::{
     backend::{
-        db::{MaybeFullDatabase, SerializableBlock, StateDb},
+        db::{MaybeFullDatabase, SerializableBlock, SerializableTransaction, StateDb},
         mem::cache::DiskStateCache,
     },
     error::BlockchainError,
@@ -40,7 +40,7 @@ use std::{
 
 // === various limits in number of blocks ===
 
-const DEFAULT_HISTORY_LIMIT: usize = 500;
+pub const DEFAULT_HISTORY_LIMIT: usize = 500;
 const MIN_HISTORY_LIMIT: usize = 10;
 // 1hr of up-time at lowest 1s interval
 const MAX_ON_DISK_HISTORY_LIMIT: usize = 3_600;
@@ -69,13 +69,13 @@ pub struct InMemoryBlockStates {
 
 impl InMemoryBlockStates {
     /// Creates a new instance with limited slots
-    pub fn new(limit: usize) -> Self {
+    pub fn new(in_memory_limit: usize, on_disk_limit: usize) -> Self {
         Self {
             states: Default::default(),
             on_disk_states: Default::default(),
-            in_memory_limit: limit,
-            min_in_memory_limit: limit.min(MIN_HISTORY_LIMIT),
-            max_on_disk_limit: MAX_ON_DISK_HISTORY_LIMIT,
+            in_memory_limit,
+            min_in_memory_limit: in_memory_limit.min(MIN_HISTORY_LIMIT),
+            max_on_disk_limit: on_disk_limit,
             oldest_on_disk: Default::default(),
             present: Default::default(),
             disk_cache: Default::default(),
@@ -205,7 +205,7 @@ impl fmt::Debug for InMemoryBlockStates {
 impl Default for InMemoryBlockStates {
     fn default() -> Self {
         // enough in memory to store `DEFAULT_HISTORY_LIMIT` blocks in memory
-        Self::new(DEFAULT_HISTORY_LIMIT)
+        Self::new(DEFAULT_HISTORY_LIMIT, MAX_ON_DISK_HISTORY_LIMIT)
     }
 }
 
@@ -271,6 +271,23 @@ impl BlockchainStorage {
         }
     }
 
+    /// Unwind the chain state back to the given block in storage.
+    ///
+    /// The block identified by `block_number` and `block_hash` is __non-inclusive__, i.e. it will
+    /// remain in the state.
+    pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) {
+        let best_num: u64 = self.best_number.try_into().unwrap_or(0);
+        for i in (block_number + 1)..=best_num {
+            if let Some(hash) = self.hashes.remove(&U64::from(i)) {
+                if let Some(block) = self.blocks.remove(&hash) {
+                    self.remove_block_transactions_by_number(block.header.number);
+                }
+            }
+        }
+        self.best_hash = block_hash;
+        self.best_number = U64::from(block_number);
+    }
+
     #[allow(unused)]
     pub fn empty() -> Self {
         Self {
@@ -334,6 +351,10 @@ impl BlockchainStorage {
         self.blocks.values().map(|block| block.clone().into()).collect()
     }
 
+    pub fn serialized_transactions(&self) -> Vec<SerializableTransaction> {
+        self.transactions.values().map(|tx: &MinedTransaction| tx.clone().into()).collect()
+    }
+
     /// Deserialize and add all blocks data to the backend storage
     pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
         for serializable_block in serializable_blocks.iter() {
@@ -342,6 +363,14 @@ impl BlockchainStorage {
             let block_number = block.header.number;
             self.blocks.insert(block_hash, block);
             self.hashes.insert(U64::from(block_number), block_hash);
+        }
+    }
+
+    /// Deserialize and add all blocks data to the backend storage
+    pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
+        for serializable_transaction in serializable_transactions.iter() {
+            let transaction: MinedTransaction = serializable_transaction.clone().into();
+            self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
     }
 }
@@ -533,9 +562,32 @@ mod tests {
         assert_eq!(storage.in_memory_limit, DEFAULT_HISTORY_LIMIT * 3);
     }
 
+    #[test]
+    fn test_init_state_limits() {
+        let mut storage = InMemoryBlockStates::default();
+        assert_eq!(storage.in_memory_limit, DEFAULT_HISTORY_LIMIT);
+        assert_eq!(storage.min_in_memory_limit, MIN_HISTORY_LIMIT);
+        assert_eq!(storage.max_on_disk_limit, MAX_ON_DISK_HISTORY_LIMIT);
+
+        storage = storage.memory_only();
+        assert!(storage.is_memory_only());
+
+        storage = InMemoryBlockStates::new(1, 0);
+        assert!(storage.is_memory_only());
+        assert_eq!(storage.in_memory_limit, 1);
+        assert_eq!(storage.min_in_memory_limit, 1);
+        assert_eq!(storage.max_on_disk_limit, 0);
+
+        storage = InMemoryBlockStates::new(1, 2);
+        assert!(!storage.is_memory_only());
+        assert_eq!(storage.in_memory_limit, 1);
+        assert_eq!(storage.min_in_memory_limit, 1);
+        assert_eq!(storage.max_on_disk_limit, 2);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cached_state() {
-        let mut storage = InMemoryBlockStates::new(1);
+        let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
         let one = B256::from(U256::from(1));
         let two = B256::from(U256::from(2));
 
@@ -561,7 +613,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn can_decrease_state_cache_size() {
         let limit = 15;
-        let mut storage = InMemoryBlockStates::new(limit);
+        let mut storage = InMemoryBlockStates::new(limit, MAX_ON_DISK_HISTORY_LIMIT);
 
         let num_states = 30;
         for idx in 0..num_states {
@@ -590,7 +642,8 @@ mod tests {
         }
     }
 
-    // verifies that blocks in BlockchainStorage remain the same when dumped and reloaded
+    // verifies that blocks and transactions in BlockchainStorage remain the same when dumped and
+    // reloaded
     #[test]
     fn test_storage_dump_reload_cycle() {
         let mut dump_storage = BlockchainStorage::empty();
@@ -608,10 +661,12 @@ mod tests {
         dump_storage.blocks.insert(block_hash, block);
 
         let serialized_blocks = dump_storage.serialized_blocks();
+        let serialized_transactions = dump_storage.serialized_transactions();
 
         let mut load_storage = BlockchainStorage::empty();
 
         load_storage.load_blocks(serialized_blocks);
+        load_storage.load_transactions(serialized_transactions);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
         assert_eq!(loaded_block.header.gas_limit, partial_header.gas_limit);

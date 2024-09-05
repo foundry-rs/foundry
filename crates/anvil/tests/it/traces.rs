@@ -3,6 +3,7 @@ use crate::{
     fork::fork_config,
     utils::http_provider_with_signer,
 };
+use alloy_eips::BlockId;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes, U256};
 use alloy_provider::{
@@ -11,17 +12,18 @@ use alloy_provider::{
 };
 use alloy_rpc_types::{
     trace::{
+        filter::{TraceFilter, TraceFilterMode},
         geth::{
             CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType,
             GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
         },
         parity::{Action, LocalizedTransactionTrace},
     },
-    BlockNumberOrTag, TransactionRequest,
+    TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use anvil::{spawn, Hardfork, NodeConfig};
+use anvil::{spawn, EthereumHardfork, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
@@ -73,7 +75,8 @@ sol!(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_parity_suicide_trace() {
-    let (_api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Shanghai))).await;
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()))).await;
     let provider = handle.ws_provider();
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let owner = wallets[0].address();
@@ -131,7 +134,7 @@ async fn test_transfer_debug_trace_call() {
 
     let traces = handle
         .http_provider()
-        .debug_trace_call(tx, BlockNumberOrTag::Latest, GethDebugTracingCallOptions::default())
+        .debug_trace_call(tx, BlockId::latest(), GethDebugTracingCallOptions::default())
         .await
         .unwrap();
 
@@ -177,7 +180,7 @@ async fn test_call_tracer_debug_trace_call() {
         .http_provider()
         .debug_trace_call(
             internal_call_tx.clone(),
-            BlockNumberOrTag::Latest,
+            BlockId::latest(),
             GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
                     .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
@@ -205,7 +208,7 @@ async fn test_call_tracer_debug_trace_call() {
         .http_provider()
         .debug_trace_call(
             internal_call_tx.clone(),
-            BlockNumberOrTag::Latest,
+            BlockId::latest(),
             GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
                     .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
@@ -234,7 +237,7 @@ async fn test_call_tracer_debug_trace_call() {
         .http_provider()
         .debug_trace_call(
             direct_call_tx,
-            BlockNumberOrTag::Latest,
+            BlockId::latest(),
             GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
                     .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
@@ -715,4 +718,145 @@ async fn test_trace_address_fork2() {
             _ => unreachable!("unexpected action"),
         }
     })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let from_two = accounts[2].address();
+    let to_two = accounts[3].address();
+
+    // Test default block ranges.
+    // From will be earliest, to will be best/latest
+    let tracer = TraceFilter {
+        from_block: None,
+        to_block: None,
+        from_address: vec![],
+        to_address: vec![],
+        mode: TraceFilterMode::Intersection,
+        after: None,
+        count: None,
+    };
+
+    for i in 0..=5 {
+        let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    let traces = api.trace_filter(tracer).await.unwrap();
+    assert_eq!(traces.len(), 5);
+
+    // Test filtering by address
+    let tracer = TraceFilter {
+        from_block: Some(provider.get_block_number().await.unwrap()),
+        to_block: None,
+        from_address: vec![from_two],
+        to_address: vec![to_two],
+        mode: TraceFilterMode::Intersection,
+        after: None,
+        count: None,
+    };
+
+    for i in 0..=5 {
+        let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+
+        let tx = TransactionRequest::default().to(to_two).value(U256::from(i)).from(from_two);
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    let traces = api.trace_filter(tracer).await.unwrap();
+    assert_eq!(traces.len(), 5);
+
+    // Test for the following actions:
+    // Create (deploy the contract)
+    // Call (goodbye function)
+    // SelfDestruct (side-effect of goodbye)
+    let contract_addr =
+        SuicideContract::deploy_builder(provider.clone()).from(from).deploy().await.unwrap();
+    let contract = SuicideContract::new(contract_addr, provider.clone());
+
+    // Test TraceActions
+    let tracer = TraceFilter {
+        from_block: Some(provider.get_block_number().await.unwrap()),
+        to_block: None,
+        from_address: vec![from, contract_addr],
+        to_address: vec![], // Leave as 0 address
+        mode: TraceFilterMode::Union,
+        after: None,
+        count: None,
+    };
+
+    // Execute call
+    let call = contract.goodbye().from(from);
+    let call = call.send().await.unwrap();
+    call.get_receipt().await.unwrap();
+
+    // Mine transactions to filter against
+    for i in 0..=5 {
+        let tx = TransactionRequest::default().to(to_two).value(U256::from(i)).from(from_two);
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    let traces = api.trace_filter(tracer).await.unwrap();
+    assert_eq!(traces.len(), 8);
+
+    // Test Range Error
+    let latest = provider.get_block_number().await.unwrap();
+    let tracer = TraceFilter {
+        from_block: Some(latest),
+        to_block: Some(latest + 301),
+        from_address: vec![],
+        to_address: vec![],
+        mode: TraceFilterMode::Union,
+        after: None,
+        count: None,
+    };
+
+    let traces = api.trace_filter(tracer).await;
+    assert!(traces.is_err());
+
+    // Test invalid block range
+    let latest = provider.get_block_number().await.unwrap();
+    let tracer = TraceFilter {
+        from_block: Some(latest + 10),
+        to_block: Some(latest),
+        from_address: vec![],
+        to_address: vec![],
+        mode: TraceFilterMode::Union,
+        after: None,
+        count: None,
+    };
+
+    let traces = api.trace_filter(tracer).await;
+    assert!(traces.is_err());
+
+    // Test after and count
+    let tracer = TraceFilter {
+        from_block: Some(provider.get_block_number().await.unwrap()),
+        to_block: None,
+        from_address: vec![],
+        to_address: vec![],
+        mode: TraceFilterMode::Union,
+        after: Some(3),
+        count: Some(5),
+    };
+
+    for i in 0..=10 {
+        let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    let traces = api.trace_filter(tracer).await.unwrap();
+    assert_eq!(traces.len(), 5);
 }

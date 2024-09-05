@@ -13,6 +13,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
+use futures::join;
 use std::{collections::HashMap, time::Duration};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -162,6 +163,39 @@ async fn can_get_pending_block() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_estimate_gas_with_undersized_max_fee_per_gas() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumWallet = wallet.clone().into();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    api.anvil_set_auto_mine(true).await.unwrap();
+
+    let init_value = "toto".to_string();
+
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, init_value.clone()).await.unwrap();
+
+    let undersized_max_fee_per_gas = 1_u128;
+
+    let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let latest_block_base_fee_per_gas = latest_block.header.base_fee_per_gas.unwrap();
+
+    assert!(undersized_max_fee_per_gas < latest_block_base_fee_per_gas);
+
+    let estimated_gas = simple_storage_contract
+        .setValue("new_value".to_string())
+        .max_fee_per_gas(undersized_max_fee_per_gas)
+        .from(wallet.address())
+        .estimate_gas()
+        .await
+        .unwrap();
+
+    assert!(estimated_gas > 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_call_on_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
@@ -240,6 +274,38 @@ async fn can_call_on_pending_block() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_call_with_undersized_max_fee_per_gas() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumWallet = wallet.clone().into();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    api.anvil_set_auto_mine(true).await.unwrap();
+
+    let init_value = "toto".to_string();
+
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, init_value.clone()).await.unwrap();
+
+    let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let latest_block_base_fee_per_gas = latest_block.header.base_fee_per_gas.unwrap();
+    let undersized_max_fee_per_gas = 1_u128;
+
+    assert!(undersized_max_fee_per_gas < latest_block_base_fee_per_gas);
+
+    let last_sender = simple_storage_contract
+        .lastSender()
+        .max_fee_per_gas(undersized_max_fee_per_gas)
+        .from(wallet.address())
+        .call()
+        .await
+        .unwrap()
+        ._0;
+    assert_eq!(last_sender, Address::ZERO);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_call_with_state_override() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -309,4 +375,45 @@ async fn can_call_with_state_override() {
     let value = simple_storage_contract.getValue().state(overrides).call().await.unwrap()._0;
     // `value` *is* changed with state
     assert_eq!(value, "");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_mine_while_mining() {
+    let (api, _) = spawn(NodeConfig::test()).await;
+
+    let total_blocks = 200;
+
+    let block_number = api
+        .block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .number
+        .unwrap();
+    assert_eq!(block_number, 0);
+
+    let block = api.block_by_number(BlockNumberOrTag::Number(block_number)).await.unwrap().unwrap();
+    assert_eq!(block.header.number.unwrap(), 0);
+
+    let result = join!(
+        api.anvil_mine(Some(U256::from(total_blocks / 2)), None),
+        api.anvil_mine(Some(U256::from(total_blocks / 2)), None)
+    );
+    result.0.unwrap();
+    result.1.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let block_number = api
+        .block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .number
+        .unwrap();
+    assert_eq!(block_number, total_blocks);
+
+    let block = api.block_by_number(BlockNumberOrTag::Number(block_number)).await.unwrap().unwrap();
+    assert_eq!(block.header.number.unwrap(), total_blocks);
 }

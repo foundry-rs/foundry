@@ -1,14 +1,14 @@
+use super::{runner::ScriptRunner, JsonResult, NestedValue, ScriptResult};
 use crate::{
     build::{CompiledState, LinkedBuildData},
     simulate::PreSimulationState,
     ScriptArgs, ScriptConfig,
 };
-
-use super::{runner::ScriptRunner, JsonResult, NestedValue, ScriptResult};
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::Provider;
+use alloy_rpc_types::TransactionInput;
 use async_recursion::async_recursion;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
@@ -189,8 +189,8 @@ impl PreExecutionState {
                 self.args.evm_opts.sender.is_none()
             {
                 for tx in txs.iter() {
-                    if tx.transaction.to.is_none() {
-                        let sender = tx.transaction.from.expect("no sender");
+                    if tx.transaction.to().is_none() {
+                        let sender = tx.transaction.from().expect("no sender");
                         if let Some(ns) = new_sender {
                             if sender != ns {
                                 shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
@@ -285,7 +285,16 @@ impl ExecutedState {
 
         let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
 
-        let txs = self.execution_result.transactions.clone().unwrap_or_default();
+        let mut txs = self.execution_result.transactions.clone().unwrap_or_default();
+
+        // Ensure that unsigned transactions have both `data` and `input` populated to avoid
+        // issues with eth_estimateGas and eth_sendTransaction requests.
+        for tx in &mut txs {
+            if let Some(req) = tx.transaction.as_unsigned_mut() {
+                req.input =
+                    TransactionInput::maybe_both(std::mem::take(&mut req.input).into_input());
+            }
+        }
         let rpc_data = RpcData::from_transactions(&txs);
 
         if rpc_data.is_multi_chain() {
@@ -331,14 +340,6 @@ impl ExecutedState {
             &self.script_config.config,
             self.script_config.evm_opts.get_remote_chain_id().await,
         )?;
-
-        // Decoding traces using etherscan is costly as we run into rate limits,
-        // causing scripts to run for a very long time unnecessarily.
-        // Therefore, we only try and use etherscan if the user has provided an API key.
-        let should_use_etherscan_traces = self.script_config.config.etherscan_api_key.is_some();
-        if !should_use_etherscan_traces {
-            identifier.etherscan = None;
-        }
 
         for (_, trace) in &self.execution_result.traces {
             decoder.identify(trace, &mut identifier);
@@ -390,14 +391,13 @@ impl PreSimulationState {
     pub fn show_json(&self) -> Result<()> {
         let result = &self.execution_result;
 
-        let console_logs = decode_console_logs(&result.logs);
-        let output = JsonResult {
-            logs: console_logs,
-            gas_used: result.gas_used,
-            returns: self.execution_artifacts.returns.clone(),
+        let json_result = JsonResult {
+            logs: decode_console_logs(&result.logs),
+            returns: &self.execution_artifacts.returns,
+            result,
         };
-        let j = serde_json::to_string(&output)?;
-        shell::println(j)?;
+        let json = serde_json::to_string(&json_result)?;
+        shell::println(json)?;
 
         if !self.execution_result.success {
             return Err(eyre::eyre!(

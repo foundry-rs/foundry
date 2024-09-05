@@ -1,23 +1,16 @@
 //! Implementations of [`Testing`](spec::Group::Testing) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Error, Result, Vm::*};
+use chrono::DateTime;
+use std::env;
+
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::Address;
 use alloy_sol_types::SolValue;
-use foundry_evm_core::constants::{MAGIC_ASSUME, MAGIC_SKIP};
+use foundry_evm_core::constants::MAGIC_SKIP;
 
 pub(crate) mod assert;
+pub(crate) mod assume;
 pub(crate) mod expect;
-
-impl Cheatcode for assumeCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { condition } = self;
-        if *condition {
-            Ok(Default::default())
-        } else {
-            Err(Error::from(MAGIC_ASSUME))
-        }
-    }
-}
 
 impl Cheatcode for breakpoint_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
@@ -30,6 +23,20 @@ impl Cheatcode for breakpoint_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { char, value } = self;
         breakpoint(ccx.state, &ccx.caller, char, *value)
+    }
+}
+
+impl Cheatcode for getFoundryVersionCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        let cargo_version = env!("CARGO_PKG_VERSION");
+        let git_sha = env!("VERGEN_GIT_SHA");
+        let build_timestamp = DateTime::parse_from_rfc3339(env!("VERGEN_BUILD_TIMESTAMP"))
+            .expect("Invalid build timestamp format")
+            .format("%Y%m%d%H%M")
+            .to_string();
+        let foundry_version = format!("{cargo_version}+{git_sha}+{build_timestamp}");
+        Ok(foundry_version.abi_encode())
     }
 }
 

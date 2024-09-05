@@ -1,6 +1,6 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge::{
     decode::decode_console_logs,
@@ -32,6 +32,7 @@ use foundry_config::{
         value::{Dict, Map},
         Metadata, Profile, Provider,
     },
+    filter::GlobMatcher,
     get_available_profiles, Config,
 };
 use foundry_debugger::Debugger;
@@ -58,6 +59,10 @@ foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 #[derive(Clone, Debug, Parser)]
 #[command(next_help_heading = "Test options")]
 pub struct TestArgs {
+    /// The contract file you want to test, it's a shortcut for --match-path.
+    #[arg(value_hint = ValueHint::FilePath)]
+    pub path: Option<GlobMatcher>,
+
     /// Run a test in the debugger.
     ///
     /// The argument passed to this flag is the name of the test function you want to run, and it
@@ -336,6 +341,7 @@ impl TestArgs {
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_test_options(test_options)
             .enable_isolation(evm_opts.isolate)
+            .alphanet(evm_opts.alphanet)
             .build(project_root, &output, env, evm_opts)?;
 
         let mut maybe_override_mt = |flag, maybe_regex: Option<&Regex>| {
@@ -559,9 +565,7 @@ impl TestArgs {
                 }
 
                 if let Some(gas_report) = &mut gas_report {
-                    gas_report
-                        .analyze(result.traces.iter().map(|(_, arena)| arena), &decoder)
-                        .await;
+                    gas_report.analyze(result.traces.iter().map(|(_, a)| &a.arena), &decoder).await;
 
                     for trace in result.gas_report_traces.iter() {
                         decoder.clear_addresses();
@@ -634,6 +638,13 @@ impl TestArgs {
         let mut filter = self.filter.clone();
         if self.rerun {
             filter.test_pattern = last_run_failures(config);
+        }
+        if filter.path_pattern.is_some() {
+            if self.path.is_some() {
+                panic!("Can not supply both --match-path and |path|");
+            }
+        } else {
+            filter.path_pattern = self.path.clone();
         }
         filter.merge_with_config(config)
     }

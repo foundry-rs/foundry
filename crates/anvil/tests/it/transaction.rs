@@ -10,7 +10,7 @@ use alloy_rpc_types::{
     AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockTransactions, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
-use anvil::{spawn, Hardfork, NodeConfig};
+use anvil::{spawn, EthereumHardfork, NodeConfig};
 use eyre::Ok;
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, str::FromStr, time::Duration};
@@ -1176,7 +1176,8 @@ async fn can_call_with_high_gas_limit() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reject_eip1559_pre_london() {
-    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
     let provider = handle.http_provider();
 
     let gas_limit = api.gas_limit().to::<u128>();
@@ -1233,6 +1234,6 @@ async fn can_mine_multiple_in_block() {
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    let txs = block.transactions.hashes().copied().collect::<Vec<_>>();
+    let txs = block.transactions.hashes().collect::<Vec<_>>();
     assert_eq!(txs, vec![first, second]);
 }

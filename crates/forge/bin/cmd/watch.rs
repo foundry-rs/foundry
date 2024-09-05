@@ -1,4 +1,4 @@
-use super::{build::BuildArgs, snapshot::SnapshotArgs, test::TestArgs};
+use super::{build::BuildArgs, doc::DocArgs, snapshot::SnapshotArgs, test::TestArgs};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::utils::{self, FoundryPathExt};
@@ -260,7 +260,7 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     let config: Config = args.build_args().into();
     let filter = args.filter(&config);
     // Marker to check whether to override the command.
-    let _no_reconfigure = filter.args().test_pattern.is_some() ||
+    let no_reconfigure = filter.args().test_pattern.is_some() ||
         filter.args().path_pattern.is_some() ||
         filter.args().contract_pattern.is_some() ||
         args.watch.run_all;
@@ -303,9 +303,21 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
 
             trace!(?file, "reconfigure test command");
 
-            command.arg("--match-path").arg(&file);
+            // Before appending `--match-path`, check if it already exists
+            if !no_reconfigure {
+                command.arg("--match-path").arg(file);
+            }
         },
     )?;
+    run(config).await?;
+
+    Ok(())
+}
+
+/// Executes a [`Watchexec`] that listens for changes in the project's sources directory
+pub async fn watch_doc(args: DocArgs) -> Result<()> {
+    let src_path = args.config()?.src;
+    let config = args.watch.watchexec_config(|| [src_path])?;
     run(config).await?;
 
     Ok(())

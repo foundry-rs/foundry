@@ -9,7 +9,10 @@ use crate::{
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::Event;
 use alloy_primitives::{address, b256, Address, U256};
-use forge::{decode::decode_console_logs, result::TestStatus};
+use forge::{
+    decode::decode_console_logs,
+    result::{TestKind, TestStatus},
+};
 use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_evm::{
     constants::HARDHAT_CONSOLE_ADDRESS,
@@ -261,7 +264,7 @@ test_repro!(6501, false, None, |res| {
     );
 
     let (kind, traces) = test.traces.last().unwrap().clone();
-    let nodes = traces.into_nodes();
+    let nodes = traces.arena.into_nodes();
     assert_eq!(kind, TraceKind::Execution);
 
     let test_call = nodes.first().unwrap();
@@ -358,3 +361,20 @@ test_repro!(8277);
 
 // https://github.com/foundry-rs/foundry/issues/8287
 test_repro!(8287);
+
+// https://github.com/foundry-rs/foundry/issues/8168
+test_repro!(8168);
+
+// https://github.com/foundry-rs/foundry/issues/8383
+test_repro!(8383, false, None, |res| {
+    let mut res = res.remove("default/repros/Issue8383.t.sol:Issue8383Test").unwrap();
+    let test = res.test_results.remove("testP256VerifyOutOfBounds()").unwrap();
+    assert_eq!(test.status, TestStatus::Success);
+    match test.kind {
+        TestKind::Unit { gas } => assert_eq!(gas, 3103),
+        _ => panic!("not a unit test kind"),
+    }
+});
+
+// https://github.com/foundry-rs/foundry/issues/1543
+test_repro!(1543);

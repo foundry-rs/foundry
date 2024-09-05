@@ -490,6 +490,10 @@ pub enum CastSubcommand {
 
         /// The ABI-encoded calldata.
         calldata: String,
+
+        /// Print the decoded calldata as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
     },
 
     /// Decode ABI-encoded input or output data.
@@ -508,6 +512,10 @@ pub enum CastSubcommand {
         /// Whether to decode the input or output data.
         #[arg(long, short, help_heading = "Decode input data instead of output data")]
         input: bool,
+
+        /// Print the decoded calldata as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
     },
 
     /// ABI encode the given function argument, excluding the selector.
@@ -594,6 +602,10 @@ pub enum CastSubcommand {
     FourByteDecode {
         /// The ABI-encoded calldata.
         calldata: Option<String>,
+
+        /// Print the decoded calldata as JSON.
+        #[arg(long, short, help_heading = "Display options")]
+        json: bool,
     },
 
     /// Get the event signature for a given topic 0 from https://openchain.xyz.
@@ -740,6 +752,13 @@ pub enum CastSubcommand {
     Keccak {
         /// The data to hash.
         data: Option<String>,
+    },
+
+    /// Hash a message according to EIP-191.
+    #[command(visible_aliases = &["--hash-message", "hm"])]
+    HashMessage {
+        /// The message to hash.
+        message: Option<String>,
     },
 
     /// Perform an ENS lookup.
@@ -905,7 +924,7 @@ pub enum CastSubcommand {
     },
 
     /// Decodes a raw signed EIP 2718 typed transaction
-    #[command(visible_alias = "dt")]
+    #[command(visible_aliases = &["dt", "decode-tx"])]
     DecodeTransaction { tx: Option<String> },
 
     /// Extracts function selectors and arguments from bytecode
@@ -918,6 +937,10 @@ pub enum CastSubcommand {
         #[arg(long, short)]
         resolve: bool,
     },
+
+    /// Decodes EOF container bytes
+    #[command()]
+    DecodeEof { eof: Option<String> },
 }
 
 /// CLI arguments for `cast --to-base`.

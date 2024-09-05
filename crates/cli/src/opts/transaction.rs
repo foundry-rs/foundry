@@ -10,7 +10,10 @@ pub struct TransactionOpts {
     #[arg(long, env = "ETH_GAS_LIMIT")]
     pub gas_limit: Option<U256>,
 
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
+    /// specified in wei, or as a string with a unit type.
+    ///
+    /// Examples: 1ether, 10gwei, 0.01ether
     #[arg(
         long,
         env = "ETH_GAS_PRICE",
@@ -53,6 +56,12 @@ pub struct TransactionOpts {
     /// Gas price for EIP-4844 blob transaction.
     #[arg(long, conflicts_with = "legacy", value_parser = parse_ether_value, env = "ETH_BLOB_GAS_PRICE", value_name = "BLOB_PRICE")]
     pub blob_gas_price: Option<U256>,
+
+    /// EIP-7702 authorization list.
+    ///
+    /// Can be either a hex-encoded signed authorization or an address.
+    #[arg(long, conflicts_with_all = &["legacy", "blob"])]
+    pub auth: Option<String>,
 }
 
 #[cfg(test)]

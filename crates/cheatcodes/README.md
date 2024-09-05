@@ -27,7 +27,7 @@ the Foundry cheatcodes externally.
 
 For example, here are some tools that make use of the JSON interface:
 - Internally, this is used to generate [a simple Solidity interface](../../testdata/cheats/Vm.sol) for testing
-- (WIP) Used by [`forge-std`](https://github.com/foundry-rs/forge-std) to generate [user-friendly Solidity interfaces](https://github.com/foundry-rs/forge-std/blob/master/src/Vm.sol)
+- Used by [`forge-std`](https://github.com/foundry-rs/forge-std) to generate [user-friendly Solidity interfaces](https://github.com/foundry-rs/forge-std/blob/master/src/Vm.sol)
 - (WIP) Used by [the Foundry book](https://github.com/foundry-rs/book) to generate [the cheatcodes reference](https://book.getfoundry.sh/cheatcodes)
 - ...
 

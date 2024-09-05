@@ -153,11 +153,13 @@ pub enum SingleLineBlockStyle {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MultilineFuncHeaderStyle {
-    /// Write function parameters multiline first
+    /// Write function parameters multiline first.
     ParamsFirst,
-    /// Write function attributes multiline first
+    /// Write function parameters multiline first when there is more than one param.
+    ParamsFirstMulti,
+    /// Write function attributes multiline first.
     AttributesFirst,
-    /// If function params or attrs are multiline
+    /// If function params or attrs are multiline.
     /// split the rest
     All,
 }

@@ -86,11 +86,7 @@ jobs:
           cache-on-failure: true
       - name: forge fmt
         shell: bash
-        # We have to ignore at shell level because testdata/ is not a valid Foundry project,
-        # so running `forge fmt` with `--root testdata` won't actually check anything
-        run: |
-          shopt -s extglob
-          cargo run --bin forge -- fmt --check $(find testdata -name '*.sol' ! -name Vm.sol)
+        run: ./.github/scripts/format.sh --check
 
   crate-checks:
     runs-on: ubuntu-latest

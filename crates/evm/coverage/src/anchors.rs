@@ -24,27 +24,34 @@ pub fn find_anchors(
             }
 
             let item = &items[item_id];
+            let find_anchor_by_first_opcode = |item: &CoverageItem| match find_anchor_simple(
+                source_map, ic_pc_map, item_id, &item.loc,
+            ) {
+                Ok(anchor) => Some(anchor),
+                Err(e) => {
+                    warn!("Could not find anchor for item {item}: {e}");
+                    None
+                }
+            };
             match item.kind {
-                CoverageItemKind::Branch { path_id, .. } => {
-                    match find_anchor_branch(bytecode, source_map, item_id, &item.loc) {
-                        Ok(anchors) => match path_id {
-                            0 => Some(anchors.0),
-                            1 => Some(anchors.1),
-                            _ => panic!("Too many paths for branch"),
-                        },
-                        Err(e) => {
-                            warn!("Could not find anchor for item {item}: {e}");
-                            None
+                CoverageItemKind::Branch { path_id, is_first_opcode, .. } => {
+                    if is_first_opcode {
+                        find_anchor_by_first_opcode(item)
+                    } else {
+                        match find_anchor_branch(bytecode, source_map, item_id, &item.loc) {
+                            Ok(anchors) => match path_id {
+                                0 => Some(anchors.0),
+                                1 => Some(anchors.1),
+                                _ => panic!("Too many paths for branch"),
+                            },
+                            Err(e) => {
+                                warn!("Could not find anchor for item {item}: {e}");
+                                None
+                            }
                         }
                     }
                 }
-                _ => match find_anchor_simple(source_map, ic_pc_map, item_id, &item.loc) {
-                    Ok(anchor) => Some(anchor),
-                    Err(e) => {
-                        warn!("Could not find anchor for item {item}: {e}");
-                        None
-                    }
-                },
+                _ => find_anchor_by_first_opcode(item),
             }
         })
         .collect()
@@ -149,7 +156,7 @@ pub fn find_anchor_branch(
                     ItemAnchor {
                         item_id,
                         // The first branch is the opcode directly after JUMPI
-                        instruction: pc + 1,
+                        instruction: pc + 2,
                     },
                     ItemAnchor { item_id, instruction: pc_jump },
                 ));

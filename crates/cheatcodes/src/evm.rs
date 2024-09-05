@@ -1,8 +1,12 @@
 //! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
+use crate::{
+    BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*,
+};
+use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
@@ -61,7 +65,7 @@ pub struct DealRecord {
 impl Cheatcode for addrCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
-        let wallet = super::utils::parse_wallet(privateKey)?;
+        let wallet = super::crypto::parse_wallet(privateKey)?;
         Ok(wallet.address().abi_encode())
     }
 }
@@ -73,12 +77,19 @@ impl Cheatcode for getNonce_0Call {
     }
 }
 
+impl Cheatcode for getNonce_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { wallet } = self;
+        get_nonce(ccx, &wallet.addr)
+    }
+}
+
 impl Cheatcode for loadCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { target, slot } = *self;
         ensure_not_precompile!(&target, ccx);
         ccx.ecx.load_account(target)?;
-        let (val, _) = ccx.ecx.sload(target, slot.into())?;
+        let val = ccx.ecx.sload(target, slot.into())?;
         Ok(val.abi_encode())
     }
 }
@@ -155,34 +166,6 @@ impl Cheatcode for dumpStateCall {
     }
 }
 
-impl Cheatcode for sign_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
-        let Self { privateKey, digest } = self;
-        super::utils::sign(privateKey, digest)
-    }
-}
-
-impl Cheatcode for sign_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { digest } = self;
-        super::utils::sign_with_wallet(ccx, None, digest)
-    }
-}
-
-impl Cheatcode for sign_2Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { signer, digest } = self;
-        super::utils::sign_with_wallet(ccx, Some(*signer), digest)
-    }
-}
-
-impl Cheatcode for signP256Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { privateKey, digest } = self;
-        super::utils::sign_p256(privateKey, digest, ccx.state)
-    }
-}
-
 impl Cheatcode for recordCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
@@ -226,9 +209,7 @@ impl Cheatcode for getRecordedLogsCall {
 impl Cheatcode for pauseGasMeteringCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        if state.gas_metering.is_none() {
-            state.gas_metering = Some(None);
-        }
+        state.gas_metering.paused = true;
         Ok(Default::default())
     }
 }
@@ -236,7 +217,15 @@ impl Cheatcode for pauseGasMeteringCall {
 impl Cheatcode for resumeGasMeteringCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        state.gas_metering = None;
+        state.gas_metering.resume();
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for resetGasMeteringCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        state.gas_metering.reset();
         Ok(Default::default())
     }
 }
@@ -244,13 +233,10 @@ impl Cheatcode for resumeGasMeteringCall {
 impl Cheatcode for lastCallGasCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        ensure!(state.last_call_gas.is_some(), "`lastCallGas` is only available after a call");
-        Ok(state
-            .last_call_gas
-            .as_ref()
-            // This should never happen, as we ensure `last_call_gas` is `Some` above.
-            .expect("`lastCallGas` is only available after a call")
-            .abi_encode())
+        let Some(last_call_gas) = &state.gas_metering.last_call_gas else {
+            bail!("no external call was made yet");
+        };
+        Ok(last_call_gas.abi_encode())
     }
 }
 
@@ -323,7 +309,7 @@ impl Cheatcode for blobhashesCall {
         let Self { hashes } = self;
         ensure!(
             ccx.ecx.spec_id() >= SpecId::CANCUN,
-            "`blobhash` is not supported before the Cancun hard fork; \
+            "`blobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
         ccx.ecx.env.tx.blob_hashes.clone_from(hashes);
@@ -336,7 +322,7 @@ impl Cheatcode for getBlobhashesCall {
         let Self {} = self;
         ensure!(
             ccx.ecx.spec_id() >= SpecId::CANCUN,
-            "`blobhash` is not supported before the Cancun hard fork; \
+            "`getBlobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
         Ok(ccx.ecx.env.tx.blob_hashes.clone().abi_encode())
@@ -567,6 +553,34 @@ impl Cheatcode for stopAndReturnStateDiffCall {
     }
 }
 
+impl Cheatcode for broadcastRawTransactionCall {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
+        let mut data = self.data.as_ref();
+        let tx = TxEnvelope::decode(&mut data)
+            .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
+
+        ccx.ecx.db.transact_from_tx(
+            tx.clone().into(),
+            &ccx.ecx.env,
+            &mut ccx.ecx.journaled_state,
+            &mut executor.get_inspector(ccx.state),
+        )?;
+
+        if ccx.state.broadcast.is_some() {
+            ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
+                rpc: ccx.db.active_fork_url(),
+                transaction: tx.try_into()?,
+            });
+        }
+
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for setBlockhashCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { blockNumber, blockHash } = *self;
@@ -582,7 +596,7 @@ impl Cheatcode for setBlockhashCall {
 }
 
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
-    let (account, _) = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
+    let account = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
     Ok(account.info.nonce.abi_encode())
 }
 

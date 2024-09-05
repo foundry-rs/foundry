@@ -1,9 +1,0 @@
-Compiling 2 files with 0.8.23
-Solc 0.8.23 finished in 185.25ms
-Compiler run successful!
-
-Ran 1 test for src/nested/forge-tests/MyTest.t.sol:MyTest
-[PASS] testTrue() (gas: 168)
-Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 2.93ms
-
-Ran 1 test suite: 1 tests passed, 0 failed, 0 skipped (1 total tests)
