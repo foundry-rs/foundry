@@ -24,12 +24,12 @@ use std::{
 mod builder;
 pub use builder::DebuggerBuilder;
 
-pub mod context;
+mod context;
 use context::DebuggerContext;
 
 use crate::DebugNode;
 
-pub mod draw;
+mod draw;
 
 type DebuggerTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 

@@ -1,7 +1,8 @@
 //! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
 use crate::{
-    inspector::RecordDebugStepInfo, BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result, Vm::*
+    inspector::RecordDebugStepInfo, BroadcastableTransaction, Cheatcode, Cheatcodes,
+    CheatcodesExecutor, CheatsCtxt, Error, Result, Vm::*,
 };
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
@@ -711,9 +712,8 @@ impl Cheatcode for stopDebugTraceRecordingCall {
 impl Cheatcode for getDebugTraceByIndexCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { index } = self;
-        let idx: usize = index.try_into().map_err(
-            |_| format!("index ({}) cannot convert to usize", index)
-        )?;
+        let idx: usize =
+            index.try_into().map_err(|_| format!("index [{index}] cannot convert to usize"))?;
 
         if let Some(debug_steps) = state.recorded_debug_steps.as_ref() {
             if let Some(debug_step) = debug_steps.get(idx) {
