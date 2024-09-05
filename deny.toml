@@ -96,5 +96,4 @@ allow-git = [
     "https://github.com/alloy-rs/alloy",
     "https://github.com/paradigmxyz/revm-inspectors",
     "https://github.com/bluealloy/revm",
-    "https://github.com/cdump/evmole",
 ]

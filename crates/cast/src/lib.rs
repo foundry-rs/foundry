@@ -1981,7 +1981,7 @@ impl SimpleCast {
                 (
                     hex::encode_prefixed(s),
                     evmole::function_arguments(&code, &s, 0),
-                    evmole::function_state_mutability(&code, &s, 0),
+                    evmole::function_state_mutability(&code, &s, 0).as_json_str(),
                 )
             })
             .collect())

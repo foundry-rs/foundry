@@ -3129,8 +3129,9 @@ dependencies = [
 
 [[package]]
 name = "evmole"
-version = "0.4.1"
-source = "git+https://github.com/cdump/evmole?rev=2e88cd6#2e88cd6c0610ab8c87478ba8d4b417a00a83ed01"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2dc8472e812ff8f53a76946fa70b1cc4bf75c78755beb09df4d1376764769c7d"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -9715,3 +9716,8 @@ dependencies = [
  "once_cell",
  "simd-adler32",
 ]
+
+[[patch.unused]]
+name = "evmole"
+version = "0.4.1"
+source = "git+https://github.com/cdump/evmole?rev=2e88cd6#2e88cd6c0610ab8c87478ba8d4b417a00a83ed01"

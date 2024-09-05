@@ -79,7 +79,7 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "signal"] }
 tracing.workspace = true
 yansi.workspace = true
-evmole = "0.4.1"
+evmole.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }
