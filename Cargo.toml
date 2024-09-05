@@ -207,6 +207,9 @@ alloy-chains = "0.1"
 alloy-rlp = "0.3"
 alloy-trie = "0.5.0"
 
+## op-alloy for tests in anvil
+op-alloy-rpc-types = "0.2.8"
+
 ## misc
 async-trait = "0.1"
 auto_impl = "1"
@@ -293,4 +296,4 @@ alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "0cb54b5
 # https://github.com/alloy-rs/core/issues/717
 alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core", rev = "6bd4aed" }
 # https://github.com/cdump/evmole/pull/11
-evmole = { git = "https://github.com/danipopes/evmole", branch = "bump-alloy" }
+evmole = { git = "https://github.com/cdump/evmole", rev = "2e88cd6" }

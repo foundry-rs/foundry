@@ -3130,7 +3130,7 @@ dependencies = [
 [[package]]
 name = "evmole"
 version = "0.4.1"
-source = "git+https://github.com/danipopes/evmole?branch=bump-alloy#2e88cd6c0610ab8c87478ba8d4b417a00a83ed01"
+source = "git+https://github.com/cdump/evmole?rev=2e88cd6#2e88cd6c0610ab8c87478ba8d4b417a00a83ed01"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
