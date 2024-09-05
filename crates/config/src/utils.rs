@@ -26,6 +26,7 @@ pub fn load_config() -> Config {
 /// # Panics
 ///
 /// Panics if the project root cannot be found. See [`find_project_root`].
+#[track_caller]
 pub fn load_config_with_root(root: Option<&Path>) -> Config {
     let root = match root {
         Some(root) => root,
@@ -57,7 +58,7 @@ pub fn find_git_root(relative_to: &Path) -> io::Result<Option<PathBuf>> {
 ///
 /// will still detect `repo` as root.
 ///
-/// Returns `cwd` if no `foundry.toml` is found in the tree.
+/// Returns `cwd` bounded to `repo` if no `foundry.toml` is found in the tree.
 ///
 /// # Panics
 ///
@@ -84,7 +85,7 @@ pub fn try_find_project_root(cwd: Option<&Path>) -> io::Result<PathBuf> {
         .take_while(|p| if let Some(boundary) = &boundary { p.starts_with(boundary) } else { true })
         .find(|p| p.join(Config::FILE_NAME).is_file())
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| cwd.to_path_buf()))
+        .unwrap_or_else(|| boundary.unwrap_or_else(|| cwd.to_path_buf())))
 }
 
 /// Returns all [`Remapping`]s contained in the `remappings` str separated by newlines
@@ -162,7 +163,7 @@ pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_dir())
-        .filter_map(|e| foundry_compilers::utils::canonicalize(e.path()).ok())
+        .filter_map(|e| dunce::canonicalize(e.path()).ok())
         .filter(|p| p.join(Config::FILE_NAME).exists())
         .collect()
 }
