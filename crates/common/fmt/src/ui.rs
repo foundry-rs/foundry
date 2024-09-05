@@ -267,7 +267,7 @@ transactionIndex: {}",
     }
 }
 
-impl UIfmt for Block {
+impl<T: UIfmt> UIfmt for Block<T> {
     fn pretty(&self) -> String {
         format!(
             "
@@ -518,6 +518,19 @@ value                {}",
     }
 }
 
+impl<T: UIfmt> UIfmt for WithOtherFields<T> {
+    fn pretty(&self) -> String {
+        format!(
+            "
+{},
+{}
+            ",
+            self.inner.pretty(),
+            self.other.pretty()
+        )
+    }
+}
+
 /// Various numerical ethereum types used for pretty printing
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
@@ -604,7 +617,7 @@ pub fn get_pretty_block_attr(
     }
 }
 
-fn pretty_block_basics(block: &Block) -> String {
+fn pretty_block_basics<T>(block: &Block<T>) -> String {
     format!(
         "
 baseFeePerGas        {}
@@ -1050,7 +1063,8 @@ value                0".to_string();
           }
         );
 
-        let block: Block = serde_json::from_value(json).unwrap();
+        let block: WithOtherFields<Block<WithOtherFields<Transaction>>> =
+            serde_json::from_value(json).unwrap();
 
         // let block: WithOtherFields<Block> = WithOtherFields::new(block);
 
