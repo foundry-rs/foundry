@@ -1125,6 +1125,13 @@ impl Backend {
         }).await?
     }
 
+    /// ## EVM settings
+    ///
+    /// This modifies certain EVM settings to mirror geth's `SkipAccountChecks` when transacting requests, see also: <https://github.com/ethereum/go-ethereum/blob/380688c636a654becc8f114438c2a5d93d2db032/core/state_transition.go#L145-L148>:
+    ///
+    ///  - `disable_eip3607` is set to `true`
+    ///  - `disable_base_fee` is set to `true`
+    ///  - `nonce` is set to `None`
     fn build_call_env(
         &self,
         request: WithOtherFields<TransactionRequest>,
@@ -1139,10 +1146,11 @@ impl Backend {
                     gas,
                     value,
                     input,
-                    nonce,
                     access_list,
                     blob_versioned_hashes,
                     authorization_list,
+                    // nonce is always ignored for calls
+                    nonce: _,
                     sidecar: _,
                     chain_id: _,
                     transaction_type: _,
@@ -1190,7 +1198,8 @@ impl Backend {
             value: value.unwrap_or_default(),
             data: input.into_input().unwrap_or_default(),
             chain_id: None,
-            nonce,
+            // set nonce to None so that the correct nonce is chosen by the EVM
+            nonce: None,
             access_list: access_list.unwrap_or_default().into(),
             blob_hashes: blob_versioned_hashes.unwrap_or_default(),
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
