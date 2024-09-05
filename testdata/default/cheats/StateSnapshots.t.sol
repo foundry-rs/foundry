@@ -104,6 +104,7 @@ contract StateSnapshotTest is DSTest {
     }
 }
 
+// TODO: remove this test suite once `snapshot*` has been deprecated in favor of `snapshotState*`.
 contract DeprecatedStateSnapshotTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 

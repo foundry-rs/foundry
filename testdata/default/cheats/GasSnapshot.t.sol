@@ -53,6 +53,19 @@ contract GasSnapshotTest is DSTest {
         vm.snapshotValue("CustomGroup", "e", e);
     }
 
+    // Writes to `GasSnapshotTest` group with `testSnapshotGasDefault` name.
+    function testSnapshotGasSectionDefaultStop() public {
+        Flare f = new Flare();
+
+        vm.startSnapshotGas("testSnapshotGasSectionDefault");
+
+        f.run(256);
+
+        // vm.stopSnapshotGas() will use the last snapshot name.
+        uint256 gasUsed = vm.stopSnapshotGas();
+        assertGt(gasUsed, 0);
+    }
+
     // Writes to `GasSnapshotTest` group with `testSnapshotGasSection` name.
     function testSnapshotGasSectionName() public {
         Flare f = new Flare();

@@ -227,6 +227,9 @@ pub struct GasMetering {
     /// Stores frames paused gas.
     pub paused_frames: Vec<Gas>,
 
+    /// The name of the last snapshot taken.
+    pub last_snapshot_name: Option<String>,
+
     /// Cache of the amount of gas used in previous call.
     /// This is used by the `lastCallGas` cheatcode.
     pub last_call_gas: Option<crate::Vm::Gas>,

@@ -424,6 +424,7 @@ interface Vm {
     function stopExpectSafeMemory() external;
     function stopMappingRecording() external;
     function stopPrank() external;
+    function stopSnapshotGas() external returns (uint256 gasUsed);
     function stopSnapshotGas(string calldata name) external returns (uint256 gasUsed);
     function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
     function store(address target, bytes32 slot, bytes32 value) external;

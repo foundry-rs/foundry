@@ -519,12 +519,22 @@ impl Cheatcode for startSnapshotGas_1Call {
 
 impl Cheatcode for stopSnapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { name } = self;
+        let Self {} = self;
+        let Some(name) = &ccx.state.gas_metering.last_snapshot_name else {
+            bail!("no gas snapshot was started yet");
+        };
         inner_stop_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
 impl Cheatcode for stopSnapshotGas_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name } = self;
+        inner_stop_gas_snapshot(ccx, None, Some(name.clone()))
+    }
+}
+
+impl Cheatcode for stopSnapshotGas_2Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name } = self;
         inner_stop_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
@@ -564,6 +574,7 @@ impl Cheatcode for snapshotGas_1Call {
 // Deprecated in favor of `snapshotStateCall`
 impl Cheatcode for snapshotCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
         inner_snapshot_state(ccx)
     }
 }
@@ -789,9 +800,11 @@ fn inner_start_gas_snapshot<DB: DatabaseExt>(
 
     ccx.state.gas_metering.gas_records.push(GasRecord {
         group: group.to_string(),
-        name,
+        name: name.clone(),
         gas_used: 0,
     });
+
+    ccx.state.gas_metering.last_snapshot_name = Some(name);
 
     Ok(Default::default())
 }
