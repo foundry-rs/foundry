@@ -650,8 +650,7 @@ impl Cheatcode for startDebugTraceRecordingCall {
         executor: &mut E,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
-            // No tracer
-            return Ok(Default::default())
+            return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
         };
 
         let mut info = RecordDebugStepInfo {
@@ -682,12 +681,11 @@ impl Cheatcode for stopDebugTraceRecordingCall {
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
             // No tracer
-            return Ok(Default::default())
+            return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
         };
 
         let Some(record_info) = ccx.state.record_debug_steps_info else {
-            // No debug trace record info, have not start recording yet
-            return Ok(Default::default())
+            return Err(Error::from("nothing recorded"))
         };
 
         // Revert the tracer config to the one before recording
@@ -701,6 +699,9 @@ impl Cheatcode for stopDebugTraceRecordingCall {
         let debug_steps: Vec<DebugStep> =
             steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
         ccx.state.recorded_debug_steps = Some(debug_steps);
+
+        // Clean up the recording info
+        ccx.state.record_debug_steps_info = None;
 
         // return the length of the debug steps
         let length = ccx.state.recorded_debug_steps.as_ref().map_or(0, |v| v.len());

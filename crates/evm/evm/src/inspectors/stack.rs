@@ -1,6 +1,6 @@
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Fuzzer, LogCollector,
-    TracingInspector, TracingInspectorConfig,
+    TracingInspector,
 };
 use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, TxKind, U256};
 use foundry_cheatcodes::CheatcodesExecutor;
@@ -425,8 +425,7 @@ impl InspectorStack {
         if let Some(config) = mode.into_config() {
             *self.tracer.get_or_insert_with(Default::default).config_mut() = config;
         } else {
-            // initiate a dummy tracer that does nothing
-            self.tracer = Some(TracingInspector::new(TracingInspectorConfig::none()));
+            self.tracer = None;
         }
     }
 
