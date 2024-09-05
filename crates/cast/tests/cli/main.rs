@@ -1122,16 +1122,18 @@ casttest!(interface_no_constructor, |prj, cmd| {
         r#"// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
-interface IIntegrationManager {
+library IIntegrationManager {
     type SpendAssetsHandleType is uint8;
+}
 
+interface Interface {
     function getIntegrationManager() external view returns (address integrationManager_);
     function lend(address _vaultProxy, bytes memory, bytes memory _assetData) external;
     function parseAssetsForAction(address, bytes4 _selector, bytes memory _actionData)
         external
         view
         returns (
-            SpendAssetsHandleType spendAssetsHandleType_,
+            IIntegrationManager.SpendAssetsHandleType spendAssetsHandleType_,
             address[] memory spendAssets_,
             uint256[] memory spendAssetAmounts_,
             address[] memory incomingAssets_,
