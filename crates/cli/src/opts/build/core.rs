@@ -173,7 +173,7 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
             let config_path = canonicalized(config_path);
             Config::figment_with_root(config_path.parent().unwrap())
         } else {
-            Config::figment_with_root(&args.project_paths.project_root())
+            Config::figment_with_root(args.project_paths.project_root())
         };
 
         // remappings should stack

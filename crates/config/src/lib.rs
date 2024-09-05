@@ -540,8 +540,8 @@ impl Config {
     ///
     /// See [`figment_with_root`](Self::figment_with_root) for more details.
     #[track_caller]
-    pub fn load_with_root(root: &Path) -> Self {
-        Self::from_provider(Self::figment_with_root(root))
+    pub fn load_with_root(root: impl AsRef<Path>) -> Self {
+        Self::from_provider(Self::figment_with_root(root.as_ref()))
     }
 
     /// Extract a `Config` from `provider`, panicking if extraction fails.
@@ -1408,7 +1408,7 @@ impl Config {
     /// let my_config = Config::figment_with_root(".").extract::<Config>();
     /// ```
     pub fn figment_with_root(root: impl AsRef<Path>) -> Figment {
-        Self::with_root(root).into()
+        Self::with_root(root.as_ref()).into()
     }
 
     /// Creates a new Config that adds additional context extracted from the provided root.
