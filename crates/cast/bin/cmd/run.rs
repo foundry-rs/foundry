@@ -176,7 +176,7 @@ impl RunArgs {
                 let pb = init_progress(block.transactions.len() as u64, "tx");
                 pb.set_position(0);
 
-                let BlockTransactions::Full(txs) = block.transactions else {
+                let BlockTransactions::Full(ref txs) = block.transactions else {
                     return Err(eyre::eyre!("Could not get block txs"))
                 };
 
@@ -194,7 +194,7 @@ impl RunArgs {
                         break;
                     }
 
-                    configure_tx_env(&mut env, &tx);
+                    configure_tx_env(&mut env, &tx.inner);
 
                     if let Some(to) = tx.to {
                         trace!(tx=?tx.hash,?to, "executing previous call transaction");
@@ -231,7 +231,7 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            configure_tx_env(&mut env, &tx);
+            configure_tx_env(&mut env, &tx.inner);
 
             if let Some(to) = tx.to {
                 trace!(tx=?tx.hash, to=?to, "executing call transaction");

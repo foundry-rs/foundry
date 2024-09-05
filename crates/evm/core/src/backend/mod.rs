@@ -1913,7 +1913,7 @@ fn commit_transaction<I: InspectorExt<Backend>>(
     persistent_accounts: &HashSet<Address>,
     inspector: I,
 ) -> eyre::Result<()> {
-    configure_tx_env(&mut env.env, &tx);
+    configure_tx_env(&mut env.env, &tx.inner);
 
     let now = Instant::now();
     let res = {

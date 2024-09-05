@@ -459,7 +459,7 @@ impl VerifyBytecodeArgs {
                 transaction.input = Bytes::from(local_bytecode_vec);
             }
 
-            configure_tx_env(&mut env, &transaction);
+            configure_tx_env(&mut env, &transaction.inner);
 
             let fork_address = crate::utils::deploy_contract(
                 &mut executor,

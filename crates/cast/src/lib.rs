@@ -872,7 +872,7 @@ where
                 BlockId::Hash(hash) => {
                     let block =
                         self.provider.get_block_by_hash(hash.block_hash, false.into()).await?;
-                    Ok(block.map(|block| block.header.number.unwrap()).map(BlockNumberOrTag::from))
+                    Ok(block.map(|block| block.header.number).map(BlockNumberOrTag::from))
                 }
             },
             None => Ok(None),
@@ -937,7 +937,7 @@ where
                     Either::Right(futures::future::pending())
                 } => {
                     if let (Some(block), Some(to_block)) = (block, to_block_number) {
-                        if block.header.number.map_or(false, |bn| bn > to_block) {
+                        if block.header.number  > to_block {
                             break;
                         }
                     }

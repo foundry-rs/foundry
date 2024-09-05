@@ -255,13 +255,14 @@ async fn main() -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let number = match block {
-                Some(id) => provider
-                    .get_block(id, false.into())
-                    .await?
-                    .ok_or_else(|| eyre::eyre!("block {id:?} not found"))?
-                    .header
-                    .number
-                    .ok_or_else(|| eyre::eyre!("block {id:?} has no block number"))?,
+                Some(id) => {
+                    provider
+                        .get_block(id, false.into())
+                        .await?
+                        .ok_or_else(|| eyre::eyre!("block {id:?} not found"))?
+                        .header
+                        .number
+                }
                 None => Cast::new(provider).block_number().await?,
             };
             println!("{number}");
