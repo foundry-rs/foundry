@@ -522,7 +522,7 @@ impl Config {
 
     /// Returns the current `Config`
     ///
-    /// See `Config::figment`
+    /// See [`figment`](Self::figment) for more details.
     #[track_caller]
     pub fn load() -> Self {
         Self::from_provider(Self::figment())
@@ -530,7 +530,7 @@ impl Config {
 
     /// Returns the current `Config` with the given `providers` preset
     ///
-    /// See `Config::to_figment`
+    /// See [`figment`](Self::figment) for more details.
     #[track_caller]
     pub fn load_with_providers(providers: FigmentProviders) -> Self {
         Self::default().to_figment(providers).extract().unwrap()
@@ -538,7 +538,7 @@ impl Config {
 
     /// Returns the current `Config`
     ///
-    /// See `Config::figment_with_root`
+    /// See [`figment_with_root`](Self::figment_with_root) for more details.
     #[track_caller]
     pub fn load_with_root(root: &Path) -> Self {
         Self::from_provider(Self::figment_with_root(root))

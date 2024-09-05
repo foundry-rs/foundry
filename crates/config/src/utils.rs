@@ -57,10 +57,13 @@ pub fn find_git_root(relative_to: &Path) -> io::Result<Option<PathBuf>> {
 ///
 /// will still detect `repo` as root.
 ///
+/// Returns `cwd` if no `foundry.toml` is found in the tree.
+///
 /// # Panics
 ///
-/// Panics if the project root cannot be found. This can only happen if `cwd` is not a valid path
-/// and the [`std::env::current_dir`] call fails.
+/// Panics if:
+/// - `cwd` is `Some` and is not a valid directory;
+/// - `cwd` is `None` and the [`std::env::current_dir`] call fails.
 #[track_caller]
 pub fn find_project_root(cwd: Option<&Path>) -> PathBuf {
     try_find_project_root(cwd).expect("Could not find project root")
