@@ -4,7 +4,7 @@ use foundry_evm_traces::CallTraceArena;
 use revm::interpreter::{InstructionResult, OpCode};
 
 use foundry_debugger::tui::{context::BufferKind, draw::get_buffer_accesses};
-use revm_inspectors::tracing::types::CallTraceStep;
+use revm_inspectors::tracing::types::{CallTraceStep, RecordedMemory};
 use spec::Vm::DebugStep;
 
 // A depth first traverse to flatten the recorded steps.
@@ -36,14 +36,14 @@ pub(crate) fn flatten_call_trace(
 }
 
 // Function to convert CallTraceStep to DebugStep
-pub(crate) fn convert_call_trace_to_debug_step(step: &&CallTraceStep) -> DebugStep {
+pub(crate) fn convert_call_trace_to_debug_step(step: &CallTraceStep) -> DebugStep {
     let opcode = step.op.get();
-    let stack = get_stack_inputs_for_opcode(opcode, step.stack.clone().unwrap_or_default());
+    let stack = get_stack_inputs_for_opcode(opcode, step.stack.as_ref());
 
     let memory = get_memory_input_for_opcode(
         opcode,
-        step.stack.clone().unwrap_or_default(),
-        step.memory.clone().unwrap_or_default().as_ref(),
+        step.stack.as_ref(),
+        step.memory.as_ref(),
     );
 
     let is_out_of_gas = step.status == InstructionResult::OutOfGas ||
@@ -64,11 +64,22 @@ pub(crate) fn convert_call_trace_to_debug_step(step: &&CallTraceStep) -> DebugSt
 
 // The expected `stack` here is from the trace stack, where the top of the stack
 // is the last value of the vector
-fn get_memory_input_for_opcode(opcode: u8, stack: Vec<U256>, memory: &[u8]) -> Vec<u8> {
-    if let Some(accesses) = get_buffer_accesses(opcode, &stack) {
+fn get_memory_input_for_opcode(opcode: u8, stack: Option<&Vec<U256>>, memory: Option<&RecordedMemory>) -> Vec<u8> {
+    let Some(stack_data) = stack else {
+        return vec![]
+    };
+    let Some(memory_data) = memory else {
+        return vec![]
+    };
+
+    if let Some(accesses) = get_buffer_accesses(opcode, stack_data) {
         if let Some((kind, access)) = accesses.read {
             return match kind {
-                BufferKind::Memory => get_slice_from_memory(memory, access.offset, access.len),
+                BufferKind::Memory => get_slice_from_memory(
+                    memory_data.as_bytes(),
+                    access.offset,
+                    access.len
+                ),
                 _ => vec![],
             }
         }
@@ -79,16 +90,20 @@ fn get_memory_input_for_opcode(opcode: u8, stack: Vec<U256>, memory: &[u8]) -> V
 
 // The expected `stack` here is from the trace stack, where the top of the stack
 // is the last value of the vector
-fn get_stack_inputs_for_opcode(opcode: u8, stack: Vec<U256>) -> Vec<U256> {
+fn get_stack_inputs_for_opcode(opcode: u8, stack: Option<&Vec<U256>>) -> Vec<U256> {
     let Some(op) = OpCode::new(opcode) else {
         // unknown opcode
+        return vec![]
+    };
+
+    let Some(stack_data) = stack else {
         return vec![]
     };
 
     let stack_input_size = op.inputs();
     let mut inputs = Vec::new();
     for i in 0..stack_input_size {
-        inputs.push(peak_stack(&stack, i.into()));
+        inputs.push(peak_stack(&stack_data, i.into()));
     }
     inputs
 }
