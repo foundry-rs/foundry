@@ -15,8 +15,9 @@ use alloy_rpc_types::{
             RewardAction, TraceOutput,
         },
     },
-    Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
+    Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, Transaction,
 };
+use alloy_serde::WithOtherFields;
 use itertools::Itertools;
 
 use futures::future::join_all;
@@ -84,7 +85,10 @@ impl EthApi {
     ///
     /// As a faster alternative to `eth_getBlockByNumber` (by excluding uncle block
     /// information), which is not relevant in the context of an anvil node
-    pub async fn erigon_get_header_by_number(&self, number: BlockNumber) -> Result<Option<Block>> {
+    pub async fn erigon_get_header_by_number(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<WithOtherFields<Block<WithOtherFields<Transaction>>>>> {
         node_info!("ots_getApiLevel");
 
         self.backend.block_by_number(number).await
@@ -144,7 +148,7 @@ impl EthApi {
         node_info!("ots_getBlockDetails");
 
         if let Some(block) = self.backend.block_by_number(number).await? {
-            let ots_block = self.build_ots_block_details(block).await?;
+            let ots_block = self.build_ots_block_details(block.inner).await?;
             Ok(ots_block)
         } else {
             Err(BlockchainError::BlockNotFound)
@@ -158,7 +162,7 @@ impl EthApi {
         node_info!("ots_getBlockDetailsByHash");
 
         if let Some(block) = self.backend.block_by_hash(hash).await? {
-            let ots_block = self.build_ots_block_details(block).await?;
+            let ots_block = self.build_ots_block_details(block.inner).await?;
             Ok(ots_block)
         } else {
             Err(BlockchainError::BlockNotFound)
@@ -176,7 +180,19 @@ impl EthApi {
         node_info!("ots_getBlockTransactions");
 
         match self.backend.block_by_number_full(number.into()).await? {
-            Some(block) => self.build_ots_block_tx(block, page, page_size).await,
+            Some(block) => {
+                let Block { header, uncles, size, withdrawals, transactions } = block.inner;
+
+                let inner_txs =
+                    transactions.into_transactions().map(|t| t.inner).collect::<Vec<Transaction>>();
+
+                let mut inner_block =
+                    Block { header, uncles, size, withdrawals, ..Default::default() };
+
+                inner_block.transactions = BlockTransactions::from(inner_txs);
+
+                self.build_ots_block_tx(inner_block, page, page_size).await
+            }
             None => Err(BlockchainError::BlockNotFound),
         }
     }
@@ -346,7 +362,10 @@ impl EthApi {
     ///     based on the existing list.
     ///
     /// Therefore we keep it simple by keeping the data in the response
-    pub async fn build_ots_block_details(&self, block: Block) -> Result<BlockDetails> {
+    pub async fn build_ots_block_details(
+        &self,
+        block: Block<WithOtherFields<Transaction>>,
+    ) -> Result<BlockDetails> {
         if block.transactions.is_uncle() {
             return Err(BlockchainError::DataUnavailable);
         }
