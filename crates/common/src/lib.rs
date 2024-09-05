@@ -11,6 +11,9 @@ extern crate self as foundry_common;
 #[macro_use]
 extern crate tracing;
 
+#[macro_use]
+pub mod io;
+
 pub use foundry_common_fmt as fmt;
 
 pub mod abi;
@@ -34,6 +37,7 @@ mod utils;
 
 pub use constants::*;
 pub use contracts::*;
+pub use io::Shell;
 pub use traits::*;
 pub use transactions::*;
 pub use utils::*;

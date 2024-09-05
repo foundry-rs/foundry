@@ -206,6 +206,11 @@ alloy-chains = "0.1"
 alloy-rlp = "0.3.3"
 alloy-trie = "0.4.1"
 
+## cli
+anstream = "0.6.15"
+anstyle = "1.0.8"
+terminal_size = "0.3.0"
+
 ## misc
 async-trait = "0.1"
 auto_impl = "1"
