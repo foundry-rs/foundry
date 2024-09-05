@@ -154,10 +154,9 @@ pub fn parse_delay(delay: &str) -> Result<Duration> {
 
 // Parses a `AccessList` from a &str
 pub fn parse_access_list(s: &str) -> Result<AccessList> {
-    let access_list = serde_json::from_str::<AccessList>(s)
-        .wrap_err("Could not parse access list from string")?
-        .0;
-    Ok(AccessList::from(access_list))
+    serde_json::from_str::<AccessList>(s)
+        .map(AccessList::from)
+        .wrap_err("Could not parse access list from string")
 }
 
 /// Returns the current time as a [`Duration`] since the Unix epoch.
