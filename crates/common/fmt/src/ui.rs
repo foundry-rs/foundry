@@ -520,13 +520,7 @@ value                {}",
 
 impl<T: UIfmt> UIfmt for WithOtherFields<T> {
     fn pretty(&self) -> String {
-        format!(
-            "
-{}{}
-            ",
-            self.inner.pretty(),
-            self.other.pretty()
-        )
+        format!("{}{}", self.inner.pretty(), self.other.pretty())
     }
 }
 
