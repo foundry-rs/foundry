@@ -72,10 +72,7 @@ impl ProjectPathsArgs {
     ///
     /// Panics if the project root directory cannot be found. See [`find_project_root`].
     pub fn project_root(&self) -> PathBuf {
-        match &self.root {
-            Some(root) => root.clone(),
-            None => find_project_root(None),
-        }
+        self.root.clone().unwrap_or_else(|| find_project_root(None))
     }
 
     /// Returns the remappings to add to the config
