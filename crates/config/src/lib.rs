@@ -1405,9 +1405,9 @@ impl Config {
     /// use foundry_config::Config;
     /// use serde::Deserialize;
     ///
-    /// let my_config = Config::figment_with_root(".".as_ref()).extract::<Config>();
+    /// let my_config = Config::figment_with_root(".").extract::<Config>();
     /// ```
-    pub fn figment_with_root(root: &Path) -> Figment {
+    pub fn figment_with_root(root: impl AsRef<Path>) -> Figment {
         Self::with_root(root).into()
     }
 
@@ -1419,7 +1419,11 @@ impl Config {
     /// use foundry_config::Config;
     /// let my_config = Config::with_root(".");
     /// ```
-    pub fn with_root(root: &Path) -> Self {
+    pub fn with_root(root: impl AsRef<Path>) -> Self {
+        Self::_with_root(root.as_ref())
+    }
+
+    fn _with_root(root: &Path) -> Self {
         // autodetect paths
         let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
