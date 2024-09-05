@@ -522,8 +522,7 @@ impl<T: UIfmt> UIfmt for WithOtherFields<T> {
     fn pretty(&self) -> String {
         format!(
             "
-{},
-{}
+{}{}
             ",
             self.inner.pretty(),
             self.other.pretty()
@@ -716,7 +715,7 @@ mod tests {
     }
         "#;
 
-        let tx: Transaction = serde_json::from_str(s).unwrap();
+        let tx: WithOtherFields<Transaction> = serde_json::from_str(s).unwrap();
         assert_eq!(tx.pretty().trim(),
                    r"
 blockHash            0x02b853cf50bc1c335b70790f93d5a390a35a166bea9c895e685cc866e4961cae
