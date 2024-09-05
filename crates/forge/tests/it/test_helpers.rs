@@ -143,7 +143,7 @@ impl ForgeTestProfile {
     ///
     /// AST output is enabled by default to support inline configs.
     pub fn config(&self) -> Config {
-        let mut config = Config::with_root(self.root());
+        let mut config = Config::with_root(&self.root());
 
         config.ast = true;
         config.src = self.root().join(self.to_string());

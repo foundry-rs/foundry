@@ -540,7 +540,7 @@ impl Config {
     ///
     /// See `Config::figment_with_root`
     #[track_caller]
-    pub fn load_with_root(root: impl Into<PathBuf>) -> Self {
+    pub fn load_with_root(root: &Path) -> Self {
         Self::from_provider(Self::figment_with_root(root))
     }
 
@@ -1405,9 +1405,9 @@ impl Config {
     /// use foundry_config::Config;
     /// use serde::Deserialize;
     ///
-    /// let my_config = Config::figment_with_root(".").extract::<Config>();
+    /// let my_config = Config::figment_with_root(".".as_ref()).extract::<Config>();
     /// ```
-    pub fn figment_with_root(root: impl Into<PathBuf>) -> Figment {
+    pub fn figment_with_root(root: &Path) -> Figment {
         Self::with_root(root).into()
     }
 
@@ -1419,10 +1419,9 @@ impl Config {
     /// use foundry_config::Config;
     /// let my_config = Config::with_root(".");
     /// ```
-    pub fn with_root(root: impl Into<PathBuf>) -> Self {
+    pub fn with_root(root: &Path) -> Self {
         // autodetect paths
-        let root = root.into();
-        let paths = ProjectPathsConfig::builder().build_with_root::<()>(&root);
+        let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         Self {
             root: paths.root.into(),
@@ -1432,7 +1431,7 @@ impl Config {
             remappings: paths
                 .remappings
                 .into_iter()
-                .map(|r| RelativeRemapping::new(r, &root))
+                .map(|r| RelativeRemapping::new(r, root))
                 .collect(),
             fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
             ..Self::default()
@@ -1481,7 +1480,7 @@ impl Config {
     ///
     /// **Note:** the closure will only be invoked if the `foundry.toml` file exists, See
     /// [Self::get_config_path()] and if the closure returns `true`.
-    pub fn update_at<F>(root: impl Into<PathBuf>, f: F) -> eyre::Result<()>
+    pub fn update_at<F>(root: &Path, f: F) -> eyre::Result<()>
     where
         F: FnOnce(&Self, &mut toml_edit::DocumentMut) -> bool,
     {
