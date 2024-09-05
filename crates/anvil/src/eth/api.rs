@@ -64,7 +64,7 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::Work,
+    types::{ReorgOptions, TransactionData, Work},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
@@ -79,7 +79,12 @@ use foundry_evm::{
 };
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
-use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    sync::Arc,
+    time::Duration,
+};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -439,6 +444,9 @@ impl EthApi {
             }
             EthRequest::RemovePoolTransactions(address) => {
                 self.anvil_remove_pool_transactions(address).await.to_rpc_result()
+            }
+            EthRequest::Reorg(reorg_options) => {
+                self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
         }
     }
@@ -995,6 +1003,7 @@ impl EthApi {
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
+
         let transaction = TypedTransaction::decode_2718(&mut data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
@@ -1912,6 +1921,124 @@ impl EthApi {
     pub async fn anvil_remove_pool_transactions(&self, address: Address) -> Result<()> {
         node_info!("anvil_removePoolTransactions");
         self.pool.remove_transactions_by_address(address);
+        Ok(())
+    }
+
+    /// Reorg the chain to a specific depth and mine new blocks back to the cannonical height.
+    ///
+    /// e.g depth = 3
+    ///     A  -> B  -> C  -> D  -> E
+    ///     A  -> B  -> C' -> D' -> E'
+    ///
+    /// Depth specifies the height to reorg the chain back to. Depth must not exceed the current
+    /// chain height, i.e. can't reorg past the genesis block.
+    ///
+    /// Optionally supply a list of transaction and block pairs that will populate the reorged
+    /// blocks. The maximum block number of the pairs must not exceed the specified depth.
+    ///
+    /// Handler for RPC call: `anvil_reorg`
+    pub async fn anvil_reorg(&self, options: ReorgOptions) -> Result<()> {
+        node_info!("anvil_reorg");
+        let depth = options.depth;
+        let tx_block_pairs = options.tx_block_pairs;
+
+        // Check reorg depth doesn't exceed current chain height
+        let current_height = self.backend.best_number();
+        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
+            RpcError::invalid_params(format!(
+                "Reorg depth must not exceed current chain height: current height {current_height}, depth {depth}"
+            )),
+        ))?;
+
+        // Get the common ancestor block
+        let common_block =
+            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
+
+        // Convert the transaction requests to pool transactions if they exist, otherwise use empty
+        // hashmap
+        let block_pool_txs = if tx_block_pairs.is_empty() {
+            HashMap::new()
+        } else {
+            let mut pairs = tx_block_pairs;
+
+            // Check the maximum block supplied number will not exceed the reorged chain height
+            if let Some((_, num)) = pairs.iter().find(|(_, num)| *num >= depth) {
+                return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
+                    "Block number for reorg tx will exceed the reorged chain height. Block number {num} must not exceed (depth-1) {}",
+                    depth-1
+                ))));
+            }
+
+            // Sort by block number to make it easier to manage new nonces
+            pairs.sort_by_key(|a| a.1);
+
+            // Manage nonces for each signer
+            // address -> cumulative nonce
+            let mut nonces: HashMap<Address, u64> = HashMap::new();
+
+            let mut txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::new();
+            for pair in pairs {
+                let (tx_data, block_index) = pair;
+
+                let mut tx_req = match tx_data {
+                    TransactionData::JSON(req) => WithOtherFields::new(req),
+                    TransactionData::Raw(bytes) => {
+                        let mut data = bytes.as_ref();
+                        let decoded = TypedTransaction::decode_2718(&mut data)
+                            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+                        let request =
+                            TransactionRequest::try_from(decoded.clone()).map_err(|_| {
+                                BlockchainError::RpcError(RpcError::invalid_params(
+                                    "Failed to convert raw transaction",
+                                ))
+                            })?;
+                        WithOtherFields::new(request)
+                    }
+                };
+
+                let from = tx_req.from.map(Ok).unwrap_or_else(|| {
+                    self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
+                })?;
+
+                // Get the nonce at the common block
+                let curr_nonce = nonces.entry(from).or_insert(
+                    self.get_transaction_count(from, Some(common_block.header.number.into()))
+                        .await?,
+                );
+
+                // Estimate gas
+                if tx_req.gas.is_none() {
+                    if let Ok(gas) = self.estimate_gas(tx_req.clone(), None, None).await {
+                        tx_req.gas = Some(gas.to());
+                    }
+                }
+
+                // Build typed transaction request
+                let typed = self.build_typed_tx_request(tx_req, *curr_nonce)?;
+
+                // Increment nonce
+                *curr_nonce += 1;
+
+                // Handle signer and convert to pending transaction
+                let pending = if self.is_impersonated(from) {
+                    let bypass_signature = self.impersonated_signature(&typed);
+                    let transaction = sign::build_typed_transaction(typed, bypass_signature)?;
+                    self.ensure_typed_transaction_supported(&transaction)?;
+                    PendingTransaction::with_impersonated(transaction, from)
+                } else {
+                    let transaction = self.sign_request(&from, typed)?;
+                    self.ensure_typed_transaction_supported(&transaction)?;
+                    PendingTransaction::new(transaction)?
+                };
+
+                let pooled = PoolTransaction::new(pending);
+                txs.entry(block_index).or_default().push(Arc::new(pooled));
+            }
+
+            txs
+        };
+
+        self.backend.reorg(depth, block_pool_txs, common_block).await?;
         Ok(())
     }
 
