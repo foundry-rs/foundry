@@ -1993,8 +1993,7 @@ mod tests {
         let mut evm_opts = config.extract::<EvmOpts>().unwrap();
         evm_opts.fork_block_number = Some(block_num);
 
-        let (env, _block) =
-            evm_opts.fork_evm_env::<alloy_provider::network::Ethereum>(endpoint).await.unwrap();
+        let (env, _block) = evm_opts.fork_evm_env(endpoint).await.unwrap();
 
         let fork = CreateFork {
             enable_caching: true,

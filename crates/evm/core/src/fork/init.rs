@@ -32,7 +32,7 @@ pub async fn environment<N: Network, T: Transport + Clone, P: Provider<T, N>>(
         provider.get_chain_id(),
         provider.get_block_by_number(BlockNumberOrTag::Number(block_number), false)
     )?;
-    let block: <N as Network>::BlockResponse = if let Some(block) = block {
+    let block = if let Some(block) = block {
         block
     } else {
         if let Ok(latest_block) = provider.get_block_number().await {
