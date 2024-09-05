@@ -143,12 +143,6 @@ impl CallArgs {
         let sender = SenderKind::from_wallet_opts(eth.wallet).await?;
         let from = sender.address();
 
-        let tx_kind = if let Some(to) = to {
-            TxKind::Call(to.resolve(&provider).await?)
-        } else {
-            TxKind::Create
-        };
-
         let code = if let Some(CallSubcommands::Create {
             code,
             sig: create_sig,
@@ -168,7 +162,8 @@ impl CallArgs {
 
         let (tx, func) = CastTxBuilder::new(&provider, tx, &config)
             .await?
-            .with_tx_kind(tx_kind)
+            .with_to(to)
+            .await?
             .with_code_sig_and_args(code, sig, args)
             .await?
             .build_raw(sender)
@@ -192,6 +187,7 @@ impl CallArgs {
 
             let value = tx.value.unwrap_or_default();
             let input = tx.inner.input.into_input().unwrap_or_default();
+            let tx_kind = tx.inner.to.expect("set by builder");
 
             let trace = match tx_kind {
                 TxKind::Create => {

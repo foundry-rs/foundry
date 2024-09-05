@@ -1,20 +1,26 @@
 //! tests for custom anvil endpoints
 
 use crate::{
-    abi::{Greeter, MulticallContract, BUSD},
+    abi::{self, Greeter, MulticallContract, BUSD},
     fork::fork_config,
     utils::http_provider_with_signer,
 };
-use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{address, fixed_bytes, Address, U256};
+use alloy_consensus::{SignableTransaction, TxEip1559};
+use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
+use alloy_primitives::{address, fixed_bytes, Address, Bytes, TxKind, U256};
 use alloy_provider::{ext::TxPoolApi, Provider};
 use alloy_rpc_types::{
-    anvil::{ForkedNetwork, Forking, Metadata, NodeEnvironment, NodeForkConfig, NodeInfo},
+    anvil::{
+        ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
+    },
     BlockId, BlockNumberOrTag, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
-use anvil::{eth::api::CLIENT_VERSION, spawn, Hardfork, NodeConfig};
-use anvil_core::eth::EthRequest;
+use anvil::{eth::api::CLIENT_VERSION, spawn, EthereumHardfork, NodeConfig};
+use anvil_core::{
+    eth::EthRequest,
+    types::{ReorgOptions, TransactionData},
+};
 use foundry_evm::revm::primitives::SpecId;
 use std::{
     str::FromStr,
@@ -23,7 +29,8 @@ use std::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
-    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
     let provider = handle.http_provider();
 
     let gas_price = U256::from(1337);
@@ -33,7 +40,8 @@ async fn can_set_gas_price() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_block_gas_limit() {
-    let (api, _) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
+    let (api, _) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
 
     let block_gas_limit = U256::from(1337);
     assert!(api.evm_set_block_gas_limit(block_gas_limit).unwrap());
@@ -655,4 +663,133 @@ async fn can_remove_pool_transactions() {
 
     let final_txs = provider.txpool_inspect().await.unwrap();
     assert_eq!(final_txs.pending.len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reorg() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+
+    // Test calls
+    // Populate chain
+    for i in 0..10 {
+        let tx = TransactionRequest::default()
+            .to(accounts[0].address())
+            .value(U256::from(i))
+            .from(accounts[1].address());
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+
+        let tx = TransactionRequest::default()
+            .to(accounts[1].address())
+            .value(U256::from(i))
+            .from(accounts[2].address());
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    // Define transactions
+    let mut txs = vec![];
+    for i in 0..3 {
+        let from = accounts[i].address();
+        let to = accounts[i + 1].address();
+        for j in 0..5 {
+            let tx = TransactionRequest::default().from(from).to(to).value(U256::from(j));
+            txs.push((TransactionData::JSON(tx), i as u64));
+        }
+    }
+
+    let prev_height = provider.get_block_number().await.unwrap();
+    api.anvil_reorg(ReorgOptions { depth: 7, tx_block_pairs: txs }).await.unwrap();
+
+    let reorged_height = provider.get_block_number().await.unwrap();
+    assert_eq!(reorged_height, prev_height);
+
+    // The first 3 reorged blocks should have 5 transactions each
+    for num in 14..17 {
+        let block = provider.get_block_by_number(num.into(), true).await.unwrap();
+        let block = block.unwrap();
+        assert_eq!(block.transactions.len(), 5);
+    }
+
+    // Verify that historic blocks are still accessible
+    for num in (0..14).rev() {
+        let _ = provider.get_block_by_number(num.into(), true).await.unwrap();
+    }
+
+    // Send a few more transaction to verify the chain can still progress
+    for i in 0..3 {
+        let tx = TransactionRequest::default()
+            .to(accounts[0].address())
+            .value(U256::from(i))
+            .from(accounts[1].address());
+        let tx = WithOtherFields::new(tx);
+        api.send_transaction(tx).await.unwrap();
+    }
+
+    // Test reverting code
+    let greeter = abi::Greeter::deploy(provider.clone(), "Reorg".to_string()).await.unwrap();
+    api.anvil_reorg(ReorgOptions { depth: 5, tx_block_pairs: vec![] }).await.unwrap();
+    let code = api.get_code(*greeter.address(), Some(BlockId::latest())).await.unwrap();
+    assert_eq!(code, Bytes::default());
+
+    // Test reverting contract storage
+    let storage =
+        abi::SimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(5) })).await.unwrap();
+    let _ = storage
+        .setValue("ReorgMe".to_string())
+        .from(accounts[0].address())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap();
+    let value = storage.getValue().call().await.unwrap()._0;
+    assert_eq!("initial value".to_string(), value);
+
+    api.mine_one().await;
+    api.mine_one().await;
+
+    // Test raw transaction data
+    let mut tx = TxEip1559 {
+        chain_id: api.chain_id(),
+        to: TxKind::Call(accounts[1].address()),
+        value: U256::from(100),
+        max_priority_fee_per_gas: 1000000000000,
+        max_fee_per_gas: 10000000000000,
+        gas_limit: 21000,
+        ..Default::default()
+    };
+    let signature = accounts[5].sign_transaction_sync(&mut tx).unwrap();
+    let tx = tx.into_signed(signature);
+    let mut encoded = vec![];
+    tx.tx().encode_with_signature(tx.signature(), &mut encoded, false);
+
+    let pre_bal = provider.get_balance(accounts[5].address()).await.unwrap();
+    api.anvil_reorg(ReorgOptions {
+        depth: 1,
+        tx_block_pairs: vec![(TransactionData::Raw(encoded.into()), 0)],
+    })
+    .await
+    .unwrap();
+    let post_bal = provider.get_balance(accounts[5].address()).await.unwrap();
+    assert_ne!(pre_bal, post_bal);
+
+    // Test reorg depth exceeding current height
+    let res = api.anvil_reorg(ReorgOptions { depth: 100, tx_block_pairs: vec![] }).await;
+    assert!(res.is_err());
+
+    // Test reorg tx pairs exceeds chain length
+    let res = api
+        .anvil_reorg(ReorgOptions {
+            depth: 1,
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 10)],
+        })
+        .await;
+    assert!(res.is_err());
 }
