@@ -1,7 +1,7 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::PoolTransaction};
-use alloy_consensus::{transaction, Account};
+use alloy_consensus::Account;
 use alloy_eips::eip2930::AccessListResult;
 use alloy_network::BlockResponse;
 use alloy_primitives::{Address, Bytes, StorageValue, B256, U256};
@@ -593,8 +593,7 @@ impl ClientFork {
             }
         }
         // TODO: fix once blocks have generic transactions
-        let block = block.clone().inner;
-        let block = block.into_full_block(transactions);
+        let block = block.inner.into_full_block(transactions);
 
         WithOtherFields::new(block)
     }

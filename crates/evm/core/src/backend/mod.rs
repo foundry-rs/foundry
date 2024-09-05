@@ -1240,7 +1240,7 @@ impl DatabaseExt for Backend {
         let (_fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         let mut env = env.clone();
-        update_env_block(&mut env, &block.into());
+        update_env_block(&mut env, &block);
 
         let env = self.env_with_handler_cfg(env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
