@@ -300,7 +300,6 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: None,
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
-            other: Default::default(),
             authorization_list: None,
         },
         TypedTransaction::EIP2930(t) => RpcTransaction {
@@ -328,7 +327,6 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: Some(1),
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
-            other: Default::default(),
             authorization_list: None,
         },
         TypedTransaction::EIP1559(t) => RpcTransaction {
@@ -356,7 +354,6 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: Some(2),
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
-            other: Default::default(),
             authorization_list: None,
         },
         TypedTransaction::EIP4844(t) => RpcTransaction {
@@ -384,7 +381,6 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: Some(3),
             max_fee_per_blob_gas: Some(t.tx().tx().max_fee_per_blob_gas),
             blob_versioned_hashes: Some(t.tx().tx().blob_versioned_hashes.clone()),
-            other: Default::default(),
             authorization_list: None,
         },
         TypedTransaction::EIP7702(t) => RpcTransaction {
@@ -433,7 +429,6 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: None,
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
-            other: Default::default(),
             authorization_list: None,
         },
     }

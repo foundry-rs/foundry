@@ -1,7 +1,7 @@
 //! tests for custom anvil endpoints
 
 use crate::{
-    abi::{self, Greeter, MulticallContract, BUSD},
+    abi::{self, Greeter, Multicall, BUSD},
     fork::fork_config,
     utils::http_provider_with_signer,
 };
@@ -298,13 +298,13 @@ async fn test_set_next_timestamp() {
 
     let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
 
-    assert_eq!(block.header.number.unwrap(), 1);
+    assert_eq!(block.header.number, 1);
     assert_eq!(block.header.timestamp, next_timestamp.as_secs());
 
     api.evm_mine(None).await.unwrap();
 
     let next = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
-    assert_eq!(next.header.number.unwrap(), 2);
+    assert_eq!(next.header.number, 2);
 
     assert!(next.header.timestamp > block.header.timestamp);
 }
@@ -447,7 +447,7 @@ async fn can_get_node_info() {
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
         current_block_timestamp: 1,
-        current_block_hash: block.header.hash.unwrap(),
+        current_block_hash: block.header.hash,
         hard_fork: hard_fork.to_string(),
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
@@ -480,7 +480,7 @@ async fn can_get_metadata() {
         provider.get_block(BlockId::from(block_number), false.into()).await.unwrap().unwrap();
 
     let expected_metadata = Metadata {
-        latest_block_hash: block.header.hash.unwrap(),
+        latest_block_hash: block.header.hash,
         latest_block_number: block_number,
         chain_id,
         client_version: CLIENT_VERSION.to_string(),
@@ -506,7 +506,7 @@ async fn can_get_metadata_on_fork() {
         provider.get_block(BlockId::from(block_number), false.into()).await.unwrap().unwrap();
 
     let expected_metadata = Metadata {
-        latest_block_hash: block.header.hash.unwrap(),
+        latest_block_hash: block.header.hash,
         latest_block_number: block_number,
         chain_id,
         client_version: CLIENT_VERSION.to_string(),
@@ -514,7 +514,7 @@ async fn can_get_metadata_on_fork() {
         forked_network: Some(ForkedNetwork {
             chain_id,
             fork_block_number: block_number,
-            fork_block_hash: block.header.hash.unwrap(),
+            fork_block_hash: block.header.hash,
         }),
         snapshots: Default::default(),
     };
@@ -618,21 +618,21 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     api.evm_revert(snapshot_id).await.unwrap();
 
     let multicall_contract =
-        MulticallContract::new(address!("eefba1e63905ef1d7acba5a8513c70307c1ce441"), &provider);
+        Multicall::new(address!("eefba1e63905ef1d7acba5a8513c70307c1ce441"), &provider);
 
-    let MulticallContract::getCurrentBlockTimestampReturn { timestamp } =
+    let Multicall::getCurrentBlockTimestampReturn { timestamp } =
         multicall_contract.getCurrentBlockTimestamp().call().await.unwrap();
     assert_eq!(timestamp, U256::from(latest_block.header.timestamp));
 
-    let MulticallContract::getCurrentBlockDifficultyReturn { difficulty } =
+    let Multicall::getCurrentBlockDifficultyReturn { difficulty } =
         multicall_contract.getCurrentBlockDifficulty().call().await.unwrap();
     assert_eq!(difficulty, U256::from(latest_block.header.difficulty));
 
-    let MulticallContract::getCurrentBlockGasLimitReturn { gaslimit } =
+    let Multicall::getCurrentBlockGasLimitReturn { gaslimit } =
         multicall_contract.getCurrentBlockGasLimit().call().await.unwrap();
     assert_eq!(gaslimit, U256::from(latest_block.header.gas_limit));
 
-    let MulticallContract::getCurrentBlockCoinbaseReturn { coinbase } =
+    let Multicall::getCurrentBlockCoinbaseReturn { coinbase } =
         multicall_contract.getCurrentBlockCoinbase().call().await.unwrap();
     assert_eq!(coinbase, latest_block.header.miner);
 }

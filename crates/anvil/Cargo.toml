@@ -122,6 +122,7 @@ alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
 similar-asserts.workspace = true
 tokio = { workspace = true, features = ["full"] }
+op-alloy-rpc-types.workspace = true
 
 [features]
 default = ["cli", "jemalloc"]

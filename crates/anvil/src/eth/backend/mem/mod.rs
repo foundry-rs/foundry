@@ -48,9 +48,10 @@ use alloy_rpc_types::{
         },
         parity::LocalizedTransactionTrace,
     },
-    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
-    EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
-    FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
+    AccessList, AnyNetworkBlock, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
+    BlockTransactions, EIP1186AccountProofResponse as AccountProof,
+    EIP1186StorageProof as StorageProof, Filter, FilteredParams, Header as AlloyHeader, Index, Log,
+    Transaction, TransactionReceipt,
 };
 use alloy_serde::WithOtherFields;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
@@ -1523,7 +1524,10 @@ impl Backend {
         }
     }
 
-    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AlloyBlock>, BlockchainError> {
+    pub async fn block_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.mined_block_by_hash(hash) {
             return Ok(tx);
@@ -1539,7 +1543,7 @@ impl Backend {
     pub async fn block_by_hash_full(
         &self,
         hash: B256,
-    ) -> Result<Option<AlloyBlock>, BlockchainError> {
+    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.get_full_block(hash) {
             return Ok(tx);
@@ -1552,7 +1556,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_block_by_hash(&self, hash: B256) -> Option<AlloyBlock> {
+    fn mined_block_by_hash(&self, hash: B256) -> Option<AnyNetworkBlock> {
         let block = self.blockchain.get_block_by_hash(&hash)?;
         Some(self.convert_block(block))
     }
@@ -1588,7 +1592,7 @@ impl Backend {
     pub async fn block_by_number(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<AlloyBlock>, BlockchainError> {
+    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.mined_block_by_number(number) {
             return Ok(tx);
@@ -1607,7 +1611,7 @@ impl Backend {
     pub async fn block_by_number_full(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<AlloyBlock>, BlockchainError> {
+    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.get_full_block(number) {
             return Ok(tx);
@@ -1660,22 +1664,24 @@ impl Backend {
         self.blockchain.get_block_by_hash(&hash)
     }
 
-    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AlloyBlock> {
+    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AnyNetworkBlock> {
         let block = self.get_block(number)?;
         let mut block = self.convert_block(block);
         block.transactions.convert_to_hashes();
         Some(block)
     }
 
-    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AlloyBlock> {
+    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AnyNetworkBlock> {
         let block = self.get_block(id)?;
         let transactions = self.mined_transactions_in_block(&block)?;
-        let block = self.convert_block(block);
-        Some(block.into_full_block(transactions.into_iter().map(|t| t.inner).collect()))
+        let mut block = self.convert_block(block);
+        block.inner.transactions = BlockTransactions::Full(transactions);
+
+        Some(block)
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format.
-    pub fn convert_block(&self, block: Block) -> AlloyBlock {
+    pub fn convert_block(&self, block: Block) -> AnyNetworkBlock {
         let size = U256::from(alloy_rlp::encode(&block).len() as u32);
 
         let Block { header, transactions, .. } = block;
@@ -1705,16 +1711,16 @@ impl Backend {
             parent_beacon_block_root,
         } = header;
 
-        let mut block = AlloyBlock {
+        let block = AlloyBlock {
             header: AlloyHeader {
-                hash: Some(hash),
+                hash,
                 parent_hash,
                 uncles_hash: ommers_hash,
                 miner: beneficiary,
                 state_root,
                 transactions_root,
                 receipts_root,
-                number: Some(number),
+                number,
                 gas_used,
                 gas_limit,
                 extra_data: extra_data.0.into(),
@@ -1737,8 +1743,9 @@ impl Backend {
             ),
             uncles: vec![],
             withdrawals: None,
-            other: Default::default(),
         };
+
+        let mut block = WithOtherFields::new(block);
 
         // If Arbitrum, apply chain specifics to converted block.
         if let Ok(
@@ -1749,7 +1756,7 @@ impl Backend {
         ) = NamedChain::try_from(self.env.read().env.cfg.chain_id)
         {
             // Block number is the best number.
-            block.header.number = Some(self.best_number());
+            block.header.number = self.best_number();
             // Set `l1BlockNumber` field.
             block.other.insert("l1BlockNumber".to_string(), number.into());
         }
@@ -1769,13 +1776,13 @@ impl Backend {
         let current = self.best_number();
         let requested =
             match block_id.map(Into::into).unwrap_or(BlockId::Number(BlockNumber::Latest)) {
-                BlockId::Hash(hash) => self
-                    .block_by_hash(hash.block_hash)
-                    .await?
-                    .ok_or(BlockchainError::BlockNotFound)?
-                    .header
-                    .number
-                    .ok_or(BlockchainError::BlockNotFound)?,
+                BlockId::Hash(hash) => {
+                    self.block_by_hash(hash.block_hash)
+                        .await?
+                        .ok_or(BlockchainError::BlockNotFound)?
+                        .header
+                        .number
+                }
                 BlockId::Number(num) => match num {
                     BlockNumber::Latest | BlockNumber::Pending => self.best_number(),
                     BlockNumber::Earliest => U64::ZERO.to::<u64>(),
@@ -1841,7 +1848,7 @@ impl Backend {
             if let Some((block_hash, block)) = self
                 .block_by_number(BlockNumber::Number(block_number.to::<u64>()))
                 .await?
-                .and_then(|block| Some((block.header.hash?, block)))
+                .map(|block| (block.header.hash, block))
             {
                 if let Some(state) = self.states.write().get(&block_hash) {
                     let block = BlockEnv {
@@ -2290,8 +2297,8 @@ impl Backend {
         number: BlockNumber,
         index: Index,
     ) -> Result<Option<WithOtherFields<Transaction>>, BlockchainError> {
-        if let Some(hash) = self.mined_block_by_number(number).and_then(|b| b.header.hash) {
-            return Ok(self.mined_transaction_by_block_hash_and_index(hash, index));
+        if let Some(block) = self.mined_block_by_number(number) {
+            return Ok(self.mined_transaction_by_block_hash_and_index(block.header.hash, index));
         }
 
         if let Some(fork) = self.get_fork() {
