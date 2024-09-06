@@ -152,7 +152,7 @@ pub fn parse_delay(delay: &str) -> Result<Duration> {
     Ok(delay)
 }
 
-// Parses a `AccessList` from a &str
+// Parses an `AccessList` from a &str
 pub fn parse_access_list(s: &str) -> Result<AccessList> {
     serde_json::from_str::<AccessList>(s)
         .map(AccessList::from)
