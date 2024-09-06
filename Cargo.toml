@@ -195,13 +195,13 @@ alloy-transport-ipc = { version = "0.3.1", default-features = false }
 alloy-transport-ws = { version = "0.3.1", default-features = false }
 
 ## alloy-core
-alloy-dyn-abi = "0.8.0"
-alloy-json-abi = "0.8.0"
-alloy-primitives = { version = "0.8.0", features = ["getrandom", "rand"] }
-alloy-sol-macro-expander = "0.8.0"
-alloy-sol-macro-input = "0.8.0"
-alloy-sol-types = "0.8.0"
-syn-solidity = "0.8.0"
+alloy-dyn-abi = "0.8.1"
+alloy-json-abi = "0.8.1"
+alloy-primitives = { version = "0.8.1", features = ["getrandom", "rand"] }
+alloy-sol-macro-expander = "0.8.1"
+alloy-sol-macro-input = "0.8.1"
+alloy-sol-types = "0.8.1"
+syn-solidity = "0.8.1"
 
 alloy-chains = "0.1"
 alloy-rlp = "0.3"
@@ -292,6 +292,3 @@ alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
-
-# https://github.com/alloy-rs/core/issues/717
-alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core", rev = "6bd4aed" }
