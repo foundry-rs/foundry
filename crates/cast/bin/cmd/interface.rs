@@ -6,7 +6,7 @@ use foundry_block_explorers::Client;
 use foundry_cli::opts::EtherscanOpts;
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{info::ContractInfo, utils::canonicalize};
-use foundry_config::{find_project_root_path, load_config_with_root, Config};
+use foundry_config::{load_config_with_root, try_find_project_root, Config};
 use itertools::Itertools;
 use serde_json::Value;
 use std::{
@@ -118,8 +118,8 @@ fn load_abi_from_file(path: &str, name: Option<String>) -> Result<Vec<(JsonAbi, 
 
 /// Load the ABI from the artifact of a locally compiled contract.
 fn load_abi_from_artifact(path_or_contract: &str) -> Result<Vec<(JsonAbi, String)>> {
-    let root = find_project_root_path(None)?;
-    let config = load_config_with_root(Some(root));
+    let root = try_find_project_root(None)?;
+    let config = load_config_with_root(Some(&root));
     let project = config.project()?;
     let compiler = ProjectCompiler::new().quiet(true);
 
