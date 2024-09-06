@@ -15,7 +15,8 @@ use alloy_rpc_types::{
             RewardAction, TraceOutput,
         },
     },
-    Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, Transaction,
+    AnyNetworkBlock, Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
+    Transaction,
 };
 use alloy_serde::WithOtherFields;
 use itertools::Itertools;
@@ -88,7 +89,7 @@ impl EthApi {
     pub async fn erigon_get_header_by_number(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<WithOtherFields<Block<WithOtherFields<Transaction>>>>> {
+    ) -> Result<Option<AnyNetworkBlock>> {
         node_info!("ots_getApiLevel");
 
         self.backend.block_by_number(number).await

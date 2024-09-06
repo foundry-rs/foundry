@@ -3,8 +3,8 @@
 use alloy_consensus::{AnyReceiptEnvelope, Eip658Value, Receipt, ReceiptWithBloom, TxType};
 use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, B256, I256, U256, U64};
 use alloy_rpc_types::{
-    AccessListItem, AnyTransactionReceipt, Block, BlockTransactions, Log, Transaction,
-    TransactionReceipt,
+    AccessListItem, AnyNetworkBlock, AnyTransactionReceipt, Block, BlockTransactions, Log,
+    Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use serde::Deserialize;
@@ -576,10 +576,7 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
 }
 
 /// Returns the `UiFmt::pretty()` formatted attribute of the given block
-pub fn get_pretty_block_attr(
-    block: &WithOtherFields<Block<WithOtherFields<Transaction>>>,
-    attr: &str,
-) -> Option<String> {
+pub fn get_pretty_block_attr(block: &AnyNetworkBlock, attr: &str) -> Option<String> {
     match attr {
         "baseFeePerGas" | "base_fee_per_gas" => Some(block.header.base_fee_per_gas.pretty()),
         "difficulty" => Some(block.header.difficulty.pretty()),
@@ -1056,10 +1053,7 @@ value                0".to_string();
           }
         );
 
-        let block: WithOtherFields<Block<WithOtherFields<Transaction>>> =
-            serde_json::from_value(json).unwrap();
-
-        // let block: WithOtherFields<Block> = WithOtherFields::new(block);
+        let block: AnyNetworkBlock = serde_json::from_value(json).unwrap();
 
         assert_eq!(None, get_pretty_block_attr(&block, ""));
         assert_eq!(Some("7".to_string()), get_pretty_block_attr(&block, "baseFeePerGas"));

@@ -48,9 +48,10 @@ use alloy_rpc_types::{
         },
         parity::LocalizedTransactionTrace,
     },
-    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
-    EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
-    FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
+    AccessList, AnyNetworkBlock, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
+    BlockTransactions, EIP1186AccountProofResponse as AccountProof,
+    EIP1186StorageProof as StorageProof, Filter, FilteredParams, Header as AlloyHeader, Index, Log,
+    Transaction, TransactionReceipt,
 };
 use alloy_serde::WithOtherFields;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
@@ -113,8 +114,6 @@ pub const MIN_TRANSACTION_GAS: u128 = 21000;
 pub const MIN_CREATE_GAS: u128 = 53000;
 
 pub type State = foundry_evm::utils::StateChangeset;
-
-type BlockAndTxsWithOtherFields = WithOtherFields<AlloyBlock<WithOtherFields<Transaction>>>;
 
 /// A block request, which includes the Pool Transactions if it's Pending
 #[derive(Debug)]
@@ -1519,7 +1518,7 @@ impl Backend {
     pub async fn block_by_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<BlockAndTxsWithOtherFields>, BlockchainError> {
+    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.mined_block_by_hash(hash) {
             return Ok(tx);
@@ -1535,7 +1534,7 @@ impl Backend {
     pub async fn block_by_hash_full(
         &self,
         hash: B256,
-    ) -> Result<Option<BlockAndTxsWithOtherFields>, BlockchainError> {
+    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.get_full_block(hash) {
             return Ok(tx);
@@ -1548,7 +1547,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_block_by_hash(&self, hash: B256) -> Option<BlockAndTxsWithOtherFields> {
+    fn mined_block_by_hash(&self, hash: B256) -> Option<AnyNetworkBlock> {
         let block = self.blockchain.get_block_by_hash(&hash)?;
         Some(self.convert_block(block))
     }
@@ -1584,7 +1583,7 @@ impl Backend {
     pub async fn block_by_number(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<BlockAndTxsWithOtherFields>, BlockchainError> {
+    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.mined_block_by_number(number) {
             return Ok(tx);
@@ -1603,7 +1602,7 @@ impl Backend {
     pub async fn block_by_number_full(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<BlockAndTxsWithOtherFields>, BlockchainError> {
+    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.get_full_block(number) {
             return Ok(tx);
@@ -1656,25 +1655,24 @@ impl Backend {
         self.blockchain.get_block_by_hash(&hash)
     }
 
-    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<BlockAndTxsWithOtherFields> {
+    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AnyNetworkBlock> {
         let block = self.get_block(number)?;
         let mut block = self.convert_block(block);
         block.transactions.convert_to_hashes();
         Some(block)
     }
 
-    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<BlockAndTxsWithOtherFields> {
+    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AnyNetworkBlock> {
         let block = self.get_block(id)?;
         let transactions = self.mined_transactions_in_block(&block)?;
-        let block = self.convert_block(block);
-        let block = block.inner.into_full_block(transactions);
+        let mut block = self.convert_block(block);
+        block.inner.transactions = BlockTransactions::Full(transactions);
 
-        Some(WithOtherFields::new(block))
-        // Some(block.into_full_block(transactions.into_iter().map(|t| t.inner).collect()))
+        Some(block)
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format.
-    pub fn convert_block(&self, block: Block) -> BlockAndTxsWithOtherFields {
+    pub fn convert_block(&self, block: Block) -> AnyNetworkBlock {
         let size = U256::from(alloy_rlp::encode(&block).len() as u32);
 
         let Block { header, transactions, .. } = block;

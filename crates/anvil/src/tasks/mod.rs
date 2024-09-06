@@ -6,8 +6,7 @@ use crate::{shutdown::Shutdown, tasks::block_listener::BlockListener, EthApi};
 use alloy_network::AnyNetwork;
 use alloy_primitives::B256;
 use alloy_provider::Provider;
-use alloy_rpc_types::{anvil::Forking, Block, Transaction};
-use alloy_serde::WithOtherFields;
+use alloy_rpc_types::{anvil::Forking, AnyNetworkBlock};
 use alloy_transport::Transport;
 use futures::StreamExt;
 use std::{fmt, future::Future};
@@ -150,11 +149,7 @@ impl TaskManager {
     where
         P: Provider<T, AnyNetwork> + 'static,
         T: Transport + Clone,
-        F: Fn(WithOtherFields<Block<WithOtherFields<Transaction>>>) -> Fut
-            + Unpin
-            + Send
-            + Sync
-            + 'static,
+        F: Fn(AnyNetworkBlock) -> Fut + Unpin + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send,
     {
         let shutdown = self.on_shutdown.clone();

@@ -48,7 +48,7 @@ use alloy_rpc_types::{
         parity::LocalizedTransactionTrace,
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
-    AccessList, AccessListResult, Block, BlockId, BlockNumberOrTag as BlockNumber,
+    AccessList, AccessListResult, AnyNetworkBlock, BlockId, BlockNumberOrTag as BlockNumber,
     BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
     Transaction,
 };
@@ -88,8 +88,6 @@ use std::{
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
-
-type BlockAndTxsWithOtherFields = WithOtherFields<Block<WithOtherFields<Transaction>>>;
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
 /// This type is cheap to clone and can be used concurrently
@@ -722,7 +720,7 @@ impl EthApi {
     /// Returns block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
-    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<BlockAndTxsWithOtherFields>> {
+    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyNetworkBlock>> {
         node_info!("eth_getBlockByHash");
         self.backend.block_by_hash(hash).await
     }
@@ -730,10 +728,7 @@ impl EthApi {
     /// Returns a _full_ block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
-    pub async fn block_by_hash_full(
-        &self,
-        hash: B256,
-    ) -> Result<Option<BlockAndTxsWithOtherFields>> {
+    pub async fn block_by_hash_full(&self, hash: B256) -> Result<Option<AnyNetworkBlock>> {
         node_info!("eth_getBlockByHash");
         self.backend.block_by_hash_full(hash).await
     }
@@ -741,10 +736,7 @@ impl EthApi {
     /// Returns block with given number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
-    pub async fn block_by_number(
-        &self,
-        number: BlockNumber,
-    ) -> Result<Option<BlockAndTxsWithOtherFields>> {
+    pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<AnyNetworkBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
             return Ok(Some(self.pending_block().await));
@@ -759,7 +751,7 @@ impl EthApi {
     pub async fn block_by_number_full(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<BlockAndTxsWithOtherFields>> {
+    ) -> Result<Option<AnyNetworkBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
             return Ok(self.pending_block_full().await);
@@ -1248,7 +1240,7 @@ impl EthApi {
         &self,
         block_hash: B256,
         idx: Index,
-    ) -> Result<Option<BlockAndTxsWithOtherFields>> {
+    ) -> Result<Option<AnyNetworkBlock>> {
         node_info!("eth_getUncleByBlockHashAndIndex");
         let number =
             self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
@@ -1268,7 +1260,7 @@ impl EthApi {
         &self,
         block_number: BlockNumber,
         idx: Index,
-    ) -> Result<Option<BlockAndTxsWithOtherFields>> {
+    ) -> Result<Option<AnyNetworkBlock>> {
         node_info!("eth_getUncleByBlockNumberAndIndex");
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
         if let Some(fork) = self.get_fork() {
@@ -2151,7 +2143,7 @@ impl EthApi {
     pub async fn evm_mine_detailed(
         &self,
         opts: Option<MineOptions>,
-    ) -> Result<Vec<WithOtherFields<Block<WithOtherFields<Transaction>>>>> {
+    ) -> Result<Vec<AnyNetworkBlock>> {
         node_info!("evm_mine_detailed");
 
         let mined_blocks = self.do_evm_mine(opts).await?;
@@ -2647,16 +2639,14 @@ impl EthApi {
     }
 
     /// Returns the pending block with tx hashes
-    async fn pending_block(&self) -> WithOtherFields<Block<WithOtherFields<Transaction>>> {
+    async fn pending_block(&self) -> AnyNetworkBlock {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let info = self.backend.pending_block(transactions).await;
         self.backend.convert_block(info.block)
     }
 
     /// Returns the full pending block with `Transaction` objects
-    async fn pending_block_full(
-        &self,
-    ) -> Option<WithOtherFields<Block<WithOtherFields<Transaction>>>> {
+    async fn pending_block_full(&self) -> Option<AnyNetworkBlock> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let BlockInfo { block, transactions, receipts: _ } =
             self.backend.pending_block(transactions).await;
