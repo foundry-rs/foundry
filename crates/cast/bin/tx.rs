@@ -172,10 +172,6 @@ where
             if let Some(priority_fee) = tx_opts.priority_gas_price {
                 tx.set_max_priority_fee_per_gas(priority_fee.to());
             }
-
-            if let Some(access_list) = tx_opts.access_list {
-                tx.set_access_list(access_list);
-            }
         }
 
         if let Some(max_blob_fee) = tx_opts.blob_gas_price {
@@ -184,6 +180,10 @@ where
 
         if let Some(nonce) = tx_opts.nonce {
             tx.set_nonce(nonce.to());
+        }
+
+        if let Some(access_list) = tx_opts.access_list {
+            tx.set_access_list(access_list);
         }
 
         Ok(Self {

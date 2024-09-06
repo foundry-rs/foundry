@@ -65,7 +65,7 @@ pub struct TransactionOpts {
     pub auth: Option<String>,
 
     /// EIP-2930 access list.
-    #[arg(long, conflicts_with = "legacy", value_parser = parse_access_list)]
+    #[arg(long, value_parser = parse_access_list)]
     pub access_list: Option<AccessList>,
 }
 
