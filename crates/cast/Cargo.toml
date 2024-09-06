@@ -1,5 +1,5 @@
 [package]
-name = "cast"
+name = "foundry-cast"
 description = "Command-line tool for performing Ethereum RPC calls"
 
 version.workspace = true
@@ -12,6 +12,9 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[lib]
+name = "cast"
 
 [[bin]]
 name = "cast"

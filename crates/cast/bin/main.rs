@@ -23,25 +23,28 @@ use foundry_common::{
 use foundry_config::Config;
 use std::time::Instant;
 
+pub mod args;
 pub mod cmd;
-pub mod opts;
 pub mod tx;
 
-use opts::{Cast as Opts, CastSubcommand, ToBaseArgs};
+use args::{Cast as CastArgs, CastSubcommand, ToBaseArgs};
 
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
+    let args = CastArgs::parse();
+    main_args(args)
+}
 
-    let opts = Opts::parse();
-    match opts.cmd {
+#[tokio::main]
+async fn main_args(args: CastArgs) -> Result<()> {
+    match args.cmd {
         // Constants
         CastSubcommand::MaxInt { r#type } => {
             println!("{}", SimpleCast::max_int(&r#type)?);
@@ -555,11 +558,11 @@ async fn main() -> Result<()> {
         }
         CastSubcommand::Wallet { command } => command.run().await?,
         CastSubcommand::Completions { shell } => {
-            generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
+            generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
         }
         CastSubcommand::GenerateFigSpec => clap_complete::generate(
             clap_complete_fig::Fig,
-            &mut Opts::command(),
+            &mut CastArgs::command(),
             "cast",
             &mut std::io::stdout(),
         ),

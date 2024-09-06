@@ -1857,65 +1857,6 @@ checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
 
 [[package]]
 name = "cast"
-version = "0.2.0"
-dependencies = [
- "alloy-chains",
- "alloy-consensus",
- "alloy-contract",
- "alloy-dyn-abi",
- "alloy-json-abi",
- "alloy-json-rpc",
- "alloy-network",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rlp",
- "alloy-rpc-types",
- "alloy-serde",
- "alloy-signer",
- "alloy-signer-local",
- "alloy-sol-types",
- "alloy-transport",
- "anvil",
- "async-trait",
- "aws-sdk-kms",
- "chrono",
- "clap",
- "clap_complete",
- "clap_complete_fig",
- "comfy-table",
- "criterion",
- "dunce",
- "evm-disassembler",
- "evmole",
- "eyre",
- "foundry-block-explorers",
- "foundry-cli",
- "foundry-common",
- "foundry-compilers",
- "foundry-config",
- "foundry-evm",
- "foundry-test-utils",
- "foundry-wallets",
- "futures",
- "indicatif",
- "itertools 0.13.0",
- "rand",
- "rayon",
- "regex",
- "rpassword",
- "semver 1.0.23",
- "serde",
- "serde_json",
- "tempfile",
- "tikv-jemallocator",
- "tokio",
- "tracing",
- "vergen",
- "yansi",
-]
-
-[[package]]
-name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
@@ -2368,7 +2309,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2b12d017a929603d80db1831cd3a24082f8137ce19c69e6447f54f5fc8d692f"
 dependencies = [
  "anes",
- "cast 0.3.0",
+ "cast",
  "ciborium",
  "clap",
  "criterion-plot",
@@ -2395,7 +2336,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
 dependencies = [
- "cast 0.3.0",
+ "cast",
  "itertools 0.10.5",
 ]
 
@@ -3525,6 +3466,65 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "foundry-cast"
+version = "0.2.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-dyn-abi",
+ "alloy-json-abi",
+ "alloy-json-rpc",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-types",
+ "alloy-serde",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "alloy-transport",
+ "anvil",
+ "async-trait",
+ "aws-sdk-kms",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "clap_complete_fig",
+ "comfy-table",
+ "criterion",
+ "dunce",
+ "evm-disassembler",
+ "evmole",
+ "eyre",
+ "foundry-block-explorers",
+ "foundry-cli",
+ "foundry-common",
+ "foundry-compilers",
+ "foundry-config",
+ "foundry-evm",
+ "foundry-test-utils",
+ "foundry-wallets",
+ "futures",
+ "indicatif",
+ "itertools 0.13.0",
+ "rand",
+ "rayon",
+ "regex",
+ "rpassword",
+ "semver 1.0.23",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tikv-jemallocator",
+ "tokio",
+ "tracing",
+ "vergen",
+ "yansi",
 ]
 
 [[package]]
