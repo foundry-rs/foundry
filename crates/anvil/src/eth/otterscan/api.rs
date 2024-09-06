@@ -3,12 +3,13 @@ use crate::eth::{
     macros::node_info,
     EthApi,
 };
+use alloy_network::BlockResponse;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rpc_types::{
     trace::{
         otterscan::{
             BlockDetails, ContractCreator, InternalOperation, OtsBlock, OtsBlockTransactions,
-            OtsReceipt, OtsTransactionReceipt, TraceEntry, TransactionsWithReceipts,
+            OtsReceipt, OtsSlimBlock, OtsTransactionReceipt, TraceEntry, TransactionsWithReceipts,
         },
         parity::{
             Action, CallAction, CallType, CreateAction, CreateOutput, LocalizedTransactionTrace,
@@ -149,7 +150,7 @@ impl EthApi {
         node_info!("ots_getBlockDetails");
 
         if let Some(block) = self.backend.block_by_number(number).await? {
-            let ots_block = self.build_ots_block_details(block.inner).await?;
+            let ots_block = self.build_ots_block_details(block).await?;
             Ok(ots_block)
         } else {
             Err(BlockchainError::BlockNotFound)
@@ -163,7 +164,7 @@ impl EthApi {
         node_info!("ots_getBlockDetailsByHash");
 
         if let Some(block) = self.backend.block_by_hash(hash).await? {
-            let ots_block = self.build_ots_block_details(block.inner).await?;
+            let ots_block = self.build_ots_block_details(block).await?;
             Ok(ots_block)
         } else {
             Err(BlockchainError::BlockNotFound)
@@ -177,23 +178,11 @@ impl EthApi {
         number: u64,
         page: usize,
         page_size: usize,
-    ) -> Result<OtsBlockTransactions> {
+    ) -> Result<OtsBlockTransactions<WithOtherFields<Transaction>>> {
         node_info!("ots_getBlockTransactions");
 
         match self.backend.block_by_number_full(number.into()).await? {
-            Some(block) => {
-                let Block { header, uncles, size, withdrawals, transactions } = block.inner;
-
-                let inner_txs =
-                    transactions.into_transactions().map(|t| t.inner).collect::<Vec<Transaction>>();
-
-                let mut inner_block =
-                    Block { header, uncles, size, withdrawals, ..Default::default() };
-
-                inner_block.transactions = BlockTransactions::from(inner_txs);
-
-                self.build_ots_block_tx(inner_block, page, page_size).await
-            }
+            Some(block) => self.build_ots_block_tx(block, page, page_size).await,
             None => Err(BlockchainError::BlockNotFound),
         }
     }
@@ -363,10 +352,7 @@ impl EthApi {
     ///     based on the existing list.
     ///
     /// Therefore we keep it simple by keeping the data in the response
-    pub async fn build_ots_block_details(
-        &self,
-        block: Block<WithOtherFields<Transaction>>,
-    ) -> Result<BlockDetails> {
+    pub async fn build_ots_block_details(&self, block: AnyNetworkBlock) -> Result<BlockDetails> {
         if block.transactions.is_uncle() {
             return Err(BlockchainError::DataUnavailable);
         }
@@ -389,8 +375,18 @@ impl EthApi {
             .iter()
             .fold(0, |acc, receipt| acc + receipt.gas_used * receipt.effective_gas_price);
 
+        let Block { header, uncles, transactions, size, withdrawals } = block.inner;
+
+        let block = OtsSlimBlock {
+            header,
+            uncles,
+            transaction_count: transactions.len(),
+            size,
+            withdrawals,
+        };
+
         Ok(BlockDetails {
-            block: block.into(),
+            block,
             total_fees: U256::from(total_fees),
             // issuance has no meaningful value in anvil's backend. just default to 0
             issuance: Default::default(),
@@ -403,20 +399,20 @@ impl EthApi {
     /// [`ots_getBlockTransactions`]: https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getblockdetails
     pub async fn build_ots_block_tx(
         &self,
-        mut block: Block,
+        mut block: AnyNetworkBlock,
         page: usize,
         page_size: usize,
-    ) -> Result<OtsBlockTransactions> {
+    ) -> Result<OtsBlockTransactions<WithOtherFields<Transaction>>> {
         if block.transactions.is_uncle() {
             return Err(BlockchainError::DataUnavailable);
         }
 
-        block.transactions = match block.transactions {
+        block.transactions = match block.transactions() {
             BlockTransactions::Full(txs) => BlockTransactions::Full(
-                txs.into_iter().skip(page * page_size).take(page_size).collect(),
+                txs.iter().skip(page * page_size).take(page_size).cloned().collect(),
             ),
             BlockTransactions::Hashes(txs) => BlockTransactions::Hashes(
-                txs.into_iter().skip(page * page_size).take(page_size).collect(),
+                txs.iter().skip(page * page_size).take(page_size).cloned().collect(),
             ),
             BlockTransactions::Uncle => unreachable!(),
         };
@@ -438,9 +434,13 @@ impl EthApi {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let fullblock: OtsBlock = block.into();
+        let transaction_count = block.transactions().len();
+        let fullblock = OtsBlock { block: block.inner, transaction_count };
 
-        Ok(OtsBlockTransactions { fullblock, receipts })
+        let ots_block_txs =
+            OtsBlockTransactions::<WithOtherFields<Transaction>> { fullblock, receipts };
+
+        Ok(ots_block_txs)
     }
 
     pub async fn build_ots_search_transactions(
