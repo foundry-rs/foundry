@@ -33,14 +33,13 @@ pub enum AnvilSubcommand {
     GenerateFigSpec,
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+fn main() -> eyre::Result<()> {
     utils::load_dotenv();
 
-    let mut app = Anvil::parse();
-    app.node.evm_opts.resolve_rpc_alias();
+    let mut args = Anvil::parse();
+    args.node.evm_opts.resolve_rpc_alias();
 
-    if let Some(ref cmd) = app.cmd {
+    if let Some(cmd) = &args.cmd {
         match cmd {
             AnvilSubcommand::Completions { shell } => {
                 clap_complete::generate(
@@ -61,9 +60,7 @@ async fn main() -> eyre::Result<()> {
     }
 
     let _ = fdlimit::raise_fd_limit();
-    app.node.run().await?;
-
-    Ok(())
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(args.node.run())
 }
 
 #[cfg(test)]

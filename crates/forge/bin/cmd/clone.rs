@@ -546,7 +546,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
 }
 
 /// Compile the project in the root directory, and return the compilation result.
-pub fn compile_project(root: &PathBuf, quiet: bool) -> Result<ProjectCompileOutput> {
+pub fn compile_project(root: &Path, quiet: bool) -> Result<ProjectCompileOutput> {
     let mut config = Config::load_with_root(root).sanitized();
     config.extra_output.push(ContractOutputSelection::StorageLayout);
     let project = config.project()?;
