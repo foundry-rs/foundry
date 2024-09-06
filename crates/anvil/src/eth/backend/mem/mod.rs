@@ -478,7 +478,7 @@ impl Backend {
                 fork.total_difficulty(),
             );
             self.states.write().clear();
-            // self.db.write().await.clear();
+            self.db.write().await.clear();
 
             self.apply_genesis().await?;
 
