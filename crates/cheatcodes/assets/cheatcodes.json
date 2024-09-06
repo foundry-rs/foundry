@@ -8168,18 +8168,18 @@
     },
     {
       "func": {
-        "id": "snapshotGas_0",
+        "id": "snapshotGasLastCall_0",
         "description": "Snapshot capture the gas usage of the last call by name.",
-        "declaration": "function snapshotGas(string calldata name) external;",
+        "declaration": "function snapshotGasLastCall(string calldata name) external;",
         "visibility": "external",
         "mutability": "",
-        "signature": "snapshotGas(string)",
-        "selector": "0x245b926b",
+        "signature": "snapshotGasLastCall(string)",
+        "selector": "0xdd9fca12",
         "selectorBytes": [
-          36,
-          91,
-          146,
-          107
+          221,
+          159,
+          202,
+          18
         ]
       },
       "group": "evm",
@@ -8188,18 +8188,18 @@
     },
     {
       "func": {
-        "id": "snapshotGas_1",
+        "id": "snapshotGasLastCall_1",
         "description": "Snapshot capture the gas usage of the last call by name in a group.",
-        "declaration": "function snapshotGas(string calldata group, string calldata name) external;",
+        "declaration": "function snapshotGasLastCall(string calldata group, string calldata name) external;",
         "visibility": "external",
         "mutability": "",
-        "signature": "snapshotGas(string,string)",
-        "selector": "0x700bd230",
+        "signature": "snapshotGasLastCall(string,string)",
+        "selector": "0x200c6772",
         "selectorBytes": [
-          112,
-          11,
-          210,
-          48
+          32,
+          12,
+          103,
+          114
         ]
       },
       "group": "evm",

@@ -62,7 +62,7 @@ pub struct DealRecord {
     pub new_balance: U256,
 }
 
-/// Records the `snapshotGas` cheatcodes.
+/// Records the `snapshotGas*` cheatcodes.
 #[derive(Clone, Debug)]
 pub struct GasRecord {
     /// The group name of the gas snapshot.
@@ -503,6 +503,36 @@ impl Cheatcode for snapshotValue_1Call {
     }
 }
 
+impl Cheatcode for snapshotGasLastCall_0Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name } = self;
+        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
+            bail!("no external call was made yet");
+        };
+        inner_create_value_snapshot(
+            ccx,
+            None,
+            Some(name.clone()),
+            last_call_gas.gasTotalUsed.to_string(),
+        )
+    }
+}
+
+impl Cheatcode for snapshotGasLastCall_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name, group } = self;
+        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
+            bail!("no external call was made yet");
+        };
+        inner_create_value_snapshot(
+            ccx,
+            Some(group.clone()),
+            Some(name.clone()),
+            last_call_gas.gasTotalUsed.to_string(),
+        )
+    }
+}
+
 impl Cheatcode for startSnapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name } = self;
@@ -538,36 +568,6 @@ impl Cheatcode for stopSnapshotGas_2Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name } = self;
         inner_stop_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
-    }
-}
-
-impl Cheatcode for snapshotGas_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { name } = self;
-        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
-            bail!("no external call was made yet");
-        };
-        inner_create_value_snapshot(
-            ccx,
-            None,
-            Some(name.clone()),
-            last_call_gas.gasTotalUsed.to_string(),
-        )
-    }
-}
-
-impl Cheatcode for snapshotGas_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { name, group } = self;
-        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
-            bail!("no external call was made yet");
-        };
-        inner_create_value_snapshot(
-            ccx,
-            Some(group.clone()),
-            Some(name.clone()),
-            last_call_gas.gasTotalUsed.to_string(),
-        )
     }
 }
 

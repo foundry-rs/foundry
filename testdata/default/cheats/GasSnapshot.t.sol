@@ -91,21 +91,21 @@ contract GasSnapshotTest is DSTest {
     }
 
     // Writes to `GasSnapshotTest` group with `testSnapshotGas` name.
-    function testSnapshotGasName() public {
+    function testSnapshotGasLastCallName() public {
         Flare f = new Flare();
 
         f.run(1);
 
-        vm.snapshotGas("testSnapshotGasName");
+        vm.snapshotGasLastCall("testSnapshotGasName");
     }
 
     // Writes to `CustomGroup` group with `testSnapshotGas` name.
-    function testSnapshotGasGroupName() public {
+    function testSnapshotGasLastCallGroupName() public {
         Flare f = new Flare();
 
         f.run(1);
 
-        vm.snapshotGas("CustomGroup", "testSnapshotGasGroupName");
+        vm.snapshotGasLastCall("CustomGroup", "testSnapshotGasGroupName");
     }
 }
 
