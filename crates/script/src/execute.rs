@@ -193,7 +193,7 @@ impl PreExecutionState {
                         let sender = tx.transaction.from().expect("no sender");
                         if let Some(ns) = new_sender {
                             if sender != ns {
-                                shell::println("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
+                                sh_println!("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
                                 return Ok(None);
                             }
                         } else if sender != self.script_config.evm_opts.sender {
@@ -252,7 +252,7 @@ For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
                     .map(|(_, chain)| *chain as u64)
                     .format(", ")
             );
-            shell::println(msg.yellow())?;
+            sh_warn!("{}", msg)?;
         }
         Ok(())
     }

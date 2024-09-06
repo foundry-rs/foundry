@@ -1,4 +1,7 @@
 #[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
 extern crate tracing;
 
 use clap::{CommandFactory, Parser};

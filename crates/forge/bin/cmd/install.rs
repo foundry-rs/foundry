@@ -2,7 +2,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    p_println, prompt,
+    p_println,
     utils::{CommandUtils, Git, LoadConfig},
 };
 use foundry_common::fs;

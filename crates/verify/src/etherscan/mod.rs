@@ -17,7 +17,7 @@ use foundry_cli::utils::{get_provider, read_constructor_args_file, LoadConfig};
 use foundry_common::{
     abi::encode_function_args,
     retry::{Retry, RetryError},
-    shell,
+    sh_println, shell,
 };
 use foundry_compilers::{artifacts::BytecodeObject, Artifact};
 use foundry_config::{Chain, Config};
@@ -424,7 +424,7 @@ impl EtherscanVerificationProvider {
         if maybe_creation_code.starts_with(bytecode) {
             let constructor_args = &maybe_creation_code[bytecode.len()..];
             let constructor_args = hex::encode(constructor_args);
-            shell::println(format!("Identified constructor arguments: {constructor_args}"))?;
+            sh_println!("{}", format!("Identified constructor arguments: {constructor_args}"))?;
             Ok(constructor_args)
         } else {
             eyre::bail!("Local bytecode doesn't match on-chain bytecode")

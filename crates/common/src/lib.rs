@@ -29,7 +29,6 @@ pub mod provider;
 pub mod retry;
 pub mod selectors;
 pub mod serde_helpers;
-pub mod shell;
 pub mod term;
 pub mod traits;
 pub mod transactions;
@@ -37,7 +36,8 @@ mod utils;
 
 pub use constants::*;
 pub use contracts::*;
-pub use io::Shell;
 pub use traits::*;
 pub use transactions::*;
 pub use utils::*;
+
+pub use io::{shell, stdin, Shell};
