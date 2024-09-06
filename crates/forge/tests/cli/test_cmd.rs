@@ -1919,3 +1919,82 @@ contract CounterRevertTest is DSTest {
 ...
 "#]]);
 });
+
+// https://github.com/foundry-rs/foundry/issues/6643
+forgetest_init!(repro_6643, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+contract Counter {
+    event TestEvent(uint n);
+    event AnotherTestEvent(uint256 n);
+
+    constructor() {
+        emit TestEvent(1);
+    }
+
+    function f() external {
+        emit TestEvent(2);
+    }
+
+    function g() external {
+        emit AnotherTestEvent(1);
+        this.f();
+        emit AnotherTestEvent(2);
+    }
+}
+
+contract CounterTest is Test {
+    Counter public counter;
+    event TestEvent(uint n);
+    event AnotherTestEvent(uint256 n);
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function test_Bug1() public {
+        // part1
+        vm.expectEmit();
+        emit TestEvent(1);
+        new Counter();
+
+        // part2
+        vm.expectEmit();
+        emit TestEvent(2);
+        counter.f();
+
+        // part3
+        vm.expectEmit();
+        emit AnotherTestEvent(1);
+        vm.expectEmit();
+        emit TestEvent(2);
+        vm.expectEmit();
+        emit AnotherTestEvent(2);
+        counter.g();
+    }
+
+    function test_Bug2() public {
+        vm.expectEmit();
+        emit TestEvent(1);
+        new Counter();
+
+        vm.expectEmit();
+        emit TestEvent(1);
+        new Counter();
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] test_Bug1() ([GAS])
+[PASS] test_Bug2() ([GAS])
+...
+"#]]);
+});
