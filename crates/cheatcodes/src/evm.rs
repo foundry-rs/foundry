@@ -13,8 +13,9 @@ use foundry_evm_core::{
     backend::{DatabaseExt, RevertSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
+use rand::Rng;
 use revm::{
-    primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
+    primitives::{Account, Bytecode, EvmStorageSlot, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
 };
 use std::{
@@ -89,7 +90,13 @@ impl Cheatcode for loadCall {
         let Self { target, slot } = *self;
         ensure_not_precompile!(&target, ccx);
         ccx.ecx.load_account(target)?;
-        let val = ccx.ecx.sload(target, slot.into())?;
+        let mut val = ccx.ecx.sload(target, slot.into())?;
+        // Generate random value if target should have arbitrary storage and storage slot untouched.
+        if ccx.state.arbitrary_storage.contains(&target) && val.is_cold && val.data.is_zero() {
+            val.data = ccx.state.rng().gen();
+            let mut account = ccx.ecx.load_account(target)?;
+            account.storage.insert(slot.into(), EvmStorageSlot::new(val.data));
+        }
         Ok(val.abi_encode())
     }
 }

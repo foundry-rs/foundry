@@ -7,6 +7,7 @@ use crate::{
         TEST_DATA_MULTI_VERSION,
     },
 };
+use alloy_primitives::U256;
 use foundry_config::{fs_permissions::PathPermission, FsPermissions};
 use foundry_test_utils::Filter;
 
@@ -26,6 +27,7 @@ async fn test_cheats_local(test_data: &ForgeTestData) {
     }
 
     let mut config = test_data.config.clone();
+    config.fuzz.seed = Some(U256::from(100));
     config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write("./")]);
     let runner = test_data.runner_with_config(config);
 

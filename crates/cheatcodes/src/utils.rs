@@ -1,6 +1,6 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
@@ -145,6 +145,28 @@ impl Cheatcode for resumeTracingCall {
 
         let node = &tracer.traces().nodes().last().expect("no trace nodes");
         ccx.state.ignored_traces.ignored.insert(start, (node.idx, node.ordering.len()));
+
+        Ok(Default::default())
+    }
+}
+impl Cheatcode for setArbitraryStorageCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { target } = self;
+        ccx.state.arbitrary_storage.push(*target);
+
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for copyStorageCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { from, to } = self;
+        if let Ok(from_account) = ccx.load_account(*from) {
+            let from_storage = from_account.storage.clone();
+            if let Ok(mut to_account) = ccx.load_account(*to) {
+                to_account.storage = from_storage;
+            }
+        }
 
         Ok(Default::default())
     }

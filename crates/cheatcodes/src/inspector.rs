@@ -41,7 +41,7 @@ use revm::{
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
-    primitives::{BlockEnv, CreateScheme, EVMError, SpecId, EOF_MAGIC_BYTES},
+    primitives::{BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SpecId, EOF_MAGIC_BYTES},
     EvmContext, InnerEvmContext, Inspector,
 };
 use rustc_hash::FxHashMap;
@@ -320,6 +320,9 @@ pub struct Cheatcodes {
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
     pub mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
 
+    /// Mocked functions. Maps target address to be mocked to pair of (calldata, mock address).
+    pub mocked_functions: HashMap<Address, HashMap<Bytes, Address>>,
+
     /// Expected calls
     pub expected_calls: ExpectedCallTracker,
     /// Expected emits
@@ -368,6 +371,10 @@ pub struct Cheatcodes {
 
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
+
+    /// Addresses that should have arbitrary storage generated (SLOADs return random value if
+    /// storage slot wasn't accessed).
+    pub arbitrary_storage: Vec<Address>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -396,6 +403,7 @@ impl Cheatcodes {
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
             mocked_calls: Default::default(),
+            mocked_functions: Default::default(),
             expected_calls: Default::default(),
             expected_emits: Default::default(),
             allowed_mem_writes: Default::default(),
@@ -410,6 +418,7 @@ impl Cheatcodes {
             breakpoints: Default::default(),
             rng: Default::default(),
             ignored_traces: Default::default(),
+            arbitrary_storage: Default::default(),
         }
     }
 
@@ -1045,13 +1054,17 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     }
 
     #[inline]
-    fn step_end(&mut self, interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
 
         if self.gas_metering.touched {
             self.meter_gas_check(interpreter);
+        }
+
+        if self.arbitrary_storage.contains(&interpreter.contract().target_address) {
+            self.ensure_arbitrary_storage(interpreter, ecx);
         }
     }
 
@@ -1461,6 +1474,26 @@ impl Cheatcodes {
                 u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
             {
                 interpreter.gas = Gas::new(interpreter.gas.limit());
+            }
+        }
+    }
+
+    /// Generates arbitrary values for storage slots.
+    #[cold]
+    fn ensure_arbitrary_storage<DB: DatabaseExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<DB>,
+    ) {
+        if interpreter.current_opcode() == op::SLOAD {
+            let key = try_or_return!(interpreter.stack().peek(0));
+            let target_address = interpreter.contract().target_address;
+            if let Ok(value) = ecx.sload(target_address, key) {
+                if value.is_cold && value.data.is_zero() {
+                    if let Ok(mut target_account) = ecx.load_account(target_address) {
+                        target_account.storage.insert(key, EvmStorageSlot::new(self.rng().gen()));
+                    }
+                }
             }
         }
     }
