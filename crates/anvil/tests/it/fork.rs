@@ -4,6 +4,7 @@ use crate::{
     abi::{Greeter, ERC721},
     utils::{http_provider, http_provider_with_signer},
 };
+use alloy_chains::NamedChain;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{address, b256, bytes, Address, Bytes, TxHash, TxKind, U256};
 use alloy_provider::Provider;
@@ -17,7 +18,7 @@ use alloy_signer_local::PrivateKeySigner;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
-use foundry_test_utils::rpc::{self, next_http_rpc_endpoint};
+use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
 use futures::StreamExt;
 use std::{sync::Arc, thread::sleep, time::Duration};
 
@@ -474,6 +475,37 @@ async fn can_reset_properly() {
 
     // tx does not exist anymore
     assert!(fork_tx_provider.get_transaction_by_hash(tx.transaction_hash).await.unwrap().is_none())
+}
+
+// Ref: <https://github.com/foundry-rs/foundry/issues/8684>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_reset_fork_to_new_fork() {
+    let eth_rpc_url = next_rpc_endpoint(NamedChain::Mainnet);
+    let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(eth_rpc_url))).await;
+    let provider = handle.http_provider();
+
+    let op = address!("C0d3c0d3c0D3c0D3C0d3C0D3C0D3c0d3c0d30007"); // L2CrossDomainMessenger - Dead on mainnet.
+
+    let tx = TransactionRequest::default().with_to(op).with_input("0x54fd4d50");
+
+    let tx = WithOtherFields::new(tx);
+
+    let mainnet_call_output = provider.call(&tx).await.unwrap();
+
+    assert_eq!(mainnet_call_output, Bytes::new()); // 0x
+
+    let optimism = next_rpc_endpoint(NamedChain::Optimism);
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(optimism.to_string()),
+        block_number: Some(124659890),
+    }))
+    .await
+    .unwrap();
+
+    let code = provider.get_code_at(op).await.unwrap();
+
+    assert_ne!(code, Bytes::new());
 }
 
 #[tokio::test(flavor = "multi_thread")]
