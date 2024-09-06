@@ -23,13 +23,13 @@ pub struct CachedSignatures {
 
 impl CachedSignatures {
     #[instrument(target = "evm::traces")]
-    pub fn load(
-        cache_path: PathBuf
-    ) -> CachedSignatures {
+    pub fn load(cache_path: PathBuf) -> CachedSignatures {
         let path = cache_path.join("signatures");
         let cached = if path.is_file() {
-            fs::read_json_file(&cache_path)
-                .map_err(|err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"))
+            fs::read_json_file(&path)
+                .map_err(
+                    |err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"),
+                )
                 .unwrap_or_default()
         } else {
             if let Err(err) = std::fs::create_dir_all(cache_path) {
@@ -66,9 +66,7 @@ impl SignaturesIdentifier {
             let path = cache_path.join("signatures");
             trace!(target: "evm::traces", ?path, "reading signature cache");
             let cached = CachedSignatures::load(cache_path.clone());
-            Self {
-                cached, cached_path: Some(path), unavailable: HashSet::new(), client
-            }
+            Self { cached, cached_path: Some(path), unavailable: HashSet::new(), client }
         } else {
             Self {
                 cached: Default::default(),
