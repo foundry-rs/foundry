@@ -440,7 +440,7 @@ pub async fn print_traces(result: &mut TraceResult, decoder: &CallTraceDecoder) 
 /// file.
 pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
     let path = cache_path.join("signatures");
-    let mut cached_signatures = CachedSignatures::load(cache_path.clone());
+    let mut cached_signatures = CachedSignatures::load(cache_path);
     output.artifacts().for_each(|(_, artifact)| {
         if let Some(abi) = &artifact.abi {
             for func in abi.functions() {
