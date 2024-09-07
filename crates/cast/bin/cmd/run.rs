@@ -186,7 +186,7 @@ impl RunArgs {
                 let BlockTransactions::Full(ref txs) = block.transactions else {
                     return Err(eyre::eyre!("Could not get block txs"))
                 };
-              
+
                 for (index, tx) in txs.iter().enumerate() {
                     // System transactions such as on L2s don't contain any pricing info so
                     // we skip them otherwise this would cause
