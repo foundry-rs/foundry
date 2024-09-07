@@ -83,7 +83,7 @@ pub enum CastSubcommand {
     },
 
     /// Concatenate hex strings.
-    #[command(visible_aliases = &["--concat-hex", "cx"])]
+    #[command(visible_aliases = &["--concat-hex", "ch"])]
     ConcatHex {
         /// The data to concatenate.
         data: Vec<String>,
@@ -832,7 +832,7 @@ pub enum CastSubcommand {
     },
 
     /// Get the codehash for an account.
-    #[command(visible_alias = "ch")]
+    #[command()]
     Codehash {
         /// The block height to query at.
         ///

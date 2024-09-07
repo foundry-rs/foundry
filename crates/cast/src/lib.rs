@@ -8,7 +8,7 @@ use alloy_network::AnyNetwork;
 use alloy_primitives::{
     hex,
     utils::{keccak256, ParseUnits, Unit},
-    Address, FixedBytes, Keccak256, TxHash, TxKind, B256, I256, U256,
+    Address, Keccak256, TxHash, TxKind, B256, I256, U256,
 };
 use alloy_provider::{
     network::eip2718::{Decodable2718, Encodable2718},
@@ -515,7 +515,7 @@ where
     pub async fn codehash(
         &self,
         who: Address,
-        slots: Vec<FixedBytes<32>>,
+        slots: Vec<B256>,
         block: Option<BlockId>,
     ) -> Result<String> {
         Ok(self
@@ -548,7 +548,7 @@ where
     pub async fn storage_root(
         &self,
         who: Address,
-        slots: Vec<FixedBytes<32>>,
+        slots: Vec<B256>,
         block: Option<BlockId>,
     ) -> Result<String> {
         Ok(self
