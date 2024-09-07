@@ -83,7 +83,7 @@ pub enum CastSubcommand {
     },
 
     /// Concatenate hex strings.
-    #[command(visible_aliases = &["--concat-hex", "ch"])]
+    #[command(visible_aliases = &["--concat-hex", "cx"])]
     ConcatHex {
         /// The data to concatenate.
         data: Vec<String>,
@@ -824,6 +824,40 @@ pub enum CastSubcommand {
         block: Option<BlockId>,
 
         /// The address to get the nonce for.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Get the codehash for an account.
+    #[command(visible_alias = "ch")]
+    Codehash {
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        /// The address to get the codehash for.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Get the storage root for an account.
+    #[command(visible_alias = "sr")]
+    StorageRoot {
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        /// The address to get the storage root for.
         #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
