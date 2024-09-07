@@ -186,6 +186,44 @@ impl Transaction for DepositTransactionRequest {
     fn gas_price(&self) -> Option<u128> {
         None
     }
+
+    fn ty(&self) -> u8 {
+        0x7E
+    }
+
+    // Below fields are not found in a `DepositTransactionRequest`
+
+    fn access_list(&self) -> Option<&alloy_rpc_types::AccessList> {
+        None
+    }
+
+    fn authorization_list(&self) -> Option<&[revm::primitives::SignedAuthorization]> {
+        None
+    }
+
+    fn blob_versioned_hashes(&self) -> Option<&[B256]> {
+        None
+    }
+
+    fn effective_tip_per_gas(&self, _base_fee: u64) -> Option<u128> {
+        None
+    }
+
+    fn max_fee_per_blob_gas(&self) -> Option<u128> {
+        None
+    }
+
+    fn max_fee_per_gas(&self) -> u128 {
+        0
+    }
+
+    fn max_priority_fee_per_gas(&self) -> Option<u128> {
+        None
+    }
+
+    fn priority_fee_or_price(&self) -> u128 {
+        0
+    }
 }
 
 impl SignableTransaction<Signature> for DepositTransactionRequest {

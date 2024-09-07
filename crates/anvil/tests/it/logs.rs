@@ -60,8 +60,7 @@ async fn get_past_events() {
         .unwrap()
         .unwrap()
         .header
-        .hash
-        .unwrap();
+        .hash;
 
     let filter = Filter::new()
         .address(simple_storage_address)
@@ -197,8 +196,7 @@ async fn watch_events() {
             .unwrap()
             .unwrap()
             .header
-            .hash
-            .unwrap();
+            .hash;
         assert_eq!(log.1.block_hash.unwrap(), hash);
     }
 }
