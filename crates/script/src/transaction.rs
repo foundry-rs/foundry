@@ -1,7 +1,7 @@
 use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::{hex, Address, Bytes, TxKind, B256};
-use eyre::{ContextCompat, Result, WrapErr};
+use eyre::{Result, WrapErr};
 use foundry_common::{fmt::format_token_raw, ContractData, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
 use itertools::Itertools;
@@ -70,53 +70,54 @@ impl TransactionWithMetadata {
     pub fn new(
         transaction: TransactionMaybeSigned,
         rpc: String,
-        result: &ScriptResult,
         local_contracts: &BTreeMap<Address, &ContractData>,
         decoder: &CallTraceDecoder,
-        additional_contracts: Vec<AdditionalContract>,
-        is_fixed_gas_limit: bool,
     ) -> Result<Self> {
         let mut metadata = Self::from_tx_request(transaction);
         metadata.rpc = rpc;
-        metadata.is_fixed_gas_limit = is_fixed_gas_limit;
 
-        // Specify if any contract was directly created with this transaction
         if let Some(TxKind::Call(to)) = metadata.transaction.to() {
             if to == DEFAULT_CREATE2_DEPLOYER {
-                metadata.set_create(
-                    true,
-                    Address::from_slice(&result.returned),
-                    local_contracts,
-                )?;
+                if let Some(input) = metadata.transaction.input() {
+                    let (salt, init_code) = input.split_at(32);
+                    metadata.set_create(
+                        true,
+                        DEFAULT_CREATE2_DEPLOYER
+                            .create2_from_code(B256::from_slice(salt), init_code),
+                        local_contracts,
+                    )?;
+                }
             } else {
                 metadata
                     .set_call(to, local_contracts, decoder)
                     .wrap_err("Could not decode transaction type.")?;
             }
         } else {
-            metadata.set_create(
-                false,
-                result.address.wrap_err("There should be a contract address from CREATE.")?,
-                local_contracts,
-            )?;
-        }
-
-        // Add the additional contracts created in this transaction, so we can verify them later.
-        if let Some(tx_address) = metadata.contract_address {
-            metadata.additional_contracts = additional_contracts
-                .into_iter()
-                .filter_map(|contract| {
-                    // Filter out the transaction contract repeated init_code.
-                    if contract.address != tx_address {
-                        Some(contract)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+            let sender =
+                metadata.transaction.from().expect("all transactions should have a sender");
+            let nonce = metadata.transaction.nonce().expect("all transactions should have a nonce");
+            metadata.set_create(false, sender.create(nonce), local_contracts)?;
         }
 
         Ok(metadata)
+    }
+
+    pub fn with_fixed_gas_limit(mut self, yes: bool) -> Self {
+        self.is_fixed_gas_limit = yes;
+        self
+    }
+
+    /// Populates additional data from the transaction execution result.
+    pub fn with_execution_result(mut self, result: &ScriptResult) -> Self {
+        let created_contracts = result.get_created_contracts();
+
+        // Add the additional contracts created in this transaction, so we can verify them later.
+        self.additional_contracts = created_contracts
+            .into_iter()
+            .filter(|contract| self.contract_address.map_or(true, |addr| addr != contract.address))
+            .collect();
+
+        self
     }
 
     /// Populate the transaction as CREATE tx

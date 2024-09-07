@@ -15,7 +15,7 @@ use crate::{
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{utils::format_units, Address, Bytes, TxKind, U256};
 use eyre::{Context, Result};
-use foundry_cheatcodes::{BroadcastableTransactions, ScriptWallets};
+use foundry_cheatcodes::{ScriptWallets};
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{get_contract_name, shell, ContractData};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
@@ -48,16 +48,30 @@ impl PreSimulationState {
     ///
     /// Both modes will panic if any of the transactions have None for the `rpc` field.
     pub async fn fill_metadata(self) -> Result<FilledTransactionsState> {
-        let transactions = if let Some(txs) = self.execution_result.transactions.as_ref() {
-            if self.args.skip_simulation {
-                shell::println("\nSKIPPING ON CHAIN SIMULATION.")?;
-                self.no_simulation(txs.clone())?
-            } else {
-                self.onchain_simulation(txs.clone()).await?
-            }
+        let address_to_abi = self.build_address_to_abi_map();
+
+        let mut transactions = self
+            .execution_result
+            .transactions
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|tx| {
+                let rpc = tx.rpc.expect("missing broadcastable tx rpc url");
+                TransactionWithMetadata::new(
+                    tx.transaction,
+                    rpc,
+                    &address_to_abi,
+                    &self.execution_artifacts.decoder,
+                )
+            })
+            .collect::<Result<VecDeque<_>>>()?;
+
+        if self.args.skip_simulation {
+            shell::println("\nSKIPPING ON CHAIN SIMULATION.")?;
         } else {
-            VecDeque::new()
-        };
+            transactions = self.simulate_and_fill(transactions).await?;
+        }
 
         Ok(FilledTransactionsState {
             args: self.args,
@@ -73,9 +87,9 @@ impl PreSimulationState {
     /// transactions in those environments.
     ///
     /// Collects gas usage and metadata for each transaction.
-    pub async fn onchain_simulation(
+    pub async fn simulate_and_fill(
         &self,
-        transactions: BroadcastableTransactions,
+        transactions: VecDeque<TransactionWithMetadata>,
     ) -> Result<VecDeque<TransactionWithMetadata>> {
         trace!(target: "script", "executing onchain simulation");
 
@@ -87,18 +101,15 @@ impl PreSimulationState {
                 .collect::<HashMap<_, _>>(),
         );
 
-        let address_to_abi = self.build_address_to_abi_map();
-
         let mut final_txs = VecDeque::new();
 
         // Executes all transactions from the different forks concurrently.
         let futs = transactions
             .into_iter()
-            .map(|transaction| async {
-                let rpc = transaction.rpc.expect("missing broadcastable tx rpc url");
-                let mut runner = runners.get(&rpc).expect("invalid rpc url").write();
+            .map(|mut transaction| async {
+                let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
 
-                let mut tx = transaction.transaction;
+                let tx = &mut transaction.transaction;
                 let to = if let Some(TxKind::Call(to)) = tx.to() { Some(to) } else { None };
                 let result = runner
                     .simulate(
@@ -113,8 +124,6 @@ impl PreSimulationState {
                 if !result.success {
                     return Ok((None, result.traces));
                 }
-
-                let created_contracts = result.get_created_contracts();
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
@@ -140,17 +149,11 @@ impl PreSimulationState {
                     true
                 };
 
-                let tx = TransactionWithMetadata::new(
-                    tx,
-                    rpc,
-                    &result,
-                    &address_to_abi,
-                    &self.execution_artifacts.decoder,
-                    created_contracts,
-                    is_fixed_gas_limit,
-                )?;
+                let transaction = transaction
+                    .with_fixed_gas_limit(is_fixed_gas_limit)
+                    .with_execution_result(&result);
 
-                eyre::Ok((Some(tx), result.traces))
+                eyre::Ok((Some(transaction), result.traces))
             })
             .collect::<Vec<_>>();
 
@@ -219,22 +222,6 @@ impl PreSimulationState {
             Ok((rpc.clone(), runner))
         });
         try_join_all(futs).await
-    }
-
-    /// If simulation is disabled, converts transactions into [TransactionWithMetadata] type
-    /// skipping metadata filling.
-    fn no_simulation(
-        &self,
-        transactions: BroadcastableTransactions,
-    ) -> Result<VecDeque<TransactionWithMetadata>> {
-        Ok(transactions
-            .into_iter()
-            .map(|btx| {
-                let mut tx = TransactionWithMetadata::from_tx_request(btx.transaction);
-                tx.rpc = btx.rpc.expect("missing broadcastable tx rpc url");
-                tx
-            })
-            .collect())
     }
 }
 
