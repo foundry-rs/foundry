@@ -8,7 +8,7 @@ use alloy_network::AnyNetwork;
 use alloy_primitives::{
     hex,
     utils::{keccak256, ParseUnits, Unit},
-    Address, Keccak256, TxHash, TxKind, B256, I256, U256,
+    Address, FixedBytes, Keccak256, TxHash, TxKind, B256, I256, U256,
 };
 use alloy_provider::{
     network::eip2718::{Decodable2718, Encodable2718},
@@ -495,47 +495,71 @@ where
     }
 
     /// #Example
-    /// 
+    ///
     /// ```
-    /// use alloy_primitives::Address;
+    /// use alloy_primitives::{Address, FixedBytes};
     /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
     /// use std::str::FromStr;
-    /// 
+    ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let codehash = cast.codehash(addr, None).await?;
+    /// let slots = vec![FixedBytes::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")?];
+    /// let codehash = cast.codehash(addr, slots, None).await?;
     /// println!("{}", codehash);
     /// # Ok(())
     /// # }
-    pub async fn codehash(&self, who: Address, block: Option<BlockId>) -> Result<String> {
-        Ok(self.provider.get_account(who).block_id(block.unwrap_or_default()).await?.code_hash.to_string())
+    pub async fn codehash(
+        &self,
+        who: Address,
+        slots: Vec<FixedBytes<32>>,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        Ok(self
+            .provider
+            .get_proof(who, slots)
+            .block_id(block.unwrap_or_default())
+            .await?
+            .code_hash
+            .to_string())
     }
 
     /// #Example
-    /// 
+    ///
     /// ```
-    /// use alloy_primitives::Address;
+    /// use alloy_primitives::{Address, FixedBytes};
     /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
     /// use cast::Cast;
     /// use std::str::FromStr;
-    /// 
+    ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let storage_root = cast.storage_root(addr, None).await?;
+    /// let slots = vec![FixedBytes::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")?];
+    /// let storage_root = cast.storage_root(addr, slots, None).await?;
     /// println!("{}", storage_root);
     /// # Ok(())
     /// # }
-    pub async fn storage_root(&self, who: Address, block: Option<BlockId>) -> Result<String> {
-        Ok(self.provider.get_account(who).block_id(block.unwrap_or_default()).await?.storage_root.to_string())
+    pub async fn storage_root(
+        &self,
+        who: Address,
+        slots: Vec<FixedBytes<32>>,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        Ok(self
+            .provider
+            .get_proof(who, slots)
+            .block_id(block.unwrap_or_default())
+            .await?
+            .storage_hash
+            .to_string())
     }
- 
+
     /// # Example
     ///
     /// ```

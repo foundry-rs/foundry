@@ -844,6 +844,10 @@ pub enum CastSubcommand {
         #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
 
+        /// The storage slot numbers (hex or decimal).
+        #[arg(value_parser = parse_slot)]
+        slots: Vec<B256>,
+
         #[command(flatten)]
         rpc: RpcOpts,
     },
@@ -860,6 +864,10 @@ pub enum CastSubcommand {
         /// The address to get the storage root for.
         #[arg(value_parser = NameOrAddress::from_str)]
         who: NameOrAddress,
+
+        /// The storage slot numbers (hex or decimal).
+        #[arg(value_parser = parse_slot)]
+        slots: Vec<B256>,
 
         #[command(flatten)]
         rpc: RpcOpts,
