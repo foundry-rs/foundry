@@ -25,7 +25,7 @@ impl CachedSignatures {
     #[instrument(target = "evm::traces")]
     pub fn load(cache_path: PathBuf) -> CachedSignatures {
         let path = cache_path.join("signatures");
-        let cached = if path.is_file() {
+        if path.is_file() {
             fs::read_json_file(&path)
                 .map_err(
                     |err| warn!(target: "evm::traces", ?path, ?err, "failed to read cache file"),
@@ -36,8 +36,7 @@ impl CachedSignatures {
                 warn!(target: "evm::traces", "could not create signatures cache dir: {:?}", err);
             }
             Self::default()
-        };
-        cached
+        }
     }
 }
 /// An identifier that tries to identify functions and events using signatures found at
