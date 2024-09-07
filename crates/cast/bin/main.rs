@@ -362,6 +362,18 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let who = who.resolve(&provider).await?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
+        CastSubcommand::Codehash { block, who, slots, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
+            let who = who.resolve(&provider).await?;
+            println!("{}", Cast::new(provider).codehash(who, slots, block).await?);
+        }
+        CastSubcommand::StorageRoot { block, who, slots, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
+            let who = who.resolve(&provider).await?;
+            println!("{}", Cast::new(provider).storage_root(who, slots, block).await?);
+        }
         CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
