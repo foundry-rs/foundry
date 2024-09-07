@@ -23,7 +23,7 @@ pub struct CachedSignatures {
 
 impl CachedSignatures {
     #[instrument(target = "evm::traces")]
-    pub fn load(cache_path: PathBuf) -> CachedSignatures {
+    pub fn load(cache_path: PathBuf) -> Self {
         let path = cache_path.join("signatures");
         if path.is_file() {
             fs::read_json_file(&path)
