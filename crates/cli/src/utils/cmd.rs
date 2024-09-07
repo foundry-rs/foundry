@@ -161,7 +161,7 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return matches! (
+        return matches!(
             chain,
             NamedChain::Acala |
                 NamedChain::AcalaMandalaTestnet |
@@ -189,10 +189,10 @@ pub fn has_batch_support(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return !matches!(
             chain,
-            NamedChain::Arbitrum |
-                NamedChain::ArbitrumTestnet |
-                NamedChain::ArbitrumGoerli |
-                NamedChain::ArbitrumSepolia
+            NamedChain::Arbitrum
+                | NamedChain::ArbitrumTestnet
+                | NamedChain::ArbitrumGoerli
+                | NamedChain::ArbitrumSepolia
         );
     }
     true

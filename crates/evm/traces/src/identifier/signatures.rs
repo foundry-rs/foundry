@@ -35,7 +35,7 @@ impl CachedSignatures {
             if let Err(err) = std::fs::create_dir_all(cache_path) {
                 warn!(target: "evm::traces", "could not create signatures cache dir: {:?}", err);
             }
-            CachedSignatures::default()
+            Self::default()
         };
         cached
     }
@@ -65,7 +65,7 @@ impl SignaturesIdentifier {
         let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");
             trace!(target: "evm::traces", ?path, "reading signature cache");
-            let cached = CachedSignatures::load(cache_path.clone());
+            let cached = CachedSignatures::load(cache_path);
             Self { cached, cached_path: Some(path), unavailable: HashSet::new(), client }
         } else {
             Self {
