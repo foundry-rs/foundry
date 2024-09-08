@@ -76,10 +76,7 @@ impl TransactionWithMetadata {
         let mut metadata = Self::from_tx_request(transaction);
         metadata.rpc = rpc;
         // If tx.gas is already set that means it was specified in script
-        if let Some(gas) = metadata.transaction.gas() {
-            println!("Gas limit was set in script to {gas}");
-            metadata.is_fixed_gas_limit = true;
-        }
+        metadata.is_fixed_gas_limit = metadata.tx().gas().is_some();
 
         if let Some(TxKind::Call(to)) = metadata.transaction.to() {
             if to == DEFAULT_CREATE2_DEPLOYER {

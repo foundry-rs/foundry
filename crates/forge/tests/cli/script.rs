@@ -244,7 +244,6 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-Gas limit was set in script to 500000
   [45299] → new GasWaster@[..]
     └─ ← [Return] 226 bytes of code
 
@@ -352,7 +351,6 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-Gas limit was set in script to 500000
   [45299] → new GasWaster@[..]
     └─ ← [Return] 226 bytes of code
 
