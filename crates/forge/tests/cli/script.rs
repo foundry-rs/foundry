@@ -1687,6 +1687,7 @@ contract SimpleScript is Script {
         "2000000",
         "--priority-gas-price",
         "100000",
+        "--non-interactive",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -1700,6 +1701,7 @@ Script ran successfully.
 success: bool true
 
 ## Setting up 1 EVM.
+Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 ==========================
 
@@ -1736,6 +1738,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
             format!("{dev:?}").as_str(),
             "--broadcast",
             "--unlocked",
+            "--non-interactive",
         ])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -1747,6 +1750,7 @@ Script ran successfully.
 success: bool true
 
 ## Setting up 1 EVM.
+Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 ==========================
 
@@ -1800,6 +1804,7 @@ contract SimpleScript is Script {
         &handle.http_endpoint(),
         "--broadcast",
         "--unlocked",
+        "--non-interactive",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -1813,6 +1818,7 @@ Script ran successfully.
 success: bool true
 
 ## Setting up 1 EVM.
+Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 ==========================
 
