@@ -110,13 +110,13 @@ impl TransactionWithMetadata {
         result: &ScriptResult,
         gas_estimate_multiplier: u64,
     ) -> Self {
-        let created_contracts = result.get_created_contracts();
+        let mut created_contracts = result.get_created_contracts();
 
         // Add the additional contracts created in this transaction, so we can verify them later.
-        self.additional_contracts = created_contracts
-            .into_iter()
-            .filter(|contract| self.contract_address.map_or(true, |addr| addr != contract.address))
-            .collect();
+        created_contracts.retain(|contract| {
+            // Filter out the contract that was created by the transaction itself.
+            self.contract_address.map_or(true, |addr| addr != contract.address)
+        });
 
         if !self.is_fixed_gas_limit {
             if let Some(unsigned) = self.transaction.as_unsigned_mut() {
