@@ -14,8 +14,9 @@ use crate::{
 };
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{utils::format_units, Address, Bytes, TxKind, U256};
+use dialoguer::Confirm;
 use eyre::{Context, Result};
-use foundry_cheatcodes::{ScriptWallets};
+use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{get_contract_name, shell, ContractData};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
@@ -25,6 +26,7 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     sync::Arc,
 };
+use yansi::Paint;
 
 /// Same as [ExecutedState](crate::execute::ExecutedState), but also contains [ExecutionArtifacts]
 /// which are obtained from [ScriptResult].
@@ -122,7 +124,7 @@ impl PreSimulationState {
                     .wrap_err("Internal EVM error during simulation")?;
 
                 if !result.success {
-                    return Ok((None, result.traces));
+                    return Ok((None, false, result.traces));
                 }
 
                 // Simulate mining the transaction if the user passes `--slow`.
@@ -149,11 +151,17 @@ impl PreSimulationState {
                     true
                 };
 
+                let noop_tx = if let Some(to) = to {
+                    runner.executor.is_empty_code(to)? && tx.value().unwrap_or_default().is_zero()
+                } else {
+                    false
+                };
+
                 let transaction = transaction
                     .with_fixed_gas_limit(is_fixed_gas_limit)
                     .with_execution_result(&result);
 
-                eyre::Ok((Some(transaction), result.traces))
+                eyre::Ok((Some(transaction), noop_tx, result.traces))
             })
             .collect::<Vec<_>>();
 
@@ -164,7 +172,7 @@ impl PreSimulationState {
 
         let mut abort = false;
         for res in join_all(futs).await {
-            let (tx, mut traces) = res?;
+            let (tx, noop_tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
             if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
@@ -175,6 +183,21 @@ impl PreSimulationState {
             }
 
             if let Some(tx) = tx {
+                if noop_tx {
+                    let to = tx.contract_address.unwrap();
+                    shell::println(format!("Script contains a transaction to {to} which does not contain any code.").yellow())?;
+
+                    // Only prompt if we're broadcasting and we've not disabled interactivity.
+                    if self.args.should_broadcast() &&
+                        !self.args.non_interactive &&
+                        !Confirm::new()
+                            .with_prompt("Do you wish to continue?".to_string())
+                            .interact()?
+                    {
+                        eyre::bail!("User canceled the script.");
+                    }
+                }
+
                 final_txs.push_back(tx);
             } else {
                 abort = true;
