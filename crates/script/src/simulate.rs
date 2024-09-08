@@ -132,36 +132,16 @@ impl PreSimulationState {
                     runner.executor.env_mut().block.number += U256::from(1);
                 }
 
-                let is_fixed_gas_limit = if let Some(tx) = tx.as_unsigned_mut() {
-                    match tx.gas {
-                        // If tx.gas is already set that means it was specified in script
-                        Some(gas) => {
-                            println!("Gas limit was set in script to {gas}");
-                            true
-                        }
-                        // We inflate the gas used by the user specified percentage
-                        None => {
-                            let gas = result.gas_used * self.args.gas_estimate_multiplier / 100;
-                            tx.gas = Some(gas as u128);
-                            false
-                        }
-                    }
-                } else {
-                    // for pre-signed transactions we can't alter gas limit
-                    true
-                };
-
-                let noop_tx = if let Some(to) = to {
+                let is_noop_tx = if let Some(to) = to {
                     runner.executor.is_empty_code(to)? && tx.value().unwrap_or_default().is_zero()
                 } else {
                     false
                 };
 
-                let transaction = transaction
-                    .with_fixed_gas_limit(is_fixed_gas_limit)
-                    .with_execution_result(&result);
+                let transaction =
+                    transaction.with_execution_result(&result, self.args.gas_estimate_multiplier);
 
-                eyre::Ok((Some(transaction), noop_tx, result.traces))
+                eyre::Ok((Some(transaction), is_noop_tx, result.traces))
             })
             .collect::<Vec<_>>();
 
@@ -172,7 +152,7 @@ impl PreSimulationState {
 
         let mut abort = false;
         for res in join_all(futs).await {
-            let (tx, noop_tx, mut traces) = res?;
+            let (tx, is_noop_tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
             if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
@@ -183,7 +163,7 @@ impl PreSimulationState {
             }
 
             if let Some(tx) = tx {
-                if noop_tx {
+                if is_noop_tx {
                     let to = tx.contract_address.unwrap();
                     shell::println(format!("Script contains a transaction to {to} which does not contain any code.").yellow())?;
 

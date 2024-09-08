@@ -75,6 +75,8 @@ impl TransactionWithMetadata {
     ) -> Result<Self> {
         let mut metadata = Self::from_tx_request(transaction);
         metadata.rpc = rpc;
+        // If tx.gas is already set that means it was specified in script
+        metadata.is_fixed_gas_limit = metadata.transaction.gas().is_some();
 
         if let Some(TxKind::Call(to)) = metadata.transaction.to() {
             if to == DEFAULT_CREATE2_DEPLOYER {
@@ -102,13 +104,12 @@ impl TransactionWithMetadata {
         Ok(metadata)
     }
 
-    pub fn with_fixed_gas_limit(mut self, yes: bool) -> Self {
-        self.is_fixed_gas_limit = yes;
-        self
-    }
-
     /// Populates additional data from the transaction execution result.
-    pub fn with_execution_result(mut self, result: &ScriptResult) -> Self {
+    pub fn with_execution_result(
+        mut self,
+        result: &ScriptResult,
+        gas_estimate_multiplier: u64,
+    ) -> Self {
         let created_contracts = result.get_created_contracts();
 
         // Add the additional contracts created in this transaction, so we can verify them later.
@@ -116,6 +117,12 @@ impl TransactionWithMetadata {
             .into_iter()
             .filter(|contract| self.contract_address.map_or(true, |addr| addr != contract.address))
             .collect();
+
+        if !self.is_fixed_gas_limit {
+            if let Some(unsigned) = self.transaction.as_unsigned_mut() {
+                unsigned.gas = Some((result.gas_used * gas_estimate_multiplier / 100) as u128);
+            }
+        }
 
         self
     }
