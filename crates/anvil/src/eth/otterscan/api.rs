@@ -419,24 +419,21 @@ impl EthApi {
 
         let receipt_futs = block.transactions.hashes().map(|hash| self.transaction_receipt(hash));
 
-        let receipts = join_all(receipt_futs)
-            .await
-            .into_iter()
-            .map(|r| match r {
-                Ok(Some(r)) => {
-                    let timestamp = self
-                        .backend
-                        .get_block(r.block_number.unwrap())
-                        .ok_or(BlockchainError::BlockNotFound)?
-                        .header
-                        .timestamp;
-                    let receipt = r.map_inner(OtsReceipt::from);
-                    let res = OtsTransactionReceipt { receipt, timestamp: Some(timestamp) };
-                    Ok(res)
-                }
-                _ => Err(BlockchainError::DataUnavailable),
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let receipts = join_all(receipt_futs).await.into_iter();
+
+        let receipts = join_all(receipts.map(|r| async {
+            if let Ok(Some(r)) = r {
+                let alloy_block = self.block_by_number(r.block_number.unwrap().into()).await?;
+                let timestamp = alloy_block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
+                let receipt = r.map_inner(OtsReceipt::from);
+                Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
+            } else {
+                Err(BlockchainError::BlockNotFound)
+            }
+        }))
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
 
         let transaction_count = block.transactions().len();
         let fullblock = OtsBlock { block: block.inner, transaction_count };
@@ -462,23 +459,20 @@ impl EthApi {
                 Ok(Some(t)) => Ok(t.inner),
                 _ => Err(BlockchainError::DataUnavailable),
             })
-            .collect::<Result<_>>()?;
+            .collect::<Result<Vec<_>>>()?;
 
-        let receipts = join_all(hashes.iter().map(|hash| async {
-            match self.transaction_receipt(*hash).await {
-                Ok(Some(receipt)) => {
-                    let timestamp = self
-                        .backend
-                        .get_block(receipt.block_number.unwrap())
-                        .ok_or(BlockchainError::BlockNotFound)?
-                        .header
-                        .timestamp;
-                    let receipt = receipt.map_inner(OtsReceipt::from);
-                    let res = OtsTransactionReceipt { receipt, timestamp: Some(timestamp) };
-                    Ok(res)
-                }
-                Ok(None) => Err(BlockchainError::DataUnavailable),
-                Err(e) => Err(e),
+        let receipt_futs = hashes.iter().map(|hash| self.transaction_receipt(*hash));
+
+        let receipts = join_all(receipt_futs).await.into_iter();
+
+        let receipts = join_all(receipts.map(|r| async {
+            if let Ok(Some(r)) = r {
+                let alloy_block = self.block_by_number(r.block_number.unwrap().into()).await?;
+                let timestamp = alloy_block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
+                let receipt = r.map_inner(OtsReceipt::from);
+                Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
+            } else {
+                Err(BlockchainError::BlockNotFound)
             }
         }))
         .await
