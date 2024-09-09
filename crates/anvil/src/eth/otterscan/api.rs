@@ -419,12 +419,10 @@ impl EthApi {
 
         let receipt_futs = block.transactions.hashes().map(|hash| self.transaction_receipt(hash));
 
-        let receipts = join_all(receipt_futs).await.into_iter();
-
-        let receipts = join_all(receipts.map(|r| async {
-            if let Ok(Some(r)) = r {
-                let alloy_block = self.block_by_number(r.block_number.unwrap().into()).await?;
-                let timestamp = alloy_block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
+        let receipts = join_all(receipt_futs.map(|r| async {
+            if let Ok(Some(r)) = r.await {
+                let block = self.block_by_number(r.block_number.unwrap().into()).await?;
+                let timestamp = block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
                 let receipt = r.map_inner(OtsReceipt::from);
                 Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
             } else {
@@ -463,12 +461,10 @@ impl EthApi {
 
         let receipt_futs = hashes.iter().map(|hash| self.transaction_receipt(*hash));
 
-        let receipts = join_all(receipt_futs).await.into_iter();
-
-        let receipts = join_all(receipts.map(|r| async {
-            if let Ok(Some(r)) = r {
-                let alloy_block = self.block_by_number(r.block_number.unwrap().into()).await?;
-                let timestamp = alloy_block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
+        let receipts = join_all(receipt_futs.map(|r| async {
+            if let Ok(Some(r)) = r.await {
+                let block = self.block_by_number(r.block_number.unwrap().into()).await?;
+                let timestamp = block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
                 let receipt = r.map_inner(OtsReceipt::from);
                 Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
             } else {
