@@ -27,6 +27,14 @@ interface Vm {
     function activeFork() external view returns (uint256 forkId);
     function addr(uint256 privateKey) external pure returns (address keyAddr);
     function allowCheatcodes(address account) external;
+    function arbitraryAddress() external view returns (address);
+    function arbitraryBool() external view returns (bool);
+    function arbitraryBytes(uint256 len) external view returns (bytes memory);
+    function arbitraryInt() external view returns (int256);
+    function arbitraryInt(uint256 bits) external view returns (int256);
+    function arbitraryUint() external view returns (uint256);
+    function arbitraryUint(uint256 min, uint256 max) external view returns (uint256);
+    function arbitraryUint(uint256 bits) external view returns (uint256);
     function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals) external pure;
     function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals, string calldata error) external pure;
     function assertApproxEqAbsDecimal(int256 left, int256 right, uint256 maxDelta, uint256 decimals) external pure;

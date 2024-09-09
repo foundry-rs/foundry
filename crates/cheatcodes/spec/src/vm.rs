@@ -2297,15 +2297,18 @@ interface Vm {
     function ensNamehash(string calldata name) external pure returns (bytes32);
 
     /// Returns a random uint256 value.
-    #[cheatcode(group = Utilities)]
+    /// `randomUint` is being deprecated in favor of `arbitraryUint`. It will be removed in future versions.
+    #[cheatcode(group = Utilities, status = Deprecated)]
     function randomUint() external returns (uint256);
 
     /// Returns random uin256 value between the provided range (=min..=max).
-    #[cheatcode(group = Utilities)]
+    /// `randomUint` is being deprecated in favor of `arbitraryUint`. It will be removed in future versions.
+    #[cheatcode(group = Utilities, status = Deprecated)]
     function randomUint(uint256 min, uint256 max) external returns (uint256);
 
     /// Returns a random `address`.
-    #[cheatcode(group = Utilities)]
+    /// `randomAddress` is being deprecated in favor of `arbitraryAddress`. It will be removed in future versions
+    #[cheatcode(group = Utilities, status = Deprecated)]
     function randomAddress() external returns (address);
 
     /// Pauses collection of call traces. Useful in cases when you want to skip tracing of
@@ -2324,6 +2327,39 @@ interface Vm {
     /// Utility cheatcode to set arbitrary storage for given target address.
     #[cheatcode(group = Utilities)]
     function setArbitraryStorage(address target) external;
+
+    /// Returns an arbitrary `uint256` value.
+    #[cheatcode(group = Utilities)]
+    function arbitraryUint() external view returns (uint256);
+
+    /// Returns an arbitrary `uint256` value between the provided range (=min..=max).
+    /// `randomUint` is being deprecated in favor of `arbitraryUint`. It will be removed in future versions.
+    #[cheatcode(group = Utilities)]
+    function arbitraryUint(uint256 min, uint256 max) external view returns (uint256);
+
+    /// Returns an arbitrary `uint256` value of given bits.
+    #[cheatcode(group = Utilities)]
+    function arbitraryUint(uint256 bits) external view returns (uint256);
+
+    /// Returns an arbitrary `int256` value.
+    #[cheatcode(group = Utilities)]
+    function arbitraryInt() external view returns (int256);
+
+    /// Returns an arbitrary `int256` value of given bits.
+    #[cheatcode(group = Utilities)]
+    function arbitraryInt(uint256 bits) external view returns (int256);
+
+    /// Returns an arbitrary `address`.
+    #[cheatcode(group = Utilities)]
+    function arbitraryAddress() external view returns (address);
+
+    /// Returns an arbitrary `bool`.
+    #[cheatcode(group = Utilities)]
+    function arbitraryBool() external view returns (bool);
+
+    /// Returns an arbitrary byte array value of the given length.
+    #[cheatcode(group = Utilities)]
+    function arbitraryBytes(uint256 len) external view returns (bytes memory);
 }
 }
 

@@ -633,6 +633,166 @@
     },
     {
       "func": {
+        "id": "arbitraryAddress",
+        "description": "Returns an arbitrary `address`.",
+        "declaration": "function arbitraryAddress() external view returns (address);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "arbitraryAddress()",
+        "selector": "0x529813db",
+        "selectorBytes": [
+          82,
+          152,
+          19,
+          219
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "arbitraryBool",
+        "description": "Returns an arbitrary `bool`.",
+        "declaration": "function arbitraryBool() external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "arbitraryBool()",
+        "selector": "0x06e18717",
+        "selectorBytes": [
+          6,
+          225,
+          135,
+          23
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "arbitraryBytes",
+        "description": "Returns an arbitrary byte array value of the given length.",
+        "declaration": "function arbitraryBytes(uint256 len) external view returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "arbitraryBytes(uint256)",
+        "selector": "0x3104ded9",
+        "selectorBytes": [
+          49,
+          4,
+          222,
+          217
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "arbitraryInt_0",
+        "description": "Returns an arbitrary `int256` value.",
+        "declaration": "function arbitraryInt() external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "arbitraryInt()",
+        "selector": "0xbb6cf445",
+        "selectorBytes": [
+          187,
+          108,
+          244,
+          69
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "arbitraryInt_1",
+        "description": "Returns an arbitrary `int256` value of given bits.",
+        "declaration": "function arbitraryInt(uint256 bits) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "arbitraryInt(uint256)",
+        "selector": "0x8d1275c9",
+        "selectorBytes": [
+          141,
+          18,
+          117,
+          201
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "arbitraryUint_0",
+        "description": "Returns an arbitrary `uint256` value.",
+        "declaration": "function arbitraryUint() external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "arbitraryUint()",
+        "selector": "0x553d5a9f",
+        "selectorBytes": [
+          85,
+          61,
+          90,
+          159
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "arbitraryUint_1",
+        "description": "Returns an arbitrary `uint256` value between the provided range (=min..=max).\n`randomUint` is being deprecated in favor of `arbitraryUint`. It will be removed in future versions.",
+        "declaration": "function arbitraryUint(uint256 min, uint256 max) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "arbitraryUint(uint256,uint256)",
+        "selector": "0xaf7a242a",
+        "selectorBytes": [
+          175,
+          122,
+          36,
+          42
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "arbitraryUint_2",
+        "description": "Returns an arbitrary `uint256` value of given bits.",
+        "declaration": "function arbitraryUint(uint256 bits) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "arbitraryUint(uint256)",
+        "selector": "0x4b2cbea1",
+        "selectorBytes": [
+          75,
+          44,
+          190,
+          161
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assertApproxEqAbsDecimal_0",
         "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message.",
         "declaration": "function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals) external pure;",
@@ -6754,7 +6914,7 @@
     {
       "func": {
         "id": "randomAddress",
-        "description": "Returns a random `address`.",
+        "description": "Returns a random `address`.\n`randomAddress` is being deprecated in favor of `arbitraryAddress`. It will be removed in future versions",
         "declaration": "function randomAddress() external returns (address);",
         "visibility": "external",
         "mutability": "",
@@ -6768,13 +6928,13 @@
         ]
       },
       "group": "utilities",
-      "status": "stable",
+      "status": "deprecated",
       "safety": "safe"
     },
     {
       "func": {
         "id": "randomUint_0",
-        "description": "Returns a random uint256 value.",
+        "description": "Returns a random uint256 value.\n`randomUint` is being deprecated in favor of `arbitraryUint`. It will be removed in future versions.",
         "declaration": "function randomUint() external returns (uint256);",
         "visibility": "external",
         "mutability": "",
@@ -6788,13 +6948,13 @@
         ]
       },
       "group": "utilities",
-      "status": "stable",
+      "status": "deprecated",
       "safety": "safe"
     },
     {
       "func": {
         "id": "randomUint_1",
-        "description": "Returns random uin256 value between the provided range (=min..=max).",
+        "description": "Returns random uin256 value between the provided range (=min..=max).\n`randomUint` is being deprecated in favor of `arbitraryUint`. It will be removed in future versions.",
         "declaration": "function randomUint(uint256 min, uint256 max) external returns (uint256);",
         "visibility": "external",
         "mutability": "",
@@ -6808,7 +6968,7 @@
         ]
       },
       "group": "utilities",
-      "status": "stable",
+      "status": "deprecated",
       "safety": "safe"
     },
     {

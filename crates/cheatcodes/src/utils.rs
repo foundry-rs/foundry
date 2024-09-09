@@ -1,10 +1,12 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, U256};
+use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_primitives::U256;
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::{backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER};
+use proptest::strategy::{Strategy, ValueTree};
 use rand::Rng;
 use std::collections::HashMap;
 
@@ -71,36 +73,20 @@ impl Cheatcode for ensNamehashCall {
 
 impl Cheatcode for randomUint_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        let rng = state.rng();
-        let random_number: U256 = rng.gen();
-        Ok(random_number.abi_encode())
+        arbitrary_uint(state, None, None)
     }
 }
 
 impl Cheatcode for randomUint_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { min, max } = *self;
-        ensure!(min <= max, "min must be less than or equal to max");
-        // Generate random between range min..=max
-        let exclusive_modulo = max - min;
-        let rng = state.rng();
-        let mut random_number = rng.gen::<U256>();
-        if exclusive_modulo != U256::MAX {
-            let inclusive_modulo = exclusive_modulo + U256::from(1);
-            random_number %= inclusive_modulo;
-        }
-        random_number += min;
-        Ok(random_number.abi_encode())
+        arbitrary_uint(state, None, Some((min, max)))
     }
 }
 
 impl Cheatcode for randomAddressCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        let rng = state.rng();
-        let addr = Address::random_with(rng);
-        Ok(addr.abi_encode())
+        arbitrary_address(state)
     }
 }
 
@@ -180,4 +166,135 @@ impl Cheatcode for copyStorageCall {
 
         Ok(Default::default())
     }
+}
+
+impl Cheatcode for arbitraryUint_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        arbitrary_uint(state, None, None)
+    }
+}
+
+impl Cheatcode for arbitraryUint_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { min, max } = *self;
+        arbitrary_uint(state, None, Some((min, max)))
+    }
+}
+
+impl Cheatcode for arbitraryUint_2Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bits } = *self;
+        arbitrary_uint(state, Some(bits), None)
+    }
+}
+
+impl Cheatcode for arbitraryInt_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        arbitrary_int(state, None)
+    }
+}
+
+impl Cheatcode for arbitraryInt_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bits } = *self;
+        arbitrary_int(state, Some(bits))
+    }
+}
+
+impl Cheatcode for arbitraryAddressCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        arbitrary_address(state)
+    }
+}
+
+impl Cheatcode for arbitraryBoolCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        Ok(DynSolValue::type_strategy(&DynSolType::Bool)
+            .new_tree(state.test_runner())
+            .unwrap()
+            .current()
+            .abi_encode())
+    }
+}
+
+impl Cheatcode for arbitraryBytesCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { len } = *self;
+        let mut val = DynSolValue::type_strategy(&DynSolType::Bytes)
+            .new_tree(state.test_runner())
+            .unwrap()
+            .current()
+            .as_bytes()
+            .unwrap_or_default()
+            .to_vec();
+        let required_len = len.to::<usize>();
+        let cur_len = val.len();
+        if cur_len > required_len {
+            // Slice to required length if random bytes length is lower than required length.
+            Ok(val[..required_len].abi_encode())
+        } else {
+            // Fill with zeroes if random bytes length is lower than required length.
+            val.extend(vec![0; required_len - cur_len]);
+            Ok(val.abi_encode())
+        }
+    }
+}
+
+/// Helper to generate an arbitrary `uint` value (with given bits or bounded if specified)
+/// from type strategy.
+fn arbitrary_uint(
+    state: &mut Cheatcodes,
+    bits: Option<U256>,
+    bounds: Option<(U256, U256)>,
+) -> Result {
+    if let Some(bits) = bits {
+        // Generate arbitrary with specified bits.
+        let no_bits = bits.to::<usize>();
+        ensure!(no_bits <= 256, "no of bits cannot exceed 256");
+        return Ok(DynSolValue::type_strategy(&DynSolType::Uint(no_bits))
+            .new_tree(state.test_runner())
+            .unwrap()
+            .current()
+            .abi_encode())
+    }
+
+    if let Some((min, max)) = bounds {
+        ensure!(min <= max, "min must be less than or equal to max");
+        // Generate arbitrary between range min..=max
+        let exclusive_modulo = max - min;
+        let mut random_number: U256 = state.test_runner().rng().gen();
+        if exclusive_modulo != U256::MAX {
+            let inclusive_modulo = exclusive_modulo + U256::from(1);
+            random_number %= inclusive_modulo;
+        }
+        random_number += min;
+        return Ok(random_number.abi_encode())
+    }
+
+    // Generate arbitrary `uint256` value.
+    Ok(DynSolValue::type_strategy(&DynSolType::Uint(256))
+        .new_tree(state.test_runner())
+        .unwrap()
+        .current()
+        .abi_encode())
+}
+
+/// Helper to generate an arbitrary `address` value from type strategy.
+fn arbitrary_address(state: &mut Cheatcodes) -> Result {
+    Ok(DynSolValue::type_strategy(&DynSolType::Address)
+        .new_tree(state.test_runner())
+        .unwrap()
+        .current()
+        .abi_encode())
+}
+
+/// Helper to generate an arbitrary `int` value (with given bits if specified) from type strategy.
+fn arbitrary_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
+    let no_bits = bits.unwrap_or(U256::from(256)).to::<usize>();
+    ensure!(no_bits <= 256, "no of bits cannot exceed 256");
+    Ok(DynSolValue::type_strategy(&DynSolType::Int(no_bits))
+        .new_tree(state.test_runner())
+        .unwrap()
+        .current()
+        .abi_encode())
 }

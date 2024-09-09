@@ -83,10 +83,10 @@ contract AContractArbitraryStorageWithSeedTest is DSTest {
     function test_arbitrary_storage_with_seed() public {
         AContract target = new AContract();
         vm.setArbitraryStorage(address(target));
-        assertEq(target.a(11), 85286582241781868037363115933978803127245343755841464083427462398552335014708);
-        assertEq(target.b(22), 0x939180Daa938F9e18Ff0E76c112D25107D358B02);
-        assertEq(target.c(33), -104);
-        assertEq(target.d(44), 0x6c178fa9c434f142df61a5355cc2b8d07be691b98dabf5b1a924f2bce97a19c7);
+        assertEq(target.a(11), 112807530564575719000382171275495171195982096112439764207649185248041477080234);
+        assertEq(target.b(22), 0x9dce87df97C81f2529877E8127b4b8c13E4b2b31);
+        assertEq(target.c(33), 85);
+        assertEq(target.d(44), 0x6ceda712fc9d694d72afeea6c44d370b789a18e1a3d640068c11069e421d25f6);
     }
 }
 
@@ -104,7 +104,7 @@ contract SymbolicStorageWithSeedTest is DSTest {
         address addr = 0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8;
         vm.setArbitraryStorage(addr);
         bytes32 value = vm.load(addr, bytes32(slot));
-        assertEq(uint256(value), 85286582241781868037363115933978803127245343755841464083427462398552335014708);
+        assertEq(uint256(value), 112807530564575719000382171275495171195982096112439764207649185248041477080234);
         // Load slot again and make sure we get same value.
         bytes32 value1 = vm.load(addr, bytes32(slot));
         assertEq(uint256(value), uint256(value1));
@@ -115,7 +115,7 @@ contract SymbolicStorageWithSeedTest is DSTest {
         SymbolicStore myStore = new SymbolicStore();
         vm.setArbitraryStorage(address(myStore));
         bytes32 value = vm.load(address(myStore), bytes32(uint256(slot)));
-        assertEq(uint256(value), 85286582241781868037363115933978803127245343755841464083427462398552335014708);
+        assertEq(uint256(value), 112807530564575719000382171275495171195982096112439764207649185248041477080234);
     }
 
     function testEmptyInitialStorage(uint256 slot) public {
