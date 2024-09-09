@@ -662,6 +662,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function resumeGasMetering() external;
 
+    /// Reset gas metering (i.e. gas usage is set to gas limit).
+    #[cheatcode(group = Evm, safety = Safe)]
+    function resetGasMetering() external;
+
     // -------- Gas Measurement --------
 
     /// Gets the gas used in the last call.
@@ -673,6 +677,10 @@ interface Vm {
     /// If the condition is false, discard this run's fuzz inputs and generate new ones.
     #[cheatcode(group = Testing, safety = Safe)]
     function assume(bool condition) external pure;
+
+    /// Discard this run's fuzz inputs and generate new ones if next call reverted.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeNoRevert() external pure;
 
     /// Writes a breakpoint to jump to in the debugger.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -787,13 +795,17 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert() external;
 
-    /// Expects an error on next call that starts with the revert data.
+    /// Expects an error on next call that exactly matches the revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes4 revertData) external;
 
     /// Expects an error on next call that exactly matches the revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes calldata revertData) external;
+
+    /// Expects an error on next call that starts with the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectPartialRevert(bytes4 revertData) external;
 
     /// Expects an error on next cheatcode call with any revert data.
     #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
@@ -2282,6 +2294,15 @@ interface Vm {
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
     function randomAddress() external returns (address);
+
+    /// Pauses collection of call traces. Useful in cases when you want to skip tracing of
+    /// complex calls which are not useful for debugging.
+    #[cheatcode(group = Utilities)]
+    function pauseTracing() external view;
+
+    /// Unpauses collection of call traces.
+    #[cheatcode(group = Utilities)]
+    function resumeTracing() external view;
 }
 }
 

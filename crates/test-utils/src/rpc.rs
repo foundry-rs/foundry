@@ -1,12 +1,14 @@
 //! RPC API keys utilities.
 
 use foundry_config::NamedChain;
-use once_cell::sync::Lazy;
 use rand::seq::SliceRandom;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    LazyLock,
+};
 
 // List of general purpose infura keys to rotate through
-static INFURA_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
+static INFURA_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
         // "16a8be88795540b9b3903d8de0f7baa5",
         // "f4a0bdad42674adab5fc0ac077ffab2b",
@@ -19,7 +21,7 @@ static INFURA_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
 });
 
 // List of alchemy keys for mainnet
-static ALCHEMY_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
+static ALCHEMY_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
         "ib1f4u1ojm-9lJJypwkeZeG-75TJRB7O",
         "7mTtk6IW4DwroGnKmG_bOWri2hyaGYhX",
@@ -49,14 +51,12 @@ static ALCHEMY_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
         "UVatYU2Ax0rX6bDiqddeTRDdcCxzdpoE",
         "bVjX9v-FpmUhf5R_oHIgwJx2kXvYPRbx",
     ];
-
     keys.shuffle(&mut rand::thread_rng());
-
     keys
 });
 
 // List of etherscan keys for mainnet
-static ETHERSCAN_MAINNET_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
+static ETHERSCAN_MAINNET_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut keys = vec![
         "MCAUM7WPE9XP5UQMZPCKIBUJHPM1C24FP6",
         "JW6RWCG2C5QF8TANH4KC7AYIF1CX7RB5D1",
@@ -67,19 +67,18 @@ static ETHERSCAN_MAINNET_KEYS: Lazy<Vec<&'static str>> = Lazy::new(|| {
         "C7I2G4JTA5EPYS42Z8IZFEIMQNI5GXIJEV",
         "A15KZUMZXXCK1P25Y1VP1WGIVBBHIZDS74",
         "3IA6ASNQXN8WKN7PNFX7T72S9YG56X9FPG",
+        "ZUB97R31KSYX7NYVW6224Q6EYY6U56H591",
+        // Optimism
+        // "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
     ];
-
     keys.shuffle(&mut rand::thread_rng());
-
     keys
 });
 
-/// counts how many times a rpc endpoint was requested for _mainnet_
-static NEXT_RPC_ENDPOINT: AtomicUsize = AtomicUsize::new(0);
-
-// returns the current value of the atomic counter and increments it
+/// Returns the next index to use.
 fn next() -> usize {
-    NEXT_RPC_ENDPOINT.fetch_add(1, Ordering::SeqCst)
+    static NEXT_INDEX: AtomicUsize = AtomicUsize::new(0);
+    NEXT_INDEX.fetch_add(1, Ordering::SeqCst)
 }
 
 fn num_keys() -> usize {
@@ -123,7 +122,7 @@ pub fn next_ws_archive_rpc_endpoint() -> String {
 }
 
 /// Returns the next etherscan api key
-pub fn next_etherscan_api_key() -> String {
+pub fn next_mainnet_etherscan_api_key() -> String {
     let idx = next() % ETHERSCAN_MAINNET_KEYS.len();
     ETHERSCAN_MAINNET_KEYS[idx].to_string()
 }
@@ -176,15 +175,48 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
+    use alloy_primitives::address;
+    use foundry_config::Chain;
 
-    #[test]
-    #[ignore]
-    fn can_rotate_unique() {
-        let mut keys = HashSet::new();
-        for _ in 0..100 {
-            keys.insert(next_http_rpc_endpoint());
+    #[tokio::test]
+    #[ignore = "run manually"]
+    async fn test_etherscan_keys() {
+        let address = address!("dAC17F958D2ee523a2206206994597C13D831ec7");
+        let mut first_abi = None;
+        let mut failed = Vec::new();
+        for (i, &key) in ETHERSCAN_MAINNET_KEYS.iter().enumerate() {
+            eprintln!("trying key {i} ({key})");
+
+            let client = foundry_block_explorers::Client::builder()
+                .chain(Chain::mainnet())
+                .unwrap()
+                .with_api_key(key)
+                .build()
+                .unwrap();
+
+            let mut fail = |e: &str| {
+                eprintln!("key {i} ({key}) failed: {e}");
+                failed.push(key);
+            };
+
+            let abi = match client.contract_abi(address).await {
+                Ok(abi) => abi,
+                Err(e) => {
+                    fail(&e.to_string());
+                    continue;
+                }
+            };
+
+            if let Some(first_abi) = &first_abi {
+                if abi != *first_abi {
+                    fail("abi mismatch");
+                }
+            } else {
+                first_abi = Some(abi);
+            }
         }
-        assert_eq!(keys.len(), num_keys());
+        if !failed.is_empty() {
+            panic!("failed keys: {failed:#?}");
+        }
     }
 }

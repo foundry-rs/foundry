@@ -30,7 +30,7 @@ use crate::{
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
     revm::{db::DatabaseRef, primitives::AccountInfo},
-    NodeConfig, PrecompileFactory,
+    ForkChoice, NodeConfig, PrecompileFactory,
 };
 use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
@@ -48,9 +48,10 @@ use alloy_rpc_types::{
         },
         parity::LocalizedTransactionTrace,
     },
-    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
-    EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
-    FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
+    AccessList, AnyNetworkBlock, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber,
+    BlockTransactions, EIP1186AccountProofResponse as AccountProof,
+    EIP1186StorageProof as StorageProof, Filter, FilteredParams, Header as AlloyHeader, Index, Log,
+    Transaction, TransactionReceipt,
 };
 use alloy_serde::WithOtherFields;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
@@ -426,37 +427,51 @@ impl Backend {
                 .ok_or(BlockchainError::BlockNotFound)?;
             // update all settings related to the forked block
             {
-                let mut env = self.env.write();
-                env.cfg.chain_id = fork.chain_id();
+                if let Some(fork_url) = forking.json_rpc_url {
+                    // Set the fork block number
+                    let mut node_config = self.node_config.write().await;
+                    node_config.fork_choice = Some(ForkChoice::Block(fork_block_number));
 
-                env.block = BlockEnv {
-                    number: U256::from(fork_block_number),
-                    timestamp: U256::from(fork_block.header.timestamp),
-                    gas_limit: U256::from(fork_block.header.gas_limit),
-                    difficulty: fork_block.header.difficulty,
-                    prevrandao: Some(fork_block.header.mix_hash.unwrap_or_default()),
-                    // Keep previous `coinbase` and `basefee` value
-                    coinbase: env.block.coinbase,
-                    basefee: env.block.basefee,
-                    ..env.block.clone()
-                };
+                    let mut env = self.env.read().clone();
+                    let (forked_db, client_fork_config) =
+                        node_config.setup_fork_db_config(fork_url, &mut env, &self.fees).await;
 
-                self.time.reset(env.block.timestamp.to::<u64>());
+                    *self.db.write().await = Box::new(forked_db);
+                    let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
+                    *self.fork.write() = Some(fork);
+                    *self.env.write() = env;
+                } else {
+                    let mut env = self.env.write();
+                    env.cfg.chain_id = fork.chain_id();
+                    env.block = BlockEnv {
+                        number: U256::from(fork_block_number),
+                        timestamp: U256::from(fork_block.header.timestamp),
+                        gas_limit: U256::from(fork_block.header.gas_limit),
+                        difficulty: fork_block.header.difficulty,
+                        prevrandao: Some(fork_block.header.mix_hash.unwrap_or_default()),
+                        // Keep previous `coinbase` and `basefee` value
+                        coinbase: env.block.coinbase,
+                        basefee: env.block.basefee,
+                        ..env.block.clone()
+                    };
 
-                // this is the base fee of the current block, but we need the base fee of
-                // the next block
-                let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                    fork_block.header.gas_used,
-                    fork_block.header.gas_limit,
-                    fork_block.header.base_fee_per_gas.unwrap_or_default(),
-                );
+                    // this is the base fee of the current block, but we need the base fee of
+                    // the next block
+                    let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+                        fork_block.header.gas_used,
+                        fork_block.header.gas_limit,
+                        fork_block.header.base_fee_per_gas.unwrap_or_default(),
+                    );
 
-                self.fees.set_base_fee(next_block_base_fee);
+                    self.fees.set_base_fee(next_block_base_fee);
+                }
+
+                // reset the time to the timestamp of the forked block
+                self.time.reset(fork_block.header.timestamp);
 
                 // also reset the total difficulty
                 self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
             }
-
             // reset storage
             *self.blockchain.storage.write() = BlockchainStorage::forked(
                 fork.block_number(),
@@ -1125,6 +1140,13 @@ impl Backend {
         }).await?
     }
 
+    /// ## EVM settings
+    ///
+    /// This modifies certain EVM settings to mirror geth's `SkipAccountChecks` when transacting requests, see also: <https://github.com/ethereum/go-ethereum/blob/380688c636a654becc8f114438c2a5d93d2db032/core/state_transition.go#L145-L148>:
+    ///
+    ///  - `disable_eip3607` is set to `true`
+    ///  - `disable_base_fee` is set to `true`
+    ///  - `nonce` is set to `None`
     fn build_call_env(
         &self,
         request: WithOtherFields<TransactionRequest>,
@@ -1139,10 +1161,11 @@ impl Backend {
                     gas,
                     value,
                     input,
-                    nonce,
                     access_list,
                     blob_versioned_hashes,
                     authorization_list,
+                    // nonce is always ignored for calls
+                    nonce: _,
                     sidecar: _,
                     chain_id: _,
                     transaction_type: _,
@@ -1190,7 +1213,8 @@ impl Backend {
             value: value.unwrap_or_default(),
             data: input.into_input().unwrap_or_default(),
             chain_id: None,
-            nonce,
+            // set nonce to None so that the correct nonce is chosen by the EVM
+            nonce: None,
             access_list: access_list.unwrap_or_default().into(),
             blob_hashes: blob_versioned_hashes.unwrap_or_default(),
             optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
@@ -1514,7 +1538,10 @@ impl Backend {
         }
     }
 
-    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AlloyBlock>, BlockchainError> {
+    pub async fn block_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.mined_block_by_hash(hash) {
             return Ok(tx);
@@ -1530,7 +1557,7 @@ impl Backend {
     pub async fn block_by_hash_full(
         &self,
         hash: B256,
-    ) -> Result<Option<AlloyBlock>, BlockchainError> {
+    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.get_full_block(hash) {
             return Ok(tx);
@@ -1543,7 +1570,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn mined_block_by_hash(&self, hash: B256) -> Option<AlloyBlock> {
+    fn mined_block_by_hash(&self, hash: B256) -> Option<AnyNetworkBlock> {
         let block = self.blockchain.get_block_by_hash(&hash)?;
         Some(self.convert_block(block))
     }
@@ -1579,7 +1606,7 @@ impl Backend {
     pub async fn block_by_number(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<AlloyBlock>, BlockchainError> {
+    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.mined_block_by_number(number) {
             return Ok(tx);
@@ -1598,7 +1625,7 @@ impl Backend {
     pub async fn block_by_number_full(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<AlloyBlock>, BlockchainError> {
+    ) -> Result<Option<AnyNetworkBlock>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.get_full_block(number) {
             return Ok(tx);
@@ -1651,22 +1678,24 @@ impl Backend {
         self.blockchain.get_block_by_hash(&hash)
     }
 
-    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AlloyBlock> {
+    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AnyNetworkBlock> {
         let block = self.get_block(number)?;
         let mut block = self.convert_block(block);
         block.transactions.convert_to_hashes();
         Some(block)
     }
 
-    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AlloyBlock> {
+    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<AnyNetworkBlock> {
         let block = self.get_block(id)?;
         let transactions = self.mined_transactions_in_block(&block)?;
-        let block = self.convert_block(block);
-        Some(block.into_full_block(transactions.into_iter().map(|t| t.inner).collect()))
+        let mut block = self.convert_block(block);
+        block.inner.transactions = BlockTransactions::Full(transactions);
+
+        Some(block)
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format.
-    pub fn convert_block(&self, block: Block) -> AlloyBlock {
+    pub fn convert_block(&self, block: Block) -> AnyNetworkBlock {
         let size = U256::from(alloy_rlp::encode(&block).len() as u32);
 
         let Block { header, transactions, .. } = block;
@@ -1696,16 +1725,16 @@ impl Backend {
             parent_beacon_block_root,
         } = header;
 
-        let mut block = AlloyBlock {
+        let block = AlloyBlock {
             header: AlloyHeader {
-                hash: Some(hash),
+                hash,
                 parent_hash,
                 uncles_hash: ommers_hash,
                 miner: beneficiary,
                 state_root,
                 transactions_root,
                 receipts_root,
-                number: Some(number),
+                number,
                 gas_used,
                 gas_limit,
                 extra_data: extra_data.0.into(),
@@ -1728,8 +1757,9 @@ impl Backend {
             ),
             uncles: vec![],
             withdrawals: None,
-            other: Default::default(),
         };
+
+        let mut block = WithOtherFields::new(block);
 
         // If Arbitrum, apply chain specifics to converted block.
         if let Ok(
@@ -1740,7 +1770,7 @@ impl Backend {
         ) = NamedChain::try_from(self.env.read().env.cfg.chain_id)
         {
             // Block number is the best number.
-            block.header.number = Some(self.best_number());
+            block.header.number = self.best_number();
             // Set `l1BlockNumber` field.
             block.other.insert("l1BlockNumber".to_string(), number.into());
         }
@@ -1760,13 +1790,13 @@ impl Backend {
         let current = self.best_number();
         let requested =
             match block_id.map(Into::into).unwrap_or(BlockId::Number(BlockNumber::Latest)) {
-                BlockId::Hash(hash) => self
-                    .block_by_hash(hash.block_hash)
-                    .await?
-                    .ok_or(BlockchainError::BlockNotFound)?
-                    .header
-                    .number
-                    .ok_or(BlockchainError::BlockNotFound)?,
+                BlockId::Hash(hash) => {
+                    self.block_by_hash(hash.block_hash)
+                        .await?
+                        .ok_or(BlockchainError::BlockNotFound)?
+                        .header
+                        .number
+                }
                 BlockId::Number(num) => match num {
                     BlockNumber::Latest | BlockNumber::Pending => self.best_number(),
                     BlockNumber::Earliest => U64::ZERO.to::<u64>(),
@@ -1832,7 +1862,7 @@ impl Backend {
             if let Some((block_hash, block)) = self
                 .block_by_number(BlockNumber::Number(block_number.to::<u64>()))
                 .await?
-                .and_then(|block| Some((block.header.hash?, block)))
+                .map(|block| (block.header.hash, block))
             {
                 if let Some(state) = self.states.write().get(&block_hash) {
                     let block = BlockEnv {
@@ -2281,8 +2311,8 @@ impl Backend {
         number: BlockNumber,
         index: Index,
     ) -> Result<Option<WithOtherFields<Transaction>>, BlockchainError> {
-        if let Some(hash) = self.mined_block_by_number(number).and_then(|b| b.header.hash) {
-            return Ok(self.mined_transaction_by_block_hash_and_index(hash, index));
+        if let Some(block) = self.mined_block_by_number(number) {
+            return Ok(self.mined_transaction_by_block_hash_and_index(block.header.hash, index));
         }
 
         if let Some(fork) = self.get_fork() {
@@ -2440,6 +2470,76 @@ impl Backend {
             .lock()
             .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
     }
+
+    /// Reorg the chain to a common height and execute blocks to build new chain.
+    ///
+    /// The state of the chain is rewound using `rewind` to the common block, including the db,
+    /// storage, and env.
+    ///
+    /// Finally, `do_mine_block` is called to create the new chain.
+    pub async fn reorg(
+        &self,
+        depth: u64,
+        tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction>>>,
+        common_block: Block,
+    ) -> Result<(), BlockchainError> {
+        // Get the database at the common block
+        let common_state = {
+            let mut state = self.states.write();
+            let state_db = state
+                .get(&common_block.header.hash_slow())
+                .ok_or(BlockchainError::DataUnavailable)?;
+            let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+            db_full.clone()
+        };
+
+        {
+            // Set state to common state
+            self.db.write().await.clear();
+            for (address, acc) in common_state {
+                for (key, value) in acc.storage {
+                    self.db.write().await.set_storage_at(address, key, value)?;
+                }
+                self.db.write().await.insert_account(address, acc.info);
+            }
+        }
+
+        {
+            // Unwind the storage back to the common ancestor
+            self.blockchain
+                .storage
+                .write()
+                .unwind_to(common_block.header.number, common_block.header.hash_slow());
+
+            // Set environment back to common block
+            let mut env = self.env.write();
+            env.block = BlockEnv {
+                number: U256::from(common_block.header.number),
+                timestamp: U256::from(common_block.header.timestamp),
+                gas_limit: U256::from(common_block.header.gas_limit),
+                difficulty: common_block.header.difficulty,
+                prevrandao: Some(common_block.header.mix_hash),
+                coinbase: env.block.coinbase,
+                basefee: env.block.basefee,
+                ..env.block.clone()
+            };
+            self.time.reset(env.block.timestamp.to::<u64>());
+        }
+
+        // Create the new reorged chain, filling the blocks with transactions if supplied
+        for i in 0..depth {
+            let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
+            let outcome = self.do_mine_block(to_be_mined).await;
+            node_info!(
+                "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
+                outcome.block_number,
+                outcome.included.len(),
+                outcome.invalid.len()
+            );
+        }
+
+        Ok(())
+    }
 }
 
 /// Get max nonce from transaction pool by address
@@ -2573,16 +2673,32 @@ impl TransactionValidator for Backend {
 
         let max_cost = tx.max_cost();
         let value = tx.value();
-        // check sufficient funds: `gas * price + value`
-        let req_funds = max_cost.checked_add(value.to()).ok_or_else(|| {
-            warn!(target: "backend", "[{:?}] cost too high",
-            tx.hash());
-            InvalidTransactionError::InsufficientFunds
-        })?;
-        if account.balance < U256::from(req_funds) {
-            warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
-            return Err(InvalidTransactionError::InsufficientFunds);
+
+        match &tx.transaction {
+            TypedTransaction::Deposit(deposit_tx) => {
+                // Deposit transactions
+                // https://specs.optimism.io/protocol/deposits.html#execution
+                // 1. no gas cost check required since already have prepaid gas from L1
+                // 2. increment account balance by deposited amount before checking for sufficient
+                //    funds `tx.value <= existing account value + deposited value`
+                if value > account.balance + deposit_tx.mint {
+                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + deposit_tx.mint, value, *pending.sender());
+                    return Err(InvalidTransactionError::InsufficientFunds);
+                }
+            }
+            _ => {
+                // check sufficient funds: `gas * price + value`
+                let req_funds = max_cost.checked_add(value.to()).ok_or_else(|| {
+                    warn!(target: "backend", "[{:?}] cost too high", tx.hash());
+                    InvalidTransactionError::InsufficientFunds
+                })?;
+                if account.balance < U256::from(req_funds) {
+                    warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
+                    return Err(InvalidTransactionError::InsufficientFunds);
+                }
+            }
         }
+
         Ok(())
     }
 
@@ -2660,8 +2776,8 @@ pub fn transaction_build(
     WithOtherFields::new(transaction)
 }
 
-/// Prove a storage key's existence or nonexistence in the account's storage
-/// trie.
+/// Prove a storage key's existence or nonexistence in the account's storage trie.
+///
 /// `storage_key` is the hash of the desired storage key, meaning
 /// this will only work correctly under a secure trie.
 /// `storage_key` == keccak(key)

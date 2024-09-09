@@ -137,6 +137,7 @@ pub(crate) fn shrink_sequence(
 }
 
 /// Checks if the given call sequence breaks the invariant.
+///
 /// Used in shrinking phase for checking candidate sequences and in replay failures phase to test
 /// persisted failures.
 /// Returns the result of invariant check (and afterInvariant call if needed) and if sequence was

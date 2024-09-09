@@ -19,7 +19,7 @@ COPY . .
 RUN git update-index --force-write-index
 
 RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/root/.cargo/git --mount=type=cache,target=/opt/foundry/target \
-    source $HOME/.profile && cargo build --release --features cast/aws-kms,forge/aws-kms \
+    source $HOME/.profile && cargo build --release --features foundry-cast/aws-kms,forge/aws-kms \
     && mkdir out \
     && mv target/release/forge out/forge \
     && mv target/release/cast out/cast \

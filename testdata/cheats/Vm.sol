@@ -144,6 +144,7 @@ interface Vm {
     function assertTrue(bool condition) external pure;
     function assertTrue(bool condition, string calldata error) external pure;
     function assume(bool condition) external pure;
+    function assumeNoRevert() external pure;
     function blobBaseFee(uint256 newBlobBaseFee) external;
     function blobhashes(bytes32[] calldata hashes) external;
     function breakpoint(string calldata char) external;
@@ -231,6 +232,7 @@ interface Vm {
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter) external;
     function expectEmit() external;
     function expectEmit(address emitter) external;
+    function expectPartialRevert(bytes4 revertData) external;
     function expectRevert() external;
     function expectRevert(bytes4 revertData) external;
     function expectRevert(bytes calldata revertData) external;
@@ -317,6 +319,7 @@ interface Vm {
     function parseToml(string calldata toml, string calldata key) external pure returns (bytes memory abiEncodedData);
     function parseUint(string calldata stringifiedValue) external pure returns (uint256 parsedValue);
     function pauseGasMetering() external;
+    function pauseTracing() external view;
     function prank(address msgSender) external;
     function prank(address msgSender, address txOrigin) external;
     function prevrandao(bytes32 newPrevrandao) external;
@@ -345,8 +348,10 @@ interface Vm {
     function removeDir(string calldata path, bool recursive) external;
     function removeFile(string calldata path) external;
     function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);
+    function resetGasMetering() external;
     function resetNonce(address account) external;
     function resumeGasMetering() external;
+    function resumeTracing() external view;
     function revertTo(uint256 snapshotId) external returns (bool success);
     function revertToAndDelete(uint256 snapshotId) external returns (bool success);
     function revokePersistent(address account) external;

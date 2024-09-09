@@ -299,7 +299,6 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: None,
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
-            other: Default::default(),
             authorization_list: None,
         },
         TypedTransaction::EIP2930(t) => RpcTransaction {
@@ -327,7 +326,6 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: Some(1),
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
-            other: Default::default(),
             authorization_list: None,
         },
         TypedTransaction::EIP1559(t) => RpcTransaction {
@@ -355,7 +353,6 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: Some(2),
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
-            other: Default::default(),
             authorization_list: None,
         },
         TypedTransaction::EIP4844(t) => RpcTransaction {
@@ -383,7 +380,6 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: Some(3),
             max_fee_per_blob_gas: Some(t.tx().tx().max_fee_per_blob_gas),
             blob_versioned_hashes: Some(t.tx().tx().blob_versioned_hashes.clone()),
-            other: Default::default(),
             authorization_list: None,
         },
         TypedTransaction::EIP7702(t) => RpcTransaction {
@@ -432,7 +428,6 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             transaction_type: None,
             max_fee_per_blob_gas: None,
             blob_versioned_hashes: None,
-            other: Default::default(),
             authorization_list: None,
         },
     }
@@ -671,6 +666,36 @@ pub enum TypedTransaction {
     EIP7702(Signed<TxEip7702>),
     /// op-stack deposit transaction
     Deposit(DepositTransaction),
+}
+
+/// This is a function that demotes TypedTransaction to TransactionRequest for greater flexibility
+/// over the type.
+///
+/// This function is purely for convience and specific use cases, e.g. RLP encoded transactions
+/// decode to TypedTransactions where the API over TypedTransctions is quite strict.
+impl TryFrom<TypedTransaction> for TransactionRequest {
+    type Error = ConversionError;
+
+    fn try_from(value: TypedTransaction) -> Result<Self, Self::Error> {
+        let from = value.recover().map_err(|_| ConversionError::InvalidSignature)?;
+        let essentials = value.essentials();
+        let tx_type = value.r#type();
+        Ok(Self {
+            from: Some(from),
+            to: Some(value.kind()),
+            gas_price: essentials.gas_price,
+            max_fee_per_gas: essentials.max_fee_per_gas,
+            max_priority_fee_per_gas: essentials.max_priority_fee_per_gas,
+            max_fee_per_blob_gas: essentials.max_fee_per_blob_gas,
+            gas: Some(essentials.gas_limit),
+            value: Some(essentials.value),
+            input: essentials.input.into(),
+            nonce: Some(essentials.nonce),
+            chain_id: essentials.chain_id,
+            transaction_type: tx_type,
+            ..Default::default()
+        })
+    }
 }
 
 impl TypedTransaction {

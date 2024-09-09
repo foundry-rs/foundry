@@ -59,7 +59,8 @@ pub fn replay_run(
         }
 
         // Identify newly generated contracts, if they exist.
-        ided_contracts.extend(load_contracts(call_result.traces.as_slice(), known_contracts));
+        ided_contracts
+            .extend(load_contracts(call_result.traces.iter().map(|a| &a.arena), known_contracts));
 
         // Create counter example to be used in failed case.
         counterexample_sequence.push(BaseCounterExample::from_invariant_call(

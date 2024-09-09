@@ -546,7 +546,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
 }
 
 /// Compile the project in the root directory, and return the compilation result.
-pub fn compile_project(root: &PathBuf, quiet: bool) -> Result<ProjectCompileOutput> {
+pub fn compile_project(root: &Path, quiet: bool) -> Result<ProjectCompileOutput> {
     let mut config = Config::load_with_root(root).sanitized();
     config.extra_output.push(ContractOutputSelection::StorageLayout);
     let project = config.project()?;
@@ -575,11 +575,9 @@ pub fn find_main_contract<'a>(
     rv.ok_or_else(|| eyre::eyre!("contract not found"))
 }
 
-#[cfg(test)]
-use mockall::automock;
 /// EtherscanClient is a trait that defines the methods to interact with Etherscan.
 /// It is defined as a wrapper of the `foundry_block_explorers::Client` to allow mocking.
-#[cfg_attr(test, automock)]
+#[cfg_attr(test, mockall::automock)]
 pub(crate) trait EtherscanClient {
     async fn contract_source_code(
         &self,
@@ -614,7 +612,7 @@ mod tests {
     use super::*;
     use alloy_primitives::hex;
     use foundry_compilers::Artifact;
-    use foundry_test_utils::rpc::next_etherscan_api_key;
+    use foundry_test_utils::rpc::next_mainnet_etherscan_api_key;
     use std::collections::BTreeMap;
 
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
@@ -692,7 +690,7 @@ mod tests {
         // create folder if not exists
         std::fs::create_dir_all(&data_folder).unwrap();
         // create metadata.json and creation_data.json
-        let client = Client::new(Chain::mainnet(), next_etherscan_api_key()).unwrap();
+        let client = Client::new(Chain::mainnet(), next_mainnet_etherscan_api_key()).unwrap();
         let meta = client.contract_source_code(address).await.unwrap();
         // dump json
         let json = serde_json::to_string_pretty(&meta).unwrap();

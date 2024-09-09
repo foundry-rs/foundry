@@ -2973,6 +2973,26 @@
     },
     {
       "func": {
+        "id": "assumeNoRevert",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted.",
+        "declaration": "function assumeNoRevert() external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoRevert()",
+        "selector": "0x285b366a",
+        "selectorBytes": [
+          40,
+          91,
+          54,
+          106
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "blobBaseFee",
         "description": "Sets `block.blobbasefee`",
         "declaration": "function blobBaseFee(uint256 newBlobBaseFee) external;",
@@ -4713,6 +4733,26 @@
     },
     {
       "func": {
+        "id": "expectPartialRevert",
+        "description": "Expects an error on next call that starts with the revert data.",
+        "declaration": "function expectPartialRevert(bytes4 revertData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectPartialRevert(bytes4)",
+        "selector": "0x11fb5b9c",
+        "selectorBytes": [
+          17,
+          251,
+          91,
+          156
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectRevert_0",
         "description": "Expects an error on next call with any revert data.",
         "declaration": "function expectRevert() external;",
@@ -4734,7 +4774,7 @@
     {
       "func": {
         "id": "expectRevert_1",
-        "description": "Expects an error on next call that starts with the revert data.",
+        "description": "Expects an error on next call that exactly matches the revert data.",
         "declaration": "function expectRevert(bytes4 revertData) external;",
         "visibility": "external",
         "mutability": "",
@@ -6433,6 +6473,26 @@
     },
     {
       "func": {
+        "id": "pauseTracing",
+        "description": "Pauses collection of call traces. Useful in cases when you want to skip tracing of\ncomplex calls which are not useful for debugging.",
+        "declaration": "function pauseTracing() external view;",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "pauseTracing()",
+        "selector": "0xc94d1f90",
+        "selectorBytes": [
+          201,
+          77,
+          31,
+          144
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "prank_0",
         "description": "Sets the *next* call's `msg.sender` to be the input address.",
         "declaration": "function prank(address msgSender) external;",
@@ -6993,6 +7053,26 @@
     },
     {
       "func": {
+        "id": "resetGasMetering",
+        "description": "Reset gas metering (i.e. gas usage is set to gas limit).",
+        "declaration": "function resetGasMetering() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "resetGasMetering()",
+        "selector": "0xbe367dd3",
+        "selectorBytes": [
+          190,
+          54,
+          125,
+          211
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "resetNonce",
         "description": "Resets the nonce of an account to 0 for EOAs and 1 for contract accounts.",
         "declaration": "function resetNonce(address account) external;",
@@ -7028,6 +7108,26 @@
         ]
       },
       "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "resumeTracing",
+        "description": "Unpauses collection of call traces.",
+        "declaration": "function resumeTracing() external view;",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "resumeTracing()",
+        "selector": "0x72a09ccb",
+        "selectorBytes": [
+          114,
+          160,
+          156,
+          203
+        ]
+      },
+      "group": "utilities",
       "status": "stable",
       "safety": "safe"
     },

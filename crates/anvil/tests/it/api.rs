@@ -1,7 +1,7 @@
 //! general eth api tests
 
 use crate::{
-    abi::{MulticallContract, SimpleStorage},
+    abi::{Multicall, SimpleStorage},
     utils::{connect_pubsub_with_wallet, http_provider_with_signer},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
@@ -118,11 +118,8 @@ async fn can_get_block_by_number() {
     let block = provider.get_block(BlockId::number(1), true.into()).await.unwrap().unwrap();
     assert_eq!(block.transactions.len(), 1);
 
-    let block = provider
-        .get_block(BlockId::hash(block.header.hash.unwrap()), true.into())
-        .await
-        .unwrap()
-        .unwrap();
+    let block =
+        provider.get_block(BlockId::hash(block.header.hash), true.into()).await.unwrap().unwrap();
     assert_eq!(block.transactions.len(), 1);
 }
 
@@ -138,7 +135,7 @@ async fn can_get_pending_block() {
     let provider = connect_pubsub_with_wallet(&handle.http_endpoint(), signer).await;
 
     let block = provider.get_block(BlockId::pending(), false.into()).await.unwrap().unwrap();
-    assert_eq!(block.header.number.unwrap(), 1);
+    assert_eq!(block.header.number, 1);
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, 0);
@@ -153,12 +150,12 @@ async fn can_get_pending_block() {
     assert_eq!(num, 0);
 
     let block = provider.get_block(BlockId::pending(), false.into()).await.unwrap().unwrap();
-    assert_eq!(block.header.number.unwrap(), 1);
+    assert_eq!(block.header.number, 1);
     assert_eq!(block.transactions.len(), 1);
     assert_eq!(block.transactions, BlockTransactions::Hashes(vec![*pending.tx_hash()]));
 
     let block = provider.get_block(BlockId::pending(), true.into()).await.unwrap().unwrap();
-    assert_eq!(block.header.number.unwrap(), 1);
+    assert_eq!(block.header.number, 1);
     assert_eq!(block.transactions.len(), 1);
 }
 
@@ -210,7 +207,7 @@ async fn can_call_on_pending_block() {
 
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let _contract_pending = MulticallContract::deploy_builder(&provider)
+    let _contract_pending = Multicall::deploy_builder(&provider)
         .from(wallet.address())
         .send()
         .await
@@ -219,13 +216,13 @@ async fn can_call_on_pending_block() {
         .await
         .unwrap();
     let contract_address = sender.create(0);
-    let contract = MulticallContract::new(contract_address, &provider);
+    let contract = Multicall::new(contract_address, &provider);
 
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, 0);
 
     // Ensure that we can get the block_number from the pending contract
-    let MulticallContract::aggregateReturn { blockNumber: ret_block_number, .. } =
+    let Multicall::aggregateReturn { blockNumber: ret_block_number, .. } =
         contract.aggregate(vec![]).block(BlockId::pending()).call().await.unwrap();
     assert_eq!(ret_block_number, U256::from(1));
 
@@ -244,31 +241,28 @@ async fn can_call_on_pending_block() {
         let block_number = BlockNumberOrTag::Number(anvil_block_number as u64);
         let block = api.block_by_number(block_number).await.unwrap().unwrap();
 
-        let MulticallContract::getCurrentBlockTimestampReturn { timestamp: ret_timestamp, .. } =
-            contract
-                .getCurrentBlockTimestamp()
-                .block(BlockId::number(anvil_block_number as u64))
-                .call()
-                .await
-                .unwrap();
+        let Multicall::getCurrentBlockTimestampReturn { timestamp: ret_timestamp, .. } = contract
+            .getCurrentBlockTimestamp()
+            .block(BlockId::number(anvil_block_number as u64))
+            .call()
+            .await
+            .unwrap();
         assert_eq!(block.header.timestamp, ret_timestamp.to::<u64>());
 
-        let MulticallContract::getCurrentBlockGasLimitReturn { gaslimit: ret_gas_limit, .. } =
-            contract
-                .getCurrentBlockGasLimit()
-                .block(BlockId::number(anvil_block_number as u64))
-                .call()
-                .await
-                .unwrap();
+        let Multicall::getCurrentBlockGasLimitReturn { gaslimit: ret_gas_limit, .. } = contract
+            .getCurrentBlockGasLimit()
+            .block(BlockId::number(anvil_block_number as u64))
+            .call()
+            .await
+            .unwrap();
         assert_eq!(block.header.gas_limit, ret_gas_limit.to::<u128>());
 
-        let MulticallContract::getCurrentBlockCoinbaseReturn { coinbase: ret_coinbase, .. } =
-            contract
-                .getCurrentBlockCoinbase()
-                .block(BlockId::number(anvil_block_number as u64))
-                .call()
-                .await
-                .unwrap();
+        let Multicall::getCurrentBlockCoinbaseReturn { coinbase: ret_coinbase, .. } = contract
+            .getCurrentBlockCoinbase()
+            .block(BlockId::number(anvil_block_number as u64))
+            .call()
+            .await
+            .unwrap();
         assert_eq!(block.header.miner, ret_coinbase);
     }
 }
@@ -316,7 +310,7 @@ async fn can_call_with_state_override() {
 
     api.anvil_set_auto_mine(true).await.unwrap();
 
-    let multicall_contract = MulticallContract::deploy(&provider).await.unwrap();
+    let multicall_contract = Multicall::deploy(&provider).await.unwrap();
 
     let init_value = "toto".to_string();
 
@@ -383,18 +377,12 @@ async fn can_mine_while_mining() {
 
     let total_blocks = 200;
 
-    let block_number = api
-        .block_by_number(BlockNumberOrTag::Latest)
-        .await
-        .unwrap()
-        .unwrap()
-        .header
-        .number
-        .unwrap();
+    let block_number =
+        api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap().header.number;
     assert_eq!(block_number, 0);
 
     let block = api.block_by_number(BlockNumberOrTag::Number(block_number)).await.unwrap().unwrap();
-    assert_eq!(block.header.number.unwrap(), 0);
+    assert_eq!(block.header.number, 0);
 
     let result = join!(
         api.anvil_mine(Some(U256::from(total_blocks / 2)), None),
@@ -404,16 +392,10 @@ async fn can_mine_while_mining() {
     result.1.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let block_number = api
-        .block_by_number(BlockNumberOrTag::Latest)
-        .await
-        .unwrap()
-        .unwrap()
-        .header
-        .number
-        .unwrap();
+    let block_number =
+        api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap().header.number;
     assert_eq!(block_number, total_blocks);
 
     let block = api.block_by_number(BlockNumberOrTag::Number(block_number)).await.unwrap().unwrap();
-    assert_eq!(block.header.number.unwrap(), total_blocks);
+    assert_eq!(block.header.number, total_blocks);
 }

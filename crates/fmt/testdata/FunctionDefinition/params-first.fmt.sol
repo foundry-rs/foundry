@@ -3,7 +3,9 @@
 interface FunctionInterfaces {
     function noParamsNoModifiersNoReturns();
 
-    function oneParam(uint256 x);
+    function oneParam(
+        uint256 x
+    );
 
     function oneModifier() modifier1;
 
@@ -335,7 +337,9 @@ contract FunctionDefinitions {
         a = 1;
     }
 
-    function oneParam(uint256 x) {
+    function oneParam(
+        uint256 x
+    ) {
         a = 1;
     }
 

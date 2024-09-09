@@ -8,6 +8,7 @@ use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::Provider;
+use alloy_rpc_types::TransactionInput;
 use async_recursion::async_recursion;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
@@ -284,7 +285,16 @@ impl ExecutedState {
 
         let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
 
-        let txs = self.execution_result.transactions.clone().unwrap_or_default();
+        let mut txs = self.execution_result.transactions.clone().unwrap_or_default();
+
+        // Ensure that unsigned transactions have both `data` and `input` populated to avoid
+        // issues with eth_estimateGas and eth_sendTransaction requests.
+        for tx in &mut txs {
+            if let Some(req) = tx.transaction.as_unsigned_mut() {
+                req.input =
+                    TransactionInput::maybe_both(std::mem::take(&mut req.input).into_input());
+            }
+        }
         let rpc_data = RpcData::from_transactions(&txs);
 
         if rpc_data.is_multi_chain() {

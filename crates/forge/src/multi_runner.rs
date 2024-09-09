@@ -84,28 +84,28 @@ pub struct MultiContractRunner {
 
 impl MultiContractRunner {
     /// Returns an iterator over all contracts that match the filter.
-    pub fn matching_contracts<'a>(
+    pub fn matching_contracts<'a: 'b, 'b>(
         &'a self,
-        filter: &'a dyn TestFilter,
-    ) -> impl Iterator<Item = (&ArtifactId, &TestContract)> {
+        filter: &'b dyn TestFilter,
+    ) -> impl Iterator<Item = (&'a ArtifactId, &'a TestContract)> + 'b {
         self.contracts.iter().filter(|&(id, c)| matches_contract(id, &c.abi, filter))
     }
 
     /// Returns an iterator over all test functions that match the filter.
-    pub fn matching_test_functions<'a>(
+    pub fn matching_test_functions<'a: 'b, 'b>(
         &'a self,
-        filter: &'a dyn TestFilter,
-    ) -> impl Iterator<Item = &Function> {
+        filter: &'b dyn TestFilter,
+    ) -> impl Iterator<Item = &'a Function> + 'b {
         self.matching_contracts(filter)
             .flat_map(|(_, c)| c.abi.functions())
             .filter(|func| is_matching_test(func, filter))
     }
 
     /// Returns an iterator over all test functions in contracts that match the filter.
-    pub fn all_test_functions<'a>(
+    pub fn all_test_functions<'a: 'b, 'b>(
         &'a self,
-        filter: &'a dyn TestFilter,
-    ) -> impl Iterator<Item = &Function> {
+        filter: &'b dyn TestFilter,
+    ) -> impl Iterator<Item = &'a Function> + 'b {
         self.contracts
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))

@@ -6,11 +6,11 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{Authorization, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
-use anvil::{spawn, Hardfork, NodeConfig};
+use anvil::{spawn, EthereumHardfork, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip7702_tx() {
-    let node_config = NodeConfig::test().with_hardfork(Some(Hardfork::Prague));
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
     let (_api, handle) = spawn(node_config).await;
     let provider = http_provider(&handle.http_endpoint());
 

@@ -7,8 +7,14 @@ forgetest_async!(
     #[ignore = "ran manually"]
     manual_debug_setup,
     |prj, cmd| {
-        cmd.args(["init", "--force"]).arg(prj.root()).assert_non_empty_stdout();
-        cmd.forge_fuse();
+        cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
 
         prj.add_source("Counter2.sol", r#"
 contract A {
@@ -74,8 +80,7 @@ contract Script0 is Script, Test {
         )
         .unwrap();
 
-        cmd.args(["build"]).assert_success();
-        cmd.forge_fuse();
+        cmd.forge_fuse().args(["build"]).assert_success();
 
         cmd.args([
             "script",

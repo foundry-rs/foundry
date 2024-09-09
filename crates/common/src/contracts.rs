@@ -341,6 +341,8 @@ unsafe fn count_different_bytes(a: &[u8], b: &[u8]) -> usize {
     sum
 }
 
+/// Returns contract name for a given contract identifier.
+///
 /// Artifact/Contract identifier can take the following form:
 /// `<artifact file name>:<contract name>`, the `artifact file name` is the name of the json file of
 /// the contract's artifact and the contract name is the name of the solidity contract, like

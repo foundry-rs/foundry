@@ -1271,3 +1271,53 @@ contract AContractTest is DSTest {
 
 "#]]);
 });
+
+forgetest!(test_constructors_coverage, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    bool public active;
+
+    constructor() {
+        active = true;
+    }
+}
+
+contract BContract {
+    bool public active;
+
+    constructor() {
+        active = true;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function test_constructors() public {
+        AContract a = new AContract();
+        BContract b = new BContract();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.arg("coverage").args(["--summary".to_string()]).assert_success().stdout_eq(str![[r#"
+...
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
+|-------------------|---------------|---------------|---------------|---------------|
+| src/AContract.sol | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+| Total             | 100.00% (2/2) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+
+"#]]);
+});

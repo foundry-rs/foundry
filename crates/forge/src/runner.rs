@@ -350,7 +350,7 @@ impl<'a> ContractRunner<'a> {
         );
 
         let identified_contracts = has_invariants
-            .then(|| load_contracts(setup.traces.iter().map(|(_, t)| t), &known_contracts));
+            .then(|| load_contracts(setup.traces.iter().map(|(_, t)| &t.arena), &known_contracts));
         let test_results = functions
             .par_iter()
             .map(|&func| {
