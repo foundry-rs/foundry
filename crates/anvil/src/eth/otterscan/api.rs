@@ -424,8 +424,12 @@ impl EthApi {
             .into_iter()
             .map(|r| match r {
                 Ok(Some(r)) => {
-                    let timestamp =
-                        self.backend.get_block(r.block_number.unwrap()).unwrap().header.timestamp;
+                    let timestamp = self
+                        .backend
+                        .get_block(r.block_number.unwrap())
+                        .ok_or(BlockchainError::BlockNotFound)?
+                        .header
+                        .timestamp;
                     let receipt = r.map_inner(OtsReceipt::from);
                     let res = OtsTransactionReceipt { receipt, timestamp: Some(timestamp) };
                     Ok(res)
@@ -466,7 +470,7 @@ impl EthApi {
                     let timestamp = self
                         .backend
                         .get_block(receipt.block_number.unwrap())
-                        .unwrap()
+                        .ok_or(BlockchainError::BlockNotFound)?
                         .header
                         .timestamp;
                     let receipt = receipt.map_inner(OtsReceipt::from);
