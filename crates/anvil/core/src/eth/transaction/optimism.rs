@@ -124,7 +124,7 @@ impl DepositTransactionRequest {
         self.kind.size() + // to
         mem::size_of::<U256>() + // mint
         mem::size_of::<U256>() + // value
-        mem::size_of::<U256>() + // gas_limit
+        mem::size_of::<u128>() + // gas_limit
         mem::size_of::<bool>() + // is_system_transaction
         self.input.len() // input
     }
@@ -177,7 +177,7 @@ impl Transaction for DepositTransactionRequest {
 
     /// Get `nonce`.
     fn nonce(&self) -> u64 {
-        u64::MAX
+        0u64
     }
 
     /// Get `gas_limit`.
@@ -271,6 +271,24 @@ impl Encodable for DepositTransactionRequest {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
         RlpHeader { list: true, payload_length: self.fields_len() }.encode(out);
         self.encode_fields(out);
+    }
+
+    fn length(&self) -> usize {
+        let payload_length = self.fields_len();
+        RlpHeader { list: true, payload_length }.length() + payload_length
+    }
+}
+
+impl Decodable for DepositTransactionRequest {
+    fn decode(data: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        let header = RlpHeader::decode(data)?;
+        let remaining_len = data.len();
+
+        if header.payload_length > remaining_len {
+            return Err(alloy_rlp::Error::InputTooShort);
+        }
+
+        Self::decode_inner(data)
     }
 }
 
