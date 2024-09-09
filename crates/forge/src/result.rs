@@ -184,6 +184,18 @@ impl TestOutcome {
         // TODO: Avoid process::exit
         std::process::exit(1);
     }
+
+    /// Removes first test result, if any.
+    pub fn remove_first(&mut self) -> Option<(String, String, TestResult)> {
+        self.results.iter_mut().find_map(|(suite_name, suite)| {
+            if let Some(test_name) = suite.test_results.keys().next().cloned() {
+                let result = suite.test_results.remove(&test_name).unwrap();
+                Some((suite_name.clone(), test_name, result))
+            } else {
+                None
+            }
+        })
+    }
 }
 
 /// A set of test results for a single test suite, which is all the tests in a single contract.
