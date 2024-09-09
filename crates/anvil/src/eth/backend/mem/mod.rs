@@ -1676,7 +1676,6 @@ impl Backend {
 
     pub fn get_block_by_hash(&self, hash: B256) -> Option<Block> {
         self.blockchain.get_block_by_hash(&hash)
-        // TODO: Fix https://github.com/foundry-rs/foundry/issues/8822 by fetching from fork.
     }
 
     pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<AnyNetworkBlock> {
