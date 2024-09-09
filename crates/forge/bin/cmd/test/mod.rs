@@ -1,7 +1,7 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
 use clap::{Parser, ValueHint};
-use eyre::{Context, Result};
+use eyre::{Context, OptionExt, Result};
 use forge::{
     decode::decode_console_logs,
     gas_report::GasReport,
@@ -81,12 +81,12 @@ pub struct TestArgs {
     #[arg(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
 
-    /// Generate flamegraph if a single test is executed.
-    #[arg(long, env = "FLAMEGRAPH")]
+    /// Generate a flamegraph for a single test. Implies `--decode-internal`.
+    #[arg(long, conflicts_with = "flamechart")]
     flamegraph: bool,
 
-    /// Generate flamechart if a single test is executed.
-    #[arg(long, env = "FLAMECHART")]
+    /// Generate a flamechart for a single test. Implies `--decode-internal`.
+    #[arg(long, conflicts_with = "flamegraph")]
     flamechart: bool,
 
     /// Whether to identify internal functions in traces.
@@ -317,10 +317,7 @@ impl TestArgs {
             .build(&output, project_root)?;
 
         let should_debug = self.debug.is_some();
-
-        if self.flamegraph && self.flamechart {
-            eyre::bail!("Cannot specify both --flamegraph and --flamechart.");
-        }
+        let should_draw = self.flamegraph || self.flamechart;
 
         // Determine print verbosity and executor verbosity.
         let verbosity = evm_opts.verbosity;
@@ -331,7 +328,7 @@ impl TestArgs {
         let env = evm_opts.evm_env().await?;
 
         // Enable internal tracing for more informative flamegraph.
-        if self.flamegraph || self.flamechart {
+        if should_draw {
             self.decode_internal = Some(None);
         }
 
@@ -382,18 +379,13 @@ impl TestArgs {
             "decode-internal",
             self.decode_internal.as_ref().and_then(|v| v.as_ref()),
         )?;
-        // maybe_override_mt("flamegraph", self.flamegraph.as_ref())?;
 
         let libraries = runner.libraries.clone();
         let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
 
-        if self.flamegraph || self.flamechart {
-            let (suite_name, (test_name, test_result)) = outcome
-                .results
-                .iter_mut()
-                .find(|(_, r)| !r.test_results.is_empty())
-                .map(|(suite_name, r)| (suite_name, r.test_results.iter_mut().next().unwrap()))
-                .unwrap();
+        if should_draw {
+            let (suite_name, test_name, mut test_result) =
+                outcome.remove_first().ok_or_eyre("no tests were executed")?;
 
             let arena = test_result
                 .traces
@@ -441,14 +433,8 @@ impl TestArgs {
 
         if should_debug {
             // Get first non-empty suite result. We will have only one such entry.
-            let Some((_, test_result)) = outcome
-                .results
-                .iter()
-                .find(|(_, r)| !r.test_results.is_empty())
-                .map(|(_, r)| (r, r.test_results.values().next().unwrap()))
-            else {
-                return Err(eyre::eyre!("no tests were executed"));
-            };
+            let (_, _, test_result) =
+                outcome.remove_first().ok_or_eyre("no tests were executed")?;
 
             let sources =
                 ContractSources::from_project_output(&output, project.root(), Some(&libraries))?;
