@@ -6533,6 +6533,26 @@
     },
     {
       "func": {
+        "id": "prank_2",
+        "description": "TODO",
+        "declaration": "TODO",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "prank(address,address, bool)",
+        "selector": "0x7d73d042",
+        "selectorBytes": [
+          125,
+          115,
+          208,
+          66
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "prevrandao_0",
         "description": "Sets `block.prevrandao`.\nNot available on EVM versions before Paris. Use `difficulty` instead.\nIf used on unsupported EVM versions it will revert.",
         "declaration": "function prevrandao(bytes32 newPrevrandao) external;",

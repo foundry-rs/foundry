@@ -863,6 +863,18 @@ impl Cheatcodes {
                 // Check if target addr
                 // If so, delegate prank
 
+                // &mut self,
+
+                // ecx: &mut EvmContext<DB>,
+
+                // call: &mut CallInputs,
+                if let CallScheme::DelegateCall = call.scheme {
+                    // This is the new `msg.sender` from above
+                    call.target_address = call.caller;
+                    call.bytecode_address = call.target_address;
+                }
+                // executor: &mut impl CheatcodesExecutor,
+
                 // contract My Test {
                 //  let contract = NewLogicContract()
                 //  let proxy = NewProxyContract()

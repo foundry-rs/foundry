@@ -322,6 +322,7 @@ interface Vm {
     function pauseTracing() external view;
     function prank(address msgSender) external;
     function prank(address msgSender, address txOrigin) external;
+    function prank(address msgSender, address txOrigin, bool delegateCall) external;
     function prevrandao(bytes32 newPrevrandao) external;
     function prevrandao(uint256 newPrevrandao) external;
     function projectRoot() external view returns (string memory path);
