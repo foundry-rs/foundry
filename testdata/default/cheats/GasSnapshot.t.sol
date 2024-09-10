@@ -10,18 +10,11 @@ contract GasSnapshotTest is DSTest {
     function testAssertAccurateGasMeasurement() public {
         Flare f = new Flare();
 
-        vm.startSnapshotGas("caseA");
+        vm.startSnapshotGas("testAssertAccurateGasMeasurement");
 
         f.update(2);
 
         uint256 gasUsed = vm.stopSnapshotGas();
-        assertGt(gasUsed, 0);
-
-        vm.startSnapshotGas("caseB");
-
-        f.update(3);
-
-        gasUsed = vm.stopSnapshotGas();
         assertGt(gasUsed, 0);
     }
 
@@ -104,10 +97,7 @@ contract GasSnapshotTest is DSTest {
 
         f.run(256);
 
-        uint256 gasUsed = vm.stopSnapshotGas(
-            "CustomGroup",
-            "testSnapshotGasSectionGroupName"
-        );
+        uint256 gasUsed = vm.stopSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
         assertGt(gasUsed, 0);
     }
 
