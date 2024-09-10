@@ -1,5 +1,6 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::Address;
+use toml::de;
 
 // Update prank so that you can use it for delegatecalling from a test contract, but throw an error
 // if the address passed to vm.prank(addr) before a delegatecall has no code (to ensure you can't
@@ -94,6 +95,20 @@ impl Cheatcode for startPrank_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { msgSender, txOrigin } = self;
         prank(ccx, msgSender, Some(txOrigin), false, false)
+    }
+}
+
+impl Cheatcode for prank_2Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { msgSender, txOrigin, delegateCall } = self;
+        prank(ccx, msgSender, Some(txOrigin), true, *delegateCall)
+    }
+}
+
+impl Cheatcode for startPrank_2Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { msgSender, txOrigin, delegateCall } = self;
+        prank(ccx, msgSender, Some(txOrigin), false, *delegateCall)
     }
 }
 

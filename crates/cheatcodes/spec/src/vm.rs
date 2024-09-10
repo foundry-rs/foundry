@@ -491,6 +491,14 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startPrank(address msgSender, address txOrigin) external;
 
+    /// TODO
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function prank(address msgSender, address txOrigin, bool delegateCall) external;
+
+    /// TODO
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function startPrank(address msgSender, address txOrigin, bool delegateCall) external;
+
     /// Resets subsequent calls' `msg.sender` to be `address(this)`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopPrank() external;
