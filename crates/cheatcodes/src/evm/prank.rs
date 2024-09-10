@@ -137,10 +137,13 @@ fn prank<DB: DatabaseExt>(
         delegate_call,
     );
 
-    if let Some(Prank {
-        new_caller, used, single_call: current_single_call, delegate_call, ..
-    }) = ccx.state.prank
-    {
+    // Ensure that code exists at `msg.sender` if delegate calling.
+    if delegate_call {
+        let code = ccx.code(*new_caller)?;
+        ensure!(!code.is_empty(), "cannot `prank` delegate call from an EOA");
+    }
+
+    if let Some(Prank { used, single_call: current_single_call, .. }) = ccx.state.prank {
         ensure!(used, "cannot overwrite a prank until it is applied at least once");
         // This case can only fail if the user calls `vm.startPrank` and then `vm.prank` later on.
         // This should not be possible without first calling `stopPrank`
@@ -149,12 +152,6 @@ fn prank<DB: DatabaseExt>(
             "cannot override an ongoing prank with a single vm.prank; \
              use vm.startPrank to override the current prank"
         );
-
-        // Ensure that code exists at `msg.sender` if delegate calling.
-        if delegate_call {
-            let code = ccx.code(new_caller)?;
-            ensure!(!code.is_empty(), "cannot `prank` delegate call from an EOA");
-        }
     }
 
     ensure!(
