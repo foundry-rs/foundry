@@ -7,7 +7,7 @@ import "cheats/Vm.sol";
 contract GasSnapshotTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function testAssertAccurateGasMeasurement() public {
+    function testAssertGasMeasurement() public {
         Flare f = new Flare();
 
         vm.startSnapshotGas("testAssertAccurateGasMeasurement");
