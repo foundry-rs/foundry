@@ -7,6 +7,24 @@ import "cheats/Vm.sol";
 contract GasSnapshotTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
+    function testAssertAccurateGasMeasurement() public {
+        Flare f = new Flare();
+
+        vm.startSnapshotGas("caseA");
+
+        f.update(2);
+
+        uint256 gasUsed = vm.stopSnapshotGas();
+        assertGt(gasUsed, 0);
+
+        vm.startSnapshotGas("caseB");
+
+        f.update(3);
+
+        gasUsed = vm.stopSnapshotGas();
+        assertGt(gasUsed, 0);
+    }
+
     // Writes to `GasSnapshotTest` group with custom names.
     function testSnapshotValueDefaultGroup1() public {
         uint256 a = 123;
@@ -86,7 +104,10 @@ contract GasSnapshotTest is DSTest {
 
         f.run(256);
 
-        uint256 gasUsed = vm.stopSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
+        uint256 gasUsed = vm.stopSnapshotGas(
+            "CustomGroup",
+            "testSnapshotGasSectionGroupName"
+        );
         assertGt(gasUsed, 0);
     }
 
@@ -110,11 +131,40 @@ contract GasSnapshotTest is DSTest {
 }
 
 contract Flare {
+    TargetA public target;
     bytes32[] public data;
 
-    function run(uint256 n) public {
-        for (uint256 i = 0; i < n; i++) {
+    constructor() {
+        target = new TargetA();
+    }
+
+    function run(uint256 n_) public {
+        for (uint256 i = 0; i < n_; i++) {
             data.push(keccak256(abi.encodePacked(i)));
         }
+    }
+
+    function update(uint256 x_) public {
+        target.update(x_);
+    }
+}
+
+contract TargetA {
+    TargetB public target;
+
+    constructor() {
+        target = new TargetB();
+    }
+
+    function update(uint256 x_) public {
+        target.update(x_);
+    }
+}
+
+contract TargetB {
+    uint256 public x;
+
+    function update(uint256 x_) public {
+        x = x_;
     }
 }
