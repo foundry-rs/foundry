@@ -2968,6 +2968,26 @@
     },
     {
       "func": {
+        "id": "assumeNoRevert",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverted.",
+        "declaration": "function assumeNoRevert() external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoRevert()",
+        "selector": "0x285b366a",
+        "selectorBytes": [
+          40,
+          91,
+          54,
+          106
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "blobBaseFee",
         "description": "Sets `block.blobbasefee`",
         "declaration": "function blobBaseFee(uint256 newBlobBaseFee) external;",

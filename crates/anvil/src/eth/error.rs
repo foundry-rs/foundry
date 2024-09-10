@@ -231,6 +231,12 @@ pub enum InvalidTransactionError {
     /// Thrown when there are no `blob_hashes` in the transaction.
     #[error("There should be at least one blob in a Blob transaction.")]
     EmptyBlobs,
+    /// Thrown when an access list is used before the berlin hard fork.
+    #[error("EIP-7702 authorization lists are not supported before the Prague hardfork")]
+    AuthorizationListNotSupported,
+    /// Forwards error from the revm
+    #[error(transparent)]
+    Revm(revm::primitives::InvalidTransaction),
 }
 
 impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
@@ -263,7 +269,14 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::BlobVersionNotSupported => Self::BlobVersionNotSupported,
             InvalidTransaction::EmptyBlobs => Self::EmptyBlobs,
             InvalidTransaction::TooManyBlobs { max, have } => Self::TooManyBlobs(max, have),
-            _ => todo!(),
+            InvalidTransaction::AuthorizationListNotSupported => {
+                Self::AuthorizationListNotSupported
+            }
+            InvalidTransaction::AuthorizationListInvalidFields |
+            InvalidTransaction::InvalidAuthorizationList(_) |
+            InvalidTransaction::OptimismError(_) |
+            InvalidTransaction::EofCrateShouldHaveToAddress |
+            InvalidTransaction::EmptyAuthorizationList => Self::Revm(err),
         }
     }
 }

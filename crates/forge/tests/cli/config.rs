@@ -196,7 +196,7 @@ forgetest_init!(can_override_config, |prj, cmd| {
     // remappings work
     let remappings_txt =
         prj.create_file("remappings.txt", "ds-test/=lib/forge-std/lib/ds-test/from-file/");
-    let config = forge_utils::load_config_with_root(Some(prj.root().into()));
+    let config = forge_utils::load_config_with_root(Some(prj.root()));
     assert_eq!(
         format!(
             "ds-test/={}/",
@@ -207,7 +207,7 @@ forgetest_init!(can_override_config, |prj, cmd| {
 
     // env vars work
     std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/forge-std/lib/ds-test/from-env/");
-    let config = forge_utils::load_config_with_root(Some(prj.root().into()));
+    let config = forge_utils::load_config_with_root(Some(prj.root()));
     assert_eq!(
         format!(
             "ds-test/={}/",
@@ -284,7 +284,7 @@ Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmat
         "remappings.txt",
         "solmate/=lib/solmate/src/\nsolmate-contracts/=lib/solmate/src/",
     );
-    let config = forge_utils::load_config_with_root(Some(prj.root().into()));
+    let config = forge_utils::load_config_with_root(Some(prj.root()));
     // trailing slashes are removed on windows `to_slash_lossy`
     let path = prj.root().join("lib/solmate/src/").to_slash_lossy().into_owned();
     #[cfg(windows)]

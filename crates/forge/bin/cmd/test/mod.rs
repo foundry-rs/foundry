@@ -1,7 +1,7 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
 use clap::{Parser, ValueHint};
-use eyre::Result;
+use eyre::{Context, OptionExt, Result};
 use forge::{
     decode::decode_console_logs,
     gas_report::GasReport,
@@ -9,7 +9,7 @@ use forge::{
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         debug::{ContractSources, DebugTraceIdentifier},
-        decode_trace_arena,
+        decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
         render_trace_arena, CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
@@ -85,6 +85,14 @@ pub struct TestArgs {
     /// For more fine-grained control of which fuzz case is run, see forge run.
     #[arg(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
+
+    /// Generate a flamegraph for a single test. Implies `--decode-internal`.
+    #[arg(long, conflicts_with = "flamechart")]
+    flamegraph: bool,
+
+    /// Generate a flamechart for a single test. Implies `--decode-internal`.
+    #[arg(long, conflicts_with = "flamegraph")]
+    flamechart: bool,
 
     /// Whether to identify internal functions in traces.
     ///
@@ -259,7 +267,7 @@ impl TestArgs {
     /// configured filter will be executed
     ///
     /// Returns the test results for all matching tests.
-    pub async fn execute_tests(self) -> Result<TestOutcome> {
+    pub async fn execute_tests(mut self) -> Result<TestOutcome> {
         // Merge all configs.
         let (mut config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
@@ -313,13 +321,21 @@ impl TestArgs {
             .profiles(profiles)
             .build(&output, project_root)?;
 
+        let should_debug = self.debug.is_some();
+        let should_draw = self.flamegraph || self.flamechart;
+
         // Determine print verbosity and executor verbosity.
         let verbosity = evm_opts.verbosity;
-        if self.gas_report && evm_opts.verbosity < 3 {
+        if (self.gas_report && evm_opts.verbosity < 3) || self.flamegraph || self.flamechart {
             evm_opts.verbosity = 3;
         }
 
         let env = evm_opts.evm_env().await?;
+
+        // Enable internal tracing for more informative flamegraph.
+        if should_draw {
+            self.decode_internal = Some(None);
+        }
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
         let decode_internal = if let Some(maybe_fn) = self.decode_internal.as_ref() {
@@ -335,7 +351,6 @@ impl TestArgs {
         };
 
         // Prepare the test builder.
-        let should_debug = self.debug.is_some();
         let config = Arc::new(config);
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
@@ -371,18 +386,60 @@ impl TestArgs {
         )?;
 
         let libraries = runner.libraries.clone();
-        let outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
+        let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
+
+        if should_draw {
+            let (suite_name, test_name, mut test_result) =
+                outcome.remove_first().ok_or_eyre("no tests were executed")?;
+
+            let arena = test_result
+                .traces
+                .iter_mut()
+                .find_map(
+                    |(kind, arena)| {
+                        if *kind == TraceKind::Execution {
+                            Some(arena)
+                        } else {
+                            None
+                        }
+                    },
+                )
+                .unwrap();
+
+            // Decode traces.
+            let decoder = outcome.last_run_decoder.as_ref().unwrap();
+            decode_trace_arena(arena, decoder).await?;
+            let mut fst = folded_stack_trace::build(arena);
+
+            let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
+            let contract = suite_name.split(':').last().unwrap();
+            let test_name = test_name.trim_end_matches("()");
+            let file_name = format!("cache/{label}_{contract}_{test_name}.svg");
+            let file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
+
+            let mut options = inferno::flamegraph::Options::default();
+            options.title = format!("{label} {contract}::{test_name}");
+            options.count_name = "gas".to_string();
+            if self.flamechart {
+                options.flame_chart = true;
+                fst.reverse();
+            }
+
+            // Generate SVG.
+            inferno::flamegraph::from_lines(&mut options, fst.iter().map(|s| s.as_str()), file)
+                .wrap_err("failed to write svg")?;
+            println!("\nSaved to {file_name}");
+
+            // Open SVG in default program.
+            if opener::open(&file_name).is_err() {
+                println!("\nFailed to open {file_name}. Please open it manually.");
+            }
+        }
 
         if should_debug {
             // Get first non-empty suite result. We will have only one such entry.
-            let Some((_, test_result)) = outcome
-                .results
-                .iter()
-                .find(|(_, r)| !r.test_results.is_empty())
-                .map(|(_, r)| (r, r.test_results.values().next().unwrap()))
-            else {
-                return Err(eyre::eyre!("no tests were executed"));
-            };
+            let (_, _, test_result) =
+                outcome.remove_first().ok_or_eyre("no tests were executed")?;
 
             let sources =
                 ContractSources::from_project_output(&output, project.root(), Some(&libraries))?;
@@ -422,13 +479,17 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         let num_filtered = runner.matching_test_functions(filter).count();
-        if (self.debug.is_some() || self.decode_internal.as_ref().map_or(false, |v| v.is_some())) &&
+        if (self.debug.is_some() ||
+            self.decode_internal.as_ref().map_or(false, |v| v.is_some()) ||
+            self.flamegraph ||
+            self.flamechart) &&
             num_filtered != 1
         {
             eyre::bail!(
-                "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n\n\
+                "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to {action}.\n\n\
                  Use --match-contract and --match-path to further limit the search.\n\
-                 Filter used:\n{filter}"
+                 Filter used:\n{filter}",
+                action = if self.flamegraph {"generate a flamegraph"} else if self.flamechart {"generate a flamechart"} else {"run the debugger"},
             );
         }
 
@@ -496,7 +557,11 @@ impl TestArgs {
             decoder.clear_addresses();
 
             // We identify addresses if we're going to print *any* trace or gas report.
-            let identify_addresses = verbosity >= 3 || self.gas_report || self.debug.is_some();
+            let identify_addresses = verbosity >= 3 ||
+                self.gas_report ||
+                self.debug.is_some() ||
+                self.flamegraph ||
+                self.flamechart;
 
             // Print suite header.
             println!();

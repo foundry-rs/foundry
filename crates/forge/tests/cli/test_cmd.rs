@@ -1834,3 +1834,88 @@ contract CounterTest is DSTest {
 ...
 "#]]);
 });
+
+forgetest_init!(test_assume_no_revert, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    let config = Config {
+        fuzz: { FuzzConfig { runs: 100, seed: Some(U256::from(100)), ..Default::default() } },
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"pragma solidity 0.8.24;
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+contract CounterWithRevert {
+    error CountError();
+    error CheckError();
+
+    function count(uint256 a) public pure returns (uint256) {
+        if (a > 1000 || a < 10) {
+            revert CountError();
+        }
+        return 99999999;
+    }
+    function check(uint256 a) public pure {
+        if (a == 99999999) {
+            revert CheckError();
+        }
+    }
+    function dummy() public pure {}
+}
+
+contract CounterRevertTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function test_assume_no_revert_pass(uint256 a) public {
+        CounterWithRevert counter = new CounterWithRevert();
+        vm.assumeNoRevert();
+        a = counter.count(a);
+        assertEq(a, 99999999);
+    }
+    function test_assume_no_revert_fail_assert(uint256 a) public {
+        CounterWithRevert counter = new CounterWithRevert();
+        vm.assumeNoRevert();
+        a = counter.count(a);
+        // Test should fail on next assertion.
+        assertEq(a, 1);
+    }
+    function test_assume_no_revert_fail_in_2nd_call(uint256 a) public {
+        CounterWithRevert counter = new CounterWithRevert();
+        vm.assumeNoRevert();
+        a = counter.count(a);
+        // Test should revert here (not in scope of `assumeNoRevert` cheatcode).
+        counter.check(a);
+        assertEq(a, 99999999);
+    }
+    function test_assume_no_revert_fail_in_3rd_call(uint256 a) public {
+        CounterWithRevert counter = new CounterWithRevert();
+        vm.assumeNoRevert();
+        a = counter.count(a);
+        // Test `assumeNoRevert` applied to non reverting call should not be available for next reverting call.
+        vm.assumeNoRevert();
+        counter.dummy();
+        // Test will revert here (not in scope of `assumeNoRevert` cheatcode).
+        counter.check(a);
+        assertEq(a, 99999999);
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).with_no_redact().assert_failure().stdout_eq(str![[r#"
+...
+[FAIL. Reason: assertion failed; counterexample: [..]] test_assume_no_revert_fail_assert(uint256) [..]
+[FAIL. Reason: CheckError(); counterexample: [..]] test_assume_no_revert_fail_in_2nd_call(uint256) [..]
+[FAIL. Reason: CheckError(); counterexample: [..]] test_assume_no_revert_fail_in_3rd_call(uint256) [..]
+[PASS] test_assume_no_revert_pass(uint256) [..]
+...
+"#]]);
+});
