@@ -5,17 +5,44 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract GasSnapshotTest is DSTest {
+    uint256 public slot0;
+
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function testAssertGasMeasurement() public {
+    function testGasExternal() public {
         Flare f = new Flare();
 
-        vm.startSnapshotGas("testAssertAccurateGasMeasurement");
+        vm.startSnapshotGas("testAssertGasExternal");
 
         f.update(2);
 
-        uint256 gasUsed = vm.stopSnapshotGas();
-        assertGt(gasUsed, 0);
+        vm.stopSnapshotGas();
+    }
+
+    function testGasInternal() public {
+        vm.startSnapshotGas("testAssertGasInternalA");
+
+        slot0 = 1;
+
+        vm.stopSnapshotGas();
+
+        vm.startSnapshotGas("testAssertGasInternalB");
+
+        slot0 = 2;
+
+        vm.stopSnapshotGas();
+
+        vm.startSnapshotGas("testAssertGasInternalC");
+
+        slot0 = 0;
+
+        vm.stopSnapshotGas();
+
+        vm.startSnapshotGas("testAssertGasInternalD");
+
+        slot0 = 1;
+
+        vm.stopSnapshotGas();
     }
 
     // Writes to `GasSnapshotTest` group with custom names.

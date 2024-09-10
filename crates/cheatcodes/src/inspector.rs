@@ -227,7 +227,7 @@ pub struct GasMetering {
     pub touched: bool,
     /// True if gas metering should be reset to frame limit.
     pub reset: bool,
-    /// Stores frames paused gas.
+    /// Stores paused gas frames.
     pub paused_frames: Vec<Gas>,
 
     /// The name of the last snapshot taken.
@@ -237,11 +237,35 @@ pub struct GasMetering {
     /// This is used by the `lastCallGas` cheatcode.
     pub last_call_gas: Option<crate::Vm::Gas>,
 
+    /// True if gas metering is enabled.
+    pub recording: bool,
+    /// Stores recorded gas frames.
+    pub recorded_frames: Vec<u64>,
     /// Gas records for the active snapshots.
     pub gas_records: Vec<GasRecord>,
 }
 
 impl GasMetering {
+    /// Start the gas recording.
+    pub fn start(&mut self) {
+        self.recording = true;
+        self.recorded_frames.clear();
+    }
+
+    /// Stop the gas recording.
+    pub fn stop(&mut self) {
+        // self.gas_records.iter_mut().for_each(|record| {
+        //     record.gas_used = record
+        //         .gas_used
+        //         .saturating_add(self.recorded_frames.iter().map(|gas| gas.spent()).sum::<u64>());
+        // });
+
+        println!("Gas frames: {:?}", self.recorded_frames);
+
+        self.recording = false;
+        self.recorded_frames.clear();
+    }
+
     /// Resume paused gas metering.
     pub fn resume(&mut self) {
         if self.paused {
@@ -1057,6 +1081,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
     #[inline]
     fn step_end(&mut self, interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>) {
+        if self.gas_metering.recording {
+            self.meter_gas_record(interpreter);
+        }
+
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1198,14 +1226,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             gasTotalUsed: gas.spent(),
             gasRefunded: gas.refunded(),
             gasRemaining: gas.remaining(),
-        });
-
-        // Store the total gas used for all active gas records started by `startSnapshotGas`.
-        self.gas_metering.gas_records.iter_mut().for_each(|record| {
-            // Only record top-level gas usage, excluding root call.
-            if ecx.journaled_state.depth() == 1 {
-                record.gas_used = record.gas_used.saturating_add(gas.spent());
-            }
         });
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -1453,6 +1473,12 @@ impl Cheatcodes {
             // Record frame paused gas.
             self.gas_metering.paused_frames.push(interpreter.gas);
         }
+    }
+
+    #[cold]
+    fn meter_gas_record(&mut self, interpreter: &mut Interpreter) {
+        // Record gas for current frame.
+        self.gas_metering.recorded_frames.push(interpreter.gas.spent());
     }
 
     #[cold]

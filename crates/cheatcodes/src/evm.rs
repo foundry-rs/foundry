@@ -806,6 +806,8 @@ fn inner_start_gas_snapshot<DB: DatabaseExt>(
 
     ccx.state.gas_metering.last_snapshot_name = Some(name);
 
+    ccx.state.gas_metering.start();
+
     Ok(Default::default())
 }
 
@@ -833,6 +835,8 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
             .entry(group.to_string())
             .or_default()
             .insert(name.clone(), value.to_string());
+
+        ccx.state.gas_metering.stop();
 
         Ok(value.abi_encode())
     } else {
