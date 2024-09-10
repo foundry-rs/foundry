@@ -835,6 +835,12 @@ impl Cheatcodes {
         if let Some(prank) = &self.prank {
             if ecx.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
                 let mut prank_applied = false;
+                println!("{:#?}", prank);
+                if prank.delegate_call {
+                    println!("******** Entering delegate call");
+                    call.target_address = prank.new_caller;
+                    call.bytecode_address = call.target_address;
+                }
 
                 // At the target depth we set `msg.sender`
                 if ecx.journaled_state.depth() == prank.depth {
@@ -868,10 +874,10 @@ impl Cheatcodes {
                 // ecx: &mut EvmContext<DB>,
 
                 // call: &mut CallInputs,
+
                 if let CallScheme::DelegateCall = call.scheme {
                     // This is the new `msg.sender` from above
-                    call.target_address = call.caller;
-                    call.bytecode_address = call.target_address;
+                    println!("******** Entering delegate call");
                 }
                 // executor: &mut impl CheatcodesExecutor,
 

@@ -100,6 +100,7 @@ impl Cheatcode for startPrank_1Call {
 
 impl Cheatcode for prank_2Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        println!("prank_2Call");
         let Self { msgSender, txOrigin, delegateCall } = self;
         prank(ccx, msgSender, Some(txOrigin), true, *delegateCall)
     }

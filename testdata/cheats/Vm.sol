@@ -409,6 +409,7 @@ interface Vm {
     function startMappingRecording() external;
     function startPrank(address msgSender) external;
     function startPrank(address msgSender, address txOrigin) external;
+    function startPrank(address msgSender, address txOrigin, bool delegateCall) external;
     function startStateDiffRecording() external;
     function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
     function stopBroadcast() external;
