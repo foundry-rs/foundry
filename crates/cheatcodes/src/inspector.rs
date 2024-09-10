@@ -854,6 +854,41 @@ impl Cheatcodes {
                         self.prank = Some(applied_prank);
                     }
                 }
+
+                // TODO(edwardJES): temp notes
+                // Flow:
+                // Check if delegate prank set
+                // Check if delegate call
+                // Check if pranked address has any code at the addr
+                // Check if target addr
+                // If so, delegate prank
+
+                // contract My Test {
+                //  let contract = NewLogicContract()
+                //  let proxy = NewProxyContract()
+                //  vm.startPrank(proxyContract)
+                //  contract.delegateCall(....)  <- this should now be executed with
+                // }
+
+                // Learning:
+                // call.bytecode_address is the bytecode at the target addr
+
+                //         // A's storage is set, B is not modified.
+                // (bool success, bytes memory data) = _contract.delegatecall(
+                //     abi.encodeWithSignature("setVars(uint256)", _num)
+                // );
+
+                // Errors:
+                // let msg =
+                // "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
+                // return Some(CallOutcome {
+                //     result: InterpreterResult {
+                //         result: InstructionResult::Revert,
+                //         output: Error::encode(msg),
+                //         gas,
+                //     },
+                //     memory_offset: call.return_memory_offset.clone(),
+                // });
             }
         }
 
@@ -946,7 +981,7 @@ impl Cheatcodes {
                 initialized = false;
                 old_balance = U256::ZERO;
             }
-            let kind = match call.scheme {
+            let kind: Vm::AccountAccessKind = match call.scheme {
                 CallScheme::Call => crate::Vm::AccountAccessKind::Call,
                 CallScheme::CallCode => crate::Vm::AccountAccessKind::CallCode,
                 CallScheme::DelegateCall => crate::Vm::AccountAccessKind::DelegateCall,

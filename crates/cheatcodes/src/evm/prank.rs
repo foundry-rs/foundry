@@ -1,6 +1,19 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::Address;
 
+// Update prank so that you can use it for delegatecalling from a test contract, but throw an error
+// if the address passed to vm.prank(addr) before a delegatecall has no code (to ensure you can't
+// delegatecall from an EOA). Is there any related change to how pranking tx.origin is impacted? I
+// don't think anything around tx.origin needs to change, but just making sure
+
+// Cheat codes work by capture the transaction context and manipulating the environment based on
+// cheatcodes
+
+// Notes:
+// https://github.com/EdwardJES/foundry/blob/cb109b1699f82d009574d13aa59f1585a3fbfdb2/crates/cheatcodes/src/inspector.rs#L723
+// Call with executor: here we could intercept the the call with delegate call
+// Possibly intercept here https://github.com/EdwardJES/foundry/blob/cb109b1699f82d009574d13aa59f1585a3fbfdb2/crates/cheatcodes/src/inspector.rs#L834
+
 /// Prank information.
 #[derive(Clone, Debug, Default)]
 pub struct Prank {
@@ -16,6 +29,8 @@ pub struct Prank {
     pub depth: u64,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
+    /// Whether the prank should be be applied to delegate call
+    pub delegate_call: bool,
     /// Whether the prank has been used yet (false if unused)
     pub used: bool,
 }
@@ -29,8 +44,18 @@ impl Prank {
         new_origin: Option<Address>,
         depth: u64,
         single_call: bool,
+        delegate_call: bool,
     ) -> Self {
-        Self { prank_caller, prank_origin, new_caller, new_origin, depth, single_call, used: false }
+        Self {
+            prank_caller,
+            prank_origin,
+            new_caller,
+            new_origin,
+            depth,
+            single_call,
+            delegate_call,
+            used: false,
+        }
     }
 
     /// Apply the prank by setting `used` to true iff it is false
@@ -47,28 +72,28 @@ impl Prank {
 impl Cheatcode for prank_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { msgSender } = self;
-        prank(ccx, msgSender, None, true)
+        prank(ccx, msgSender, None, true, false)
     }
 }
 
 impl Cheatcode for startPrank_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { msgSender } = self;
-        prank(ccx, msgSender, None, false)
+        prank(ccx, msgSender, None, false, false)
     }
 }
 
 impl Cheatcode for prank_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { msgSender, txOrigin } = self;
-        prank(ccx, msgSender, Some(txOrigin), true)
+        prank(ccx, msgSender, Some(txOrigin), true, false)
     }
 }
 
 impl Cheatcode for startPrank_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { msgSender, txOrigin } = self;
-        prank(ccx, msgSender, Some(txOrigin), false)
+        prank(ccx, msgSender, Some(txOrigin), false, false)
     }
 }
 
@@ -85,6 +110,7 @@ fn prank<DB: DatabaseExt>(
     new_caller: &Address,
     new_origin: Option<&Address>,
     single_call: bool,
+    delegate_call: bool,
 ) -> Result {
     let prank = Prank::new(
         ccx.caller,
@@ -93,6 +119,7 @@ fn prank<DB: DatabaseExt>(
         new_origin.copied(),
         ccx.ecx.journaled_state.depth(),
         single_call,
+        delegate_call,
     );
 
     if let Some(Prank { used, single_call: current_single_call, .. }) = ccx.state.prank {
