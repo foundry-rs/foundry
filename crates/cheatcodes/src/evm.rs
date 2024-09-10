@@ -15,7 +15,7 @@ use foundry_evm_core::{
 };
 use rand::Rng;
 use revm::{
-    primitives::{Account, Bytecode, EvmStorageSlot, SpecId, KECCAK_EMPTY},
+    primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
 };
 use std::{
@@ -91,12 +91,23 @@ impl Cheatcode for loadCall {
         ensure_not_precompile!(&target, ccx);
         ccx.ecx.load_account(target)?;
         let mut val = ccx.ecx.sload(target, slot.into())?;
-        // Generate random value if target should have arbitrary storage and storage slot untouched.
-        if ccx.state.arbitrary_storage.contains(&target) && val.is_cold && val.data.is_zero() {
-            val.data = ccx.state.rng().gen();
-            let mut account = ccx.ecx.load_account(target)?;
-            account.storage.insert(slot.into(), EvmStorageSlot::new(val.data));
+
+        if val.is_cold && val.data.is_zero() {
+            let rand_value = ccx.state.rng().gen();
+            let arbitrary_storage = &mut ccx.state.arbitrary_storage;
+            if arbitrary_storage.is_arbitrary(&target) {
+                // If storage slot is untouched and load from a target with arbitrary storage,
+                // then set random value for current slot.
+                arbitrary_storage.save(ccx.ecx, target, slot.into(), rand_value);
+                val.data = rand_value;
+            } else if arbitrary_storage.is_copy(&target) {
+                // If storage slot is untouched and load from a target that copies storage from
+                // a source address with arbitrary storage, then copy existing arbitrary value.
+                // If no arbitrary value generated yet, then the random one is saved and set.
+                val.data = arbitrary_storage.copy(ccx.ecx, target, slot.into(), rand_value);
+            }
         }
+
         Ok(val.abi_encode())
     }
 }

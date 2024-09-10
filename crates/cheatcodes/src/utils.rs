@@ -152,7 +152,7 @@ impl Cheatcode for resumeTracingCall {
 impl Cheatcode for setArbitraryStorageCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { target } = self;
-        ccx.state.arbitrary_storage.push(*target);
+        ccx.state.arbitrary_storage.mark_arbitrary(target);
 
         Ok(Default::default())
     }
@@ -161,10 +161,15 @@ impl Cheatcode for setArbitraryStorageCall {
 impl Cheatcode for copyStorageCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { from, to } = self;
+        ensure!(
+            !ccx.state.arbitrary_storage.is_arbitrary(to),
+            "target address cannot have arbitrary storage"
+        );
         if let Ok(from_account) = ccx.load_account(*from) {
             let from_storage = from_account.storage.clone();
             if let Ok(mut to_account) = ccx.load_account(*to) {
                 to_account.storage = from_storage;
+                ccx.state.arbitrary_storage.mark_copy(from, to);
             }
         }
 
