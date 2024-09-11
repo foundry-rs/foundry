@@ -728,13 +728,13 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             // Handle mocked functions, replace bytecode address with mock if matched.
             if let Some(mocks) = cheatcodes.mocked_functions.get(&call.target_address) {
-                if let Some(target) = mocks.get(&call.input) {
+                // Check if any mock function set for call data or if catch-all mock function set
+                // for selector.
+                if let Some(target) = mocks
+                    .get(&call.input)
+                    .or_else(|| call.input.get(..4).and_then(|selector| mocks.get(selector)))
+                {
                     call.bytecode_address = *target;
-                } else {
-                    // Check if we have a catch-all mock set for selector.
-                    if let Some(target) = mocks.get(&call.input.slice(..4)) {
-                        call.bytecode_address = *target;
-                    }
                 }
             }
 

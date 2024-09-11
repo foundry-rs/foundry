@@ -18,7 +18,7 @@ contract Counter {
     }
 }
 
-contract CounterTest is DSTest {
+contract CounterWithSeedTest is DSTest {
     Counter public counter;
     Counter public counter1;
     Vm vm = Vm(HEVM_ADDRESS);

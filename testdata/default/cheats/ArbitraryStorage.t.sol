@@ -77,7 +77,7 @@ contract AContract {
     bytes32[] public d;
 }
 
-contract AContractArbitraryStorageTest is DSTest {
+contract AContractArbitraryStorageWithSeedTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
     function test_arbitrary_storage_with_seed() public {
@@ -96,7 +96,7 @@ contract SymbolicStore {
     constructor() {}
 }
 
-contract SymbolicStorageTest is DSTest {
+contract SymbolicStorageWithSeedTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
     function test_SymbolicStorage() public {

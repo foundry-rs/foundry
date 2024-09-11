@@ -298,11 +298,8 @@ impl ArbitraryStorage {
         slot: U256,
         data: U256,
     ) {
+        self.values.get_mut(&address).expect("missing arbitrary address entry").insert(slot, data);
         if let Ok(mut account) = ecx.load_account(address) {
-            self.values
-                .get_mut(&address)
-                .expect("missing arbitrary address entry")
-                .insert(slot, data);
             account.storage.insert(slot, EvmStorageSlot::new(data));
         }
     }
@@ -1148,12 +1145,12 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             self.meter_gas_check(interpreter);
         }
 
-        if self.arbitrary_storage.is_arbitrary(&interpreter.contract().target_address) {
-            self.ensure_arbitrary_storage(interpreter, ecx);
-        }
-
-        if self.arbitrary_storage.is_copy(&interpreter.contract().target_address) {
-            self.copy_arbitrary_storage(interpreter, ecx);
+        // `setArbitraryStorage` and `copyStorage`: add arbitrary values to storage.
+        if (self.arbitrary_storage.is_arbitrary(&interpreter.contract().target_address) ||
+            self.arbitrary_storage.is_copy(&interpreter.contract().target_address)) &&
+            interpreter.current_opcode() == op::SLOAD
+        {
+            self.arbitrary_storage_end(interpreter, ecx);
         }
     }
 
@@ -1567,53 +1564,33 @@ impl Cheatcodes {
         }
     }
 
-    /// Generates arbitrary values for storage slots.
-    /// Invoked in inspector `step_end`, when the current opcode is not executed.
-    /// If current opcode to execute is `SLOAD` and storage slot is cold, then an arbitrary value
-    /// is generated and saved in target address storage (therefore when `SLOAD` opcode is executed,
-    /// the arbitrary value will be returned).
+    /// Generates or copies arbitrary values for storage slots.
+    /// Invoked in inspector `step_end` (when the current opcode is not executed), if current opcode
+    /// to execute is `SLOAD` and storage slot is cold.
+    /// Ensures that in next step (when `SLOAD` opcode is executed) an arbitrary value is returned:
+    /// - copies the existing arbitrary storage value (or the new generated one if no value in
+    ///   cache) from mapped source address to the target address.
+    /// - generates arbitrary value and saves it in target address storage.
     #[cold]
-    fn ensure_arbitrary_storage<DB: DatabaseExt>(
+    fn arbitrary_storage_end<DB: DatabaseExt>(
         &mut self,
         interpreter: &mut Interpreter,
         ecx: &mut EvmContext<DB>,
     ) {
-        if interpreter.current_opcode() == op::SLOAD {
-            let key = try_or_return!(interpreter.stack().peek(0));
-            let target_address = interpreter.contract().target_address;
-            if let Ok(value) = ecx.sload(target_address, key) {
-                if value.is_cold && value.data.is_zero() {
-                    let arbitrary_value = self.rng().gen();
-                    self.arbitrary_storage.save(
+        let key = try_or_return!(interpreter.stack().peek(0));
+        let target_address = interpreter.contract().target_address;
+        if let Ok(value) = ecx.sload(target_address, key) {
+            if value.is_cold && value.data.is_zero() {
+                let arbitrary_value = self.rng().gen();
+                if self.arbitrary_storage.is_copy(&target_address) {
+                    self.arbitrary_storage.copy(
                         &mut ecx.inner,
                         target_address,
                         key,
                         arbitrary_value,
                     );
-                }
-            }
-        }
-    }
-
-    /// Copies arbitrary values for storage slots.
-    /// Invoked in inspector `step_end`, when the current opcode is not executed.
-    /// If current opcode to execute is `SLOAD` and storage slot is cold, it copies the existing
-    /// arbitrary storage value (or the new generated one if no value in cache) from mapped source
-    /// address to the target address (therefore when `SLOAD` opcode is executed, the arbitrary
-    /// value will be returned).
-    #[cold]
-    fn copy_arbitrary_storage<DB: DatabaseExt>(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EvmContext<DB>,
-    ) {
-        if interpreter.current_opcode() == op::SLOAD {
-            let key = try_or_return!(interpreter.stack().peek(0));
-            let target_address = interpreter.contract().target_address;
-            if let Ok(value) = ecx.sload(target_address, key) {
-                if value.is_cold && value.data.is_zero() {
-                    let arbitrary_value = self.rng().gen();
-                    self.arbitrary_storage.copy(
+                } else {
+                    self.arbitrary_storage.save(
                         &mut ecx.inner,
                         target_address,
                         key,
