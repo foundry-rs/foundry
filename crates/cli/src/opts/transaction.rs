@@ -1,6 +1,5 @@
-use crate::utils::{parse_access_list, parse_ether_value};
+use crate::utils::parse_ether_value;
 use alloy_primitives::{U256, U64};
-use alloy_rpc_types::AccessList;
 use clap::Parser;
 use serde::Serialize;
 
@@ -65,8 +64,10 @@ pub struct TransactionOpts {
     pub auth: Option<String>,
 
     /// EIP-2930 access list.
-    #[arg(long, value_parser = parse_access_list)]
-    pub access_list: Option<AccessList>,
+    ///
+    /// Can be either JSON encoded access list or empty to use the output of `cast access-list`.
+    #[arg(long)]
+    pub access_list: Option<Option<String>>,
 }
 
 #[cfg(test)]

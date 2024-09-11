@@ -12,7 +12,7 @@ use cast::revm::primitives::SignedAuthorization;
 use eyre::Result;
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{self, parse_function_args},
+    utils::{self, parse_access_list, parse_function_args},
 };
 use foundry_common::ens::NameOrAddress;
 use foundry_config::{Chain, Config};
@@ -182,7 +182,13 @@ where
             tx.set_nonce(nonce.to());
         }
 
-        if let Some(access_list) = tx_opts.access_list {
+        if let Some(access_list) = match tx_opts.access_list {
+            None => None,
+            // --access-list provided with no value, call the provider to create it
+            Some(None) => Some(provider.create_access_list(&tx).await?.access_list),
+            // Access list provided as a string, attempt to parse it
+            Some(Some(ref s)) => Some(parse_access_list(s)?),
+        } {
             tx.set_access_list(access_list);
         }
 
