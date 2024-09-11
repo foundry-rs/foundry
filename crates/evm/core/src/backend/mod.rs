@@ -9,9 +9,7 @@ use crate::{
 };
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{keccak256, uint, Address, TxKind, B256, U256};
-use alloy_rpc_types::{
-    Block, BlockNumberOrTag, BlockTransactions, Transaction, TransactionRequest,
-};
+use alloy_rpc_types::{Block, BlockNumberOrTag, Transaction, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use eyre::Context;
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
@@ -828,7 +826,7 @@ impl Backend {
         &self,
         id: LocalForkId,
         transaction: B256,
-    ) -> eyre::Result<(u64, Block)> {
+    ) -> eyre::Result<(u64, Block<WithOtherFields<Transaction>>)> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.db.db.get_transaction(transaction)?;
 
@@ -839,12 +837,13 @@ impl Backend {
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
             let fork_block = tx_block - 1;
-            Ok((fork_block, block))
+            Ok((fork_block, block.inner))
         } else {
             let block = fork.db.db.get_full_block(BlockNumberOrTag::Latest)?;
 
-            let number =
-                block.header.number.ok_or_else(|| BackendError::msg("missing block number"))?;
+            let number = block.header.number;
+
+            let block = block.inner;
 
             Ok((number, block))
         }
@@ -869,33 +868,31 @@ impl Backend {
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block = fork.db.db.get_full_block(env.block.number.to::<u64>())?;
 
-        if let BlockTransactions::Full(txs) = full_block.transactions {
-            for tx in txs.into_iter() {
-                // System transactions such as on L2s don't contain any pricing info so we skip them
-                // otherwise this would cause reverts
-                if is_known_system_sender(tx.from) ||
-                    tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
-                {
-                    trace!(tx=?tx.hash, "skipping system transaction");
-                    continue;
-                }
-
-                if tx.hash == tx_hash {
-                    // found the target transaction
-                    return Ok(Some(tx))
-                }
-                trace!(tx=?tx.hash, "committing transaction");
-
-                commit_transaction(
-                    WithOtherFields::new(tx),
-                    env.clone(),
-                    journaled_state,
-                    fork,
-                    &fork_id,
-                    &persistent_accounts,
-                    &mut NoOpInspector,
-                )?;
+        for tx in full_block.transactions.clone().into_transactions() {
+            // System transactions such as on L2s don't contain any pricing info so we skip them
+            // otherwise this would cause reverts
+            if is_known_system_sender(tx.from) ||
+                tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
+            {
+                trace!(tx=?tx.hash, "skipping system transaction");
+                continue;
             }
+
+            if tx.hash == tx_hash {
+                // found the target transaction
+                return Ok(Some(tx.inner))
+            }
+            trace!(tx=?tx.hash, "committing transaction");
+
+            commit_transaction(
+                tx,
+                env.clone(),
+                journaled_state,
+                fork,
+                &fork_id,
+                &persistent_accounts,
+                &mut NoOpInspector,
+            )?;
         }
 
         Ok(None)
@@ -1210,7 +1207,7 @@ impl DatabaseExt for Backend {
         // roll the fork to the transaction's block or latest if it's pending
         self.roll_fork(Some(id), fork_block, env, journaled_state)?;
 
-        update_env_block(env, fork_block, &block);
+        update_env_block(env, &block);
 
         // replay all transactions that came before
         let env = env.clone();
@@ -1240,10 +1237,10 @@ impl DatabaseExt for Backend {
 
         // This is a bit ambiguous because the user wants to transact an arbitrary transaction in the current context, but we're assuming the user wants to transact the transaction as it was mined. Usually this is used in a combination of a fork at the transaction's parent transaction in the block and then the transaction is transacted: <https://github.com/foundry-rs/foundry/issues/6538>
         // So we modify the env to match the transaction's block
-        let (fork_block, block) =
+        let (_fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         let mut env = env.clone();
-        update_env_block(&mut env, fork_block, &block);
+        update_env_block(&mut env, &block);
 
         let env = self.env_with_handler_cfg(env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
@@ -1895,14 +1892,14 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
 }
 
 /// Updates the env's block with the block's data
-fn update_env_block(env: &mut Env, fork_block: u64, block: &Block) {
+fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
     env.block.timestamp = U256::from(block.header.timestamp);
     env.block.coinbase = block.header.miner;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
     env.block.gas_limit = U256::from(block.header.gas_limit);
-    env.block.number = U256::from(block.header.number.unwrap_or(fork_block));
+    env.block.number = U256::from(block.header.number);
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
@@ -1916,7 +1913,7 @@ fn commit_transaction<I: InspectorExt<Backend>>(
     persistent_accounts: &HashSet<Address>,
     inspector: I,
 ) -> eyre::Result<()> {
-    configure_tx_env(&mut env.env, &tx);
+    configure_tx_env(&mut env.env, &tx.inner);
 
     let now = Instant::now();
     let res = {

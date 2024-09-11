@@ -89,6 +89,15 @@ impl Cheatcode for mockCallRevert_1Call {
     }
 }
 
+impl Cheatcode for mockFunctionCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { callee, target, data } = self;
+        state.mocked_functions.entry(*callee).or_default().insert(data.clone(), *target);
+
+        Ok(Default::default())
+    }
+}
+
 #[allow(clippy::ptr_arg)] // Not public API, doesn't matter
 fn mock_call(
     state: &mut Cheatcodes,

@@ -34,7 +34,7 @@ use crate::{
 use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, TxEnvelope};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::eip2718::Decodable2718;
+use alloy_network::{eip2718::Decodable2718, BlockResponse};
 use alloy_primitives::{Address, Bytes, Parity, TxHash, TxKind, B256, B64, U256, U64};
 use alloy_rpc_types::{
     anvil::{
@@ -48,7 +48,7 @@ use alloy_rpc_types::{
         parity::LocalizedTransactionTrace,
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
-    AccessList, AccessListResult, Block, BlockId, BlockNumberOrTag as BlockNumber,
+    AccessList, AccessListResult, AnyNetworkBlock, BlockId, BlockNumberOrTag as BlockNumber,
     BlockTransactions, EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
     Transaction,
 };
@@ -721,7 +721,7 @@ impl EthApi {
     /// Returns block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
-    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<Block>> {
+    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<AnyNetworkBlock>> {
         node_info!("eth_getBlockByHash");
         self.backend.block_by_hash(hash).await
     }
@@ -729,7 +729,7 @@ impl EthApi {
     /// Returns a _full_ block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
-    pub async fn block_by_hash_full(&self, hash: B256) -> Result<Option<Block>> {
+    pub async fn block_by_hash_full(&self, hash: B256) -> Result<Option<AnyNetworkBlock>> {
         node_info!("eth_getBlockByHash");
         self.backend.block_by_hash_full(hash).await
     }
@@ -737,7 +737,7 @@ impl EthApi {
     /// Returns block with given number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
-    pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<Block>> {
+    pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<AnyNetworkBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
             return Ok(Some(self.pending_block().await));
@@ -749,7 +749,10 @@ impl EthApi {
     /// Returns a _full_ block with given number
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
-    pub async fn block_by_number_full(&self, number: BlockNumber) -> Result<Option<Block>> {
+    pub async fn block_by_number_full(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<AnyNetworkBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
             return Ok(self.pending_block_full().await);
@@ -778,7 +781,7 @@ impl EthApi {
     pub async fn block_transaction_count_by_hash(&self, hash: B256) -> Result<Option<U256>> {
         node_info!("eth_getBlockTransactionCountByHash");
         let block = self.backend.block_by_hash(hash).await?;
-        let txs = block.map(|b| match b.transactions {
+        let txs = block.map(|b| match b.transactions() {
             BlockTransactions::Full(txs) => U256::from(txs.len()),
             BlockTransactions::Hashes(txs) => U256::from(txs.len()),
             BlockTransactions::Uncle => U256::from(0),
@@ -800,7 +803,7 @@ impl EthApi {
             return Ok(Some(U256::from(block.transactions.len())));
         }
         let block = self.backend.block_by_number(block_number).await?;
-        let txs = block.map(|b| match b.transactions {
+        let txs = block.map(|b| match b.transactions() {
             BlockTransactions::Full(txs) => U256::from(txs.len()),
             BlockTransactions::Hashes(txs) => U256::from(txs.len()),
             BlockTransactions::Uncle => U256::from(0),
@@ -1238,7 +1241,7 @@ impl EthApi {
         &self,
         block_hash: B256,
         idx: Index,
-    ) -> Result<Option<Block>> {
+    ) -> Result<Option<AnyNetworkBlock>> {
         node_info!("eth_getUncleByBlockHashAndIndex");
         let number =
             self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
@@ -1258,7 +1261,7 @@ impl EthApi {
         &self,
         block_number: BlockNumber,
         idx: Index,
-    ) -> Result<Option<Block>> {
+    ) -> Result<Option<AnyNetworkBlock>> {
         node_info!("eth_getUncleByBlockNumberAndIndex");
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
         if let Some(fork) = self.get_fork() {
@@ -2138,7 +2141,10 @@ impl EthApi {
     /// **Note**: This behaves exactly as [Self::evm_mine] but returns different output, for
     /// compatibility reasons, this is a separate call since `evm_mine` is not an anvil original.
     /// and `ganache` may change the `0x0` placeholder.
-    pub async fn evm_mine_detailed(&self, opts: Option<MineOptions>) -> Result<Vec<Block>> {
+    pub async fn evm_mine_detailed(
+        &self,
+        opts: Option<MineOptions>,
+    ) -> Result<Vec<AnyNetworkBlock>> {
         node_info!("evm_mine_detailed");
 
         let mined_blocks = self.do_evm_mine(opts).await?;
@@ -2151,7 +2157,7 @@ impl EthApi {
             if let Some(mut block) =
                 self.backend.block_by_number_full(BlockNumber::Number(block_num)).await?
             {
-                let mut block_txs = match block.transactions {
+                let block_txs = match block.transactions_mut() {
                     BlockTransactions::Full(txs) => txs,
                     BlockTransactions::Hashes(_) | BlockTransactions::Uncle => unreachable!(),
                 };
@@ -2183,7 +2189,7 @@ impl EthApi {
                         }
                     }
                 }
-                block.transactions = BlockTransactions::Full(block_txs);
+                block.transactions = BlockTransactions::Full(block_txs.to_vec());
                 blocks.push(block);
             }
         }
@@ -2634,19 +2640,19 @@ impl EthApi {
     }
 
     /// Returns the pending block with tx hashes
-    async fn pending_block(&self) -> Block {
+    async fn pending_block(&self) -> AnyNetworkBlock {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let info = self.backend.pending_block(transactions).await;
         self.backend.convert_block(info.block)
     }
 
     /// Returns the full pending block with `Transaction` objects
-    async fn pending_block_full(&self) -> Option<Block> {
+    async fn pending_block_full(&self) -> Option<AnyNetworkBlock> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let BlockInfo { block, transactions, receipts: _ } =
             self.backend.pending_block(transactions).await;
 
-        let partial_block = self.backend.convert_block(block.clone());
+        let mut partial_block = self.backend.convert_block(block.clone());
 
         let mut block_transactions = Vec::with_capacity(block.transactions.len());
         let base_fee = self.backend.base_fee();
@@ -2661,10 +2667,12 @@ impl EthApi {
                 Some(info),
                 Some(base_fee),
             );
-            block_transactions.push(tx.inner);
+            block_transactions.push(tx);
         }
 
-        Some(partial_block.into_full_block(block_transactions))
+        partial_block.transactions = BlockTransactions::from(block_transactions);
+
+        Some(partial_block)
     }
 
     fn build_typed_tx_request(
