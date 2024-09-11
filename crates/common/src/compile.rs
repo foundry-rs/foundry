@@ -10,6 +10,8 @@ use foundry_compilers::{
         solc::{Solc, SolcCompiler},
         Compiler,
     },
+    preprocessor::{TestOptimizerPreprocessor},
+    project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
@@ -122,7 +124,10 @@ impl ProjectCompiler {
     }
 
     /// Compiles the project.
-    pub fn compile<C: Compiler>(mut self, project: &Project<C>) -> Result<ProjectCompileOutput<C>> {
+    pub fn compile<C: Compiler>(mut self, project: &Project<C>) -> Result<ProjectCompileOutput<C>>
+    where
+        TestOptimizerPreprocessor: Preprocessor<C>,
+    {
         // TODO: Avoid process::exit
         if !project.paths.has_input_files() && self.files.is_empty() {
             println!("Nothing to compile");
@@ -140,6 +145,7 @@ impl ProjectCompiler {
             };
 
             foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?
+                .with_preprocessor(TestOptimizerPreprocessor)
                 .compile()
                 .map_err(Into::into)
         })
@@ -361,7 +367,10 @@ pub fn compile_target<C: Compiler>(
     target_path: &Path,
     project: &Project<C>,
     quiet: bool,
-) -> Result<ProjectCompileOutput<C>> {
+) -> Result<ProjectCompileOutput<C>>
+where
+    TestOptimizerPreprocessor: Preprocessor<C>,
+{
     ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
 }
 
