@@ -41,7 +41,7 @@ use revm::{
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
-    primitives::{BlockEnv, CreateScheme, EVMError, SpecId, EOF_MAGIC_BYTES},
+    primitives::{BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SpecId, EOF_MAGIC_BYTES},
     EvmContext, InnerEvmContext, Inspector,
 };
 use rustc_hash::FxHashMap;
@@ -254,6 +254,89 @@ impl GasMetering {
     }
 }
 
+/// Holds data about arbitrary storage.
+#[derive(Clone, Debug, Default)]
+pub struct ArbitraryStorage {
+    /// Mapping of arbitrary storage addresses to generated values (slot, arbitrary value).
+    /// (SLOADs return random value if storage slot wasn't accessed).
+    /// Changed values are recorded and used to copy storage to different addresses.
+    pub values: HashMap<Address, HashMap<U256, U256>>,
+    /// Mapping of address with storage copied to arbitrary storage address source.
+    pub copies: HashMap<Address, Address>,
+}
+
+impl ArbitraryStorage {
+    /// Whether the given address has arbitrary storage.
+    pub fn is_arbitrary(&self, address: &Address) -> bool {
+        self.values.contains_key(address)
+    }
+
+    /// Whether the given address is a copy of an address with arbitrary storage.
+    pub fn is_copy(&self, address: &Address) -> bool {
+        self.copies.contains_key(address)
+    }
+
+    /// Marks an address with arbitrary storage.
+    pub fn mark_arbitrary(&mut self, address: &Address) {
+        self.values.insert(*address, HashMap::default());
+    }
+
+    /// Maps an address that copies storage with the arbitrary storage address.
+    pub fn mark_copy(&mut self, from: &Address, to: &Address) {
+        if self.is_arbitrary(from) {
+            self.copies.insert(*to, *from);
+        }
+    }
+
+    /// Saves arbitrary storage value for a given address:
+    /// - store value in changed values cache.
+    /// - update account's storage with given value.
+    pub fn save<DB: DatabaseExt>(
+        &mut self,
+        ecx: &mut InnerEvmContext<DB>,
+        address: Address,
+        slot: U256,
+        data: U256,
+    ) {
+        self.values.get_mut(&address).expect("missing arbitrary address entry").insert(slot, data);
+        if let Ok(mut account) = ecx.load_account(address) {
+            account.storage.insert(slot, EvmStorageSlot::new(data));
+        }
+    }
+
+    /// Copies arbitrary storage value from source address to the given target address:
+    /// - if a value is present in arbitrary values cache, then update target storage and return
+    ///   existing value.
+    /// - if no value was yet generated for given slot, then save new value in cache and update both
+    ///   source and target storages.
+    pub fn copy<DB: DatabaseExt>(
+        &mut self,
+        ecx: &mut InnerEvmContext<DB>,
+        target: Address,
+        slot: U256,
+        new_value: U256,
+    ) -> U256 {
+        let source = self.copies.get(&target).expect("missing arbitrary copy target entry");
+        let storage_cache = self.values.get_mut(source).expect("missing arbitrary source storage");
+        let value = match storage_cache.get(&slot) {
+            Some(value) => *value,
+            None => {
+                storage_cache.insert(slot, new_value);
+                // Update source storage with new value.
+                if let Ok(mut source_account) = ecx.load_account(*source) {
+                    source_account.storage.insert(slot, EvmStorageSlot::new(new_value));
+                }
+                new_value
+            }
+        };
+        // Update target storage with new value.
+        if let Ok(mut target_account) = ecx.load_account(target) {
+            target_account.storage.insert(slot, EvmStorageSlot::new(value));
+        }
+        value
+    }
+}
+
 /// List of transactions that can be broadcasted.
 pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 
@@ -320,6 +403,9 @@ pub struct Cheatcodes {
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
     pub mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
 
+    /// Mocked functions. Maps target address to be mocked to pair of (calldata, mock address).
+    pub mocked_functions: HashMap<Address, HashMap<Bytes, Address>>,
+
     /// Expected calls
     pub expected_calls: ExpectedCallTracker,
     /// Expected emits
@@ -368,6 +454,9 @@ pub struct Cheatcodes {
 
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
+
+    /// Addresses with arbitrary storage.
+    pub arbitrary_storage: ArbitraryStorage,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -396,6 +485,7 @@ impl Cheatcodes {
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
             mocked_calls: Default::default(),
+            mocked_functions: Default::default(),
             expected_calls: Default::default(),
             expected_emits: Default::default(),
             allowed_mem_writes: Default::default(),
@@ -410,6 +500,7 @@ impl Cheatcodes {
             breakpoints: Default::default(),
             rng: Default::default(),
             ignored_traces: Default::default(),
+            arbitrary_storage: Default::default(),
         }
     }
 
@@ -1045,13 +1136,21 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     }
 
     #[inline]
-    fn step_end(&mut self, interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
 
         if self.gas_metering.touched {
             self.meter_gas_check(interpreter);
+        }
+
+        // `setArbitraryStorage` and `copyStorage`: add arbitrary values to storage.
+        if (self.arbitrary_storage.is_arbitrary(&interpreter.contract().target_address) ||
+            self.arbitrary_storage.is_copy(&interpreter.contract().target_address)) &&
+            interpreter.current_opcode() == op::SLOAD
+        {
+            self.arbitrary_storage_end(interpreter, ecx);
         }
     }
 
@@ -1461,6 +1560,43 @@ impl Cheatcodes {
                 u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
             {
                 interpreter.gas = Gas::new(interpreter.gas.limit());
+            }
+        }
+    }
+
+    /// Generates or copies arbitrary values for storage slots.
+    /// Invoked in inspector `step_end` (when the current opcode is not executed), if current opcode
+    /// to execute is `SLOAD` and storage slot is cold.
+    /// Ensures that in next step (when `SLOAD` opcode is executed) an arbitrary value is returned:
+    /// - copies the existing arbitrary storage value (or the new generated one if no value in
+    ///   cache) from mapped source address to the target address.
+    /// - generates arbitrary value and saves it in target address storage.
+    #[cold]
+    fn arbitrary_storage_end<DB: DatabaseExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<DB>,
+    ) {
+        let key = try_or_return!(interpreter.stack().peek(0));
+        let target_address = interpreter.contract().target_address;
+        if let Ok(value) = ecx.sload(target_address, key) {
+            if value.is_cold && value.data.is_zero() {
+                let arbitrary_value = self.rng().gen();
+                if self.arbitrary_storage.is_copy(&target_address) {
+                    self.arbitrary_storage.copy(
+                        &mut ecx.inner,
+                        target_address,
+                        key,
+                        arbitrary_value,
+                    );
+                } else {
+                    self.arbitrary_storage.save(
+                        &mut ecx.inner,
+                        target_address,
+                        key,
+                        arbitrary_value,
+                    );
+                }
             }
         }
     }

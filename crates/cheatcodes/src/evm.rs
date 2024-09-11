@@ -13,6 +13,7 @@ use foundry_evm_core::{
     backend::{DatabaseExt, RevertSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
+use rand::Rng;
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
@@ -89,7 +90,25 @@ impl Cheatcode for loadCall {
         let Self { target, slot } = *self;
         ensure_not_precompile!(&target, ccx);
         ccx.ecx.load_account(target)?;
-        let val = ccx.ecx.sload(target, slot.into())?;
+        let mut val = ccx.ecx.sload(target, slot.into())?;
+
+        if val.is_cold && val.data.is_zero() {
+            if ccx.state.arbitrary_storage.is_arbitrary(&target) {
+                // If storage slot is untouched and load from a target with arbitrary storage,
+                // then set random value for current slot.
+                let rand_value = ccx.state.rng().gen();
+                ccx.state.arbitrary_storage.save(ccx.ecx, target, slot.into(), rand_value);
+                val.data = rand_value;
+            } else if ccx.state.arbitrary_storage.is_copy(&target) {
+                // If storage slot is untouched and load from a target that copies storage from
+                // a source address with arbitrary storage, then copy existing arbitrary value.
+                // If no arbitrary value generated yet, then the random one is saved and set.
+                let rand_value = ccx.state.rng().gen();
+                val.data =
+                    ccx.state.arbitrary_storage.copy(ccx.ecx, target, slot.into(), rand_value);
+            }
+        }
+
         Ok(val.abi_encode())
     }
 }
