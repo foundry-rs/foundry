@@ -162,6 +162,14 @@ impl VerifyBytecodeArgs {
                 self.contract.name.clone().green(),
                 self.address.green()
             );
+            if ignore_immutables {
+                println!(
+                    "{}",
+                    "Ignoring immutable references while verifying runtime bytecode."
+                        .yellow()
+                        .bold()
+                );
+            }
         }
 
         let mut json_results: Vec<JsonResult> = vec![];
