@@ -10,7 +10,14 @@ use foundry_cli::{
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
-use foundry_config::{find_project_root_path, Config};
+use foundry_config::{
+    figment::{
+        self,
+        value::{Dict, Map},
+        Figment, Metadata, Profile,
+    },
+    Config,
+};
 use foundry_evm::{
     executors::{EvmError, TracingExecutor},
     opts::EvmOpts,
@@ -26,6 +33,10 @@ pub struct RunArgs {
     /// Opens the transaction in the debugger.
     #[arg(long, short)]
     debug: bool,
+
+    /// Whether to identify internal functions in traces.
+    #[arg(long)]
+    decode_internal: bool,
 
     /// Print out opcode traces.
     #[arg(long, short)]
@@ -71,6 +82,10 @@ pub struct RunArgs {
     /// See also, https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second
     #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
     pub no_rate_limit: bool,
+
+    /// Enables Alphanet features.
+    #[arg(long)]
+    pub alphanet: bool,
 }
 
 impl RunArgs {
@@ -80,8 +95,7 @@ impl RunArgs {
     ///
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     pub async fn run(self) -> Result<()> {
-        let figment =
-            Config::figment_with_root(find_project_root_path(None).unwrap()).merge(self.rpc);
+        let figment = Into::<Figment>::into(&self.rpc).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::try_from(figment)?.sanitized();
 
@@ -118,7 +132,8 @@ impl RunArgs {
         // we need to fork off the parent block
         config.fork_block_number = Some(tx_block_number - 1);
 
-        let (mut env, fork, chain) = TracingExecutor::get_fork_material(&config, evm_opts).await?;
+        let (mut env, fork, chain, alphanet) =
+            TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
         let mut evm_version = self.evm_version;
 
@@ -142,7 +157,14 @@ impl RunArgs {
             }
         }
 
-        let mut executor = TracingExecutor::new(env.clone(), fork, evm_version, self.debug);
+        let mut executor = TracingExecutor::new(
+            env.clone(),
+            fork,
+            evm_version,
+            self.debug,
+            self.decode_internal,
+            alphanet,
+        );
         let mut env =
             EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 
@@ -154,11 +176,11 @@ impl RunArgs {
                 let pb = init_progress(block.transactions.len() as u64, "tx");
                 pb.set_position(0);
 
-                let BlockTransactions::Full(txs) = block.transactions else {
+                let BlockTransactions::Full(ref txs) = block.transactions else {
                     return Err(eyre::eyre!("Could not get block txs"))
                 };
 
-                for (index, tx) in txs.into_iter().enumerate() {
+                for (index, tx) in txs.iter().enumerate() {
                     // System transactions such as on L2s don't contain any pricing info so
                     // we skip them otherwise this would cause
                     // reverts
@@ -172,7 +194,7 @@ impl RunArgs {
                         break;
                     }
 
-                    configure_tx_env(&mut env, &tx);
+                    configure_tx_env(&mut env, &tx.inner);
 
                     if let Some(to) = tx.to {
                         trace!(tx=?tx.hash,?to, "executing previous call transaction");
@@ -209,7 +231,7 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            configure_tx_env(&mut env, &tx);
+            configure_tx_env(&mut env, &tx.inner);
 
             if let Some(to) = tx.to {
                 trace!(tx=?tx.hash, to=?to, "executing call transaction");
@@ -220,8 +242,28 @@ impl RunArgs {
             }
         };
 
-        handle_traces(result, &config, chain, self.label, self.debug).await?;
+        handle_traces(result, &config, chain, self.label, self.debug, self.decode_internal).await?;
 
         Ok(())
+    }
+}
+
+impl figment::Provider for RunArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("RunArgs")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let mut map = Map::new();
+
+        if self.alphanet {
+            map.insert("alphanet".into(), self.alphanet.into());
+        }
+
+        if let Some(evm_version) = self.evm_version {
+            map.insert("evm_version".into(), figment::value::Value::serialize(evm_version)?);
+        }
+
+        Ok(Map::from([(Config::selected_profile(), map)]))
     }
 }

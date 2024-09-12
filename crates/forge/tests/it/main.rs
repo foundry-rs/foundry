@@ -10,3 +10,4 @@ mod inline;
 mod invariant;
 mod repros;
 mod spec;
+mod vyper;

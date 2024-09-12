@@ -1,7 +1,6 @@
 //! Test outcomes.
 
 use crate::{
-    decode::decode_console_logs,
     fuzz::{BaseCounterExample, FuzzedCases},
     gas_report::GasReport,
 };
@@ -10,7 +9,6 @@ use eyre::Report;
 use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
 use foundry_evm::{
     coverage::HitMaps,
-    debug::DebugArena,
     executors::{EvmError, RawCallResult},
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
@@ -186,6 +184,18 @@ impl TestOutcome {
         // TODO: Avoid process::exit
         std::process::exit(1);
     }
+
+    /// Removes first test result, if any.
+    pub fn remove_first(&mut self) -> Option<(String, String, TestResult)> {
+        self.results.iter_mut().find_map(|(suite_name, suite)| {
+            if let Some(test_name) = suite.test_results.keys().next().cloned() {
+                let result = suite.test_results.remove(&test_name).unwrap();
+                Some((suite_name.clone(), test_name, result))
+            } else {
+                None
+            }
+        })
+    }
 }
 
 /// A set of test results for a single test suite, which is all the tests in a single contract.
@@ -357,9 +367,6 @@ pub struct TestResult {
     /// be printed to the user.
     pub logs: Vec<Log>,
 
-    /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
-    pub decoded_logs: Vec<String>,
-
     /// What kind of test this was
     pub kind: TestKind,
 
@@ -377,9 +384,6 @@ pub struct TestResult {
 
     /// Labeled addresses
     pub labeled_addresses: HashMap<Address, String>,
-
-    /// The debug nodes of the call
-    pub debug: Option<DebugArena>,
 
     pub duration: Duration,
 
@@ -442,7 +446,6 @@ impl TestResult {
         Self {
             status: TestStatus::Failure,
             reason: setup.reason,
-            decoded_logs: decode_console_logs(&setup.logs),
             logs: setup.logs,
             traces: setup.traces,
             coverage: setup.coverage,
@@ -454,14 +457,13 @@ impl TestResult {
     /// Returns the skipped result for single test (used in skipped fuzz test too).
     pub fn single_skip(mut self) -> Self {
         self.status = TestStatus::Skipped;
-        self.decoded_logs = decode_console_logs(&self.logs);
         self
     }
 
     /// Returns the failed result with reason for single test.
-    pub fn single_fail(mut self, err: EvmError) -> Self {
+    pub fn single_fail(mut self, reason: Option<String>) -> Self {
         self.status = TestStatus::Failure;
-        self.reason = Some(err.to_string());
+        self.reason = reason;
         self
     }
 
@@ -487,8 +489,6 @@ impl TestResult {
             false => TestStatus::Failure,
         };
         self.reason = reason;
-        self.decoded_logs = decode_console_logs(&self.logs);
-        self.debug = raw_call_result.debug;
         self.breakpoints = raw_call_result.cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
         self.duration = Duration::default();
         self.gas_report_traces = Vec::new();
@@ -517,9 +517,9 @@ impl TestResult {
         };
         self.reason = result.reason;
         self.counterexample = result.counterexample;
-        self.decoded_logs = decode_console_logs(&self.logs);
         self.duration = Duration::default();
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
+        self.breakpoints = result.breakpoints.unwrap_or_default();
         self
     }
 
@@ -527,7 +527,6 @@ impl TestResult {
     pub fn invariant_skip(mut self) -> Self {
         self.kind = TestKind::Invariant { runs: 1, calls: 1, reverts: 1 };
         self.status = TestStatus::Skipped;
-        self.decoded_logs = decode_console_logs(&self.logs);
         self
     }
 
@@ -546,7 +545,6 @@ impl TestResult {
             Some(format!("{invariant_name} persisted failure revert"))
         };
         self.counterexample = Some(CounterExample::Sequence(call_sequence));
-        self.decoded_logs = decode_console_logs(&self.logs);
         self
     }
 
@@ -555,7 +553,6 @@ impl TestResult {
         self.kind = TestKind::Invariant { runs: 0, calls: 0, reverts: 0 };
         self.status = TestStatus::Failure;
         self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
-        self.decoded_logs = decode_console_logs(&self.logs);
         self
     }
 
@@ -580,7 +577,6 @@ impl TestResult {
         };
         self.reason = reason;
         self.counterexample = counterexample;
-        self.decoded_logs = decode_console_logs(&self.logs);
         self.gas_report_traces = gas_report_traces;
         self
     }
@@ -595,8 +591,16 @@ impl TestResult {
         format!("{self} {name} {}", self.kind.report())
     }
 
+    /// Function to merge logs, addresses, traces and coverage from a call result into test result.
+    pub fn merge_call_result(&mut self, call_result: &RawCallResult) {
+        self.logs.extend(call_result.logs.clone());
+        self.labeled_addresses.extend(call_result.labels.clone());
+        self.traces.extend(call_result.traces.clone().map(|traces| (TraceKind::Execution, traces)));
+        self.merge_coverages(call_result.coverage.clone());
+    }
+
     /// Function to merge given coverage in current test result coverage.
-    fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
+    pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
         let old_coverage = std::mem::take(&mut self.coverage);
         self.coverage = match (old_coverage, other_coverage) {
             (Some(old_coverage), Some(other)) => Some(old_coverage.merged(other)),

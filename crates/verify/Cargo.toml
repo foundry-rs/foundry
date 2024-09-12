@@ -19,10 +19,10 @@ foundry-cli.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
 serde_json.workspace = true
-hex.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types.workspace = true
+alloy-dyn-abi.workspace = true
 revm-primitives.workspace = true
 serde.workspace = true
 eyre.workspace = true
@@ -37,9 +37,10 @@ async-trait.workspace = true
 futures.workspace = true
 semver.workspace = true
 regex = { version = "1", default-features = false }
-once_cell.workspace = true
 yansi.workspace = true
 itertools.workspace = true
+
+ciborium = "0.2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }

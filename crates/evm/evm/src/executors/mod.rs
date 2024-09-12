@@ -14,17 +14,16 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256};
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
-    backend::{Backend, CowBackend, DatabaseError, DatabaseExt, DatabaseResult},
+    backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
-        DEFAULT_CREATE2_DEPLOYER_CODE,
+        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
-    debug::DebugArena,
     decode::RevertDecoder,
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_traces::CallTraceArena;
+use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     db::{DatabaseCommit, DatabaseRef},
     interpreter::{return_ok, InstructionResult},
@@ -44,13 +43,16 @@ pub use fuzz::FuzzedExecutor;
 pub mod invariant;
 pub use invariant::InvariantExecutor;
 
-mod tracing;
-pub use tracing::TracingExecutor;
+mod trace;
+pub use trace::TracingExecutor;
 
 sol! {
     interface ITest {
         function setUp() external;
         function failed() external view returns (bool failed);
+
+        #[derive(Default)]
+        function beforeTestSetup(bytes4 testSelector) public view returns (bytes[] memory beforeTestCalldata);
     }
 }
 
@@ -81,6 +83,8 @@ pub struct Executor {
     /// the passed in environment, as those limits are used by the EVM for certain opcodes like
     /// `gaslimit`.
     gas_limit: u64,
+    /// Whether `failed()` should be called on the test contract to determine if the test failed.
+    legacy_assertions: bool,
 }
 
 impl Executor {
@@ -97,6 +101,7 @@ impl Executor {
         env: EnvWithHandlerCfg,
         inspector: InspectorStack,
         gas_limit: u64,
+        legacy_assertions: bool,
     ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // do not fail.
@@ -111,12 +116,12 @@ impl Executor {
             },
         );
 
-        Self { backend, env, inspector, gas_limit }
+        Self { backend, env, inspector, gas_limit, legacy_assertions }
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
         let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(self.env().clone()), self.spec_id());
-        Self::new(backend, env, self.inspector().clone(), self.gas_limit)
+        Self::new(backend, env, self.inspector().clone(), self.gas_limit, self.legacy_assertions)
     }
 
     /// Returns a reference to the EVM backend.
@@ -160,16 +165,16 @@ impl Executor {
         let create2_deployer_account = self
             .backend()
             .basic_ref(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or_else(|| DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+            .ok_or_else(|| BackendError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
-        // if the deployer is not currently deployed, deploy the default one
+        // If the deployer is not currently deployed, deploy the default one.
         if create2_deployer_account.code.map_or(true, |code| code.is_empty()) {
-            let creator = "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse().unwrap();
+            let creator = DEFAULT_CREATE2_DEPLOYER_DEPLOYER;
 
             // Probably 0, but just in case.
             let initial_balance = self.get_balance(creator)?;
-
             self.set_balance(creator, U256::MAX)?;
+
             let res =
                 self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
             trace!(create2=?res.address, "deployed local create2 deployer");
@@ -180,7 +185,7 @@ impl Executor {
     }
 
     /// Set the balance of an account.
-    pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<()> {
+    pub fn set_balance(&mut self, address: Address, amount: U256) -> BackendResult<()> {
         trace!(?address, ?amount, "setting account balance");
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.balance = amount;
@@ -189,12 +194,12 @@ impl Executor {
     }
 
     /// Gets the balance of an account
-    pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
+    pub fn get_balance(&self, address: Address) -> BackendResult<U256> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.balance).unwrap_or_default())
     }
 
     /// Set the nonce of an account.
-    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<()> {
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.nonce = nonce;
         self.backend_mut().insert_account_info(address, account);
@@ -202,24 +207,18 @@ impl Executor {
     }
 
     /// Returns the nonce of an account.
-    pub fn get_nonce(&self, address: Address) -> DatabaseResult<u64> {
+    pub fn get_nonce(&self, address: Address) -> BackendResult<u64> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
     }
 
     /// Returns `true` if the account has no code.
-    pub fn is_empty_code(&self, address: Address) -> DatabaseResult<bool> {
+    pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
     }
 
     #[inline]
-    pub fn set_tracing(&mut self, tracing: bool) -> &mut Self {
-        self.inspector_mut().tracing(tracing);
-        self
-    }
-
-    #[inline]
-    pub fn set_debugger(&mut self, debugger: bool) -> &mut Self {
-        self.inspector_mut().enable_debugger(debugger);
+    pub fn set_tracing(&mut self, mode: TraceMode) -> &mut Self {
+        self.inspector_mut().tracing(mode);
         self
     }
 
@@ -256,6 +255,7 @@ impl Executor {
     /// # Panics
     ///
     /// Panics if `env.tx.transact_to` is not `TxKind::Create(_)`.
+    #[instrument(name = "deploy", level = "debug", skip_all)]
     pub fn deploy_with_env(
         &mut self,
         env: EnvWithHandlerCfg,
@@ -289,6 +289,7 @@ impl Executor {
     ///
     /// Ayn changes made during the setup call to env's block environment are persistent, for
     /// example `vm.chainId()` will change the `block.chainId` for all subsequent test calls.
+    #[instrument(name = "setup", level = "debug", skip_all)]
     pub fn setup(
         &mut self,
         from: Option<Address>,
@@ -389,6 +390,7 @@ impl Executor {
     /// Execute the transaction configured in `env.tx`.
     ///
     /// The state after the call is **not** persisted.
+    #[instrument(name = "call", level = "debug", skip_all)]
     pub fn call_with_env(&self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
@@ -397,6 +399,7 @@ impl Executor {
     }
 
     /// Execute the transaction configured in `env.tx`.
+    #[instrument(name = "transact", level = "debug", skip_all)]
     pub fn transact_with_env(&mut self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
         let backend = self.backend_mut();
@@ -411,6 +414,7 @@ impl Executor {
     /// the executed call result.
     ///
     /// This should not be exposed to the user, as it should be called only by `transact*`.
+    #[instrument(name = "commit", level = "debug", skip_all)]
     fn commit(&mut self, result: &mut RawCallResult) {
         // Persist changes to db.
         self.backend_mut().commit(result.state_changeset.clone());
@@ -420,17 +424,20 @@ impl Executor {
         if let Some(cheats) = self.inspector_mut().cheatcodes.as_mut() {
             // Clear broadcastable transactions
             cheats.broadcastable_transactions.clear();
-            debug!(target: "evm::executors", "cleared broadcastable transactions");
+            cheats.ignored_traces.ignored.clear();
 
-            // corrected_nonce value is needed outside of this context (setUp), so we don't
-            // reset it.
+            // if tracing was paused but never unpaused, we should begin next frame with tracing
+            // still paused
+            if let Some(last_pause_call) = cheats.ignored_traces.last_pause_call.as_mut() {
+                *last_pause_call = (0, 0);
+            }
         }
 
         // Persist the changed environment.
         self.inspector_mut().set_env(&result.env);
     }
 
-    /// Checks if a call to a test contract was successful.
+    /// Returns `true` if a test can be considered successful.
     ///
     /// This is the same as [`Self::is_success`], but will consume the `state_changeset` map to use
     /// internally when calling `failed()`.
@@ -448,20 +455,9 @@ impl Executor {
         )
     }
 
-    /// Checks if a call to a test contract was successful.
+    /// Returns `true` if a test can be considered successful.
     ///
-    /// This is the same as [`Self::is_success`] but intended for outcomes of [`Self::call_raw`].
-    ///
-    /// ## Background
-    ///
-    /// Executing and failure checking `Executor::is_success` are two steps, for ds-test
-    /// legacy reasons failures can be stored in a global variables and needs to be called via a
-    /// solidity call `failed()(bool)`.
-    ///
-    /// Snapshots make this task more complicated because now we also need to keep track of that
-    /// global variable when we revert to a snapshot (because it is stored in state). Now, the
-    /// problem is that the `CowBackend` is dropped after every call, so we need to keep track
-    /// of the snapshot failure in the [`RawCallResult`] instead.
+    /// This is the same as [`Self::is_success`], but intended for outcomes of [`Self::call_raw`].
     pub fn is_raw_call_success(
         &self,
         address: Address,
@@ -476,21 +472,27 @@ impl Executor {
         self.is_success(address, call_result.reverted, state_changeset, should_fail)
     }
 
-    /// Check if a call to a test contract was successful.
+    /// Returns `true` if a test can be considered successful.
     ///
-    /// This function checks both the VM status of the call, DSTest's `failed` status and the
-    /// `globalFailed` flag which is stored in `failed` inside the `CHEATCODE_ADDRESS` contract.
+    /// If the call succeeded, we also have to check the global and local failure flags.
     ///
-    /// DSTest will not revert inside its `assertEq`-like functions which allows
-    /// to test multiple assertions in 1 test function while also preserving logs.
+    /// These are set by the test contract itself when an assertion fails, using the internal `fail`
+    /// function. The global flag is located in [`CHEATCODE_ADDRESS`] at slot [`GLOBAL_FAIL_SLOT`],
+    /// and the local flag is located in the test contract at an unspecified slot.
     ///
-    /// If an `assert` is violated, the contract's `failed` variable is set to true, and the
-    /// `globalFailure` flag inside the `CHEATCODE_ADDRESS` is also set to true, this way, failing
-    /// asserts from any contract are tracked as well.
+    /// This behavior is inherited from Dapptools, where initially only a public
+    /// `failed` variable was used to track test failures, and later, a global failure flag was
+    /// introduced to track failures across multiple contracts in
+    /// [ds-test#30](https://github.com/dapphub/ds-test/pull/30).
     ///
-    /// In order to check whether a test failed, we therefore need to evaluate the contract's
-    /// `failed` variable and the `globalFailure` flag, which happens by calling
-    /// `contract.failed()`.
+    /// The assumption is that the test runner calls `failed` on the test contract to determine if
+    /// it failed. However, we want to avoid this as much as possible, as it is relatively
+    /// expensive to set up an EVM call just for checking a single boolean flag.
+    ///
+    /// See:
+    /// - Newer DSTest: <https://github.com/dapphub/ds-test/blob/e282159d5170298eb2455a6c05280ab5a73a4ef0/src/test.sol#L47-L63>
+    /// - Older DSTest: <https://github.com/dapphub/ds-test/blob/9ca4ecd48862b40d7b0197b600713f64d337af12/src/test.sol#L38-L49>
+    /// - forge-std: <https://github.com/foundry-rs/forge-std/blob/19891e6a0b5474b9ea6827ddb90bb9388f7acfc0/src/StdAssertions.sol#L38-L44>
     pub fn is_success(
         &self,
         address: Address,
@@ -502,19 +504,43 @@ impl Executor {
         should_fail ^ success
     }
 
+    #[instrument(name = "is_success", level = "debug", skip_all)]
     fn is_success_raw(
         &self,
         address: Address,
         reverted: bool,
         state_changeset: Cow<'_, StateChangeset>,
     ) -> bool {
-        if self.backend().has_snapshot_failure() {
-            // a failure occurred in a reverted snapshot, which is considered a failed test
+        // The call reverted.
+        if reverted {
             return false;
         }
 
-        let mut success = !reverted;
-        if success {
+        // A failure occurred in a reverted snapshot, which is considered a failed test.
+        if self.backend().has_snapshot_failure() {
+            return false;
+        }
+
+        // Check the global failure slot.
+        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
+            if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
+                if !failed_slot.present_value().is_zero() {
+                    return false;
+                }
+            }
+        }
+        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT) {
+            if !failed_slot.is_zero() {
+                return false;
+            }
+        }
+
+        if !self.legacy_assertions {
+            return true;
+        }
+
+        // Finally, resort to calling `DSTest::failed`.
+        {
             // Construct a new bare-bones backend to evaluate success.
             let mut backend = self.backend().clone_empty();
 
@@ -536,15 +562,15 @@ impl Executor {
             let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
             match call {
                 Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { failed } }) => {
-                    debug!(failed, "DSTest::failed()");
-                    success = !failed;
+                    trace!(failed, "DSTest::failed()");
+                    !failed
                 }
                 Err(err) => {
-                    debug!(%err, "failed to call DSTest::failed()");
+                    trace!(%err, "failed to call DSTest::failed()");
+                    true
                 }
             }
         }
-        success
     }
 
     /// Creates the environment to use when executing a transaction in a test context
@@ -582,6 +608,16 @@ impl Executor {
         };
 
         EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.spec_id())
+    }
+
+    pub fn call_sol_default<C: SolCall>(&self, to: Address, args: &C) -> C::Return
+    where
+        C::Return: Default,
+    {
+        self.call_sol(CALLER, to, args, U256::ZERO, None)
+            .map(|c| c.decoded_result)
+            .inspect_err(|e| warn!(target: "forge::test", "failed calling {:?}: {e}", C::SIGNATURE))
+            .unwrap_or_default()
     }
 }
 
@@ -689,11 +725,9 @@ pub struct RawCallResult {
     /// The labels assigned to addresses during the call
     pub labels: HashMap<Address, String>,
     /// The traces of the call
-    pub traces: Option<CallTraceArena>,
+    pub traces: Option<SparsedTraceArena>,
     /// The coverage info collected during the call
     pub coverage: Option<HitMaps>,
-    /// The debug nodes of the call
-    pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
     pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
@@ -722,7 +756,6 @@ impl Default for RawCallResult {
             labels: HashMap::new(),
             traces: None,
             coverage: None,
-            debug: None,
             transactions: None,
             state_changeset: HashMap::default(),
             env: EnvWithHandlerCfg::new_with_spec_id(Box::default(), SpecId::LATEST),
@@ -828,6 +861,7 @@ fn convert_executed_result(
         &env.tx.data,
         env.tx.transact_to.is_create(),
         &env.tx.access_list,
+        0,
     );
 
     let result = match &out {
@@ -835,7 +869,7 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData { mut logs, labels, traces, coverage, debug, cheatcodes, chisel_state } =
+    let InspectorData { mut logs, labels, traces, coverage, cheatcodes, chisel_state } =
         inspector.collect();
 
     if logs.is_empty() {
@@ -859,7 +893,6 @@ fn convert_executed_result(
         labels,
         traces,
         coverage,
-        debug,
         transactions,
         state_changeset,
         env,

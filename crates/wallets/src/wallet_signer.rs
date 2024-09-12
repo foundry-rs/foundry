@@ -2,7 +2,7 @@ use crate::error::WalletSignerError;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
-use alloy_primitives::{Address, ChainId, B256};
+use alloy_primitives::{hex, Address, ChainId, B256};
 use alloy_signer::{Signature, Signer};
 use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
 use alloy_signer_local::{coins_bip39::English, MnemonicBuilder, PrivateKeySigner};
@@ -263,7 +263,17 @@ impl PendingSigner {
         match self {
             Self::Keystore(path) => {
                 let password = rpassword::prompt_password("Enter keystore password:")?;
-                Ok(WalletSigner::Local(PrivateKeySigner::decrypt_keystore(path, password)?))
+                match PrivateKeySigner::decrypt_keystore(path, password) {
+                    Ok(signer) => Ok(WalletSigner::Local(signer)),
+                    Err(e) => match e {
+                        // Catch the `MacMismatch` error, which indicates an incorrect password and
+                        // return a more user-friendly `IncorrectKeystorePassword`.
+                        alloy_signer_local::LocalSignerError::EthKeystoreError(
+                            eth_keystore::KeystoreError::MacMismatch,
+                        ) => Err(WalletSignerError::IncorrectKeystorePassword),
+                        _ => Err(WalletSignerError::Local(e)),
+                    },
+                }
             }
             Self::Interactive => {
                 let private_key = rpassword::prompt_password("Enter private key:")?;

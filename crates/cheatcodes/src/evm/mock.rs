@@ -47,9 +47,9 @@ impl Cheatcode for clearMockedCallsCall {
 }
 
 impl Cheatcode for mockCall_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { callee, data, returnData } = self;
-        let (acc, _) = ccx.ecx.load_account(*callee)?;
+        let acc = ccx.ecx.load_account(*callee)?;
 
         // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
         // check Solidity might perform.
@@ -65,7 +65,7 @@ impl Cheatcode for mockCall_0Call {
 }
 
 impl Cheatcode for mockCall_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         ccx.ecx.load_account(*callee)?;
         mock_call(ccx.state, callee, data, Some(msgValue), returnData, InstructionResult::Return);
@@ -85,6 +85,15 @@ impl Cheatcode for mockCallRevert_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { callee, msgValue, data, revertData } = self;
         mock_call(state, callee, data, Some(msgValue), revertData, InstructionResult::Revert);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for mockFunctionCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { callee, target, data } = self;
+        state.mocked_functions.entry(*callee).or_default().insert(data.clone(), *target);
+
         Ok(Default::default())
     }
 }

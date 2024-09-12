@@ -1,8 +1,8 @@
+use alloy_primitives::hex::FromHexError;
 use alloy_signer::k256::ecdsa;
 use alloy_signer_ledger::LedgerError;
 use alloy_signer_local::LocalSignerError;
 use alloy_signer_trezor::TrezorError;
-use hex::FromHexError;
 
 #[cfg(feature = "aws-kms")]
 use alloy_signer_aws::AwsSignerError;
@@ -22,6 +22,8 @@ pub enum PrivateKeyError {
 pub enum WalletSignerError {
     #[error(transparent)]
     Local(#[from] LocalSignerError),
+    #[error("Failed to decrypt keystore: incorrect password")]
+    IncorrectKeystorePassword,
     #[error(transparent)]
     Ledger(#[from] LedgerError),
     #[error(transparent)]

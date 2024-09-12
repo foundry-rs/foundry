@@ -32,7 +32,7 @@ aws-sdk-kms = { version = "1", default-features = false, optional = true }
 
 # gcp-kms
 alloy-signer-gcp = { workspace = true, features = ["eip712"], optional = true }
-gcloud-sdk = { version = "0.24", features = [
+gcloud-sdk = { version = "0.25", features = [
   "google-cloud-kms-v1",
   "google-longrunning",
 ], optional = true }
@@ -41,11 +41,11 @@ async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 derive_builder = "0.20.0"
 eyre.workspace = true
-hex = { workspace = true, features = ["serde"] }
 rpassword = "7"
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+eth-keystore = "0.5.0"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }

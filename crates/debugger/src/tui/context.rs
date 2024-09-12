@@ -1,10 +1,10 @@
 //! Debugger context and event handler implementation.
 
-use crate::{Debugger, ExitReason};
-use alloy_primitives::Address;
+use crate::{DebugNode, Debugger, ExitReason};
+use alloy_primitives::{hex, Address};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use foundry_evm_core::debug::{DebugNodeFlat, DebugStep};
-use revm_inspectors::tracing::types::CallKind;
+use revm::interpreter::OpCode;
+use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::ops::ControlFlow;
 
 /// This is currently used to remember last scroll position so screen doesn't wiggle as much.
@@ -84,11 +84,11 @@ impl<'a> DebuggerContext<'a> {
         self.gen_opcode_list();
     }
 
-    pub(crate) fn debug_arena(&self) -> &[DebugNodeFlat] {
+    pub(crate) fn debug_arena(&self) -> &[DebugNode] {
         &self.debugger.debug_arena
     }
 
-    pub(crate) fn debug_call(&self) -> &DebugNodeFlat {
+    pub(crate) fn debug_call(&self) -> &DebugNode {
         &self.debug_arena()[self.draw_memory.inner_call_index]
     }
 
@@ -103,19 +103,21 @@ impl<'a> DebuggerContext<'a> {
     }
 
     /// Returns the current debug steps.
-    pub(crate) fn debug_steps(&self) -> &[DebugStep] {
+    pub(crate) fn debug_steps(&self) -> &[CallTraceStep] {
         &self.debug_call().steps
     }
 
     /// Returns the current debug step.
-    pub(crate) fn current_step(&self) -> &DebugStep {
+    pub(crate) fn current_step(&self) -> &CallTraceStep {
         &self.debug_steps()[self.current_step]
     }
 
     fn gen_opcode_list(&mut self) {
         self.opcode_list.clear();
         let debug_steps = &self.debugger.debug_arena[self.draw_memory.inner_call_index].steps;
-        self.opcode_list.extend(debug_steps.iter().map(DebugStep::pretty_opcode));
+        for step in debug_steps {
+            self.opcode_list.push(pretty_opcode(step));
+        }
     }
 
     fn gen_opcode_list_if_necessary(&mut self) {
@@ -127,8 +129,8 @@ impl<'a> DebuggerContext<'a> {
 
     fn active_buffer(&self) -> &[u8] {
         match self.active_buffer {
-            BufferKind::Memory => &self.current_step().memory,
-            BufferKind::Calldata => &self.current_step().calldata,
+            BufferKind::Memory => self.current_step().memory.as_ref().unwrap().as_bytes(),
+            BufferKind::Calldata => &self.debug_call().calldata,
             BufferKind::Returndata => &self.current_step().returndata,
         }
     }
@@ -186,7 +188,8 @@ impl DebuggerContext<'_> {
             }),
             // Scroll down the stack
             KeyCode::Char('J') => self.repeat(|this| {
-                let max_stack = this.current_step().stack.len().saturating_sub(1);
+                let max_stack =
+                    this.current_step().stack.as_ref().map_or(0, |s| s.len()).saturating_sub(1);
                 if this.draw_memory.current_stack_startline < max_stack {
                     this.draw_memory.current_stack_startline += 1;
                 }
@@ -227,20 +230,20 @@ impl DebuggerContext<'_> {
 
             // Step forward
             KeyCode::Char('s') => self.repeat(|this| {
-                let remaining_ops = &this.opcode_list[this.current_step..];
-                if let Some((i, _)) = remaining_ops.iter().enumerate().skip(1).find(|&(i, op)| {
-                    let prev = &remaining_ops[i - 1];
-                    let prev_is_jump = prev.contains("JUMP") && prev != "JUMPDEST";
-                    let is_jumpdest = op == "JUMPDEST";
-                    prev_is_jump && is_jumpdest
-                }) {
-                    this.current_step += i;
+                let remaining_steps = &this.debug_steps()[this.current_step..];
+                if let Some((i, _)) =
+                    remaining_steps.iter().enumerate().skip(1).find(|(i, step)| {
+                        let prev = &remaining_steps[*i - 1];
+                        is_jump(step, prev)
+                    })
+                {
+                    this.current_step += i
                 }
             }),
 
             // Step backwards
             KeyCode::Char('a') => self.repeat(|this| {
-                let ops = &this.opcode_list[..this.current_step];
+                let ops = &this.debug_steps()[..this.current_step];
                 this.current_step = ops
                     .iter()
                     .enumerate()
@@ -248,9 +251,7 @@ impl DebuggerContext<'_> {
                     .rev()
                     .find(|&(i, op)| {
                         let prev = &ops[i - 1];
-                        let prev_is_jump = prev.contains("JUMP") && prev != "JUMPDEST";
-                        let is_jumpdest = op == "JUMPDEST";
-                        prev_is_jump && is_jumpdest
+                        is_jump(op, prev)
                     })
                     .map(|(i, _)| i)
                     .unwrap_or_default();
@@ -344,4 +345,36 @@ fn buffer_as_number(s: &str) -> usize {
     const MIN: usize = 1;
     const MAX: usize = 100_000;
     s.parse().unwrap_or(MIN).clamp(MIN, MAX)
+}
+
+fn pretty_opcode(step: &CallTraceStep) -> String {
+    if let Some(immediate) = step.immediate_bytes.as_ref().filter(|b| !b.is_empty()) {
+        format!("{}(0x{})", step.op, hex::encode(immediate))
+    } else {
+        step.op.to_string()
+    }
+}
+
+fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
+    if !matches!(
+        prev.op,
+        OpCode::JUMP |
+            OpCode::JUMPI |
+            OpCode::JUMPF |
+            OpCode::RJUMP |
+            OpCode::RJUMPI |
+            OpCode::RJUMPV |
+            OpCode::CALLF |
+            OpCode::RETF
+    ) {
+        return false
+    }
+
+    let immediate_len = prev.immediate_bytes.as_ref().map_or(0, |b| b.len());
+
+    if step.pc != prev.pc + 1 + immediate_len {
+        true
+    } else {
+        step.code_section_idx != prev.code_section_idx
+    }
 }

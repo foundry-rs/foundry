@@ -4,15 +4,15 @@ use crate::{
     constants::*,
     utils::{self, EnvExternalities},
 };
-use alloy_primitives::Address;
+use alloy_primitives::{hex, Address};
 use anvil::{spawn, NodeConfig};
 use foundry_compilers::artifacts::{remappings::Remapping, BytecodeHash};
 use foundry_config::Config;
 use foundry_test_utils::{
-    forgetest, forgetest_async,
+    forgetest, forgetest_async, str,
     util::{OutputExt, TestCommand, TestProject},
 };
-use std::{path::PathBuf, str::FromStr};
+use std::str::FromStr;
 
 /// This will insert _dummy_ contract that uses a library
 ///
@@ -104,12 +104,16 @@ where
 {
     if let Some(info) = info {
         let contract_path = f(&prj);
-        cmd.arg("create");
-        cmd.args(info.create_args()).arg(contract_path);
 
-        let out = cmd.stdout_lossy();
-        let _address = utils::parse_deployed_address(out.as_str())
-            .unwrap_or_else(|| panic!("Failed to parse deployer {out}"));
+        let output = cmd
+            .arg("create")
+            .args(info.create_args())
+            .arg(contract_path)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let _address = utils::parse_deployed_address(output.as_str())
+            .unwrap_or_else(|| panic!("Failed to parse deployer {output}"));
     }
 }
 
@@ -150,15 +154,23 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
         pk.as_str(),
     ]);
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_template_contract.stdout"),
-    );
+    cmd.assert().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+[TX_HASH]
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_template_contract-2nd.stdout"),
-    );
+"#]]);
+
+    cmd.assert().stdout_eq(str![[r#"
+No files changed, compilation skipped
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+[TX_HASH]
+
+"#]]);
 });
 
 // tests that we can deploy the template contract
@@ -183,15 +195,22 @@ forgetest_async!(can_create_using_unlocked, |prj, cmd| {
         "--unlocked",
     ]);
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_using_unlocked.stdout"),
-    );
+    cmd.assert().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+[TX_HASH]
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_using_unlocked-2nd.stdout"),
-    );
+"#]]);
+    cmd.assert().stdout_eq(str![[r#"
+No files changed, compilation skipped
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+[TX_HASH]
+
+"#]]);
 });
 
 // tests that we can deploy with constructor args
@@ -221,21 +240,27 @@ contract ConstructorContract {
     )
     .unwrap();
 
-    cmd.forge_fuse().args([
-        "create",
-        "./src/ConstructorContract.sol:ConstructorContract",
-        "--rpc-url",
-        rpc.as_str(),
-        "--private-key",
-        pk.as_str(),
-        "--constructor-args",
-        "My Constructor",
-    ]);
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "./src/ConstructorContract.sol:ConstructorContract",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--constructor-args",
+            "My Constructor",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+[TX_HASH]
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_with_constructor_args.stdout"),
-    );
+"#]]);
 
     prj.add_source(
         "TupleArrayConstructorContract",
@@ -252,21 +277,27 @@ contract TupleArrayConstructorContract {
     )
     .unwrap();
 
-    cmd.forge_fuse().args([
-        "create",
-        "./src/TupleArrayConstructorContract.sol:TupleArrayConstructorContract",
-        "--rpc-url",
-        rpc.as_str(),
-        "--private-key",
-        pk.as_str(),
-        "--constructor-args",
-        "[(1,2), (2,3), (3,4)]",
-    ]);
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "./src/TupleArrayConstructorContract.sol:TupleArrayConstructorContract",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--constructor-args",
+            "[(1,2), (2,3), (3,4)]",
+        ])
+        .assert()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+[TX_HASH]
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_with_tuple_constructor_args.stdout"),
-    );
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6332>
@@ -296,15 +327,29 @@ contract UniswapV2Swap {
     )
     .unwrap();
 
-    cmd.forge_fuse().args([
-        "create",
-        "./src/UniswapV2Swap.sol:UniswapV2Swap",
-        "--rpc-url",
-        rpc.as_str(),
-        "--private-key",
-        pk.as_str(),
-    ]);
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "./src/UniswapV2Swap.sol:UniswapV2Swap",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:6:5:
+  |
+6 |     function pairInfo() public view returns (uint reserveA, uint reserveB, uint totalSupply) {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
 
-    let (stdout, _) = cmd.output_lossy();
-    assert!(stdout.contains("Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3"));
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+[TX_HASH]
+
+"#]]);
 });

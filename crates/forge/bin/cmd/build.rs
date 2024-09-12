@@ -19,7 +19,6 @@ use foundry_config::{
 };
 use serde::Serialize;
 use std::path::PathBuf;
-use watchexec::config::{InitConfig, RuntimeConfig};
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 
@@ -91,8 +90,10 @@ impl BuildArgs {
 
         // Collect sources to compile if build subdirectories specified.
         let mut files = vec![];
-        if let Some(paths) = self.paths {
+        if let Some(paths) = &self.paths {
             for path in paths {
+                let joined = project.root().join(path);
+                let path = if joined.exists() { &joined } else { path };
                 files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
             }
         }
@@ -116,7 +117,7 @@ impl BuildArgs {
     /// Returns the `Project` for the current workspace
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
-    /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
+    /// [`utils::find_project_root`] and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]
     pub fn project(&self) -> Result<Project> {
         self.args.project()
@@ -129,11 +130,11 @@ impl BuildArgs {
 
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
-    pub(crate) fn watchexec_config(&self) -> Result<(InitConfig, RuntimeConfig)> {
+    pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         // use the path arguments or if none where provided the `src` dir
         self.watch.watchexec_config(|| {
             let config = Config::from(self);
-            vec![config.src, config.test, config.script]
+            [config.src, config.test, config.script]
         })
     }
 }

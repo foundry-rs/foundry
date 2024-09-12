@@ -44,10 +44,9 @@ revm = { workspace = true, default-features = false, features = [
 ] }
 revm-inspectors.workspace = true
 
-arrayvec.workspace = true
 eyre.workspace = true
 parking_lot.workspace = true
-proptest = "1"
+proptest.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 indicatif = "0.17"

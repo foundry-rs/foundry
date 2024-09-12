@@ -1,8 +1,6 @@
-use foundry_common::fs::read_json_file;
 use foundry_config::Config;
-use foundry_test_utils::forgetest;
+use foundry_test_utils::{forgetest, snapbox::IntoData, str};
 use globset::Glob;
-use std::{collections::BTreeMap, path::PathBuf};
 
 // tests that json is printed when --json is passed
 forgetest!(compile_json, |prj, cmd| {
@@ -20,35 +18,51 @@ contract Dummy {
     .unwrap();
 
     // set up command
-    cmd.args(["compile", "--format-json"]);
-
-    // Exclude build_infos from output as IDs depend on root dir and are not deterministic.
-    let mut output: BTreeMap<String, serde_json::Value> =
-        serde_json::from_str(&cmd.stdout_lossy()).unwrap();
-    output.remove("build_infos");
-
-    let expected: BTreeMap<String, serde_json::Value> = read_json_file(
-        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/compile_json.stdout"),
-    )
-    .unwrap();
-
-    similar_asserts::assert_eq!(output, expected);
+    cmd.args(["compile", "--format-json"]).assert_success().stdout_eq(str![[r#"
+{
+  "errors": [
+    {
+      "sourceLocation": {
+        "file": "src/jsonError.sol",
+        "start": 184,
+        "end": 193
+      },
+      "type": "DeclarationError",
+      "component": "general",
+      "severity": "error",
+      "errorCode": "7576",
+      "message": "Undeclared identifier. Did you mean \"newNumber\"?",
+      "formattedMessage": "DeclarationError: Undeclared identifier. Did you mean \"newNumber\"?\n [FILE]:7:18:\n  |\n7 |         number = newnumber; // error here\n  |                  ^^^^^^^^^\n\n"
+    }
+  ],
+  "sources": {},
+  "contracts": {},
+  "build_infos": "{...}"
+}
+"#]].is_json());
 });
 
 // tests build output is as expected
 forgetest_init!(exact_build_output, |prj, cmd| {
-    cmd.args(["build", "--force"]);
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiling"), "\n{stdout}");
+    cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 // tests build output is as expected
 forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
-    cmd.args(["build", "--sizes"]);
-    let stdout = cmd.stdout_lossy();
-    assert!(!stdout.contains("console"), "\n{stdout}");
-    assert!(!stdout.contains("std"), "\n{stdout}");
-    assert!(stdout.contains("Counter"), "\n{stdout}");
+    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![
+        r#"
+...
+| Contract | Size (B) | Margin (B) |
+|----------|----------|------------|
+| Counter  |      247 |     24,329 |
+...
+"#
+    ]);
 });
 
 // tests that skip key in config can be used to skip non-compilable contract
@@ -71,8 +85,10 @@ contract ValidContract {}
     )
     .unwrap();
 
-    let config =
-        Config { skip: vec![Glob::new("src/InvalidContract.sol").unwrap()], ..Default::default() };
+    let config = Config {
+        skip: vec![Glob::new("src/InvalidContract.sol").unwrap().into()],
+        ..Default::default()
+    };
     prj.write_config(config);
 
     cmd.args(["build"]).assert_success();

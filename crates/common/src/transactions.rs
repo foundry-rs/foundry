@@ -1,10 +1,13 @@
 //! Wrappers for transactions.
 
+use alloy_consensus::{Transaction, TxEnvelope};
+use alloy_primitives::{Address, TxKind, U256};
 use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_rpc_types::{AnyTransactionReceipt, BlockId};
+use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::Result;
+use foundry_common_fmt::UIfmt;
 use serde::{Deserialize, Serialize};
 
 /// Helper type to carry a transaction along with an optional revert reason
@@ -75,12 +78,59 @@ impl From<TransactionReceiptWithRevertReason> for AnyTransactionReceipt {
     }
 }
 
+impl UIfmt for TransactionReceiptWithRevertReason {
+    fn pretty(&self) -> String {
+        if let Some(revert_reason) = &self.revert_reason {
+            format!(
+                "{}
+revertReason            {}",
+                self.receipt.pretty(),
+                revert_reason
+            )
+        } else {
+            self.receipt.pretty()
+        }
+    }
+}
+
 fn extract_revert_reason<S: AsRef<str>>(error_string: S) -> Option<String> {
     let message_substr = "execution reverted: ";
     error_string
         .as_ref()
         .find(message_substr)
         .map(|index| error_string.as_ref().split_at(index + message_substr.len()).1.to_string())
+}
+
+/// Returns the `UiFmt::pretty()` formatted attribute of the transaction receipt
+pub fn get_pretty_tx_receipt_attr(
+    receipt: &TransactionReceiptWithRevertReason,
+    attr: &str,
+) -> Option<String> {
+    match attr {
+        "blockHash" | "block_hash" => Some(receipt.receipt.block_hash.pretty()),
+        "blockNumber" | "block_number" => Some(receipt.receipt.block_number.pretty()),
+        "contractAddress" | "contract_address" => Some(receipt.receipt.contract_address.pretty()),
+        "cumulativeGasUsed" | "cumulative_gas_used" => {
+            Some(receipt.receipt.inner.inner.inner.receipt.cumulative_gas_used.pretty())
+        }
+        "effectiveGasPrice" | "effective_gas_price" => {
+            Some(receipt.receipt.effective_gas_price.to_string())
+        }
+        "gasUsed" | "gas_used" => Some(receipt.receipt.gas_used.to_string()),
+        "logs" => Some(receipt.receipt.inner.inner.inner.receipt.logs.as_slice().pretty()),
+        "logsBloom" | "logs_bloom" => Some(receipt.receipt.inner.inner.inner.logs_bloom.pretty()),
+        "root" | "stateRoot" | "state_root " => Some(receipt.receipt.state_root.pretty()),
+        "status" | "statusCode" | "status_code" => {
+            Some(receipt.receipt.inner.inner.inner.receipt.status.pretty())
+        }
+        "transactionHash" | "transaction_hash" => Some(receipt.receipt.transaction_hash.pretty()),
+        "transactionIndex" | "transaction_index" => {
+            Some(receipt.receipt.transaction_index.pretty())
+        }
+        "type" | "transaction_type" => Some(receipt.receipt.inner.inner.r#type.to_string()),
+        "revertReason" | "revert_reason" => Some(receipt.revert_reason.pretty()),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -94,5 +144,90 @@ mod tests {
 
         assert_eq!(extract_revert_reason(error_string_1), Some("Transaction too old".to_string()));
         assert_eq!(extract_revert_reason(error_string_2), None);
+    }
+}
+
+/// Used for broadcasting transactions
+/// A transaction can either be a [`TransactionRequest`] waiting to be signed
+/// or a [`TxEnvelope`], already signed
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TransactionMaybeSigned {
+    Signed {
+        #[serde(flatten)]
+        tx: TxEnvelope,
+        from: Address,
+    },
+    Unsigned(WithOtherFields<TransactionRequest>),
+}
+
+impl TransactionMaybeSigned {
+    /// Creates a new (unsigned) transaction for broadcast
+    pub fn new(tx: WithOtherFields<TransactionRequest>) -> Self {
+        Self::Unsigned(tx)
+    }
+
+    /// Creates a new signed transaction for broadcast.
+    pub fn new_signed(
+        tx: TxEnvelope,
+    ) -> core::result::Result<Self, alloy_primitives::SignatureError> {
+        let from = tx.recover_signer()?;
+        Ok(Self::Signed { tx, from })
+    }
+
+    pub fn as_unsigned_mut(&mut self) -> Option<&mut WithOtherFields<TransactionRequest>> {
+        match self {
+            Self::Unsigned(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    pub fn from(&self) -> Option<Address> {
+        match self {
+            Self::Signed { from, .. } => Some(*from),
+            Self::Unsigned(tx) => tx.from,
+        }
+    }
+
+    pub fn input(&self) -> Option<&[u8]> {
+        match self {
+            Self::Signed { tx, .. } => Some(tx.input()),
+            Self::Unsigned(tx) => tx.input.input().map(|i| i.as_ref()),
+        }
+    }
+
+    pub fn to(&self) -> Option<TxKind> {
+        match self {
+            Self::Signed { tx, .. } => Some(tx.to()),
+            Self::Unsigned(tx) => tx.to,
+        }
+    }
+
+    pub fn value(&self) -> Option<U256> {
+        match self {
+            Self::Signed { tx, .. } => Some(tx.value()),
+            Self::Unsigned(tx) => tx.value,
+        }
+    }
+
+    pub fn gas(&self) -> Option<u128> {
+        match self {
+            Self::Signed { tx, .. } => Some(tx.gas_limit()),
+            Self::Unsigned(tx) => tx.gas,
+        }
+    }
+}
+
+impl From<TransactionRequest> for TransactionMaybeSigned {
+    fn from(tx: TransactionRequest) -> Self {
+        Self::new(WithOtherFields::new(tx))
+    }
+}
+
+impl TryFrom<TxEnvelope> for TransactionMaybeSigned {
+    type Error = alloy_primitives::SignatureError;
+
+    fn try_from(tx: TxEnvelope) -> core::result::Result<Self, Self::Error> {
+        Self::new_signed(tx)
     }
 }

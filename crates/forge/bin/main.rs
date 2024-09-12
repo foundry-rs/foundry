@@ -55,6 +55,7 @@ fn main() -> Result<()> {
         ForgeSubcommand::Debug(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::VerifyContract(args) => utils::block_on(args.run()),
         ForgeSubcommand::VerifyCheck(args) => utils::block_on(args.run()),
+        ForgeSubcommand::VerifyBytecode(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Clone(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Cache(cmd) => match cmd.sub {
             CacheSubcommands::Clean(cmd) => cmd.run(),
@@ -80,7 +81,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         ForgeSubcommand::Clean { root } => {
-            let config = utils::load_config_with_root(root);
+            let config = utils::load_config_with_root(root.as_deref());
             let project = config.project()?;
             config.cleanup(&project)?;
             Ok(())
@@ -105,13 +106,21 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        ForgeSubcommand::Doc(cmd) => cmd.run(),
+        ForgeSubcommand::Doc(cmd) => {
+            if cmd.is_watch() {
+                utils::block_on(watch::watch_doc(cmd))
+            } else {
+                utils::block_on(cmd.run())?;
+                Ok(())
+            }
+        }
         ForgeSubcommand::Selectors { command } => utils::block_on(command.run()),
         ForgeSubcommand::Generate(cmd) => match cmd.sub {
             GenerateSubcommands::Test(cmd) => cmd.run(),
         },
-        ForgeSubcommand::VerifyBytecode(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Soldeer(cmd) => cmd.run(),
+        ForgeSubcommand::Eip712(cmd) => cmd.run(),
+        ForgeSubcommand::BindJson(cmd) => cmd.run(),
     }
 }
 

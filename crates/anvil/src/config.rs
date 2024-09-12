@@ -9,16 +9,17 @@ use crate::{
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
-        pool::transactions::TransactionOrder,
+        pool::transactions::{PoolTransaction, TransactionOrder},
     },
+    hardfork::{ChainHardfork, OptimismHardfork},
     mem::{self, in_memory_db::MemDb},
-    FeeManager, Hardfork, PrecompileFactory,
+    EthereumHardfork, FeeManager, PrecompileFactory,
 };
 use alloy_genesis::Genesis;
 use alloy_network::AnyNetwork;
-use alloy_primitives::{hex, utils::Unit, U256};
+use alloy_primitives::{hex, utils::Unit, BlockNumber, TxHash, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::BlockNumberOrTag;
+use alloy_rpc_types::{BlockNumberOrTag, Transaction};
 use alloy_signer::Signer;
 use alloy_signer_local::{
     coins_bip39::{English, Mnemonic},
@@ -26,16 +27,19 @@ use alloy_signer_local::{
 };
 use alloy_transport::{Transport, TransportError};
 use anvil_server::ServerConfig;
+use eyre::Result;
 use foundry_common::{
-    provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
+    provider::{ProviderBuilder, RetryProvider},
+    ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
 };
 use foundry_config::Config;
 use foundry_evm::{
+    backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     revm::primitives::{BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, SpecId, TxEnv},
     utils::apply_chain_and_block_specific_env_changes,
 };
+use itertools::Itertools;
 use parking_lot::RwLock;
 use rand::thread_rng;
 use revm::primitives::BlobExcessGasAndPrice;
@@ -61,7 +65,6 @@ pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test
 /// The default IPC endpoint
 pub const DEFAULT_IPC_ENDPOINT: &str =
     if cfg!(unix) { "/tmp/anvil.ipc" } else { r"\\.\pipe\anvil.ipc" };
-
 /// `anvil 0.1.0 (f01b232bc 2022-04-13T23:28:39.493201+00:00)`
 pub const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -97,7 +100,7 @@ pub struct NodeConfig {
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// The hardfork to use
-    pub hardfork: Option<Hardfork>,
+    pub hardfork: Option<ChainHardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
     pub genesis_accounts: Vec<PrivateKeySigner>,
     /// Native token balance of every genesis account in the genesis block
@@ -110,6 +113,8 @@ pub struct NodeConfig {
     pub block_time: Option<Duration>,
     /// Disable auto, interval mining mode uns use `MiningMode::None` instead
     pub no_mining: bool,
+    /// Enables auto and interval mining mode
+    pub mixed_mining: bool,
     /// port to use for the server
     pub port: u16,
     /// maximum number of transactions in a block
@@ -118,8 +123,8 @@ pub struct NodeConfig {
     pub silent: bool,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
-    /// pins the block number for the state fork
-    pub fork_block_number: Option<u64>,
+    /// pins the block number or transaction hash for the state fork
+    pub fork_choice: Option<ForkChoice>,
     /// headers to use with `eth_rpc_url`
     pub fork_headers: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
@@ -152,6 +157,8 @@ pub struct NodeConfig {
     pub ipc_path: Option<Option<String>>,
     /// Enable transaction/call steps tracing for debug calls returning geth-style traces
     pub enable_steps_tracing: bool,
+    /// Enable printing of `console.log` invocations.
+    pub print_logs: bool,
     /// Enable auto impersonation of accounts on startup
     pub enable_auto_impersonate: bool,
     /// Configure the code size limit
@@ -160,6 +167,8 @@ pub struct NodeConfig {
     ///
     /// If set to `Some(num)` keep latest num state in memory only.
     pub prune_history: PruneStateHistoryConfig,
+    /// Max number of states cached on disk.
+    pub max_persisted_states: Option<usize>,
     /// The file where to load the state from
     pub init_state: Option<SerializableState>,
     /// max number of blocks with transactions in memory
@@ -174,6 +183,8 @@ pub struct NodeConfig {
     pub memory_limit: Option<u64>,
     /// Factory used by `anvil` to extend the EVM's precompiles.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
+    /// Enable Alphanet features.
+    pub alphanet: bool,
 }
 
 impl NodeConfig {
@@ -242,6 +253,10 @@ Chain ID:       {}
                 fork.block_hash(),
                 fork.chain_id()
             );
+
+            if let Some(tx_hash) = fork.transaction_hash() {
+                let _ = writeln!(config_string, "Transaction hash: {tx_hash}");
+            }
         } else {
             let _ = write!(
                 config_string,
@@ -386,17 +401,19 @@ impl Default for NodeConfig {
             genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
             block_time: None,
             no_mining: false,
+            mixed_mining: false,
             port: NODE_PORT,
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
             silent: false,
             eth_rpc_url: None,
-            fork_block_number: None,
+            fork_choice: None,
             account_generator: None,
             base_fee: None,
             blob_excess_gas_and_price: None,
             enable_tracing: true,
             enable_steps_tracing: false,
+            print_logs: true,
             enable_auto_impersonate: false,
             no_storage_caching: false,
             server_config: Default::default(),
@@ -414,6 +431,7 @@ impl Default for NodeConfig {
             ipc_path: None,
             code_size_limit: None,
             prune_history: Default::default(),
+            max_persisted_states: None,
             init_state: None,
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
@@ -421,6 +439,7 @@ impl Default for NodeConfig {
             slots_in_an_epoch: 32,
             memory_limit: None,
             precompile_factory: None,
+            alphanet: false,
         }
     }
 }
@@ -455,15 +474,32 @@ impl NodeConfig {
         }
     }
 
-    /// Returns the base fee to use
-    pub fn get_hardfork(&self) -> Hardfork {
-        self.hardfork.unwrap_or_default()
+    /// Returns the hardfork to use
+    pub fn get_hardfork(&self) -> ChainHardfork {
+        if self.alphanet {
+            return ChainHardfork::Ethereum(EthereumHardfork::PragueEOF);
+        }
+        if let Some(hardfork) = self.hardfork {
+            return hardfork;
+        }
+        if self.enable_optimism {
+            return OptimismHardfork::default().into();
+        }
+        EthereumHardfork::default().into()
     }
 
     /// Sets a custom code size limit
     #[must_use]
     pub fn with_code_size_limit(mut self, code_size_limit: Option<usize>) -> Self {
         self.code_size_limit = code_size_limit;
+        self
+    }
+    /// Disables  code size limit
+    #[must_use]
+    pub fn disable_code_size_limit(mut self, disable_code_size_limit: bool) -> Self {
+        if disable_code_size_limit {
+            self.code_size_limit = Some(usize::MAX);
+        }
         self
     }
 
@@ -539,6 +575,16 @@ impl NodeConfig {
         self
     }
 
+    /// Sets max number of states to cache on disk.
+    #[must_use]
+    pub fn with_max_persisted_states<U: Into<usize>>(
+        mut self,
+        max_persisted_states: Option<U>,
+    ) -> Self {
+        self.max_persisted_states = max_persisted_states.map(Into::into);
+        self
+    }
+
     /// Sets max number of blocks with transactions to keep in memory
     #[must_use]
     pub fn with_transaction_block_keeper<U: Into<usize>>(
@@ -581,7 +627,7 @@ impl NodeConfig {
 
     /// Sets the hardfork
     #[must_use]
-    pub fn with_hardfork(mut self, hardfork: Option<Hardfork>) -> Self {
+    pub fn with_hardfork(mut self, hardfork: Option<ChainHardfork>) -> Self {
         self.hardfork = hardfork;
         self
     }
@@ -620,6 +666,17 @@ impl NodeConfig {
     #[must_use]
     pub fn with_blocktime<D: Into<Duration>>(mut self, block_time: Option<D>) -> Self {
         self.block_time = block_time.map(Into::into);
+        self
+    }
+
+    #[must_use]
+    pub fn with_mixed_mining<D: Into<Duration>>(
+        mut self,
+        mixed_mining: bool,
+        block_time: Option<D>,
+    ) -> Self {
+        self.block_time = block_time.map(Into::into);
+        self.mixed_mining = mixed_mining;
         self
     }
 
@@ -694,10 +751,25 @@ impl NodeConfig {
         self
     }
 
-    /// Sets the `fork_block_number` to use to fork off from
+    /// Sets the `fork_choice` to use to fork off from based on a block number
     #[must_use]
-    pub fn with_fork_block_number<U: Into<u64>>(mut self, fork_block_number: Option<U>) -> Self {
-        self.fork_block_number = fork_block_number.map(Into::into);
+    pub fn with_fork_block_number<U: Into<u64>>(self, fork_block_number: Option<U>) -> Self {
+        self.with_fork_choice(fork_block_number.map(Into::into))
+    }
+
+    /// Sets the `fork_choice` to use to fork off from based on a transaction hash
+    #[must_use]
+    pub fn with_fork_transaction_hash<U: Into<TxHash>>(
+        self,
+        fork_transaction_hash: Option<U>,
+    ) -> Self {
+        self.with_fork_choice(fork_transaction_hash.map(Into::into))
+    }
+
+    /// Sets the `fork_choice` to use to fork off from
+    #[must_use]
+    pub fn with_fork_choice<U: Into<ForkChoice>>(mut self, fork_choice: Option<U>) -> Self {
+        self.fork_choice = fork_choice.map(Into::into);
         self
     }
 
@@ -764,6 +836,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_steps_tracing(mut self, enable_steps_tracing: bool) -> Self {
         self.enable_steps_tracing = enable_steps_tracing;
+        self
+    }
+
+    /// Sets whether to print `console.log` invocations to stdout.
+    #[must_use]
+    pub fn with_print_logs(mut self, print_logs: bool) -> Self {
+        self.print_logs = print_logs;
         self
     }
 
@@ -851,6 +930,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to enable Alphanet support
+    #[must_use]
+    pub fn with_alphanet(mut self, alphanet: bool) -> Self {
+        self.alphanet = alphanet;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -915,7 +1001,6 @@ impl NodeConfig {
             timestamp: self.get_genesis_timestamp(),
             balance: self.genesis_balance,
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
-            fork_genesis_account_infos: Arc::new(Default::default()),
             genesis_init: self.genesis.clone(),
         };
 
@@ -927,7 +1012,10 @@ impl NodeConfig {
             fees,
             Arc::new(RwLock::new(fork)),
             self.enable_steps_tracing,
+            self.print_logs,
+            self.alphanet,
             self.prune_history,
+            self.max_persisted_states,
             self.transaction_block_keeper,
             self.block_time,
             Arc::new(tokio::sync::RwLock::new(self.clone())),
@@ -987,19 +1075,22 @@ impl NodeConfig {
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)
                 .timeout(self.fork_request_timeout)
-                .timeout_retry(self.fork_request_retries)
                 .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
-                .max_retry(10)
+                .max_retry(self.fork_request_retries)
                 .initial_backoff(1000)
                 .headers(self.fork_headers.clone())
                 .build()
                 .expect("Failed to establish provider to fork url"),
         );
 
-        let (fork_block_number, fork_chain_id) = if let Some(fork_block_number) =
-            self.fork_block_number
+        let (fork_block_number, fork_chain_id, force_transactions) = if let Some(fork_choice) =
+            &self.fork_choice
         {
+            let (fork_block_number, force_transactions) =
+                derive_block_and_transactions(fork_choice, &provider).await.expect(
+                    "Failed to derive fork block number and force transactions from fork choice",
+                );
             let chain_id = if let Some(chain_id) = self.fork_chain_id {
                 Some(chain_id)
             } else if self.hardfork.is_none() {
@@ -1008,21 +1099,21 @@ impl NodeConfig {
                 let chain_id =
                     provider.get_chain_id().await.expect("Failed to fetch network chain ID");
                 if alloy_chains::NamedChain::Mainnet == chain_id {
-                    let hardfork: Hardfork = fork_block_number.into();
+                    let hardfork: EthereumHardfork = fork_block_number.into();
                     env.handler_cfg.spec_id = hardfork.into();
-                    self.hardfork = Some(hardfork);
+                    self.hardfork = Some(ChainHardfork::Ethereum(hardfork));
                 }
                 Some(U256::from(chain_id))
             } else {
                 None
             };
 
-            (fork_block_number, chain_id)
+            (fork_block_number, chain_id, force_transactions)
         } else {
             // pick the last block number but also ensure it's not pending anymore
             let bn =
                 find_latest_fork_block(&provider).await.expect("Failed to get fork block number");
-            (bn, None)
+            (bn, None, None)
         };
 
         let block = provider
@@ -1107,7 +1198,7 @@ latest block number: {latest_block}"
             }
         }
 
-        let block_hash = block.header.hash.unwrap_or_default();
+        let block_hash = block.header.hash;
 
         let chain_id = if let Some(chain_id) = self.chain_id {
             chain_id
@@ -1126,7 +1217,7 @@ latest block number: {latest_block}"
         };
         let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
-        apply_chain_and_block_specific_env_changes(env, &block);
+        apply_chain_and_block_specific_env_changes::<AnyNetwork>(env, &block);
 
         let meta = BlockchainDbMeta::new(*env.env.clone(), eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {
@@ -1147,6 +1238,7 @@ latest block number: {latest_block}"
             eth_rpc_url,
             block_number: fork_block_number,
             block_hash,
+            transaction_hash: self.fork_choice.and_then(|fc| fc.transaction_hash()),
             provider,
             chain_id,
             override_chain_id,
@@ -1159,6 +1251,7 @@ latest block number: {latest_block}"
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
             blob_gas_used: block.header.blob_gas_used,
             blob_excess_gas_and_price: env.block.blob_excess_gas_and_price.clone(),
+            force_transactions,
         };
 
         let mut db = ForkedDatabase::new(backend, block_chain_db);
@@ -1167,6 +1260,91 @@ latest block number: {latest_block}"
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
 
         (db, config)
+    }
+}
+
+/// If the fork choice is a block number, simply return it with an empty list of transactions.
+/// If the fork choice is a transaction hash, determine the block that the transaction was mined in,
+/// and return the block number before the fork block along with all transactions in the fork block
+/// that are before (and including) the fork transaction.
+async fn derive_block_and_transactions(
+    fork_choice: &ForkChoice,
+    provider: &Arc<RetryProvider>,
+) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction>>)> {
+    match fork_choice {
+        ForkChoice::Block(block_number) => Ok((block_number.to_owned(), None)),
+        ForkChoice::Transaction(transaction_hash) => {
+            // Determine the block that this transaction was mined in
+            let transaction = provider
+                .get_transaction_by_hash(transaction_hash.0.into())
+                .await?
+                .ok_or(eyre::eyre!("Failed to get fork transaction by hash"))?;
+            let transaction_block_number = transaction.block_number.unwrap();
+
+            // Get the block pertaining to the fork transaction
+            let transaction_block = provider
+                .get_block_by_number(transaction_block_number.into(), true)
+                .await?
+                .ok_or(eyre::eyre!("Failed to get fork block by number"))?;
+
+            // Filter out transactions that are after the fork transaction
+            let filtered_transactions: Vec<&alloy_serde::WithOtherFields<Transaction>> =
+                transaction_block
+                    .transactions
+                    .as_transactions()
+                    .ok_or(eyre::eyre!("Failed to get transactions from full fork block"))?
+                    .iter()
+                    .take_while_inclusive(|&transaction| transaction.hash != transaction_hash.0)
+                    .collect();
+
+            // Convert the transactions to PoolTransactions
+            let force_transactions = filtered_transactions
+                .iter()
+                .map(|&transaction| PoolTransaction::try_from(transaction.clone().inner))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((transaction_block_number.saturating_sub(1), Some(force_transactions)))
+        }
+    }
+}
+
+/// Fork delimiter used to specify which block or transaction to fork from
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForkChoice {
+    /// Block number to fork from
+    Block(BlockNumber),
+    /// Transaction hash to fork from
+    Transaction(TxHash),
+}
+
+impl ForkChoice {
+    /// Returns the block number to fork from
+    pub fn block_number(&self) -> Option<BlockNumber> {
+        match self {
+            Self::Block(block_number) => Some(*block_number),
+            Self::Transaction(_) => None,
+        }
+    }
+
+    /// Returns the transaction hash to fork from
+    pub fn transaction_hash(&self) -> Option<TxHash> {
+        match self {
+            Self::Block(_) => None,
+            Self::Transaction(transaction_hash) => Some(*transaction_hash),
+        }
+    }
+}
+
+/// Convert a transaction hash into a ForkChoice
+impl From<TxHash> for ForkChoice {
+    fn from(tx_hash: TxHash) -> Self {
+        Self::Transaction(tx_hash)
+    }
+}
+
+/// Convert a decimal block number into a ForkChoice
+impl From<u64> for ForkChoice {
+    fn from(block: u64) -> Self {
+        Self::Block(block)
     }
 }
 
@@ -1252,7 +1430,7 @@ impl AccountGenerator {
         let mut wallets = Vec::with_capacity(self.amount);
         for idx in 0..self.amount {
             let builder =
-                builder.clone().derivation_path(&format!("{derivation_path}{idx}")).unwrap();
+                builder.clone().derivation_path(format!("{derivation_path}{idx}")).unwrap();
             let wallet = builder.build().unwrap().with_chain_id(Some(self.chain_id));
             wallets.push(wallet)
         }
@@ -1283,7 +1461,7 @@ async fn find_latest_fork_block<P: Provider<T, AnyNetwork>, T: Transport + Clone
     // leeway
     for _ in 0..2 {
         if let Some(block) = provider.get_block(num.into(), false.into()).await? {
-            if block.header.hash.is_some() {
+            if !block.header.hash.is_zero() {
                 break;
             }
         }

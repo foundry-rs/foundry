@@ -1,4 +1,6 @@
+use alloy_primitives::{hex, U256};
 use alloy_rlp::{Buf, Decodable, Encodable, Header};
+use eyre::Context;
 use serde_json::Value;
 use std::fmt;
 
@@ -48,11 +50,12 @@ impl Item {
         return match value {
             Value::Null => Ok(Self::Data(vec![])),
             Value::Bool(_) => {
-                eyre::bail!("RLP input should not contain booleans")
+                eyre::bail!("RLP input can not contain booleans")
             }
-            // If a value is passed without quotes we cast it to string
-            Value::Number(n) => Ok(Self::value_to_item(&Value::String(n.to_string()))?),
-            Value::String(s) => Ok(Self::Data(hex::decode(s).expect("Could not decode hex"))),
+            Value::Number(n) => {
+                Ok(Self::Data(n.to_string().parse::<U256>()?.to_be_bytes_trimmed_vec()))
+            }
+            Value::String(s) => Ok(Self::Data(hex::decode(s).wrap_err("Could not decode hex")?)),
             Value::Array(values) => values.iter().map(Self::value_to_item).collect(),
             Value::Object(_) => {
                 eyre::bail!("RLP input can not contain objects")

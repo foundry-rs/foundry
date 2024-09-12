@@ -60,28 +60,37 @@ impl TestOptions {
         let mut inline_invariant = InlineConfig::<InvariantConfig>::default();
         let mut inline_fuzz = InlineConfig::<FuzzConfig>::default();
 
-        for natspec in natspecs {
-            // Perform general validation
-            validate_profiles(&natspec, &profiles)?;
-            FuzzConfig::validate_configs(&natspec)?;
-            InvariantConfig::validate_configs(&natspec)?;
+        // Validate all natspecs
+        for natspec in &natspecs {
+            validate_profiles(natspec, &profiles)?;
+        }
 
-            // Apply in-line configurations for the current profile
-            let configs: Vec<String> = natspec.current_profile_configs().collect();
-            let c: &str = &natspec.contract;
-            let f: &str = &natspec.function;
-            let line: String = natspec.debug_context();
-
-            match base_fuzz.try_merge(&configs) {
-                Ok(Some(conf)) => inline_fuzz.insert(c, f, conf),
-                Ok(None) => { /* No inline config found, do nothing */ }
-                Err(e) => Err(InlineConfigError { line: line.clone(), source: e })?,
+        // Firstly, apply contract-level configurations
+        for natspec in natspecs.iter().filter(|n| n.function.is_none()) {
+            if let Some(fuzz) = base_fuzz.merge(natspec)? {
+                inline_fuzz.insert_contract(&natspec.contract, fuzz);
             }
 
-            match base_invariant.try_merge(&configs) {
-                Ok(Some(conf)) => inline_invariant.insert(c, f, conf),
-                Ok(None) => { /* No inline config found, do nothing */ }
-                Err(e) => Err(InlineConfigError { line: line.clone(), source: e })?,
+            if let Some(invariant) = base_invariant.merge(natspec)? {
+                inline_invariant.insert_contract(&natspec.contract, invariant);
+            }
+        }
+
+        for (natspec, f) in natspecs.iter().filter_map(|n| n.function.as_ref().map(|f| (n, f))) {
+            // Apply in-line configurations for the current profile
+            let c = &natspec.contract;
+
+            // We might already have inserted contract-level configs above, so respect data already
+            // present in inline configs.
+            let base_fuzz = inline_fuzz.get(c, f).unwrap_or(&base_fuzz);
+            let base_invariant = inline_invariant.get(c, f).unwrap_or(&base_invariant);
+
+            if let Some(fuzz) = base_fuzz.merge(natspec)? {
+                inline_fuzz.insert_fn(c, f, fuzz);
+            }
+
+            if let Some(invariant) = base_invariant.merge(natspec)? {
+                inline_invariant.insert_fn(c, f, invariant);
             }
         }
 
@@ -106,6 +115,7 @@ impl TestOptions {
             .unwrap();
         self.fuzzer_with_cases(
             fuzz_config.runs,
+            fuzz_config.max_test_rejects,
             Some(Box::new(FileFailurePersistence::Direct(failure_persist_path.leak()))),
         )
     }
@@ -119,7 +129,7 @@ impl TestOptions {
     /// - `test_fn` is the name of the test function declared inside the test contract.
     pub fn invariant_runner(&self, contract_id: &str, test_fn: &str) -> TestRunner {
         let invariant = self.invariant_config(contract_id, test_fn);
-        self.fuzzer_with_cases(invariant.runs, None)
+        self.fuzzer_with_cases(invariant.runs, invariant.max_assume_rejects, None)
     }
 
     /// Returns a "fuzz" configuration setup. Parameters are used to select tight scoped fuzz
@@ -147,12 +157,13 @@ impl TestOptions {
     pub fn fuzzer_with_cases(
         &self,
         cases: u32,
+        max_global_rejects: u32,
         file_failure_persistence: Option<Box<dyn FailurePersistence>>,
     ) -> TestRunner {
         let config = proptest::test_runner::Config {
             failure_persistence: file_failure_persistence,
             cases,
-            max_global_rejects: self.fuzz.max_test_rejects,
+            max_global_rejects,
             // Disable proptest shrink: for fuzz tests we provide single counterexample,
             // for invariant tests we shrink outside proptest.
             max_shrink_iters: 0,

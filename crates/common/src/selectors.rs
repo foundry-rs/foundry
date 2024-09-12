@@ -4,6 +4,7 @@
 
 use crate::abi::abi_decode_calldata;
 use alloy_json_abi::JsonAbi;
+use eyre::Context;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -39,14 +40,15 @@ pub struct OpenChainClient {
 
 impl OpenChainClient {
     /// Creates a new client with default settings
-    pub fn new() -> reqwest::Result<Self> {
+    pub fn new() -> eyre::Result<Self> {
         let inner = reqwest::Client::builder()
             .default_headers(HeaderMap::from_iter([(
                 HeaderName::from_static("user-agent"),
                 HeaderValue::from_static("forge"),
             )]))
             .timeout(REQ_TIMEOUT)
-            .build()?;
+            .build()
+            .wrap_err("failed to build OpenChain client")?;
         Ok(Self {
             inner,
             spurious_connection: Arc::new(Default::default()),
@@ -61,16 +63,10 @@ impl OpenChainClient {
             .get(url)
             .send()
             .await
-            .map_err(|err| {
-                self.on_reqwest_err(&err);
-                err
-            })?
+            .inspect_err(|err| self.on_reqwest_err(err))?
             .text()
             .await
-            .map_err(|err| {
-                self.on_reqwest_err(&err);
-                err
-            })
+            .inspect_err(|err| self.on_reqwest_err(err))
     }
 
     /// Sends a new post request
@@ -85,16 +81,10 @@ impl OpenChainClient {
             .json(body)
             .send()
             .await
-            .map_err(|err| {
-                self.on_reqwest_err(&err);
-                err
-            })?
+            .inspect_err(|err| self.on_reqwest_err(err))?
             .json()
             .await
-            .map_err(|err| {
-                self.on_reqwest_err(&err);
-                err
-            })
+            .inspect_err(|err| self.on_reqwest_err(err))
     }
 
     fn on_reqwest_err(&self, err: &reqwest::Error) {

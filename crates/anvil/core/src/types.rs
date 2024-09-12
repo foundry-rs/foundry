@@ -1,5 +1,7 @@
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Bytes, B256, U256};
 
+use alloy_rpc_types::TransactionRequest;
+use serde::Deserialize;
 #[cfg(feature = "serde")]
 use serde::Serializer;
 
@@ -25,4 +27,20 @@ impl serde::Serialize for Work {
             (&self.pow_hash, &self.seed_hash, &self.target).serialize(s)
         }
     }
+}
+
+/// Represents the options used in `anvil_reorg`
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReorgOptions {
+    // The depth of the reorg
+    pub depth: u64,
+    // List of transaction requests and blocks pairs to be mined into the new chain
+    pub tx_block_pairs: Vec<(TransactionData, u64)>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum TransactionData {
+    JSON(TransactionRequest),
+    Raw(Bytes),
 }

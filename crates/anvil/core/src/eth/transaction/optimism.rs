@@ -1,10 +1,13 @@
-use alloy_consensus::{SignableTransaction, Signed, Transaction, TxType};
+use alloy_consensus::{SignableTransaction, Signed, Transaction};
 use alloy_primitives::{keccak256, Address, Bytes, ChainId, Signature, TxKind, B256, U256};
 use alloy_rlp::{
     length_of_length, Decodable, Encodable, Error as DecodeError, Header as RlpHeader,
 };
+use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 use std::mem;
+
+pub const DEPOSIT_TX_TYPE_ID: u8 = 0x7E;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DepositTransactionRequest {
@@ -20,13 +23,17 @@ pub struct DepositTransactionRequest {
 
 impl DepositTransactionRequest {
     pub fn hash(&self) -> B256 {
-        B256::from_slice(alloy_primitives::keccak256(alloy_rlp::encode(self)).as_slice())
+        let mut encoded = Vec::new();
+        encoded.put_u8(DEPOSIT_TX_TYPE_ID);
+        self.encode(&mut encoded);
+
+        B256::from_slice(alloy_primitives::keccak256(encoded).as_slice())
     }
 
     /// Encodes only the transaction's fields into the desired buffer, without a RLP header.
     pub(crate) fn encode_fields(&self, out: &mut dyn alloy_rlp::BufMut) {
-        self.from.encode(out);
         self.source_hash.encode(out);
+        self.from.encode(out);
         self.kind.encode(out);
         self.mint.encode(out);
         self.value.encode(out);
@@ -103,8 +110,8 @@ impl DepositTransactionRequest {
     }
 
     /// Get transaction type
-    pub(crate) const fn tx_type(&self) -> TxType {
-        TxType::Eip1559
+    pub(crate) const fn tx_type(&self) -> u8 {
+        DEPOSIT_TX_TYPE_ID
     }
 
     /// Calculates a heuristic for the in-memory size of the [DepositTransaction] transaction.
@@ -121,7 +128,7 @@ impl DepositTransactionRequest {
 
     /// Encodes the legacy transaction in RLP for signing.
     pub(crate) fn encode_for_signing(&self, out: &mut dyn alloy_rlp::BufMut) {
-        out.put_u8(self.tx_type() as u8);
+        out.put_u8(self.tx_type());
         alloy_rlp::Header { list: true, payload_length: self.fields_len() }.encode(out);
         self.encode_fields(out);
     }
@@ -178,6 +185,44 @@ impl Transaction for DepositTransactionRequest {
     /// Get `gas_price`.
     fn gas_price(&self) -> Option<u128> {
         None
+    }
+
+    fn ty(&self) -> u8 {
+        0x7E
+    }
+
+    // Below fields are not found in a `DepositTransactionRequest`
+
+    fn access_list(&self) -> Option<&alloy_rpc_types::AccessList> {
+        None
+    }
+
+    fn authorization_list(&self) -> Option<&[revm::primitives::SignedAuthorization]> {
+        None
+    }
+
+    fn blob_versioned_hashes(&self) -> Option<&[B256]> {
+        None
+    }
+
+    fn effective_tip_per_gas(&self, _base_fee: u64) -> Option<u128> {
+        None
+    }
+
+    fn max_fee_per_blob_gas(&self) -> Option<u128> {
+        None
+    }
+
+    fn max_fee_per_gas(&self) -> u128 {
+        0
+    }
+
+    fn max_priority_fee_per_gas(&self) -> Option<u128> {
+        None
+    }
+
+    fn priority_fee_or_price(&self) -> u128 {
+        0
     }
 }
 
@@ -247,7 +292,9 @@ impl DepositTransaction {
     }
 
     pub fn hash(&self) -> B256 {
-        B256::from_slice(alloy_primitives::keccak256(alloy_rlp::encode(self)).as_slice())
+        let mut encoded = Vec::new();
+        self.encode_2718(&mut encoded);
+        B256::from_slice(alloy_primitives::keccak256(encoded).as_slice())
     }
 
     // /// Recovers the Ethereum address which was used to sign the transaction.
@@ -259,9 +306,13 @@ impl DepositTransaction {
         None
     }
 
+    pub fn encode_2718(&self, out: &mut dyn alloy_rlp::BufMut) {
+        out.put_u8(DEPOSIT_TX_TYPE_ID);
+        self.encode(out);
+    }
+
     /// Encodes only the transaction's fields into the desired buffer, without a RLP header.
     pub(crate) fn encode_fields(&self, out: &mut dyn alloy_rlp::BufMut) {
-        self.nonce.encode(out);
         self.source_hash.encode(out);
         self.from.encode(out);
         self.kind.encode(out);
@@ -284,6 +335,20 @@ impl DepositTransaction {
         len += self.is_system_tx.length();
         len += self.input.length();
         len
+    }
+
+    pub fn decode_2718(buf: &mut &[u8]) -> Result<Self, DecodeError> {
+        use bytes::Buf;
+
+        let tx_type = *buf.first().ok_or(alloy_rlp::Error::Custom("empty slice"))?;
+
+        if tx_type != DEPOSIT_TX_TYPE_ID {
+            return Err(alloy_rlp::Error::Custom("invalid tx type: expected deposit tx type"));
+        }
+
+        // Skip the tx type byte
+        buf.advance(1);
+        Self::decode(buf)
     }
 
     /// Decodes the inner fields from RLP bytes
@@ -325,11 +390,76 @@ impl Decodable for DepositTransaction {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         let header = RlpHeader::decode(buf)?;
         let remaining_len = buf.len();
-
         if header.payload_length > remaining_len {
             return Err(alloy_rlp::Error::InputTooShort);
         }
 
         Self::decode_inner(buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_decode() {
+        let tx = DepositTransaction {
+            nonce: 0,
+            source_hash: B256::default(),
+            from: Address::default(),
+            kind: TxKind::Call(Address::default()),
+            mint: U256::from(100),
+            value: U256::from(100),
+            gas_limit: 50000,
+            is_system_tx: false,
+            input: Bytes::default(),
+        };
+
+        let encoded_tx: Vec<u8> = alloy_rlp::encode(&tx);
+
+        let decoded_tx = DepositTransaction::decode(&mut encoded_tx.as_slice()).unwrap();
+
+        assert_eq!(tx, decoded_tx);
+    }
+    #[test]
+    fn test_encode_decode_2718() {
+        let tx = DepositTransaction {
+            nonce: 0,
+            source_hash: B256::default(),
+            from: Address::default(),
+            kind: TxKind::Call(Address::default()),
+            mint: U256::from(100),
+            value: U256::from(100),
+            gas_limit: 50000,
+            is_system_tx: false,
+            input: Bytes::default(),
+        };
+
+        let mut encoded_tx: Vec<u8> = Vec::new();
+        tx.encode_2718(&mut encoded_tx);
+
+        let decoded_tx = DepositTransaction::decode_2718(&mut encoded_tx.as_slice()).unwrap();
+
+        assert_eq!(tx, decoded_tx);
+    }
+
+    #[test]
+    fn test_tx_request_hash_equals_tx_hash() {
+        let tx = DepositTransaction {
+            nonce: 0,
+            source_hash: B256::default(),
+            from: Address::default(),
+            kind: TxKind::Call(Address::default()),
+            mint: U256::from(100),
+            value: U256::from(100),
+            gas_limit: 50000,
+            is_system_tx: false,
+            input: Bytes::default(),
+        };
+
+        let tx_request = DepositTransactionRequest::from(tx.clone());
+
+        assert_eq!(tx.hash(), tx_request.hash());
     }
 }

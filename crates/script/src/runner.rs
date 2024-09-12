@@ -75,10 +75,11 @@ impl ScriptRunner {
                     rpc: self.evm_opts.fork_url.clone(),
                     transaction: TransactionRequest {
                         from: Some(self.evm_opts.sender),
-                        input: Some(code.clone()).into(),
+                        input: code.clone().into(),
                         nonce: Some(sender_nonce + library_transactions.len() as u64),
                         ..Default::default()
-                    },
+                    }
+                    .into(),
                 })
             }),
             ScriptPredeployLibraries::Create2(libraries, salt) => {
@@ -108,11 +109,12 @@ impl ScriptRunner {
                         rpc: self.evm_opts.fork_url.clone(),
                         transaction: TransactionRequest {
                             from: Some(self.evm_opts.sender),
-                            input: Some(calldata.into()).into(),
+                            input: calldata.into(),
                             nonce: Some(sender_nonce + library_transactions.len() as u64),
                             to: Some(TxKind::Call(DEFAULT_CREATE2_DEPLOYER)),
                             ..Default::default()
-                        },
+                        }
+                        .into(),
                     });
                 }
 
@@ -134,8 +136,7 @@ impl ScriptRunner {
         // Deploy an instance of the contract
         let DeployResult {
             address,
-            raw:
-                RawCallResult { mut logs, traces: constructor_traces, debug: constructor_debug, .. },
+            raw: RawCallResult { mut logs, traces: constructor_traces, .. },
         } = self
             .executor
             .deploy(CALLER, code, U256::ZERO, None)
@@ -144,15 +145,9 @@ impl ScriptRunner {
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
 
         // Optionally call the `setUp` function
-        let (success, gas_used, labeled_addresses, transactions, debug) = if !setup {
+        let (success, gas_used, labeled_addresses, transactions) = if !setup {
             self.executor.backend_mut().set_test_contract(address);
-            (
-                true,
-                0,
-                Default::default(),
-                Some(library_transactions),
-                vec![constructor_debug].into_iter().collect(),
-            )
+            (true, 0, Default::default(), Some(library_transactions))
         } else {
             match self.executor.setup(Some(self.evm_opts.sender), address, None) {
                 Ok(RawCallResult {
@@ -160,7 +155,6 @@ impl ScriptRunner {
                     traces: setup_traces,
                     labels,
                     logs: setup_logs,
-                    debug,
                     gas_used,
                     transactions: setup_transactions,
                     ..
@@ -172,13 +166,7 @@ impl ScriptRunner {
                         library_transactions.extend(txs);
                     }
 
-                    (
-                        !reverted,
-                        gas_used,
-                        labels,
-                        Some(library_transactions),
-                        vec![constructor_debug, debug].into_iter().collect(),
-                    )
+                    (!reverted, gas_used, labels, Some(library_transactions))
                 }
                 Err(EvmError::Execution(err)) => {
                     let RawCallResult {
@@ -186,7 +174,6 @@ impl ScriptRunner {
                         traces: setup_traces,
                         labels,
                         logs: setup_logs,
-                        debug,
                         gas_used,
                         transactions,
                         ..
@@ -198,13 +185,7 @@ impl ScriptRunner {
                         library_transactions.extend(txs);
                     }
 
-                    (
-                        !reverted,
-                        gas_used,
-                        labels,
-                        Some(library_transactions),
-                        vec![constructor_debug, debug].into_iter().collect(),
-                    )
+                    (!reverted, gas_used, labels, Some(library_transactions))
                 }
                 Err(e) => return Err(e.into()),
             }
@@ -220,7 +201,6 @@ impl ScriptRunner {
                 transactions,
                 logs,
                 traces,
-                debug,
                 address: None,
                 ..Default::default()
             },
@@ -249,7 +229,7 @@ impl ScriptRunner {
                 value.unwrap_or(U256::ZERO),
                 None,
             );
-            let (address, RawCallResult { gas_used, logs, traces, debug, .. }) = match res {
+            let (address, RawCallResult { gas_used, logs, traces, .. }) = match res {
                 Ok(DeployResult { address, raw }) => (address, raw),
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { raw, reason } = *err;
@@ -268,7 +248,6 @@ impl ScriptRunner {
                 traces: traces
                     .map(|traces| vec![(TraceKind::Execution, traces)])
                     .unwrap_or_default(),
-                debug: debug.map(|debug| vec![debug]),
                 address: Some(address),
                 ..Default::default()
             })
@@ -304,7 +283,7 @@ impl ScriptRunner {
             res = self.executor.transact_raw(from, to, calldata, value)?;
         }
 
-        let RawCallResult { result, reverted, logs, traces, labels, debug, transactions, .. } = res;
+        let RawCallResult { result, reverted, logs, traces, labels, transactions, .. } = res;
         let breakpoints = res.cheatcodes.map(|cheats| cheats.breakpoints).unwrap_or_default();
 
         Ok(ScriptResult {
@@ -319,7 +298,6 @@ impl ScriptRunner {
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),
-            debug: debug.map(|d| vec![d]),
             labeled_addresses: labels,
             transactions,
             address: None,

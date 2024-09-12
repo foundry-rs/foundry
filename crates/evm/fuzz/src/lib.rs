@@ -10,9 +10,9 @@ extern crate tracing;
 
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_primitives::{Address, Bytes, Log};
-use foundry_common::{calc, contracts::ContractsByAddress};
+use foundry_common::{calc, contracts::ContractsByAddress, evm::Breakpoints};
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_traces::CallTraceArena;
+use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, sync::Arc};
@@ -52,7 +52,7 @@ pub struct BaseCounterExample {
     pub args: Option<String>,
     /// Traces
     #[serde(skip)]
-    pub traces: Option<CallTraceArena>,
+    pub traces: Option<SparsedTraceArena>,
 }
 
 impl BaseCounterExample {
@@ -62,7 +62,7 @@ impl BaseCounterExample {
         addr: Address,
         bytes: &Bytes,
         contracts: &ContractsByAddress,
-        traces: Option<CallTraceArena>,
+        traces: Option<SparsedTraceArena>,
     ) -> Self {
         if let Some((name, abi)) = &contracts.get(&addr) {
             if let Some(func) = abi.functions().find(|f| f.selector() == bytes[..4]) {
@@ -98,7 +98,7 @@ impl BaseCounterExample {
     pub fn from_fuzz_call(
         bytes: Bytes,
         args: Vec<DynSolValue>,
-        traces: Option<CallTraceArena>,
+        traces: Option<SparsedTraceArena>,
     ) -> Self {
         Self {
             sender: None,
@@ -163,9 +163,6 @@ pub struct FuzzTestResult {
     /// be printed to the user.
     pub logs: Vec<Log>,
 
-    /// The decoded DSTest logging events and Hardhat's `console.log` from [logs](Self::logs).
-    pub decoded_logs: Vec<String>,
-
     /// Labeled addresses
     pub labeled_addresses: HashMap<Address, String>,
 
@@ -173,7 +170,7 @@ pub struct FuzzTestResult {
     ///
     /// **Note** We only store a single trace of a successful fuzz call, otherwise we would get
     /// `num(fuzz_cases)` traces, one for each run, which is neither helpful nor performant.
-    pub traces: Option<CallTraceArena>,
+    pub traces: Option<SparsedTraceArena>,
 
     /// Additional traces used for gas report construction.
     /// Those traces should not be displayed.
@@ -181,6 +178,9 @@ pub struct FuzzTestResult {
 
     /// Raw coverage info
     pub coverage: Option<HitMaps>,
+
+    /// Breakpoints for debugger. Correspond to the same fuzz case as `traces`.
+    pub breakpoints: Option<Breakpoints>,
 }
 
 impl FuzzTestResult {
@@ -299,6 +299,7 @@ impl FuzzedCases {
 }
 
 /// Fixtures to be used for fuzz tests.
+///
 /// The key represents name of the fuzzed parameter, value holds possible fuzzed values.
 /// For example, for a fixture function declared as
 /// `function fixture_sender() external returns (address[] memory senders)`

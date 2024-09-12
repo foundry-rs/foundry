@@ -1,14 +1,16 @@
 //! Implementations of [`Filesystem`](spec::Group::Filesystem) cheatcodes.
 
 use super::string::parse;
-use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::{hex, Bytes, U256};
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
+use foundry_evm_core::backend::DatabaseExt;
+use revm::interpreter::CreateInputs;
 use semver::Version;
 use std::{
     collections::hash_map::Entry,
@@ -262,6 +264,59 @@ impl Cheatcode for getDeployedCodeCall {
     }
 }
 
+impl Cheatcode for deployCode_0Call {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
+        let Self { artifactPath: path } = self;
+        let bytecode = get_artifact_code(ccx.state, path, false)?;
+        let address = executor
+            .exec_create(
+                CreateInputs {
+                    caller: ccx.caller,
+                    scheme: revm::primitives::CreateScheme::Create,
+                    value: U256::ZERO,
+                    init_code: bytecode,
+                    gas_limit: ccx.gas_limit,
+                },
+                ccx,
+            )?
+            .address
+            .ok_or_else(|| fmt_err!("contract creation failed"))?;
+
+        Ok(address.abi_encode())
+    }
+}
+
+impl Cheatcode for deployCode_1Call {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
+        let Self { artifactPath: path, constructorArgs } = self;
+        let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+        bytecode.extend_from_slice(constructorArgs);
+        let address = executor
+            .exec_create(
+                CreateInputs {
+                    caller: ccx.caller,
+                    scheme: revm::primitives::CreateScheme::Create,
+                    value: U256::ZERO,
+                    init_code: bytecode.into(),
+                    gas_limit: ccx.gas_limit,
+                },
+                ccx,
+            )?
+            .address
+            .ok_or_else(|| fmt_err!("contract creation failed"))?;
+
+        Ok(address.abi_encode())
+    }
+}
+
 /// Returns the path to the json artifact depending on the input
 ///
 /// Can parse following input formats:
@@ -299,7 +354,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
         }
 
         let version = if let Some(version) = version {
-            Some(Version::parse(version).map_err(|_| fmt_err!("Error parsing version"))?)
+            Some(Version::parse(version).map_err(|e| fmt_err!("failed parsing version: {e}"))?)
         } else {
             None
         };
@@ -334,10 +389,10 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                 })
                 .collect::<Vec<_>>();
 
-            let artifact = match filtered.len() {
-                0 => Err(fmt_err!("No matching artifact found")),
-                1 => Ok(filtered[0]),
-                _ => {
+            let artifact = match &filtered[..] {
+                [] => Err(fmt_err!("no matching artifact found")),
+                [artifact] => Ok(artifact),
+                filtered => {
                     // If we know the current script/test contract solc version, try to filter by it
                     state
                         .config
@@ -345,13 +400,12 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                         .as_ref()
                         .and_then(|version| {
                             let filtered = filtered
-                                .into_iter()
+                                .iter()
                                 .filter(|(id, _)| id.version == *version)
                                 .collect::<Vec<_>>();
-
-                            (filtered.len() == 1).then_some(filtered[0])
+                            (filtered.len() == 1).then(|| filtered[0])
                         })
-                        .ok_or_else(|| fmt_err!("Multiple matching artifacts found"))
+                        .ok_or_else(|| fmt_err!("multiple matching artifacts found"))
                 }
             }?;
 
@@ -362,7 +416,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
             };
 
             return maybe_bytecode
-                .ok_or_else(|| fmt_err!("No bytecode for contract. Is it abstract or unlinked?"));
+                .ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"));
         } else {
             let path_in_artifacts =
                 match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
@@ -387,7 +441,7 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
     let data = fs::read_to_string(path)?;
     let artifact = serde_json::from_str::<ContractObject>(&data)?;
     let maybe_bytecode = if deployed { artifact.deployed_bytecode } else { artifact.bytecode };
-    maybe_bytecode.ok_or_else(|| fmt_err!("No bytecode for contract. Is it abstract or unlinked?"))
+    maybe_bytecode.ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"))
 }
 
 impl Cheatcode for ffiCall {
@@ -566,7 +620,7 @@ mod tests {
             root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
             ..Default::default()
         };
-        Cheatcodes { config: Arc::new(config), ..Default::default() }
+        Cheatcodes::new(Arc::new(config))
     }
 
     #[test]

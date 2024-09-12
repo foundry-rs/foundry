@@ -14,12 +14,20 @@ exclude.workspace = true
 [lints]
 workspace = true
 
+[build-dependencies]
+vergen = { workspace = true, default-features = false, features = [
+    "build",
+    "git",
+    "gitcl",
+] }
+
 [dependencies]
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm-core.workspace = true
+foundry-evm-traces.workspace = true
 foundry-wallets.workspace = true
 
 alloy-dyn-abi.workspace = true
@@ -28,28 +36,35 @@ alloy-primitives.workspace = true
 alloy-genesis.workspace = true
 alloy-sol-types.workspace = true
 alloy-provider.workspace = true
-alloy-rpc-types.workspace = true
+alloy-rpc-types = { workspace = true, features = ["k256"] }
 alloy-signer.workspace = true
 alloy-signer-local = { workspace = true, features = [
     "mnemonic-all-languages",
     "keystore",
 ] }
 parking_lot.workspace = true
+alloy-consensus = { workspace = true, features = ["k256"] }
+alloy-rlp.workspace = true
 
+base64.workspace = true
+chrono.workspace = true
+dialoguer = "0.11.0"
 eyre.workspace = true
-hex.workspace = true
 itertools.workspace = true
 jsonpath_lib.workspace = true
+k256.workspace = true
+memchr = "2.7"
+p256 = "0.13.2"
+ecdsa = "0.16"
+rand = "0.8"
 revm.workspace = true
+rustc-hash.workspace = true
+semver.workspace = true
 serde_json.workspace = true
-base64.workspace = true
+thiserror.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }
 tracing.workspace = true
-k256.workspace = true
 walkdir.workspace = true
-p256 = "0.13.2"
-thiserror.workspace = true
-semver.workspace = true
-rustc-hash.workspace = true
-dialoguer = "0.11.0"
-rand = "0.8"
+
+[dev-dependencies]
+proptest.workspace = true

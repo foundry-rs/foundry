@@ -28,6 +28,7 @@ impl From<AnyTransactionReceipt> for TxStatus {
 pub async fn check_tx_status(
     provider: &RetryProvider,
     hash: TxHash,
+    timeout: u64,
 ) -> (TxHash, Result<TxStatus, eyre::Report>) {
     // We use the inner future so that we can use ? operator in the future, but
     // still neatly return the tuple
@@ -38,13 +39,24 @@ pub async fn check_tx_status(
             return Ok(receipt.into());
         }
 
-        // If the tx is present in the mempool, run the pending tx future, and
-        // assume the next drop is really really real
-        Ok(PendingTransactionBuilder::new(provider, hash)
-            .with_timeout(Some(Duration::from_secs(120)))
-            .get_receipt()
-            .await
-            .map_or(TxStatus::Dropped, |r| r.into()))
+        loop {
+            if let Ok(receipt) = PendingTransactionBuilder::new(provider, hash)
+                .with_timeout(Some(Duration::from_secs(timeout)))
+                .get_receipt()
+                .await
+            {
+                return Ok(receipt.into())
+            }
+
+            if provider.get_transaction_by_hash(hash).await?.is_some() {
+                trace!("tx is still known to the node, waiting for receipt");
+            } else {
+                trace!("eth_getTransactionByHash returned null, assuming dropped");
+                break
+            }
+        }
+
+        Ok(TxStatus::Dropped)
     }
     .await;
 

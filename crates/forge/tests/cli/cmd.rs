@@ -7,21 +7,34 @@ use foundry_config::{
 };
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
-    rpc::next_etherscan_api_key,
+    rpc::next_mainnet_etherscan_api_key,
     util::{pretty_err, read_string, OutputExt, TestCommand},
 };
 use semver::Version;
 use std::{
-    env, fs,
-    path::{Path, PathBuf},
+    fs,
+    path::Path,
     process::{Command, Stdio},
     str::FromStr,
 };
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_prj, cmd| {
-    cmd.arg("--help");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("--help").assert_success().stdout_eq(str![[r#"
+Build, test, fuzz, debug and deploy Solidity contracts
+
+Usage: forge[..] <COMMAND>
+
+Commands:
+...
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html
+
+"#]]);
 });
 
 // checks that `clean` can be invoked even if out and cache don't exist
@@ -51,10 +64,9 @@ forgetest!(
         fs::write(block2_file, "{}").unwrap();
         fs::create_dir_all(etherscan_cache_dir).unwrap();
 
-        cmd.args(["cache", "ls"]);
-        let output_string = String::from_utf8_lossy(&cmd.output().stdout).to_string();
-        let output_lines = output_string.split('\n').collect::<Vec<_>>();
-        println!("{output_string}");
+        let output = cmd.args(["cache", "ls"]).assert_success().get_output().stdout_lossy();
+        let output_lines = output.split('\n').collect::<Vec<_>>();
+        println!("{output}");
 
         assert_eq!(output_lines.len(), 6);
         assert!(output_lines[0].starts_with("-️ mainnet ("));
@@ -212,8 +224,14 @@ forgetest!(can_init_repo_with_config, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.args(["init", "--force"]).arg(prj.root());
-    cmd.assert_non_empty_stdout();
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -233,11 +251,19 @@ forgetest!(can_detect_dirty_git_status_on_init, |prj, cmd| {
     fs::create_dir_all(&nested).unwrap();
 
     cmd.current_dir(&nested);
-    cmd.arg("init");
-    cmd.unchecked_output().stderr_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_detect_dirty_git_status_on_init.stderr"),
-    );
+    cmd.arg("init").assert_failure().stderr_eq(str![[r#"
+Error: 
+The target directory is a part of or on its own an already initialized git repository,
+and it requires clean working and staging areas, including no untracked files.
+
+Check the current git repository's status with `git status`.
+Then, you can track files with `git add ...` and then commit them with `git commit`,
+ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag.
+
+If none of the previous steps worked, please open an issue at:
+https://github.com/foundry-rs/foundry/issues/new/choose
+
+"#]]);
 
     // ensure nothing was emitted, dir is empty
     assert!(!nested.read_dir().map(|mut i| i.next().is_some()).unwrap_or_default());
@@ -247,8 +273,13 @@ forgetest!(can_detect_dirty_git_status_on_init, |prj, cmd| {
 forgetest!(can_init_no_git, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root()).arg("--no-git");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("init").arg(prj.root()).arg("--no-git").assert_success().stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std
+    Initialized forge project
+
+"#]]);
     prj.assert_config_exists();
 
     assert!(!prj.root().join(".git").exists());
@@ -260,8 +291,7 @@ forgetest!(can_init_no_git, |prj, cmd| {
 forgetest!(can_init_quiet, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root()).arg("-q");
-    let _ = cmd.output();
+    cmd.arg("init").arg(prj.root()).arg("-q").assert_empty_stdout();
 });
 
 // `forge init foobar` works with dir argument
@@ -275,10 +305,14 @@ forgetest!(can_init_with_dir, |prj, cmd| {
 
 // `forge init foobar --template [template]` works with dir argument
 forgetest!(can_init_with_dir_and_template, |prj, cmd| {
-    cmd.args(["init", "foobar", "--template", "foundry-rs/forge-template"]);
+    cmd.args(["init", "foobar", "--template", "foundry-rs/forge-template"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Initializing [..] from https://github.com/foundry-rs/forge-template...
+    Initialized forge project
 
-    cmd.assert_success();
-    cmd.assert_non_empty_stdout();
+"#]]);
+
     assert!(prj.root().join("foobar/.git").exists());
     assert!(prj.root().join("foobar/foundry.toml").exists());
     assert!(prj.root().join("foobar/lib/forge-std").exists());
@@ -297,10 +331,14 @@ forgetest!(can_init_with_dir_and_template_and_branch, |prj, cmd| {
         "foundry-rs/forge-template",
         "--branch",
         "test/deployments",
-    ]);
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Initializing [..] from https://github.com/foundry-rs/forge-template...
+    Initialized forge project
 
-    cmd.assert_success();
-    cmd.assert_non_empty_stdout();
+"#]]);
+
     assert!(prj.root().join("foobar/.dapprc").exists());
     assert!(prj.root().join("foobar/lib/ds-test").exists());
     // assert that gitmodules were correctly initialized
@@ -312,11 +350,22 @@ forgetest!(can_init_with_dir_and_template_and_branch, |prj, cmd| {
 // `forge init --force` works on non-empty dirs
 forgetest!(can_init_non_empty, |prj, cmd| {
     prj.create_file("README.md", "non-empty dir");
-    cmd.arg("init").arg(prj.root());
-    cmd.assert_err();
+    cmd.arg("init").arg(prj.root()).assert_failure().stderr_eq(str![[r#"
+Error: 
+Cannot run `init` on a non-empty directory.
+Run with the `--force` flag to initialize regardless.
 
-    cmd.arg("--force");
-    cmd.assert_non_empty_stdout();
+"#]]);
+
+    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
+
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join("lib/forge-std").exists());
 });
@@ -336,11 +385,21 @@ forgetest!(can_init_in_empty_repo, |prj, cmd| {
     assert!(status.success());
     assert!(root.join(".git").exists());
 
-    cmd.arg("init").arg(root);
-    cmd.assert_err();
+    cmd.arg("init").arg(root).assert_failure().stderr_eq(str![[r#"
+Error: 
+Cannot run `init` on a non-empty directory.
+Run with the `--force` flag to initialize regardless.
 
-    cmd.arg("--force");
-    cmd.assert_non_empty_stdout();
+"#]]);
+
+    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
     assert!(root.join("lib/forge-std").exists());
 });
 
@@ -362,11 +421,21 @@ forgetest!(can_init_in_non_empty_repo, |prj, cmd| {
     prj.create_file("README.md", "non-empty dir");
     prj.create_file(".gitignore", "not foundry .gitignore");
 
-    cmd.arg("init").arg(root);
-    cmd.assert_err();
+    cmd.arg("init").arg(root).assert_failure().stderr_eq(str![[r#"
+Error: 
+Cannot run `init` on a non-empty directory.
+Run with the `--force` flag to initialize regardless.
 
-    cmd.arg("--force");
-    cmd.assert_non_empty_stdout();
+"#]]);
+
+    cmd.arg("--force").assert_success().stdout_eq(str![[r#"
+Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
     assert!(root.join("lib/forge-std").exists());
 
     // not overwritten
@@ -379,8 +448,13 @@ forgetest!(can_init_in_non_empty_repo, |prj, cmd| {
 forgetest!(can_init_vscode, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root()).arg("--vscode");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("init").arg(prj.root()).arg("--vscode").assert_success().stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+
+"#]]);
 
     let settings = prj.root().join(".vscode/settings.json");
     assert!(settings.is_file());
@@ -388,7 +462,7 @@ forgetest!(can_init_vscode, |prj, cmd| {
     assert_eq!(
         settings,
         serde_json::json!({
-             "solidity.packageDefaultDependenciesContractsDirectory": "src",
+            "solidity.packageDefaultDependenciesContractsDirectory": "src",
             "solidity.packageDefaultDependenciesDirectory": "lib"
         })
     );
@@ -402,8 +476,16 @@ forgetest!(can_init_vscode, |prj, cmd| {
 // checks that forge can init with template
 forgetest!(can_init_template, |prj, cmd| {
     prj.wipe();
-    cmd.args(["init", "--template", "foundry-rs/forge-template"]).arg(prj.root());
-    cmd.assert_non_empty_stdout();
+
+    cmd.args(["init", "--template", "foundry-rs/forge-template"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
+Initializing [..] from https://github.com/foundry-rs/forge-template...
+    Initialized forge project
+
+"#]]);
+
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join("foundry.toml").exists());
     assert!(prj.root().join("lib/forge-std").exists());
@@ -417,8 +499,14 @@ forgetest!(can_init_template, |prj, cmd| {
 forgetest!(can_init_template_with_branch, |prj, cmd| {
     prj.wipe();
     cmd.args(["init", "--template", "foundry-rs/forge-template", "--branch", "test/deployments"])
-        .arg(prj.root());
-    cmd.assert_non_empty_stdout();
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
+Initializing [..] from https://github.com/foundry-rs/forge-template...
+    Initialized forge project
+
+"#]]);
+
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join(".dapprc").exists());
     assert!(prj.root().join("lib/ds-test").exists());
@@ -431,8 +519,13 @@ forgetest!(can_init_template_with_branch, |prj, cmd| {
 // checks that init fails when the provided template doesn't exist
 forgetest!(fail_init_nonexistent_template, |prj, cmd| {
     prj.wipe();
-    cmd.args(["init", "--template", "a"]).arg(prj.root());
-    cmd.assert_non_empty_stderr();
+    cmd.args(["init", "--template", "a"]).arg(prj.root()).assert_failure().stderr_eq(str![[r#"
+remote: Not Found
+fatal: repository 'https://github.com/a/' not found
+Error: 
+git fetch exited with code 128
+
+"#]]);
 });
 
 // checks that clone works
@@ -445,11 +538,23 @@ forgetest!(can_clone, |prj, cmd| {
     cmd.args([
         "clone",
         "--etherscan-api-key",
-        next_etherscan_api_key().as_str(),
+        next_mainnet_etherscan_api_key().as_str(),
         "0x044b75f554b886A065b9567891e45c79542d7357",
     ])
-    .arg(prj.root());
-    cmd.assert_non_empty_stdout();
+    .arg(prj.root())
+    .assert_success()
+    .stdout_eq(str![[r#"
+Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -462,12 +567,12 @@ forgetest!(can_clone_quiet, |prj, cmd| {
     cmd.args([
         "clone",
         "--etherscan-api-key",
-        next_etherscan_api_key().as_str(),
+        next_mainnet_etherscan_api_key().as_str(),
         "--quiet",
         "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec",
     ])
-    .arg(prj.root());
-    cmd.assert_empty_stdout();
+    .arg(prj.root())
+    .assert_empty_stdout();
 });
 
 // checks that clone works with --no-remappings-txt
@@ -480,12 +585,24 @@ forgetest!(can_clone_no_remappings_txt, |prj, cmd| {
     cmd.args([
         "clone",
         "--etherscan-api-key",
-        next_etherscan_api_key().as_str(),
+        next_mainnet_etherscan_api_key().as_str(),
         "--no-remappings-txt",
         "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
     ])
-    .arg(prj.root());
-    cmd.assert_non_empty_stdout();
+    .arg(prj.root())
+    .assert_success()
+    .stdout_eq(str![[r#"
+Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+    Initialized forge project
+Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -498,15 +615,33 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.args([
-        "clone",
-        "--etherscan-api-key",
-        next_etherscan_api_key().as_str(),
-        "--keep-directory-structure",
-        "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
-    ])
-    .arg(prj.root());
-    cmd.assert_non_empty_stdout();
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "clone",
+            "--etherscan-api-key",
+            next_mainnet_etherscan_api_key().as_str(),
+            "--keep-directory-structure",
+            "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
+        ])
+        .arg(prj.root())
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    if output.contains("502 Bad Gateway") {
+        // etherscan nginx proxy issue, skip this test:
+        //
+        // stdout:
+        // Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from
+        // Etherscan... 2024-07-05T11:40:11.801765Z ERROR etherscan: Failed to deserialize
+        // response: expected value at line 1 column 1 res="<html>\r\n<head><title>502 Bad
+        // Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad
+        // Gateway</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
+
+        eprintln!("Skipping test due to 502 Bad Gateway");
+        return;
+    }
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -534,15 +669,18 @@ forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj, cmd| {
 forgetest_init!(can_clean_config, |prj, cmd| {
     let config = Config { out: "custom-out".into(), ..Default::default() };
     prj.write_config(config);
-    cmd.arg("build");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     // default test contract is written in custom out directory
     let artifact = prj.root().join(format!("custom-out/{TEMPLATE_TEST_CONTRACT_ARTIFACT_JSON}"));
     assert!(artifact.exists());
 
-    cmd.forge_fuse().arg("clean");
-    cmd.output();
+    cmd.forge_fuse().arg("clean").assert_empty_stdout();
     assert!(!artifact.exists());
 });
 
@@ -563,38 +701,57 @@ forgetest_init!(can_clean_test_cache, |prj, cmd| {
     assert!(fuzz_cache_dir.exists());
     assert!(invariant_cache_dir.exists());
 
-    cmd.forge_fuse().arg("clean");
-    cmd.output();
+    cmd.forge_fuse().arg("clean").assert_empty_stdout();
     assert!(!fuzz_cache_dir.exists());
     assert!(!invariant_cache_dir.exists());
 });
 
 // checks that extra output works
 forgetest_init!(can_emit_extra_output, |prj, cmd| {
-    cmd.args(["build", "--extra-output", "metadata"]);
-    cmd.assert_non_empty_stdout();
+    prj.clear();
+
+    cmd.args(["build", "--extra-output", "metadata"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
-        foundry_compilers::utils::read_json_file(artifact_path).unwrap();
+        foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
 
-    cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
-    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse()
+        .args(["build", "--extra-output-files", "metadata", "--force"])
+        .root_arg()
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
-    let _artifact: Metadata = foundry_compilers::utils::read_json_file(metadata_path).unwrap();
+    let _artifact: Metadata = foundry_compilers::utils::read_json_file(&metadata_path).unwrap();
 });
 
 // checks that extra output works
 forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
-    cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
-    cmd.assert_non_empty_stdout();
+    cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
-        foundry_compilers::utils::read_json_file(artifact_path).unwrap();
+        foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
     assert!(artifact.ir.is_some());
     assert!(artifact.ir_optimized.is_some());
@@ -608,12 +765,18 @@ forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
             "evm.bytecode.sourceMap",
             "--force",
         ])
-        .root_arg();
-    cmd.assert_non_empty_stdout();
+        .root_arg()
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
-    let _artifact: Metadata = foundry_compilers::utils::read_json_file(metadata_path).unwrap();
+    let _artifact: Metadata = foundry_compilers::utils::read_json_file(&metadata_path).unwrap();
 
     let iropt = prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.iropt"));
     std::fs::read_to_string(iropt).unwrap();
@@ -636,10 +799,30 @@ contract Greeter {
     )
     .unwrap();
 
-    cmd.arg("build");
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (5667): Unused function parameter. Remove or comment out the variable name to silence this warning.
+ [FILE]:5:18:
+  |
+5 |     function foo(uint256 a) public {
+  |                  ^^^^^^^^^
 
-    let output = cmd.stdout_lossy();
-    assert!(output.contains("Warning"), "{output}");
+Warning (2072): Unused local variable.
+ [FILE]:6:9:
+  |
+6 |         uint256 x = 1;
+  |         ^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:5:5:
+  |
+5 |     function foo(uint256 a) public {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
+
+
+"#]]);
 });
 
 // Tests that direct import paths are handled correctly
@@ -677,13 +860,12 @@ library FooLib {
     )
     .unwrap();
 
-    cmd.arg("build");
-
-    assert!(cmd.stdout_lossy().ends_with(
-        "
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-"
-    ));
+
+"#]]);
 });
 
 // tests that the `inspect` command works correctly
@@ -703,17 +885,18 @@ contract Foo {
         )
         .unwrap();
 
-    let check_output = |output: String| {
-        let output = output.trim();
-        assert!(output.starts_with("0x") && hex::decode(output).is_ok(), "{output}");
-    };
+    cmd.arg("inspect").arg(contract_name).arg("bytecode").assert_success().stdout_eq(str![[r#"
+0x60806040[..]
 
-    cmd.arg("inspect").arg(contract_name).arg("bytecode");
-    check_output(cmd.stdout_lossy());
+"#]]);
 
     let info = format!("src/{}:{}", path.file_name().unwrap().to_string_lossy(), contract_name);
-    cmd.forge_fuse().arg("inspect").arg(info).arg("bytecode");
-    check_output(cmd.stdout_lossy());
+    cmd.forge_fuse().arg("inspect").arg(info).arg("bytecode").assert_success().stdout_eq(str![[
+        r#"
+0x60806040[..]
+
+"#
+    ]]);
 });
 
 // test that `forge snapshot` commands work
@@ -733,14 +916,29 @@ contract ATest is DSTest {
     )
     .unwrap();
 
-    cmd.arg("snapshot");
+    cmd.args(["snapshot"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_check_snapshot.stdout"),
-    );
+Ran 1 test for src/ATest.t.sol:ATest
+[PASS] testExample() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-    cmd.arg("--check");
-    let _ = cmd.output();
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.arg("--check").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for src/ATest.t.sol:ATest
+[PASS] testExample() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // test that `forge build` does not print `(with warnings)` if file path is ignored
@@ -763,20 +961,27 @@ contract A {
     )
     .unwrap();
 
-    cmd.args(["build", "--force"]);
-    let out = cmd.stdout_lossy();
-    // expect no warning as path is ignored
-    assert!(out.contains("Compiler run successful!"));
-    assert!(!out.contains("Compiler run successful with warnings:"));
+    cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     // Reconfigure without ignored paths or error codes and check for warnings
     // need to reset empty error codes as default would set some error codes
     prj.write_config(Config { ignored_error_codes: vec![], ..Default::default() });
 
-    let out = cmd.stdout_lossy();
-    // expect warnings as path is not ignored
-    assert!(out.contains("Compiler run successful with warnings:"), "{out}");
-    assert!(out.contains("Warning") && out.contains("SPDX-License-Identifier"), "{out}");
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+[FILE]
+
+
+"#]]);
 });
 
 // test that `forge build` does not print `(with warnings)` if there arent any
@@ -797,19 +1002,27 @@ contract A {
     )
     .unwrap();
 
-    cmd.args(["build", "--force"]);
-    let out = cmd.stdout_lossy();
-    // no warnings
-    assert!(out.contains("Compiler run successful!"));
-    assert!(!out.contains("Compiler run successful with warnings:"));
+    cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     // don't ignore errors
     let config = Config { ignored_error_codes: vec![], ..Default::default() };
     prj.write_config(config);
-    let out = cmd.stdout_lossy();
 
-    assert!(out.contains("Compiler run successful with warnings:"), "{out}");
-    assert!(out.contains("Warning") && out.contains("SPDX-License-Identifier"), "{out}");
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+[FILE]
+
+
+"#]]);
 });
 
 // test that `forge build` compiles when severity set to error, fails when set to warning, and
@@ -829,14 +1042,30 @@ contract A {
     .unwrap();
 
     // there are no errors
-    cmd.args(["build", "--force"]);
-    let out = cmd.stdout_lossy();
-    assert!(out.contains("Compiler run successful with warnings:"), "{out}");
+    cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+[FILE]
+
+
+"#]]);
 
     // warning fails to compile
     let config = Config { ignored_error_codes: vec![], deny_warnings: true, ..Default::default() };
     prj.write_config(config);
-    cmd.assert_err();
+
+    cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+Compiler run failed:
+Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+[FILE]
+
+
+"#]]);
 
     // ignores error code and compiles
     let config = Config {
@@ -845,10 +1074,13 @@ contract A {
         ..Default::default()
     };
     prj.write_config(config);
-    let out = cmd.stdout_lossy();
 
-    assert!(out.contains("Compiler run successful!"));
-    assert!(!out.contains("Compiler run successful with warnings:"));
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 // test that a failing `forge build` does not impact followup builds
@@ -880,8 +1112,14 @@ contract BTest is DSTest {
     )
     .unwrap();
 
-    cmd.arg("build");
-    cmd.assert_non_empty_stdout();
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+...
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
     prj.assert_cache_exists();
     prj.assert_artifacts_dir_exists();
 
@@ -898,16 +1136,34 @@ contract CTest is DSTest {
     prj.add_source("CTest.t.sol", syntax_err).unwrap();
 
     // `forge build --force` which should fail
-    cmd.arg("--force");
-    cmd.assert_err();
+    cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+Compiler run failed:
+Error (2314): Expected ';' but got identifier
+ [FILE]:7:19:
+  |
+7 |         THIS WILL CAUSE AN ERROR
+  |                   ^^^^^
+
+
+"#]]);
 
     // but ensure this cleaned cache and artifacts
     assert!(!prj.paths().artifacts.exists());
     assert!(!prj.cache().exists());
 
     // still errors
-    cmd.forge_fuse().arg("build");
-    cmd.assert_err();
+    cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+Compiler run failed:
+Error (2314): Expected ';' but got identifier
+ [FILE]:7:19:
+  |
+7 |         THIS WILL CAUSE AN ERROR
+  |                   ^^^^^
+
+
+"#]]);
 
     // resolve the error by replacing the file
     prj.add_source(
@@ -923,7 +1179,13 @@ contract CTest is DSTest {
     )
     .unwrap();
 
-    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
     prj.assert_cache_exists();
     prj.assert_artifacts_dir_exists();
 
@@ -932,7 +1194,17 @@ contract CTest is DSTest {
 
     // introduce the error again but building without force
     prj.add_source("CTest.t.sol", syntax_err).unwrap();
-    cmd.assert_err();
+    cmd.forge_fuse().arg("build").assert_failure().stderr_eq(str![[r#"
+Error: 
+Compiler run failed:
+Error (2314): Expected ';' but got identifier
+ [FILE]:7:19:
+  |
+7 |         THIS WILL CAUSE AN ERROR
+  |                   ^^^^^
+
+
+"#]]);
 
     // ensure unchanged cache file
     let cache_after = fs::read_to_string(prj.cache()).unwrap();
@@ -951,8 +1223,15 @@ forgetest!(can_install_and_remove, |prj, cmd| {
     let forge_std_mod = git_mod.join("forge-std");
 
     let install = |cmd: &mut TestCommand| {
-        cmd.forge_fuse().args(["install", "foundry-rs/forge-std", "--no-commit"]);
-        cmd.assert_non_empty_stdout();
+        cmd.forge_fuse()
+            .args(["install", "foundry-rs/forge-std", "--no-commit"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+
+"#]]);
+
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
 
@@ -961,8 +1240,14 @@ forgetest!(can_install_and_remove, |prj, cmd| {
     };
 
     let remove = |cmd: &mut TestCommand, target: &str| {
-        cmd.forge_fuse().args(["remove", "--force", target]);
-        cmd.assert_non_empty_stdout();
+        // TODO: flaky behavior with URL, sometimes it is None, sometimes it is Some("https://github.com/lib/forge-std")
+        cmd.forge_fuse().args(["remove", "--force", target]).assert_success().stdout_eq(str![[
+            r#"
+Removing 'forge-std' in [..], (url: [..], tag: None)
+
+"#
+        ]]);
+
         assert!(!forge_std.exists());
         assert!(!forge_std_mod.exists());
         let submods = read_string(&git_mod_file);
@@ -987,8 +1272,8 @@ forgetest!(can_install_empty, |prj, cmd| {
     // create initial commit
     fs::write(prj.root().join("README.md"), "Initial commit").unwrap();
 
-    cmd.git_add().unwrap();
-    cmd.git_commit("Initial commit").unwrap();
+    cmd.git_add();
+    cmd.git_commit("Initial commit");
 
     cmd.forge_fuse().args(["install"]);
     cmd.assert_empty_stdout();
@@ -1006,8 +1291,15 @@ forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
     let forge_std_mod = git_mod.join("forge-std");
 
     let install = |cmd: &mut TestCommand| {
-        cmd.forge_fuse().args(["install", "foundry-rs/forge-std", "--no-commit"]);
-        cmd.assert_non_empty_stdout();
+        cmd.forge_fuse()
+            .args(["install", "foundry-rs/forge-std", "--no-commit"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std [..]
+
+"#]]);
+
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
 
@@ -1068,8 +1360,14 @@ forgetest!(
         let package_mod = git_mod.join("forge-5980-test");
 
         // install main dependency
-        cmd.forge_fuse().args(["install", "evalir/forge-5980-test", "--no-commit"]);
-        cmd.assert_non_empty_stdout();
+        cmd.forge_fuse()
+            .args(["install", "evalir/forge-5980-test", "--no-commit"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5980-test"), tag: None)
+    Installed forge-5980-test
+
+"#]]);
 
         // assert paths exist
         assert!(package.exists());
@@ -1081,8 +1379,7 @@ forgetest!(
         // try to update the top-level dependency; there should be no update for this dependency,
         // but its sub-dependency has upstream (breaking) changes; forge should not attempt to
         // update the sub-dependency
-        cmd.forge_fuse().args(["update", "lib/forge-5980-test"]);
-        cmd.stdout_lossy();
+        cmd.forge_fuse().args(["update", "lib/forge-5980-test"]).assert_empty_stdout();
 
         // add explicit remappings for test file
         let config = Config {
@@ -1112,9 +1409,12 @@ contract CounterCopy is Counter {
         .unwrap();
 
         // build and check output
-        cmd.forge_fuse().arg("build");
-        let output = cmd.stdout_lossy();
-        assert!(output.contains("Compiler run successful",));
+        cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
     }
 );
 
@@ -1215,23 +1515,36 @@ contract ContractThreeTest is DSTest {
         gas_reports_ignore: (vec![]),
         ..Default::default()
     });
-    cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+
+    let first_out = cmd
+        .forge_fuse()
+        .arg("test")
+        .arg("--gas-report")
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
 
-    cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
-    cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let second_out = cmd
+        .forge_fuse()
+        .arg("test")
+        .arg("--gas-report")
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
 
-    cmd.forge_fuse();
     prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
-    cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let third_out = cmd
+        .forge_fuse()
+        .arg("test")
+        .arg("--gas-report")
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
 
-    cmd.forge_fuse();
     prj.write_config(Config {
         gas_reports: (vec![
             "ContractOne".to_string(),
@@ -1240,8 +1553,13 @@ contract ContractThreeTest is DSTest {
         ]),
         ..Default::default()
     });
-    cmd.forge_fuse();
-    let fourth_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let fourth_out = cmd
+        .forge_fuse()
+        .arg("test")
+        .arg("--gas-report")
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
     assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
 });
 
@@ -1339,7 +1657,8 @@ contract ContractThreeTest is DSTest {
     // report for One
     prj.write_config(Config { gas_reports: vec!["ContractOne".to_string()], ..Default::default() });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let first_out =
+        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
     assert!(
         first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"),
         "foo:\n{first_out}"
@@ -1348,7 +1667,8 @@ contract ContractThreeTest is DSTest {
     // report for Two
     prj.write_config(Config { gas_reports: vec!["ContractTwo".to_string()], ..Default::default() });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let second_out =
+        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
     assert!(
         !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz"),
         "bar:\n{second_out}"
@@ -1360,7 +1680,8 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let third_out =
+        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
     assert!(
         !third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"),
         "baz:\n{third_out}"
@@ -1465,7 +1786,8 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let first_out =
+        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
     assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
 
     // ignore ContractTwo
@@ -1476,7 +1798,8 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let second_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let second_out =
+        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
     assert!(
         second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
     );
@@ -1493,7 +1816,8 @@ contract ContractThreeTest is DSTest {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out = cmd.arg("test").arg("--gas-report").stdout_lossy();
+    let third_out =
+        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
 });
 
@@ -1536,9 +1860,12 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     )
     .unwrap();
 
-    cmd.arg("build");
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiler run successful"));
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/3440>
@@ -1579,9 +1906,12 @@ contract MyTest is IMyTest {}
     )
     .unwrap();
 
-    cmd.arg("build");
-    let stdout = cmd.stdout_lossy();
-    assert!(stdout.contains("Compiler run successful"), "{stdout}");
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 // checks `forge inspect <contract> irOptimized works
@@ -1591,57 +1921,90 @@ forgetest_init!(can_inspect_ir_optimized, |_prj, cmd| {
 });
 
 // checks forge bind works correctly on the default project
-forgetest_init!(can_bind, |_prj, cmd| {
-    cmd.arg("bind");
-    cmd.assert_non_empty_stdout();
+forgetest_init!(can_bind, |prj, cmd| {
+    prj.clear();
+
+    cmd.arg("bind").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Generating bindings for [..] contracts
+Bindings have been generated to [..]
+
+"#]]);
 });
 
 // checks missing dependencies are auto installed
 forgetest_init!(can_install_missing_deps_test, |prj, cmd| {
+    prj.clear();
+
     // wipe forge-std
     let forge_std_dir = prj.root().join("lib/forge-std");
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
 
-    cmd.arg("test");
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+Missing dependencies found. Installing now...
 
-    let output = cmd.stdout_lossy();
-    assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
-    assert!(output.contains("[PASS]"), "{}", output);
+[UPDATING_DEPENDENCIES]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
+[PASS] test_Increment() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
 });
 
 // checks missing dependencies are auto installed
 forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
+    prj.clear();
+
     // wipe forge-std
     let forge_std_dir = prj.root().join("lib/forge-std");
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
 
-    cmd.arg("build");
+    // Build the project
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+Missing dependencies found. Installing now...
 
-    let output = cmd.stdout_lossy();
-    assert!(output.contains("Missing dependencies found. Installing now"), "{output}");
+[UPDATING_DEPENDENCIES]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    // re-run
-    let output = cmd.stdout_lossy();
-    assert!(!output.contains("Missing dependencies found. Installing now"), "{output}");
-    assert!(output.contains("No files changed, compilation skipped"), "{output}");
+"#]]);
+
+    // Expect compilation to be skipped as no files have changed
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
 });
 
 // checks that extra output works
 forgetest_init!(can_build_skip_contracts, |prj, cmd| {
     prj.clear();
 
-    // only builds the single template contract `src/*`
-    cmd.args(["build", "--skip", "tests", "--skip", "scripts"]);
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_build_skip_contracts.stdout"),
-    );
+    // Only builds the single template contract `src/*`
+    cmd.args(["build", "--skip", "tests", "--skip", "scripts"]).assert_success().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    // re-run command
-    let out = cmd.stdout_lossy();
+"#
+    ]]);
 
-    // unchanged
-    assert!(out.contains("No files changed, compilation skipped"), "{}", out);
+    // Expect compilation to be skipped as no files have changed
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
 });
 
 forgetest_init!(can_build_skip_glob, |prj, cmd| {
@@ -1656,15 +2019,24 @@ function test_run() external {}
 
     // only builds the single template contract `src/*` even if `*.t.sol` or `.s.sol` is absent
     prj.clear();
-    cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**", "--force"]);
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),
-    );
+    cmd.args(["build", "--skip", "*/test/**", "--skip", "*/script/**", "--force"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    cmd.forge_fuse().args(["build", "--skip", "./test/**", "--skip", "./script/**", "--force"]);
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_build_skip_glob.stdout"),
-    );
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["build", "--skip", "./test/**", "--skip", "./script/**", "--force"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 forgetest_init!(can_build_specific_paths, |prj, cmd| {
@@ -1696,83 +2068,86 @@ function test_bar() external {}
 
     // Build 2 files within test dir
     prj.clear();
-    cmd.args(["build", "test", "--force"]);
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_build_path_with_two_files.stdout"),
-    );
+    cmd.args(["build", "test", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     // Build one file within src dir
     prj.clear();
     cmd.forge_fuse();
-    cmd.args(["build", "src", "--force"]);
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_build_path_with_one_file.stdout"),
-    );
+    cmd.args(["build", "src", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     // Build 3 files from test and src dirs
     prj.clear();
     cmd.forge_fuse();
-    cmd.args(["build", "src", "test", "--force"]);
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_build_path_with_three_files.stdout"),
-    );
+    cmd.args(["build", "src", "test", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 
     // Build single test file
     prj.clear();
     cmd.forge_fuse();
-    cmd.args(["build", "test/Bar.sol", "--force"]);
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_build_path_with_one_file.stdout"),
-    );
+    cmd.args(["build", "test/Bar.sol", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
 });
 
 // checks that build --sizes includes all contracts even if unchanged
 forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
     prj.clear_cache();
 
-    cmd.args(["build", "--sizes"]);
-    let out = cmd.stdout_lossy();
+    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+| Contract | Size (B) | Margin (B) |
+|----------|----------|------------|
+| Counter  |      247 |     24,329 |
 
-    // contains: Counter    ┆ 0.247     ┆ 24.329
-    assert!(out.contains(TEMPLATE_CONTRACT));
 
-    // get the entire table
-    let table = out.split("Compiler run successful!").nth(1).unwrap().trim();
-
-    let unchanged = cmd.stdout_lossy();
-    assert!(unchanged.contains(table), "{}", table);
+"#]]);
 });
 
 // checks that build --names includes all contracts even if unchanged
 forgetest_init!(can_build_names_repeatedly, |prj, cmd| {
     prj.clear_cache();
 
-    cmd.args(["build", "--names"]);
-    let out = cmd.stdout_lossy();
+    cmd.args(["build", "--names"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+  compiler version: [..]
+    - [..]
+...
 
-    assert!(out.contains(TEMPLATE_CONTRACT));
-
-    // get the entire list
-    let list = out.split("Compiler run successful!").nth(1).unwrap().trim();
-
-    let unchanged = cmd.stdout_lossy();
-    assert!(unchanged.contains(list), "{}", list);
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6816>
 forgetest_init!(can_inspect_counter_pretty, |prj, cmd| {
-    cmd.args(["inspect", "src/Counter.sol:Counter", "abi", "--pretty"]);
-    let output = cmd.stdout_lossy();
-    assert_eq!(
-        output.trim(),
-        "interface Counter {
+    cmd.args(["inspect", "src/Counter.sol:Counter", "abi", "--pretty"]).assert_success().stdout_eq(
+        str![[r#"
+interface Counter {
     function increment() external;
     function number() external view returns (uint256);
     function setNumber(uint256 newNumber) external;
-}"
+}
+
+
+"#]],
     );
 });

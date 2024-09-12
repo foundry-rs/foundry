@@ -1,7 +1,11 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_primitives::{address, Address, Bytes, LogData as RawLog, U256};
+use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Error, Result, Vm::*};
+use alloy_primitives::{address, hex, Address, Bytes, LogData as RawLog, U256};
 use alloy_sol_types::{SolError, SolValue};
-use revm::interpreter::{return_ok, InstructionResult};
+use foundry_common::ContractsByArtifact;
+use foundry_evm_core::decode::RevertDecoder;
+use revm::interpreter::{
+    return_ok, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+};
 use spec::Vm;
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -68,12 +72,14 @@ pub enum ExpectedRevertKind {
 
 #[derive(Clone, Debug)]
 pub struct ExpectedRevert {
-    /// The expected data returned by the revert, None being any
+    /// The expected data returned by the revert, None being any.
     pub reason: Option<Vec<u8>>,
-    /// The depth at which the revert is expected
+    /// The depth at which the revert is expected.
     pub depth: u64,
     /// The type of expected revert.
     pub kind: ExpectedRevertKind,
+    /// If true then only the first 4 bytes of expected data returned by the revert are checked.
+    pub partial_match: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -84,13 +90,16 @@ pub struct ExpectedEmit {
     pub log: Option<RawLog>,
     /// The checks to perform:
     /// ```text
-    /// ┌───────┬───────┬───────┬────┐
-    /// │topic 1│topic 2│topic 3│data│
-    /// └───────┴───────┴───────┴────┘
+    /// ┌───────┬───────┬───────┬───────┬────┐
+    /// │topic 0│topic 1│topic 2│topic 3│data│
+    /// └───────┴───────┴───────┴───────┴────┘
     /// ```
-    pub checks: [bool; 4],
+    pub checks: [bool; 5],
     /// If present, check originating address against this
     pub address: Option<Address>,
+    /// If present, relax the requirement that topic 0 must be present. This allows anonymous
+    /// events with no indexed topics to be matched.
+    pub anonymous: bool,
     /// Whether the log was actually found in the subcalls
     pub found: bool,
 }
@@ -197,93 +206,160 @@ impl Cheatcode for expectCallMinGas_1Call {
 }
 
 impl Cheatcode for expectEmit_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
         expect_emit(
             ccx.state,
             ccx.ecx.journaled_state.depth(),
-            [checkTopic1, checkTopic2, checkTopic3, checkData],
+            [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             None,
+            false,
         )
     }
 }
 
 impl Cheatcode for expectEmit_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
         expect_emit(
             ccx.state,
             ccx.ecx.journaled_state.depth(),
-            [checkTopic1, checkTopic2, checkTopic3, checkData],
+            [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             Some(emitter),
+            false,
         )
     }
 }
 
 impl Cheatcode for expectEmit_2Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 4], None)
+        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, false)
     }
 }
 
 impl Cheatcode for expectEmit_3Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { emitter } = *self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 4], Some(emitter))
+        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), false)
+    }
+}
+
+impl Cheatcode for expectEmitAnonymous_0Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
+        expect_emit(
+            ccx.state,
+            ccx.ecx.journaled_state.depth(),
+            [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
+            None,
+            true,
+        )
+    }
+}
+
+impl Cheatcode for expectEmitAnonymous_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
+        expect_emit(
+            ccx.state,
+            ccx.ecx.journaled_state.depth(),
+            [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
+            Some(emitter),
+            true,
+        )
+    }
+}
+
+impl Cheatcode for expectEmitAnonymous_2Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, true)
+    }
+}
+
+impl Cheatcode for expectEmitAnonymous_3Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { emitter } = *self;
+        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), true)
     }
 }
 
 impl Cheatcode for expectRevert_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), false)
+        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), false, false)
     }
 }
 
 impl Cheatcode for expectRevert_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.ecx.journaled_state.depth(), false)
+        expect_revert(
+            ccx.state,
+            Some(revertData.as_ref()),
+            ccx.ecx.journaled_state.depth(),
+            false,
+            false,
+        )
     }
 }
 
 impl Cheatcode for expectRevert_2Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.ecx.journaled_state.depth(), false)
+        expect_revert(ccx.state, Some(revertData), ccx.ecx.journaled_state.depth(), false, false)
+    }
+}
+
+impl Cheatcode for expectPartialRevertCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { revertData } = self;
+        expect_revert(
+            ccx.state,
+            Some(revertData.as_ref()),
+            ccx.ecx.journaled_state.depth(),
+            false,
+            true,
+        )
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), true)
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        expect_revert(ccx.state, None, ccx.ecx.journaled_state.depth(), true, false)
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.ecx.journaled_state.depth(), true)
+        expect_revert(
+            ccx.state,
+            Some(revertData.as_ref()),
+            ccx.ecx.journaled_state.depth(),
+            true,
+            false,
+        )
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_2Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.ecx.journaled_state.depth(), true)
+        expect_revert(ccx.state, Some(revertData), ccx.ecx.journaled_state.depth(), true, false)
     }
 }
 
 impl Cheatcode for expectSafeMemoryCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { min, max } = *self;
         expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth())
     }
 }
 
 impl Cheatcode for stopExpectSafeMemoryCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
         ccx.state.allowed_mem_writes.remove(&ccx.ecx.journaled_state.depth());
         Ok(Default::default())
@@ -291,7 +367,7 @@ impl Cheatcode for stopExpectSafeMemoryCall {
 }
 
 impl Cheatcode for expectSafeMemoryCallCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { min, max } = *self;
         expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth() + 1)
     }
@@ -384,20 +460,28 @@ fn expect_call(
 fn expect_emit(
     state: &mut Cheatcodes,
     depth: u64,
-    checks: [bool; 4],
+    checks: [bool; 5],
     address: Option<Address>,
+    anonymous: bool,
 ) -> Result {
-    state.expected_emits.push_back(ExpectedEmit {
-        depth,
-        checks,
-        address,
-        found: false,
-        log: None,
-    });
+    let expected_emit = ExpectedEmit { depth, checks, address, found: false, log: None, anonymous };
+    if let Some(found_emit_pos) = state.expected_emits.iter().position(|emit| emit.found) {
+        // The order of emits already found (back of queue) should not be modified, hence push any
+        // new emit before first found emit.
+        state.expected_emits.insert(found_emit_pos, expected_emit);
+    } else {
+        // If no expected emits then push new one at the back of queue.
+        state.expected_emits.push_back(expected_emit);
+    }
+
     Ok(Default::default())
 }
 
-pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives::Log) {
+pub(crate) fn handle_expect_emit(
+    state: &mut Cheatcodes,
+    log: &alloy_primitives::Log,
+    interpreter: &mut Interpreter,
+) {
     // Fill or check the expected emits.
     // We expect for emit checks to be filled as they're declared (from oldest to newest),
     // so we fill them and push them to the back of the queue.
@@ -412,50 +496,73 @@ pub(crate) fn handle_expect_emit(state: &mut Cheatcodes, log: &alloy_primitives:
         return
     }
 
-    // if there's anything to fill, we need to pop back.
-    // Otherwise, if there are any events that are unmatched, we try to match to match them
-    // in the order declared, so we start popping from the front (like a queue).
-    let mut event_to_fill_or_check =
-        if state.expected_emits.iter().any(|expected| expected.log.is_none()) {
-            state.expected_emits.pop_back()
-        } else {
-            state.expected_emits.pop_front()
-        }
+    let should_fill_logs = state.expected_emits.iter().any(|expected| expected.log.is_none());
+    let index_to_fill_or_check = if should_fill_logs {
+        // If there's anything to fill, we start with the last event to match in the queue
+        // (without taking into account events already matched).
+        state
+            .expected_emits
+            .iter()
+            .position(|emit| emit.found)
+            .unwrap_or(state.expected_emits.len())
+            .saturating_sub(1)
+    } else {
+        // Otherwise, if all expected logs are filled, we start to check any unmatched event
+        // in the declared order, so we start from the front (like a queue).
+        0
+    };
+
+    let mut event_to_fill_or_check = state
+        .expected_emits
+        .remove(index_to_fill_or_check)
         .expect("we should have an emit to fill or check");
 
     let Some(expected) = &event_to_fill_or_check.log else {
-        // Fill the event.
-        event_to_fill_or_check.log = Some(log.data.clone());
-        state.expected_emits.push_back(event_to_fill_or_check);
+        // Unless the caller is trying to match an anonymous event, the first topic must be
+        // filled.
+        if event_to_fill_or_check.anonymous || log.topics().first().is_some() {
+            event_to_fill_or_check.log = Some(log.data.clone());
+            // If we only filled the expected log then we put it back at the same position.
+            state.expected_emits.insert(index_to_fill_or_check, event_to_fill_or_check);
+        } else {
+            interpreter.instruction_result = InstructionResult::Revert;
+            interpreter.next_action = InterpreterAction::Return {
+                result: InterpreterResult {
+                    output: Error::encode("use vm.expectEmitAnonymous to match anonymous events"),
+                    gas: interpreter.gas,
+                    result: InstructionResult::Revert,
+                },
+            };
+        }
         return
     };
 
-    let expected_topic_0 = expected.topics().first();
-    let log_topic_0 = log.topics().first();
-
-    if expected_topic_0
-        .zip(log_topic_0)
-        .map_or(false, |(a, b)| a == b && expected.topics().len() == log.topics().len())
-    {
-        // Match topics
-        event_to_fill_or_check.found = log
+    event_to_fill_or_check.found = || -> bool {
+        // Topic count must match.
+        if expected.topics().len() != log.topics().len() {
+            return false
+        }
+        // Match topics according to the checks.
+        if !log
             .topics()
             .iter()
-            .skip(1)
             .enumerate()
             .filter(|(i, _)| event_to_fill_or_check.checks[*i])
-            .all(|(i, topic)| topic == &expected.topics()[i + 1]);
-
-        // Maybe match source address
-        if let Some(addr) = event_to_fill_or_check.address {
-            event_to_fill_or_check.found &= addr == log.address;
+            .all(|(i, topic)| topic == &expected.topics()[i])
+        {
+            return false
+        }
+        // Maybe match source address.
+        if event_to_fill_or_check.address.map_or(false, |addr| addr != log.address) {
+            return false;
+        }
+        // Maybe match data.
+        if event_to_fill_or_check.checks[4] && expected.data.as_ref() != log.data.data.as_ref() {
+            return false
         }
 
-        // Maybe match data
-        if event_to_fill_or_check.checks[3] {
-            event_to_fill_or_check.found &= expected.data.as_ref() == log.data.data.as_ref();
-        }
-    }
+        true
+    }();
 
     // If we found the event, we can push it to the back of the queue
     // and begin expecting the next event.
@@ -473,6 +580,7 @@ fn expect_revert(
     reason: Option<&[u8]>,
     depth: u64,
     cheatcode: bool,
+    partial_match: bool,
 ) -> Result {
     ensure!(
         state.expected_revert.is_none(),
@@ -486,15 +594,19 @@ fn expect_revert(
         } else {
             ExpectedRevertKind::Default
         },
+        partial_match,
     });
     Ok(Default::default())
 }
 
 pub(crate) fn handle_expect_revert(
+    is_cheatcode: bool,
     is_create: bool,
     expected_revert: Option<&[u8]>,
+    partial_match: bool,
     status: InstructionResult,
     retdata: Bytes,
+    known_contracts: &Option<ContractsByArtifact>,
 ) -> Result<(Option<Address>, Bytes)> {
     let success_return = || {
         if is_create {
@@ -504,9 +616,9 @@ pub(crate) fn handle_expect_revert(
         }
     };
 
-    ensure!(!matches!(status, return_ok!()), "call did not revert as expected");
+    ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
 
-    // If None, accept any revert
+    // If None, accept any revert.
     let Some(expected_revert) = expected_revert else {
         return Ok(success_return());
     };
@@ -517,7 +629,12 @@ pub(crate) fn handle_expect_revert(
 
     let mut actual_revert: Vec<u8> = retdata.into();
 
-    // Try decoding as known errors
+    // Compare only the first 4 bytes if partial match.
+    if partial_match && actual_revert.get(..4) == expected_revert.get(..4) {
+        return Ok(success_return())
+    }
+
+    // Try decoding as known errors.
     if matches!(
         actual_revert.get(..4).map(|s| s.try_into().unwrap()),
         Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
@@ -527,20 +644,30 @@ pub(crate) fn handle_expect_revert(
         }
     }
 
-    if actual_revert == expected_revert {
+    if actual_revert == expected_revert ||
+        (is_cheatcode && memchr::memmem::find(&actual_revert, expected_revert).is_some())
+    {
         Ok(success_return())
     } else {
-        let stringify = |data: &[u8]| {
-            String::abi_decode(data, false)
-                .ok()
-                .or_else(|| std::str::from_utf8(data).ok().map(ToOwned::to_owned))
-                .unwrap_or_else(|| hex::encode_prefixed(data))
+        let (actual, expected) = if let Some(contracts) = known_contracts {
+            let decoder = RevertDecoder::new().with_abis(contracts.iter().map(|(_, c)| &c.abi));
+            (
+                &decoder.decode(actual_revert.as_slice(), Some(status)),
+                &decoder.decode(expected_revert, Some(status)),
+            )
+        } else {
+            let stringify = |data: &[u8]| {
+                if let Ok(s) = String::abi_decode(data, true) {
+                    return s;
+                }
+                if data.is_ascii() {
+                    return std::str::from_utf8(data).unwrap().to_owned();
+                }
+                hex::encode_prefixed(data)
+            };
+            (&stringify(&actual_revert), &stringify(expected_revert))
         };
-        Err(fmt_err!(
-            "Error != expected error: {} != {}",
-            stringify(&actual_revert),
-            stringify(expected_revert),
-        ))
+        Err(fmt_err!("Error != expected error: {} != {}", actual, expected,))
     }
 }
 

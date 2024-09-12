@@ -3,15 +3,14 @@
 use super::context::{BufferKind, DebuggerContext};
 use crate::op::OpcodeParam;
 use alloy_primitives::U256;
-use foundry_compilers::{
-    artifacts::sourcemap::SourceElement, compilers::multi::MultiCompilerLanguage,
-};
+use foundry_compilers::artifacts::sourcemap::SourceElement;
+use foundry_evm_traces::debug::SourceData;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    terminal::Frame,
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    Frame,
 };
 use revm::interpreter::opcode;
 use revm_inspectors::tracing::types::CallKind;
@@ -26,17 +25,17 @@ impl DebuggerContext<'_> {
     #[inline]
     fn draw_layout(&self, f: &mut Frame<'_>) {
         // We need 100 columns to display a 32 byte word in the memory and stack panes.
-        let size = f.size();
+        let area = f.area();
         let min_width = 100;
         let min_height = 16;
-        if size.width < min_width || size.height < min_height {
+        if area.width < min_width || area.height < min_height {
             self.size_too_small(f, min_width, min_height);
             return;
         }
 
         // The horizontal layout draws these panes at 50% width.
         let min_column_width_for_horizontal = 200;
-        if size.width >= min_column_width_for_horizontal {
+        if area.width >= min_column_width_for_horizontal {
             self.horizontal_layout(f);
         } else {
             self.vertical_layout(f);
@@ -49,14 +48,14 @@ impl DebuggerContext<'_> {
         let l1 = "Terminal size too small:";
         lines.push(Line::from(l1));
 
-        let size = f.size();
-        let width_color = if size.width >= min_width { Color::Green } else { Color::Red };
-        let height_color = if size.height >= min_height { Color::Green } else { Color::Red };
+        let area = f.area();
+        let width_color = if area.width >= min_width { Color::Green } else { Color::Red };
+        let height_color = if area.height >= min_height { Color::Green } else { Color::Red };
         let l2 = vec![
             Span::raw("Width = "),
-            Span::styled(size.width.to_string(), Style::new().fg(width_color)),
+            Span::styled(area.width.to_string(), Style::new().fg(width_color)),
             Span::raw(" Height = "),
-            Span::styled(size.height.to_string(), Style::new().fg(height_color)),
+            Span::styled(area.height.to_string(), Style::new().fg(height_color)),
         ];
         lines.push(Line::from(l2));
 
@@ -67,7 +66,7 @@ impl DebuggerContext<'_> {
 
         let paragraph =
             Paragraph::new(lines).alignment(Alignment::Center).wrap(Wrap { trim: true });
-        f.render_widget(paragraph, size)
+        f.render_widget(paragraph, area)
     }
 
     /// Draws the layout in vertical mode.
@@ -86,7 +85,7 @@ impl DebuggerContext<'_> {
     /// |-----------------------------|
     /// ```
     fn vertical_layout(&self, f: &mut Frame<'_>) {
-        let area = f.size();
+        let area = f.area();
         let h_height = if self.show_shortcuts { 4 } else { 0 };
 
         // NOTE: `Layout::split` always returns a slice of the same length as the number of
@@ -136,7 +135,7 @@ impl DebuggerContext<'_> {
     /// |-----------------|-----------|
     /// ```
     fn horizontal_layout(&self, f: &mut Frame<'_>) {
-        let area = f.size();
+        let area = f.area();
         let h_height = if self.show_shortcuts { 4 } else { 0 };
 
         // Split off footer.
@@ -201,6 +200,7 @@ impl DebuggerContext<'_> {
             CallKind::CallCode => "Contract callcode",
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
+            CallKind::EOFCreate => "EOF contract creation",
         };
         let title = format!(
             "{} {} ",
@@ -213,7 +213,7 @@ impl DebuggerContext<'_> {
     }
 
     fn src_text(&self, area: Rect) -> (Text<'_>, Option<&str>) {
-        let (source_element, source_code, source_file) = match self.src_map() {
+        let (source_element, source) = match self.src_map() {
             Ok(r) => r,
             Err(e) => return (Text::from(e), None),
         };
@@ -224,15 +224,16 @@ impl DebuggerContext<'_> {
         // minus `sum(push_bytes[..pc])`.
         let offset = source_element.offset() as usize;
         let len = source_element.length() as usize;
-        let max = source_code.len();
+        let max = source.source.len();
 
         // Split source into before, relevant, and after chunks, split by line, for formatting.
         let actual_start = offset.min(max);
         let actual_end = (offset + len).min(max);
 
-        let mut before: Vec<_> = source_code[..actual_start].split_inclusive('\n').collect();
-        let actual: Vec<_> = source_code[actual_start..actual_end].split_inclusive('\n').collect();
-        let mut after: VecDeque<_> = source_code[actual_end..].split_inclusive('\n').collect();
+        let mut before: Vec<_> = source.source[..actual_start].split_inclusive('\n').collect();
+        let actual: Vec<_> =
+            source.source[actual_start..actual_end].split_inclusive('\n').collect();
+        let mut after: VecDeque<_> = source.source[actual_end..].split_inclusive('\n').collect();
 
         let num_lines = before.len() + actual.len() + after.len();
         let height = area.height as usize;
@@ -279,7 +280,7 @@ impl DebuggerContext<'_> {
         // Highlighted text: cyan, bold.
         let h_text = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 
-        let mut lines = SourceLines::new(decimal_digits(num_lines));
+        let mut lines = SourceLines::new(start_line, end_line);
 
         // We check if there is other text on the same line before the highlight starts.
         if let Some(last) = before.pop() {
@@ -337,74 +338,24 @@ impl DebuggerContext<'_> {
             }
         }
 
-        (Text::from(lines.lines), Some(source_file))
+        (Text::from(lines.lines), source.path.to_str())
     }
 
     /// Returns source map, source code and source name of the current line.
-    fn src_map(&self) -> Result<(SourceElement, &str, &str), String> {
+    fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
         let address = self.address();
         let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
         };
 
-        let Some(mut files_source_code) =
-            self.debugger.contracts_sources.get_sources(contract_name)
-        else {
-            return Err(format!("No source map index for contract {contract_name}"));
-        };
-
-        let Some((create_map, rt_map)) = self.debugger.pc_ic_maps.get(contract_name) else {
-            return Err(format!("No PC-IC maps for contract {contract_name}"));
-        };
-
-        let is_create = matches!(self.call_kind(), CallKind::Create | CallKind::Create2);
-        let pc = self.current_step().pc;
-        let Some((source_element, source_code, source_file)) =
-            files_source_code.find_map(|(artifact, source)| {
-                let bytecode = if is_create {
-                    &artifact.bytecode.bytecode
-                } else {
-                    artifact.bytecode.deployed_bytecode.bytecode.as_ref()?
-                };
-                let source_map = bytecode.source_map()?.expect("failed to parse");
-
-                let pc_ic_map = if is_create { create_map } else { rt_map };
-                let ic = pc_ic_map.get(pc)?;
-
-                // Solc indexes source maps by instruction counter, but Vyper indexes by program
-                // counter.
-                let source_element = if matches!(source.language, MultiCompilerLanguage::Solc(_)) {
-                    source_map.get(ic)?
-                } else {
-                    source_map.get(pc)?
-                };
-                // if the source element has an index, find the sourcemap for that index
-                let res = source_element
-                    .index()
-                    // if index matches current file_id, return current source code
-                    .and_then(|index| {
-                        (index == artifact.file_id)
-                            .then(|| (source_element.clone(), source.source.as_str(), &source.name))
-                    })
-                    .or_else(|| {
-                        // otherwise find the source code for the element's index
-                        self.debugger
-                            .contracts_sources
-                            .sources_by_id
-                            .get(&artifact.build_id)?
-                            .get(&source_element.index()?)
-                            .map(|source| {
-                                (source_element.clone(), source.source.as_str(), &source.name)
-                            })
-                    });
-
-                res
-            })
-        else {
-            return Err(format!("No source map for contract {contract_name}"));
-        };
-
-        Ok((source_element, source_code, source_file))
+        self.debugger
+            .contracts_sources
+            .find_source_mapping(
+                contract_name,
+                self.current_step().pc,
+                self.debug_call().kind.is_any_create(),
+            )
+            .ok_or_else(|| format!("No source map for contract {contract_name}"))
     }
 
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {
@@ -426,10 +377,11 @@ impl DebuggerContext<'_> {
             .collect::<Vec<_>>();
 
         let title = format!(
-            "Address: {} | PC: {} | Gas used in call: {}",
+            "Address: {} | PC: {} | Gas used in call: {} | Code section: {}",
             self.address(),
             self.current_step().pc,
-            self.current_step().total_gas_used,
+            self.current_step().gas_used,
+            self.current_step().code_section_idx,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)
@@ -443,58 +395,69 @@ impl DebuggerContext<'_> {
 
     fn draw_stack(&self, f: &mut Frame<'_>, area: Rect) {
         let step = self.current_step();
-        let stack = &step.stack;
+        let stack = step.stack.as_ref();
+        let stack_len = stack.map_or(0, |s| s.len());
 
-        let min_len = decimal_digits(stack.len()).max(2);
+        let min_len = decimal_digits(stack_len).max(2);
 
-        let params = OpcodeParam::of(step.instruction);
+        let params = OpcodeParam::of(step.op.get(), step.immediate_bytes.as_ref());
 
         let text: Vec<Line<'_>> = stack
-            .iter()
-            .rev()
-            .enumerate()
-            .skip(self.draw_memory.current_stack_startline)
-            .map(|(i, stack_item)| {
-                let param = params.iter().find(|param| param.index == i);
+            .map(|stack| {
+                stack
+                    .iter()
+                    .rev()
+                    .enumerate()
+                    .skip(self.draw_memory.current_stack_startline)
+                    .map(|(i, stack_item)| {
+                        let param = params
+                            .as_ref()
+                            .and_then(|params| params.iter().find(|param| param.index == i));
 
-                let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
+                        let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
 
-                // Stack index.
-                spans.push(Span::styled(format!("{i:0min_len$}| "), Style::new().fg(Color::White)));
+                        // Stack index.
+                        spans.push(Span::styled(
+                            format!("{i:0min_len$}| "),
+                            Style::new().fg(Color::White),
+                        ));
 
-                // Item hex bytes.
-                hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| {
-                    if param.is_some() {
-                        Style::new().fg(Color::Cyan)
-                    } else {
-                        Style::new().fg(Color::White)
-                    }
-                });
+                        // Item hex bytes.
+                        hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| {
+                            if param.is_some() {
+                                Style::new().fg(Color::Cyan)
+                            } else {
+                                Style::new().fg(Color::White)
+                            }
+                        });
 
-                if self.stack_labels {
-                    if let Some(param) = param {
-                        spans.push(Span::raw("| "));
-                        spans.push(Span::raw(param.name));
-                    }
-                }
+                        if self.stack_labels {
+                            if let Some(param) = param {
+                                spans.push(Span::raw("| "));
+                                spans.push(Span::raw(param.name));
+                            }
+                        }
 
-                spans.push(Span::raw("\n"));
+                        spans.push(Span::raw("\n"));
 
-                Line::from(spans)
+                        Line::from(spans)
+                    })
+                    .collect()
             })
-            .collect();
+            .unwrap_or_default();
 
-        let title = format!("Stack: {}", stack.len());
+        let title = format!("Stack: {stack_len}");
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
+        let call = self.debug_call();
         let step = self.current_step();
         let buf = match self.active_buffer {
-            BufferKind::Memory => step.memory.as_ref(),
-            BufferKind::Calldata => step.calldata.as_ref(),
+            BufferKind::Memory => step.memory.as_ref().unwrap().as_ref(),
+            BufferKind::Calldata => call.calldata.as_ref(),
             BufferKind::Returndata => step.returndata.as_ref(),
         };
 
@@ -502,22 +465,24 @@ impl DebuggerContext<'_> {
 
         // Color memory region based on read/write.
         let mut offset = None;
-        let mut size = None;
+        let mut len = None;
         let mut write_offset = None;
         let mut write_size = None;
         let mut color = None;
-        let stack_len = step.stack.len();
+        let stack_len = step.stack.as_ref().map_or(0, |s| s.len());
         if stack_len > 0 {
-            if let Some(accesses) = get_buffer_accesses(step.instruction, &step.stack) {
-                if let Some(read_access) = accesses.read {
-                    offset = Some(read_access.1.offset);
-                    size = Some(read_access.1.size);
-                    color = Some(Color::Cyan);
-                }
-                if let Some(write_access) = accesses.write {
-                    if self.active_buffer == BufferKind::Memory {
-                        write_offset = Some(write_access.offset);
-                        write_size = Some(write_access.size);
+            if let Some(stack) = step.stack.as_ref() {
+                if let Some(accesses) = get_buffer_accesses(step.op.get(), stack) {
+                    if let Some(read_access) = accesses.read {
+                        offset = Some(read_access.1.offset);
+                        len = Some(read_access.1.len);
+                        color = Some(Color::Cyan);
+                    }
+                    if let Some(write_access) = accesses.write {
+                        if self.active_buffer == BufferKind::Memory {
+                            write_offset = Some(write_access.offset);
+                            write_size = Some(write_access.len);
+                        }
                     }
                 }
             }
@@ -530,13 +495,15 @@ impl DebuggerContext<'_> {
         if self.current_step > 0 {
             let prev_step = self.current_step - 1;
             let prev_step = &self.debug_steps()[prev_step];
-            if let Some(write_access) =
-                get_buffer_accesses(prev_step.instruction, &prev_step.stack).and_then(|a| a.write)
-            {
-                if self.active_buffer == BufferKind::Memory {
-                    offset = Some(write_access.offset);
-                    size = Some(write_access.size);
-                    color = Some(Color::Green);
+            if let Some(stack) = prev_step.stack.as_ref() {
+                if let Some(write_access) =
+                    get_buffer_accesses(prev_step.op.get(), stack).and_then(|a| a.write)
+                {
+                    if self.active_buffer == BufferKind::Memory {
+                        offset = Some(write_access.offset);
+                        len = Some(write_access.len);
+                        color = Some(Color::Green);
+                    }
                 }
             }
         }
@@ -563,10 +530,10 @@ impl DebuggerContext<'_> {
                     let mut byte_color = Color::White;
                     let mut end = None;
                     let idx = i * 32 + j;
-                    if let (Some(offset), Some(size), Some(color)) = (offset, size, color) {
-                        end = Some(offset + size);
-                        if (offset..offset + size).contains(&idx) {
-                            // [offset, offset + size] is the memory region to be colored.
+                    if let (Some(offset), Some(len), Some(color)) = (offset, len, color) {
+                        end = Some(offset + len);
+                        if (offset..offset + len).contains(&idx) {
+                            // [offset, offset + len] is the memory region to be colored.
                             // If a byte at row i and column j in the memory panel
                             // falls in this region, set the color.
                             byte_color = color;
@@ -625,12 +592,13 @@ impl DebuggerContext<'_> {
 /// Wrapper around a list of [`Line`]s that prepends the line number on each new line.
 struct SourceLines<'a> {
     lines: Vec<Line<'a>>,
+    start_line: usize,
     max_line_num: usize,
 }
 
 impl<'a> SourceLines<'a> {
-    fn new(max_line_num: usize) -> Self {
-        Self { lines: Vec::new(), max_line_num }
+    fn new(start_line: usize, end_line: usize) -> Self {
+        Self { lines: Vec::new(), start_line, max_line_num: decimal_digits(end_line) }
     }
 
     fn push(&mut self, line_number_style: Style, line: &'a str, line_style: Style) {
@@ -640,8 +608,11 @@ impl<'a> SourceLines<'a> {
     fn push_raw(&mut self, line_number_style: Style, spans: &[Span<'a>]) {
         let mut line_spans = Vec::with_capacity(4);
 
-        let line_number =
-            format!("{number: >width$} ", number = self.lines.len() + 1, width = self.max_line_num);
+        let line_number = format!(
+            "{number: >width$} ",
+            number = self.start_line + self.lines.len() + 1,
+            width = self.max_line_num
+        );
         line_spans.push(Span::styled(line_number, line_number_style));
 
         // Space between line number and line text.
@@ -656,7 +627,7 @@ impl<'a> SourceLines<'a> {
 /// Container for buffer access information.
 struct BufferAccess {
     offset: usize,
-    size: usize,
+    len: usize,
 }
 
 /// Container for read and write buffer access information.
@@ -668,14 +639,15 @@ struct BufferAccesses {
 }
 
 /// The memory_access variable stores the index on the stack that indicates the buffer
-/// offset/size accessed by the given opcode:
-///   (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
-///   >= 1: the stack index
-///   0: no memory access
-///   -1: a fixed size of 32 bytes
-///   -2: a fixed size of 1 byte
+/// offset/len accessed by the given opcode:
+///    (read buffer, buffer read offset, buffer read len, write memory offset, write memory len)
+///    \>= 1: the stack index
+///    0: no memory access
+///    -1: a fixed len of 32 bytes
+///    -2: a fixed len of 1 byte
+///
 /// The return value is a tuple about accessed buffer region by the given opcode:
-///   (read buffer, buffer read offset, buffer read size, write memory offset, write memory size)
+///    (read buffer, buffer read offset, buffer read len, write memory offset, write memory len)
 fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
     let buffer_access = match op {
         opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => {
@@ -696,6 +668,13 @@ fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
         opcode::CALL | opcode::CALLCODE => (Some((BufferKind::Memory, 4, 5)), None),
         opcode::DELEGATECALL | opcode::STATICCALL => (Some((BufferKind::Memory, 3, 4)), None),
         opcode::MCOPY => (Some((BufferKind::Memory, 2, 3)), Some((1, 3))),
+        opcode::RETURNDATALOAD => (Some((BufferKind::Returndata, 1, -1)), None),
+        opcode::EOFCREATE => (Some((BufferKind::Memory, 3, 4)), None),
+        opcode::RETURNCONTRACT => (Some((BufferKind::Memory, 1, 2)), None),
+        opcode::DATACOPY => (None, Some((1, 3))),
+        opcode::EXTCALL | opcode::EXTSTATICCALL | opcode::EXTDELEGATECALL => {
+            (Some((BufferKind::Memory, 2, 3)), None)
+        }
         _ => Default::default(),
     };
 
@@ -717,12 +696,12 @@ fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
     if buffer_access.0.is_some() || buffer_access.1.is_some() {
         let (read, write) = buffer_access;
         let read_access = read.and_then(|b| {
-            let (buffer, offset, size) = b;
-            Some((buffer, BufferAccess { offset: get_size(offset)?, size: get_size(size)? }))
+            let (buffer, offset, len) = b;
+            Some((buffer, BufferAccess { offset: get_size(offset)?, len: get_size(len)? }))
         });
         let write_access = write.and_then(|b| {
-            let (offset, size) = b;
-            Some(BufferAccess { offset: get_size(offset)?, size: get_size(size)? })
+            let (offset, len) = b;
+            Some(BufferAccess { offset: get_size(offset)?, len: get_size(len)? })
         });
         Some(BufferAccesses { read: read_access, write: write_access })
     } else {

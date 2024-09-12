@@ -1,11 +1,10 @@
 use crate::{error::PrivateKeyError, PendingSigner, WalletSigner};
-use alloy_primitives::B256;
+use alloy_primitives::{hex::FromHex, B256};
 use alloy_signer_ledger::HDPath as LedgerHDPath;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_signer_trezor::HDPath as TrezorHDPath;
 use eyre::{Context, Result};
 use foundry_config::Config;
-use hex::FromHex;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -146,5 +145,19 @@ pub fn create_keystore_signer(
         Ok((Some(WalletSigner::Local(wallet)), None))
     } else {
         Ok((None, Some(PendingSigner::Keystore(path.clone()))))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_private_key_signer() {
+        let pk = B256::random();
+        let pk_str = pk.to_string();
+        assert!(create_private_key_signer(&pk_str).is_ok());
+        // skip 0x
+        assert!(create_private_key_signer(&pk_str[2..]).is_ok());
     }
 }

@@ -73,7 +73,7 @@ jobs:
           python-version: 3.11
       - name: Install Vyper
         if: contains(matrix.name, 'external')
-        run: pip install vyper~=0.3.10
+        run: pip install vyper~=0.4.0
 
       - name: Forge RPC cache
         uses: actions/cache@v3

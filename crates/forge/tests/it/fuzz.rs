@@ -3,10 +3,11 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::{Bytes, U256};
 use forge::{
+    decode::decode_console_logs,
     fuzz::CounterExample,
     result::{SuiteResult, TestStatus},
 };
-use foundry_test_utils::Filter;
+use foundry_test_utils::{forgetest_init, str, Filter};
 use std::collections::BTreeMap;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -31,7 +32,7 @@ async fn test_fuzz() {
                     "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                     test_name,
                     result.reason,
-                    result.decoded_logs.join("\n")
+                    decode_console_logs(&result.logs).join("\n")
                 ),
                 _ => assert_eq!(
                     result.status,
@@ -39,7 +40,7 @@ async fn test_fuzz() {
                     "Test {} did not fail as expected.\nReason: {:?}\nLogs:\n{}",
                     test_name,
                     result.reason,
-                    result.decoded_logs.join("\n")
+                    decode_console_logs(&result.logs).join("\n")
                 ),
             }
         }
@@ -67,7 +68,7 @@ async fn test_successful_fuzz_cases() {
                     "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                     test_name,
                     result.reason,
-                    result.decoded_logs.join("\n")
+                    decode_console_logs(&result.logs).join("\n")
                 ),
                 _ => {}
             }
@@ -175,3 +176,29 @@ async fn test_scrape_bytecode() {
         }
     }
 }
+
+// tests that inline max-test-rejects config is properly applied
+forgetest_init!(test_inline_max_test_rejects, |prj, cmd| {
+    prj.wipe_contracts();
+
+    prj.add_test(
+        "Contract.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InlineMaxRejectsTest is Test {
+    /// forge-config: default.fuzz.max-test-rejects = 1
+    function test_fuzz_bound(uint256 a) public {
+        vm.assume(a == 0);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL. Reason: The `vm.assume` cheatcode rejected too many inputs (1 allowed)] test_fuzz_bound(uint256) (runs: 0, [AVG_GAS])
+...
+"#]]);
+});

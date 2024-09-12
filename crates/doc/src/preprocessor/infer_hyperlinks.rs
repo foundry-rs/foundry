@@ -1,18 +1,18 @@
 use super::{Preprocessor, PreprocessorId};
 use crate::{Comments, Document, ParseItem, ParseSource};
 use forge_fmt::solang_ext::SafeUnwrap;
-use once_cell::sync::Lazy;
 use regex::{Captures, Match, Regex};
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
 
 /// A regex that matches `{identifier-part}` placeholders
 ///
 /// Overloaded functions are referenced by including the exact function arguments in the `part`
 /// section of the placeholder.
-static RE_INLINE_LINK: Lazy<Regex> = Lazy::new(|| {
+static RE_INLINE_LINK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)(\{(?P<xref>xref-)?(?P<identifier>[a-zA-Z_][0-9a-zA-Z_]*)(-(?P<part>[a-zA-Z_][0-9a-zA-Z_-]*))?}(\[(?P<link>(.*?))\])?)").unwrap()
 });
 
@@ -226,7 +226,7 @@ impl<'a> InlineLink<'a> {
         })
     }
 
-    fn captures(s: &'a str) -> impl Iterator<Item = Self> + '_ {
+    fn captures(s: &'a str) -> impl Iterator<Item = Self> + 'a {
         RE_INLINE_LINK.captures(s).map(Self::from_capture).into_iter().flatten()
     }
 

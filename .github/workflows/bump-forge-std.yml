@@ -1,0 +1,25 @@
+# Daily CI job to update forge-std version used for tests if new release has been published
+
+name: bump-forge-std
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  update-tag:
+    name: update forge-std tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch and update forge-std tag
+        run: curl 'https://api.github.com/repos/foundry-rs/forge-std/tags' | jq '.[0].commit.sha' -jr > testdata/forge-std-rev
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          commit-message: "chore: bump forge-std version used for tests"
+          title: "chore(tests): bump forge-std version"
+          body: |
+            New release of forge-std has been published, bump forge-std version used in tests. Likely some fixtures need to be updated.
+          branch: chore/bump-forge-std

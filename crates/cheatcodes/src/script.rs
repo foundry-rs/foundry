@@ -8,49 +8,49 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
         broadcast(ccx, None, true)
     }
 }
 
 impl Cheatcode for broadcast_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { signer } = self;
         broadcast(ccx, Some(signer), true)
     }
 }
 
 impl Cheatcode for broadcast_2Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey } = self;
         broadcast_key(ccx, privateKey, true)
     }
 }
 
 impl Cheatcode for startBroadcast_0Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
         broadcast(ccx, None, false)
     }
 }
 
 impl Cheatcode for startBroadcast_1Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { signer } = self;
         broadcast(ccx, Some(signer), false)
     }
 }
 
 impl Cheatcode for startBroadcast_2Call {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { privateKey } = self;
         broadcast_key(ccx, privateKey, false)
     }
 }
 
 impl Cheatcode for stopBroadcastCall {
-    fn apply_full<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
         let Some(broadcast) = ccx.state.broadcast.take() else {
             bail!("no broadcast in progress to stop");
@@ -171,7 +171,7 @@ fn broadcast_key<DB: DatabaseExt>(
     private_key: &U256,
     single_call: bool,
 ) -> Result {
-    let wallet = super::utils::parse_wallet(private_key)?;
+    let wallet = super::crypto::parse_wallet(private_key)?;
     let new_origin = wallet.address();
 
     let result = broadcast(ccx, Some(&new_origin), single_call);

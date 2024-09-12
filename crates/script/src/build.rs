@@ -10,9 +10,7 @@ use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_common::{
-    compile::{ContractSources, ProjectCompiler},
-    provider::try_get_http_provider,
-    ContractData, ContractsByArtifact,
+    compile::ProjectCompiler, provider::try_get_http_provider, ContractData, ContractsByArtifact,
 };
 use foundry_compilers::{
     artifacts::{BytecodeObject, Libraries},
@@ -21,7 +19,7 @@ use foundry_compilers::{
     utils::source_files_iter,
     ArtifactId, ProjectCompileOutput,
 };
-use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
+use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::debug::ContractSources};
 use foundry_linking::Linker;
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
@@ -293,7 +291,7 @@ impl CompiledState {
                 s.transactions
                     .iter()
                     .skip(s.receipts.len())
-                    .map(|t| t.transaction.from.expect("from is missing in script artifact"))
+                    .map(|t| t.transaction.from().expect("from is missing in script artifact"))
             });
 
             let available_signers = self

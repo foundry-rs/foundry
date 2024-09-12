@@ -4,13 +4,20 @@
 [advisories]
 version = 2
 yanked = "warn"
+ignore = [
+    # https://github.com/watchexec/watchexec/issues/852
+    "RUSTSEC-2024-0350",
+    "RUSTSEC-2024-0351",
+    # proc-macro-error is unmaintained
+    "RUSTSEC-2024-0370",
+]
 
 # This section is considered when running `cargo deny check bans`.
 # More documentation about the 'bans' section can be found here:
 # https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
 [bans]
 # Lint level for when multiple versions of the same crate are detected
-multiple-versions = "warn"
+multiple-versions = "allow"
 # Lint level for when a crate version requirement is `*`
 wildcards = "allow"
 highlight = "all"
@@ -40,12 +47,12 @@ allow = [
     "ISC",
     "Unicode-DFS-2016",
     "OpenSSL",
-    "Unicode-3.0",
     "Unlicense",
     "WTFPL",
     "BSL-1.0",
     "0BSD",
     "MPL-2.0",
+    "CDDL-1.0",
 ]
 
 # Allow 1 or more licenses on a per-crate basis, so that particular licenses
@@ -55,12 +62,13 @@ exceptions = [
     # so we prefer to not have dependencies using it
     # https://tldrlegal.com/license/creative-commons-cc0-1.0-universal
     { allow = ["CC0-1.0"], name = "tiny-keccak" },
-    { allow = ["CC0-1.0"], name = "to_method" },
     { allow = ["CC0-1.0"], name = "trezor-client" },
     { allow = ["CC0-1.0"], name = "notify" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
     { allow = ["CC0-1.0"], name = "constant_time_eq" },
+    { allow = ["CC0-1.0"], name = "secp256k1" },
+    { allow = ["CC0-1.0"], name = "secp256k1-sys" },
 ]
 #copyleft = "deny"
 

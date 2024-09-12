@@ -42,7 +42,7 @@ revm = { workspace = true, features = [
 eyre .workspace = true
 itertools.workspace = true
 parking_lot.workspace = true
-proptest = "1"
+proptest.workspace = true
 rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true

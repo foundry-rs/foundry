@@ -1,10 +1,8 @@
 use super::ScriptResult;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{Address, Bytes, TxKind, B256};
-use alloy_rpc_types::request::TransactionRequest;
-use alloy_serde::WithOtherFields;
+use alloy_primitives::{hex, Address, Bytes, TxKind, B256};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{fmt::format_token_raw, ContractData, SELECTOR_LEN};
+use foundry_common::{fmt::format_token_raw, ContractData, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, traces::CallTraceDecoder};
 use itertools::Itertools;
 use revm_inspectors::tracing::types::CallKind;
@@ -20,7 +18,7 @@ pub struct AdditionalContract {
     pub init_code: Bytes,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithMetadata {
     pub hash: Option<B256>,
@@ -36,7 +34,7 @@ pub struct TransactionWithMetadata {
     pub arguments: Option<Vec<String>>,
     #[serde(skip)]
     pub rpc: String,
-    pub transaction: WithOtherFields<TransactionRequest>,
+    pub transaction: TransactionMaybeSigned,
     pub additional_contracts: Vec<AdditionalContract>,
     pub is_fixed_gas_limit: bool,
 }
@@ -54,12 +52,23 @@ fn default_vec_of_strings() -> Option<Vec<String>> {
 }
 
 impl TransactionWithMetadata {
-    pub fn from_tx_request(transaction: TransactionRequest) -> Self {
-        Self { transaction: WithOtherFields::new(transaction), ..Default::default() }
+    pub fn from_tx_request(transaction: TransactionMaybeSigned) -> Self {
+        Self {
+            transaction,
+            hash: Default::default(),
+            opcode: Default::default(),
+            contract_name: Default::default(),
+            contract_address: Default::default(),
+            function: Default::default(),
+            arguments: Default::default(),
+            is_fixed_gas_limit: Default::default(),
+            additional_contracts: Default::default(),
+            rpc: Default::default(),
+        }
     }
 
     pub fn new(
-        transaction: TransactionRequest,
+        transaction: TransactionMaybeSigned,
         rpc: String,
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, &ContractData>,
@@ -72,7 +81,7 @@ impl TransactionWithMetadata {
         metadata.is_fixed_gas_limit = is_fixed_gas_limit;
 
         // Specify if any contract was directly created with this transaction
-        if let Some(TxKind::Call(to)) = metadata.transaction.to {
+        if let Some(TxKind::Call(to)) = metadata.transaction.to() {
             if to == DEFAULT_CREATE2_DEPLOYER {
                 metadata.set_create(
                     true,
@@ -130,7 +139,7 @@ impl TransactionWithMetadata {
         self.contract_name = info.map(|info| info.name.clone());
         self.contract_address = Some(address);
 
-        let Some(data) = self.transaction.input.input() else { return Ok(()) };
+        let Some(data) = self.transaction.input() else { return Ok(()) };
         let Some(info) = info else { return Ok(()) };
         let Some(bytecode) = info.bytecode() else { return Ok(()) };
 
@@ -152,7 +161,7 @@ impl TransactionWithMetadata {
         let constructor_args = &creation_code[bytecode.len()..];
 
         let Some(constructor) = info.abi.constructor() else { return Ok(()) };
-        let values = constructor.abi_decode_input(constructor_args, false).map_err(|e| {
+        let values = constructor.abi_decode_input(constructor_args, false).inspect_err(|_| {
             error!(
                 contract=?self.contract_name,
                 signature=%format!("constructor({})", constructor.inputs.iter().map(|p| &p.ty).format(",")),
@@ -161,7 +170,6 @@ impl TransactionWithMetadata {
                 "Failed to decode constructor arguments",
             );
             debug!(full_data=%hex::encode(data), bytecode=%hex::encode(creation_code));
-            e
         })?;
         self.arguments = Some(values.iter().map(format_token_raw).collect());
 
@@ -178,7 +186,7 @@ impl TransactionWithMetadata {
         self.opcode = CallKind::Call;
         self.contract_address = Some(target);
 
-        let Some(data) = self.transaction.input.input() else { return Ok(()) };
+        let Some(data) = self.transaction.input() else { return Ok(()) };
         if data.len() < SELECTOR_LEN {
             return Ok(());
         }
@@ -195,14 +203,13 @@ impl TransactionWithMetadata {
         if let Some(function) = function {
             self.function = Some(function.signature());
 
-            let values = function.abi_decode_input(data, false).map_err(|e| {
+            let values = function.abi_decode_input(data, false).inspect_err(|_| {
                 error!(
                     contract=?self.contract_name,
                     signature=?function,
                     data=hex::encode(data),
                     "Failed to decode function arguments",
                 );
-                e
             })?;
             self.arguments = Some(values.iter().map(format_token_raw).collect());
         }
@@ -210,11 +217,11 @@ impl TransactionWithMetadata {
         Ok(())
     }
 
-    pub fn tx(&self) -> &WithOtherFields<TransactionRequest> {
+    pub fn tx(&self) -> &TransactionMaybeSigned {
         &self.transaction
     }
 
-    pub fn tx_mut(&mut self) -> &mut WithOtherFields<TransactionRequest> {
+    pub fn tx_mut(&mut self) -> &mut TransactionMaybeSigned {
         &mut self.transaction
     }
 

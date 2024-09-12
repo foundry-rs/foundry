@@ -24,7 +24,6 @@ foundry-cheatcodes.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
 
-hex.workspace = true
 serde.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
@@ -54,6 +53,7 @@ alloy-dyn-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-eips.workspace = true
 alloy-transport.workspace = true
+alloy-consensus.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -3,13 +3,12 @@ use crate::{
     transaction::{AdditionalContract, TransactionWithMetadata},
     verify::VerifyBundle,
 };
-use alloy_primitives::{Address, TxHash};
-use alloy_rpc_types::{AnyTransactionReceipt, TransactionRequest};
-use alloy_serde::WithOtherFields;
-use eyre::{ContextCompat, Result, WrapErr};
+use alloy_primitives::{hex, Address, TxHash};
+use alloy_rpc_types::AnyTransactionReceipt;
+use eyre::{eyre, ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::{now, Git};
-use foundry_common::{fs, shell, SELECTOR_LEN};
+use foundry_common::{fs, shell, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -284,10 +283,8 @@ impl ScriptSequence {
                 }
 
                 // Verify contract created directly from the transaction
-                if let (Some(address), Some(data)) =
-                    (receipt.contract_address, tx.tx().input.input())
-                {
-                    match verify.get_verify_args(address, offset, &data.0, &self.libraries) {
+                if let (Some(address), Some(data)) = (receipt.contract_address, tx.tx().input()) {
+                    match verify.get_verify_args(address, offset, data, &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
                         None => unverifiable_contracts.push(address),
                     };
@@ -307,9 +304,19 @@ impl ScriptSequence {
             self.check_unverified(unverifiable_contracts, verify);
 
             let num_verifications = future_verifications.len();
-            println!("##\nStart verification for ({num_verifications}) contracts",);
+            let mut num_of_successful_verifications = 0;
+            println!("##\nStart verification for ({num_verifications}) contracts");
             for verification in future_verifications {
-                verification.await?;
+                match verification.await {
+                    Ok(_) => {
+                        num_of_successful_verifications += 1;
+                    }
+                    Err(err) => eprintln!("Error during verification: {err:#}"),
+                }
+            }
+
+            if num_of_successful_verifications < num_verifications {
+                return Err(eyre!("Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"))
             }
 
             println!("All ({num_verifications}) contracts were verified!");
@@ -353,7 +360,7 @@ impl ScriptSequence {
     }
 
     /// Returns the list of the transactions without the metadata.
-    pub fn transactions(&self) -> impl Iterator<Item = &WithOtherFields<TransactionRequest>> {
+    pub fn transactions(&self) -> impl Iterator<Item = &TransactionMaybeSigned> {
         self.transactions.iter().map(|tx| tx.tx())
     }
 

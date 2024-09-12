@@ -9,12 +9,12 @@ contract Issue6616Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testCreateForkRollLatestBlock() public {
-        vm.createSelectFork("rpcAlias");
+        vm.createSelectFork("mainnet");
         uint256 startBlock = block.number;
         // this will create new forks and exit once a new latest block is found
         for (uint256 i; i < 10; i++) {
             vm.sleep(5000);
-            vm.createSelectFork("rpcAlias");
+            vm.createSelectFork("mainnet");
             if (block.number > startBlock) break;
         }
         assertGt(block.number, startBlock);

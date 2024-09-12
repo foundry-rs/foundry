@@ -3,7 +3,7 @@ use crate::provider::VerificationContext;
 use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
 use foundry_compilers::{
-    artifacts::{BytecodeHash, Source},
+    artifacts::{BytecodeHash, Source, Sources},
     buildinfo::RawBuildInfo,
     compilers::{
         solc::{SolcCompiler, SolcLanguage, SolcVersionedInput},
@@ -13,7 +13,7 @@ use foundry_compilers::{
     AggregatedCompilerOutput,
 };
 use semver::{BuildMetadata, Version};
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct EtherscanFlattenedSource;
@@ -81,7 +81,7 @@ impl EtherscanFlattenedSource {
         let solc = Solc::find_or_install(&version)?;
 
         let input = SolcVersionedInput::build(
-            BTreeMap::from([("contract.sol".into(), Source::new(content))]),
+            Sources::from([("contract.sol".into(), Source::new(content))]),
             Default::default(),
             SolcLanguage::Solidity,
             version.clone(),

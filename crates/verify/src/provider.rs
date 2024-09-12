@@ -1,6 +1,7 @@
-use super::{
-    etherscan::EtherscanVerificationProvider, sourcify::SourcifyVerificationProvider, VerifyArgs,
-    VerifyCheckArgs,
+use crate::{
+    etherscan::EtherscanVerificationProvider,
+    sourcify::SourcifyVerificationProvider,
+    verify::{VerifyArgs, VerifyCheckArgs},
 };
 use alloy_json_abi::JsonAbi;
 use async_trait::async_trait;
@@ -37,7 +38,7 @@ impl VerificationContext {
         project.no_artifacts = true;
 
         let solc = Solc::find_or_install(&compiler_version)?;
-        project.compiler.solc = SolcCompiler::Specific(solc);
+        project.compiler.solc = Some(SolcCompiler::Specific(solc));
 
         Ok(Self { config, project, target_name, target_path, compiler_version })
     }
@@ -55,7 +56,7 @@ impl VerificationContext {
             .compile(&project)?;
 
         let artifact = output
-            .find(self.target_path.to_string_lossy(), &self.target_name)
+            .find(&self.target_path, &self.target_name)
             .ok_or_eyre("failed to find target artifact when compiling for abi")?;
 
         artifact.abi.clone().ok_or_eyre("target artifact does not have an ABI")
@@ -74,7 +75,7 @@ impl VerificationContext {
             .compile(&project)?;
 
         let artifact = output
-            .find(self.target_path.to_string_lossy(), &self.target_name)
+            .find(&self.target_path, &self.target_name)
             .ok_or_eyre("failed to find target artifact when compiling for metadata")?;
 
         artifact.metadata.clone().ok_or_eyre("target artifact does not have an ABI")
@@ -101,7 +102,7 @@ pub trait VerificationProvider {
     /// [`VerifyArgs`] are valid to begin with. This should prevent situations where there's a
     /// contract deployment that's executed before the verify request and the subsequent verify task
     /// fails due to misconfiguration.
-    async fn preflight_check(
+    async fn preflight_verify_check(
         &mut self,
         args: VerifyArgs,
         context: VerificationContext,

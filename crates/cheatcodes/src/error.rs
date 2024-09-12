@@ -1,11 +1,11 @@
 use crate::Vm;
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{hex, Address, Bytes};
 use alloy_signer::Error as SignerError;
 use alloy_signer_local::LocalSignerError;
 use alloy_sol_types::SolError;
 use foundry_common::errors::FsPathError;
 use foundry_config::UnresolvedEnvVarError;
-use foundry_evm_core::backend::DatabaseError;
+use foundry_evm_core::backend::{BackendError, DatabaseError};
 use foundry_wallets::error::WalletSignerError;
 use k256::ecdsa::signature::Error as SignatureError;
 use revm::primitives::EVMError;
@@ -68,17 +68,14 @@ macro_rules! ensure {
 macro_rules! ensure_not_precompile {
     ($address:expr, $ctxt:expr) => {
         if $ctxt.is_precompile($address) {
-            return Err($crate::error::precompile_error(
-                <Self as $crate::CheatcodeDef>::CHEATCODE.func.id,
-                $address,
-            ))
+            return Err($crate::error::precompile_error($address));
         }
     };
 }
 
 #[cold]
-pub(crate) fn precompile_error(id: &'static str, address: &Address) -> Error {
-    fmt_err!("cannot call `{id}` on precompile {address}")
+pub(crate) fn precompile_error(address: &Address) -> Error {
+    fmt_err!("cannot use precompile {address} as an argument")
 }
 
 /// Error thrown by cheatcodes.
@@ -158,7 +155,7 @@ impl Error {
     }
 
     /// Returns the kind of this error.
-    #[inline(always)]
+    #[inline]
     pub fn kind(&self) -> ErrorKind<'_> {
         let data = self.data();
         if self.is_str {
@@ -170,32 +167,38 @@ impl Error {
     }
 
     /// Returns the raw data of this error.
-    #[inline(always)]
+    #[inline]
     pub fn data(&self) -> &[u8] {
         unsafe { &*self.data }
     }
 
-    #[inline(always)]
+    /// Returns `true` if this error is a human-readable string.
+    #[inline]
+    pub fn is_str(&self) -> bool {
+        self.is_str
+    }
+
+    #[inline]
     fn new_str(data: &'static str) -> Self {
         Self::_new(true, false, data.as_bytes())
     }
 
-    #[inline(always)]
+    #[inline]
     fn new_string(data: String) -> Self {
         Self::_new(true, true, Box::into_raw(data.into_boxed_str().into_boxed_bytes()))
     }
 
-    #[inline(always)]
+    #[inline]
     fn new_bytes(data: &'static [u8]) -> Self {
         Self::_new(false, false, data)
     }
 
-    #[inline(always)]
+    #[inline]
     fn new_vec(data: Vec<u8>) -> Self {
         Self::_new(false, true, Box::into_raw(data.into_boxed_slice()))
     }
 
-    #[inline(always)]
+    #[inline]
     fn _new(is_str: bool, drop: bool, data: *const [u8]) -> Self {
         debug_assert!(!data.is_null());
         Self { is_str, drop, data }
@@ -286,10 +289,12 @@ macro_rules! impl_from {
 
 impl_from!(
     alloy_sol_types::Error,
+    alloy_dyn_abi::Error,
     alloy_primitives::SignatureError,
     FsPathError,
     hex::FromHexError,
     eyre::Error,
+    BackendError,
     DatabaseError,
     jsonpath_lib::JsonPathError,
     serde_json::Error,
@@ -304,10 +309,10 @@ impl_from!(
     WalletSignerError,
 );
 
-impl From<EVMError<DatabaseError>> for Error {
+impl<T: Into<BackendError>> From<EVMError<T>> for Error {
     #[inline]
-    fn from(err: EVMError<DatabaseError>) -> Self {
-        Self::display(DatabaseError::from(err))
+    fn from(err: EVMError<T>) -> Self {
+        Self::display(BackendError::from(err))
     }
 }
 

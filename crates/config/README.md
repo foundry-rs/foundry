@@ -114,6 +114,11 @@ match_contract = "Foo"
 no_match_contract = "Bar"
 match_path = "*/Foo*"
 no_match_path = "*/Bar*"
+no_match_coverage = "Baz"
+# Number of threads to use. Not set or zero specifies the number of logical cores.
+threads = 0
+# whether to show test execution progress
+show_progress = true
 ffi = false
 always_use_create_2_factory = false
 prompt_timeout = 120
@@ -124,9 +129,10 @@ initial_balance = '0xffffffffffffffffffffffff'
 block_number = 0
 fork_block_number = 0
 chain_id = 1
-# NOTE due to a toml-rs limitation, this value needs to be a string if the desired gas limit exceeds `i64::MAX` (9223372036854775807)
-# `gas_limit = "Max"` is equivalent to `gas_limit = "18446744073709551615"`
-gas_limit = 9223372036854775807
+# NOTE due to a toml-rs limitation, this value needs to be a string if the desired gas limit exceeds 2**63-1 (9223372036854775807).
+# `gas_limit = "max"` is equivalent to `gas_limit = "18446744073709551615"`. This is not recommended
+# as it will make infinite loops effectively hang during execution.
+gas_limit = 1073741824
 gas_price = 0
 block_base_fee_per_gas = 0
 block_coinbase = '0x0000000000000000000000000000000000000000'
@@ -179,6 +185,11 @@ root = "root"
 # following example enables read-write access for the project dir :
 #       `fs_permissions = [{ access = "read-write", path = "./"}]`
 fs_permissions = [{ access = "read", path = "./out"}]
+# whether failed assertions should revert
+# note that this only applies to native (cheatcode) assertions, invoked on Vm contract
+assertions_revert = true
+# whether `failed()` should be invoked to check if the test have failed
+legacy_assertions = false
 [fuzz]
 runs = 256
 max_test_rejects = 65536

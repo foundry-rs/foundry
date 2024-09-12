@@ -58,7 +58,12 @@ pub struct CoreBuildArgs {
     /// Specify the solc version, or a path to a local solc, to build with.
     ///
     /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
-    #[arg(long = "use", help_heading = "Compiler options", value_name = "SOLC_VERSION")]
+    #[arg(
+        long = "use",
+        alias = "compiler-version",
+        help_heading = "Compiler options",
+        value_name = "SOLC_VERSION"
+    )]
     #[serde(skip)]
     pub use_solc: Option<String>,
 
@@ -141,7 +146,7 @@ impl CoreBuildArgs {
     /// Returns the `Project` for the current workspace
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
-    /// `find_project_root_path` and merges the cli `BuildArgs` into it before returning
+    /// `find_project_root` and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]).
     pub fn project(&self) -> Result<Project<MultiCompiler>> {
         let config = self.try_load_config_emit_warnings()?;

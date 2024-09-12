@@ -1,12 +1,16 @@
+use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{Address, Signature, B256};
+use alloy_primitives::{hex, Address, Signature, B256};
+use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_signer_local::{
     coins_bip39::{English, Entropy, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
 };
+use cast::revm::primitives::{Authorization, U256};
 use clap::Parser;
 use eyre::{Context, Result};
+use foundry_cli::{opts::RpcOpts, utils};
 use foundry_common::fs;
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
@@ -111,6 +115,25 @@ pub enum WalletSubcommands {
         /// Treat the message as a raw 32-byte hash and sign it directly without hashing it again.
         #[arg(long, conflicts_with = "data")]
         no_hash: bool,
+
+        #[command(flatten)]
+        wallet: WalletOpts,
+    },
+
+    /// EIP-7702 sign authorization.
+    #[command(visible_alias = "sa")]
+    SignAuth {
+        /// Address to sign authorization for.
+        address: Address,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+
+        #[arg(long)]
+        nonce: Option<u64>,
+
+        #[arg(long)]
+        chain: Option<Chain>,
 
         #[command(flatten)]
         wallet: WalletOpts,
@@ -326,6 +349,24 @@ impl WalletSubcommands {
                     wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
                 };
                 println!("0x{}", hex::encode(sig.as_bytes()));
+            }
+            Self::SignAuth { rpc, nonce, chain, wallet, address } => {
+                let wallet = wallet.signer().await?;
+                let provider = utils::get_provider(&Config::from(&rpc))?;
+                let nonce = if let Some(nonce) = nonce {
+                    nonce
+                } else {
+                    provider.get_transaction_count(wallet.address()).await?
+                };
+                let chain_id = if let Some(chain) = chain {
+                    chain.id()
+                } else {
+                    provider.get_chain_id().await?
+                };
+                let auth = Authorization { chain_id: U256::from(chain_id), address, nonce };
+                let signature = wallet.sign_hash(&auth.signature_hash()).await?;
+                let auth = auth.into_signed(signature);
+                println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)));
             }
             Self::Verify { message, signature, address } => {
                 let recovered_address = Self::recover_address_from_message(&message, &signature)?;

@@ -1,8 +1,9 @@
-use alloy_primitives::Address;
+use alloy_primitives::{hex, Address};
 use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address};
 use alloy_signer_local::PrivateKeySigner;
-use clap::{builder::TypedValueParser, Parser};
+use clap::Parser;
 use eyre::Result;
+use itertools::Either;
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -18,17 +19,12 @@ pub type GeneratedWallet = (SigningKey, Address);
 /// CLI arguments for `cast wallet vanity`.
 #[derive(Clone, Debug, Parser)]
 pub struct VanityArgs {
-    /// Prefix for the vanity address.
-    #[arg(
-        long,
-        required_unless_present = "ends_with",
-        value_parser = HexAddressValidator,
-        value_name = "HEX"
-    )]
+    /// Prefix regex pattern or hex string.
+    #[arg(long, value_name = "PATTERN", required_unless_present = "ends_with")]
     pub starts_with: Option<String>,
 
-    /// Suffix for the vanity address.
-    #[arg(long, value_parser = HexAddressValidator, value_name = "HEX")]
+    /// Suffix regex pattern or hex string.
+    #[arg(long, value_name = "PATTERN")]
     pub ends_with: Option<String>,
 
     // 2^64-1 is max possible nonce per [eip-2681](https://eips.ethereum.org/EIPS/eip-2681).
@@ -74,24 +70,22 @@ impl WalletData {
 impl VanityArgs {
     pub fn run(self) -> Result<PrivateKeySigner> {
         let Self { starts_with, ends_with, nonce, save_path } = self;
+
         let mut left_exact_hex = None;
         let mut left_regex = None;
-        let mut right_exact_hex = None;
-        let mut right_regex = None;
-
         if let Some(prefix) = starts_with {
-            if let Ok(decoded) = hex::decode(&prefix) {
-                left_exact_hex = Some(decoded)
-            } else {
-                left_regex = Some(Regex::new(&format!(r"^{prefix}"))?);
+            match parse_pattern(&prefix, true)? {
+                Either::Left(left) => left_exact_hex = Some(left),
+                Either::Right(re) => left_regex = Some(re),
             }
         }
 
+        let mut right_exact_hex = None;
+        let mut right_regex = None;
         if let Some(suffix) = ends_with {
-            if let Ok(decoded) = hex::decode(&suffix) {
-                right_exact_hex = Some(decoded)
-            } else {
-                right_regex = Some(Regex::new(&format!(r"{suffix}$"))?);
+            match parse_pattern(&suffix, false)? {
+                Either::Left(right) => right_exact_hex = Some(right),
+                Either::Right(re) => right_regex = Some(re),
             }
         }
 
@@ -151,8 +145,8 @@ impl VanityArgs {
         }
 
         println!(
-            "Successfully found vanity address in {} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
-            timer.elapsed().as_secs(),
+            "Successfully found vanity address in {:.3} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
+            timer.elapsed().as_secs_f64(),
             if nonce.is_some() { "\nContract address: " } else { "" },
             if nonce.is_some() {
                 wallet.address().create(nonce.unwrap()).to_checksum(None)
@@ -331,29 +325,15 @@ impl VanityMatcher for RegexMatcher {
     }
 }
 
-/// Parse 40 byte addresses
-#[derive(Clone, Copy, Debug, Default)]
-pub struct HexAddressValidator;
-
-impl TypedValueParser for HexAddressValidator {
-    type Value = String;
-
-    fn parse_ref(
-        &self,
-        _cmd: &clap::Command,
-        _arg: Option<&clap::Arg>,
-        value: &std::ffi::OsStr,
-    ) -> Result<Self::Value, clap::Error> {
-        if value.len() > 40 {
-            return Err(clap::Error::raw(
-                clap::error::ErrorKind::InvalidValue,
-                "vanity patterns length exceeded. cannot be more than 40 characters",
-            ))
+fn parse_pattern(pattern: &str, is_start: bool) -> Result<Either<Vec<u8>, Regex>> {
+    if let Ok(decoded) = hex::decode(pattern) {
+        if decoded.len() > 20 {
+            return Err(eyre::eyre!("Hex pattern must be less than 20 bytes"));
         }
-        let value = value.to_str().ok_or_else(|| {
-            clap::Error::raw(clap::error::ErrorKind::InvalidUtf8, "address must be valid utf8")
-        })?;
-        Ok(value.to_string())
+        Ok(Either::Left(decoded))
+    } else {
+        let (prefix, suffix) = if is_start { ("^", "") } else { ("", "$") };
+        Ok(Either::Right(Regex::new(&format!("{prefix}{pattern}{suffix}"))?))
     }
 }
 

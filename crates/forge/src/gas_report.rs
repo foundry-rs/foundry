@@ -84,30 +84,30 @@ impl GasReport {
         if trace.depth > 1 &&
             (trace.kind == CallKind::Call ||
                 trace.kind == CallKind::Create ||
-                trace.kind == CallKind::Create2)
+                trace.kind == CallKind::Create2 ||
+                trace.kind == CallKind::EOFCreate)
         {
             return;
         }
 
-        let decoded = decoder.decode_function(&node.trace).await;
-
-        let Some(name) = &decoded.contract else { return };
+        let Some(name) = decoder.contracts.get(&node.trace.address) else { return };
         let contract_name = name.rsplit(':').next().unwrap_or(name);
 
         if !self.should_report(contract_name) {
             return;
         }
 
+        let decoded = || decoder.decode_function(&node.trace);
+
         let contract_info = self.contracts.entry(name.to_string()).or_default();
         if trace.kind.is_any_create() {
             trace!(contract_name, "adding create gas info");
             contract_info.gas = trace.gas_used;
             contract_info.size = trace.data.len();
-        } else if let Some(DecodedCallData { signature, .. }) = decoded.func {
+        } else if let Some(DecodedCallData { signature, .. }) = decoded().await.call_data {
             let name = signature.split('(').next().unwrap();
             // ignore any test/setup functions
-            let should_include = !(name.is_test() || name.is_invariant_test() || name.is_setup());
-            if should_include {
+            if !name.test_function_kind().is_known() {
                 trace!(contract_name, signature, "adding gas info");
                 let gas_info = contract_info
                     .functions
@@ -144,7 +144,7 @@ impl Display for GasReport {
         for (name, contract) in &self.contracts {
             if contract.functions.is_empty() {
                 trace!(name, "gas report contract without functions");
-                continue
+                continue;
             }
 
             let mut table = Table::new();
