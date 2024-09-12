@@ -158,7 +158,9 @@ mod tests {
                 nonce: 1234,
             },
         );
-        dump_db.set_storage_at(test_addr, U256::from(1234567).into(), U256::from(1).into()).unwrap();
+        dump_db
+            .set_storage_at(test_addr, U256::from(1234567).into(), U256::from(1).into())
+            .unwrap();
 
         // blocks dumping/loading tested in storage.rs
         let state = dump_db.dump_state(Default::default(), U64::ZERO, Vec::new()).unwrap().unwrap();
