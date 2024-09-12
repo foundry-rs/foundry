@@ -1074,7 +1074,7 @@ impl Cheatcodes {
     /// Returns existing or set a default `ArbitraryStorage` option.
     /// Used by `setArbitraryStorage` cheatcode to track addresses with arbitrary storage.
     pub fn ensure_arbitrary_storage(&mut self) -> &mut ArbitraryStorage {
-        self.arbitrary_storage.get_or_insert(ArbitraryStorage::default())
+        self.arbitrary_storage.get_or_insert_with(ArbitraryStorage::default)
     }
 
     /// Whether the given address has arbitrary storage.
