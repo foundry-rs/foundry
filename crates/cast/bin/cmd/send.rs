@@ -1,19 +1,21 @@
 use crate::tx::{self, CastTxBuilder};
+use alloy_json_rpc::RpcError;
 use alloy_network::{AnyNetwork, EthereumWallet};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
-use alloy_transport::Transport;
+use alloy_transport::{Transport, TransportErrorKind};
 use cast::Cast;
 use clap::Parser;
-use eyre::Result;
+use eyre::{eyre, Result};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
 };
-use foundry_common::ens::NameOrAddress;
+use foundry_common::{ens::NameOrAddress, selectors::pretty_calldata};
 use foundry_config::Config;
+use serde_json::Value;
 use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast send`.
@@ -166,7 +168,56 @@ impl SendTxArgs {
 
             tx::validate_from_address(eth.wallet.from, from)?;
 
-            let (tx, _) = builder.build(&signer).await?;
+            println!("Sending transaction");
+
+            let res = builder.build(&signer).await;
+
+            let (tx, _) = match res {
+                Err(report) => {
+                    // Try to downcast the error to ErrorPayload
+                    if let Some(RpcError::ErrorResp(error_payload)) =
+                        report.downcast_ref::<RpcError<TransportErrorKind>>()
+                    {
+                        // 1. Return if it's not a custom error
+                        if !error_payload.message.contains("execution reverted: custom error") {
+                            return Err(report);
+                        }
+                        // 2. Extract the error data from the ErrorPayload
+                        let error_data = match error_payload.data.clone() {
+                            Some(data) => data,
+                            None => {
+                                return Err(report);
+                            }
+                        };
+
+                        let error_data: Value = match serde_json::from_str(error_data.get()) {
+                            Ok(data) => data,
+                            Err(e) => {
+                                tracing::warn!("Failed to deserialize error data: {e}");
+                                return Err(eyre!(e));
+                            }
+                        };
+                        let error_data_string = error_data.as_str().unwrap_or_default();
+
+                        let pretty_calldata = match pretty_calldata(error_data_string, false).await
+                        {
+                            Ok(pretty_calldata) => pretty_calldata,
+                            Err(e) => {
+                                tracing::warn!("Failed to pretty print calldata: {e}");
+                                return Err(report);
+                            }
+                        };
+
+                        let detailed_report = report
+                            .wrap_err(format!("Reverted with custom error: {pretty_calldata}"));
+
+                        return Err(detailed_report);
+                    }
+                    // If it's not an ErrorPayload, return the original error
+                    return Err(report);
+                }
+                Ok(result) => result,
+            };
 
             let wallet = EthereumWallet::from(signer);
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
