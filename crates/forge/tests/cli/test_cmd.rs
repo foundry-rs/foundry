@@ -1927,25 +1927,25 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
         r#"
 import "forge-std/Test.sol";
 contract AJunitReportTest is Test {
-    function test_junit1() public {
+    function test_junit_assert_fail() public {
         assert(1 > 2);
     }
 
-    function test_junit2() public {
+    function test_junit_revert_fail() public {
         require(1 > 2, "Revert");
     }
 }
 
 contract BJunitReportTest is Test {
-    function test_junit3() public {
+    function test_junit_pass() public {
         require(1 < 2, "Revert");
     }
 
-    function test_junit4() public {
+    function test_junit_skip() public {
         vm.skip(true);
     }
 
-    function test_junit5(uint256 a) public {
+    function test_junit_pass_fuzz(uint256 a) public {
     }
 }
    "#,
@@ -1954,33 +1954,34 @@ contract BJunitReportTest is Test {
 
     cmd.args(["test", "--junit"]).assert_failure().stdout_eq(str![[r#"
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Test run" tests="5" failures="2" errors="0" timestamp="[..]">
-    <testsuite name="src/JunitReportTest.t.sol:AJunitReportTest" tests="2" disabled="0" errors="0" failures="2">
-        <testcase name="test_junit1()" time="[..]">
+<testsuites name="Test run" tests="5" failures="2" errors="0" timestamp="[..]" time="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:AJunitReportTest" tests="2" disabled="0" errors="0" failures="2" time="[..]">
+        <testcase name="test_junit_assert_fail()" time="[..]">
             <failure message="panic: assertion failed (0x01)"/>
-            <system-err>[FAIL. Reason: panic: assertion failed (0x01)] test_junit1() ([GAS])</system-err>
+            <system-out>[FAIL. Reason: panic: assertion failed (0x01)] test_junit_assert_fail() ([GAS])</system-out>
         </testcase>
-        <testcase name="test_junit2()" time="[..]">
+        <testcase name="test_junit_revert_fail()" time="[..]">
             <failure message="revert: Revert"/>
-            <system-err>[FAIL. Reason: revert: Revert] test_junit2() ([GAS])</system-err>
+            <system-out>[FAIL. Reason: revert: Revert] test_junit_revert_fail() ([GAS])</system-out>
         </testcase>
         <system-out>Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]</system-out>
     </testsuite>
-    <testsuite name="src/JunitReportTest.t.sol:BJunitReportTest" tests="3" disabled="1" errors="0" failures="0">
-        <testcase name="test_junit3()" time="[..]">
-            <system-out>[PASS] test_junit3() ([GAS])</system-out>
+    <testsuite name="src/JunitReportTest.t.sol:BJunitReportTest" tests="3" disabled="1" errors="0" failures="0" time="[..]">
+        <testcase name="test_junit_pass()" time="[..]">
+            <system-out>[PASS] test_junit_pass() ([GAS])</system-out>
         </testcase>
-        <testcase name="test_junit4()" time="[..]">
+        <testcase name="test_junit_pass_fuzz(uint256)" time="[..]">
+            <system-out>[PASS] test_junit_pass_fuzz(uint256) (runs: 256, [AVG_GAS])</system-out>
+        </testcase>
+        <testcase name="test_junit_skip()" time="[..]">
             <skipped/>
-            <system-out>[SKIP] test_junit4() ([GAS])</system-out>
-        </testcase>
-        <testcase name="test_junit5(uint256)" time="[..]">
-            <system-out>[PASS] test_junit5(uint256) (runs: 256, [AVG_GAS])</system-out>
+            <system-out>[SKIP] test_junit_skip() ([GAS])</system-out>
         </testcase>
         <system-out>Suite result: ok. 2 passed; 0 failed; 1 skipped; [ELAPSED]</system-out>
     </testsuite>
 </testsuites>
-...
+
+
 "#]]);
 });
 
@@ -1991,7 +1992,7 @@ forgetest_init!(should_generate_junit_xml_report_with_logs, |prj, cmd| {
         r#"
 import "forge-std/Test.sol";
 contract JunitReportTest is Test {
-    function test_junit1() public {
+    function test_junit_with_logs() public {
         console.log("Step1");
         console.log("Step2");
         console.log("Step3");
@@ -2004,14 +2005,15 @@ contract JunitReportTest is Test {
 
     cmd.args(["test", "--junit", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Test run" tests="1" failures="0" errors="0" timestamp="[..]">
-    <testsuite name="src/JunitReportTest.t.sol:JunitReportTest" tests="1" disabled="0" errors="0" failures="0">
-        <testcase name="test_junit1()" time="[..]">
-            <system-out>[PASS] test_junit1() ([GAS])/nLogs:/n  Step1/n  Step2/n  Step3/n</system-out>
+<testsuites name="Test run" tests="1" failures="0" errors="0" timestamp="[..]" time="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:JunitReportTest" tests="1" disabled="0" errors="0" failures="0" time="[..]">
+        <testcase name="test_junit_with_logs()" time="[..]">
+            <system-out>[PASS] test_junit_with_logs() ([GAS])/nLogs:/n  Step1/n  Step2/n  Step3/n</system-out>
         </testcase>
         <system-out>Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]</system-out>
     </testsuite>
 </testsuites>
-...
+
+
 "#]]);
 });

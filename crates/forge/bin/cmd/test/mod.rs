@@ -41,9 +41,10 @@ use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt::Write,
     path::PathBuf,
     sync::{mpsc::channel, Arc},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use yansi::Paint;
 
@@ -829,10 +830,13 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
 
 /// Generate test report in JUnit XML report format.
 fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> Report {
+    let mut total_duration = Duration::default();
     let mut junit_report = Report::new("Test run");
     junit_report.set_timestamp(Utc::now());
     for (suite_name, suite_result) in results {
         let mut test_suite = TestSuite::new(suite_name);
+        total_duration = total_duration + suite_result.duration;
+        test_suite.set_time(suite_result.duration);
         test_suite.set_system_out(suite_result.summary());
         for (test_name, test_result) in &suite_result.test_results {
             let test_status = if test_result.status.is_failure() {
@@ -848,25 +852,23 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
             let mut test_case = TestCase::new(test_name, test_status);
             test_case.set_time(test_result.duration);
 
-            let mut sys_out =
-                format!("{} {} {}", test_result, test_name, test_result.kind.report());
+            let mut sys_out = String::new();
+            let result_report = test_result.kind.report();
+            write!(sys_out, "{test_result} {test_name} {result_report}").unwrap();
             if verbosity >= 2 && !test_result.logs.is_empty() {
-                sys_out.push_str("\\nLogs:\\n");
+                write!(sys_out, "\\nLogs:\\n").unwrap();
                 let console_logs = decode_console_logs(&test_result.logs);
                 for log in console_logs {
-                    sys_out.push_str(format!("  {log}\\n").as_str());
+                    write!(sys_out, "  {log}\\n").unwrap();
                 }
             }
 
-            if test_result.status.is_failure() {
-                test_case.set_system_err(sys_out);
-            } else {
-                test_case.set_system_out(sys_out);
-            }
+            test_case.set_system_out(sys_out);
             test_suite.add_test_case(test_case);
         }
         junit_report.add_test_suite(test_suite);
     }
+    junit_report.set_time(total_duration);
     junit_report
 }
 
