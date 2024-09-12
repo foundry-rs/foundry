@@ -1919,3 +1919,99 @@ contract CounterRevertTest is DSTest {
 ...
 "#]]);
 });
+
+forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source(
+        "JunitReportTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract AJunitReportTest is Test {
+    function test_junit1() public {
+        assert(1 > 2);
+    }
+
+    function test_junit2() public {
+        require(1 > 2, "Revert");
+    }
+}
+
+contract BJunitReportTest is Test {
+    function test_junit3() public {
+        require(1 < 2, "Revert");
+    }
+
+    function test_junit4() public {
+        vm.skip(true);
+    }
+
+    function test_junit5(uint256 a) public {
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--junit"]).assert_failure().stdout_eq(str![[r#"
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="Test run" tests="5" failures="2" errors="0" timestamp="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:AJunitReportTest" tests="2" disabled="0" errors="0" failures="2">
+        <testcase name="test_junit1()" time="[..]">
+            <failure message="panic: assertion failed (0x01)"/>
+            <system-err>[FAIL. Reason: panic: assertion failed (0x01)] test_junit1() ([GAS])</system-err>
+        </testcase>
+        <testcase name="test_junit2()" time="[..]">
+            <failure message="revert: Revert"/>
+            <system-err>[FAIL. Reason: revert: Revert] test_junit2() ([GAS])</system-err>
+        </testcase>
+        <system-out>Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]</system-out>
+    </testsuite>
+    <testsuite name="src/JunitReportTest.t.sol:BJunitReportTest" tests="3" disabled="1" errors="0" failures="0">
+        <testcase name="test_junit3()" time="[..]">
+            <system-out>[PASS] test_junit3() ([GAS])</system-out>
+        </testcase>
+        <testcase name="test_junit4()" time="[..]">
+            <skipped/>
+            <system-out>[SKIP] test_junit4() ([GAS])</system-out>
+        </testcase>
+        <testcase name="test_junit5(uint256)" time="[..]">
+            <system-out>[PASS] test_junit5(uint256) (runs: 256, [AVG_GAS])</system-out>
+        </testcase>
+        <system-out>Suite result: ok. 2 passed; 0 failed; 1 skipped; [ELAPSED]</system-out>
+    </testsuite>
+</testsuites>
+...
+"#]]);
+});
+
+forgetest_init!(should_generate_junit_xml_report_with_logs, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source(
+        "JunitReportTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract JunitReportTest is Test {
+    function test_junit1() public {
+        console.log("Step1");
+        console.log("Step2");
+        console.log("Step3");
+        assert(2 > 1);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--junit", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="Test run" tests="1" failures="0" errors="0" timestamp="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:JunitReportTest" tests="1" disabled="0" errors="0" failures="0">
+        <testcase name="test_junit1()" time="[..]">
+            <system-out>[PASS] test_junit1() ([GAS])/nLogs:/n  Step1/n  Step2/n  Step3/n</system-out>
+        </testcase>
+        <system-out>Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]</system-out>
+    </testsuite>
+</testsuites>
+...
+"#]]);
+});

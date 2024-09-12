@@ -1,5 +1,6 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use alloy_primitives::U256;
+use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result};
 use forge::{
@@ -48,6 +49,8 @@ use yansi::Paint;
 
 mod filter;
 mod summary;
+
+use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::TestSummaryReporter;
 
 pub use filter::FilterArgs;
@@ -115,6 +118,10 @@ pub struct TestArgs {
     #[arg(long, help_heading = "Display options")]
     json: bool,
 
+    /// Output test results as JUnit XML report.
+    #[arg(long, conflicts_with = "json", help_heading = "Display options")]
+    junit: bool,
+
     /// Stop running tests after the first failure.
     #[arg(long)]
     pub fail_fast: bool,
@@ -181,7 +188,7 @@ impl TestArgs {
 
     pub async fn run(self) -> Result<TestOutcome> {
         trace!(target: "forge::test", "executing test command");
-        shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
+        shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json || self.junit))?;
         self.execute_tests().await
     }
 
@@ -300,7 +307,7 @@ impl TestArgs {
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
 
         let compiler = ProjectCompiler::new()
-            .quiet_if(self.json || self.opts.silent)
+            .quiet_if(self.json || self.junit || self.opts.silent)
             .files(sources_to_compile);
 
         let output = compiler.compile(&project)?;
@@ -491,6 +498,12 @@ impl TestArgs {
         if self.json {
             let results = runner.test_collect(filter);
             println!("{}", serde_json::to_string(&results)?);
+            return Ok(TestOutcome::new(results, self.allow_failure));
+        }
+
+        if self.junit {
+            let results = runner.test_collect(filter);
+            println!("{}", junit_xml_report(&results, verbosity).to_string().unwrap());
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
@@ -812,6 +825,49 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         }
         let _ = fs::write(&config.test_failures_file, filter);
     }
+}
+
+/// Generate test report in JUnit XML report format.
+fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> Report {
+    let mut junit_report = Report::new("Test run");
+    junit_report.set_timestamp(Utc::now());
+    for (suite_name, suite_result) in results {
+        let mut test_suite = TestSuite::new(suite_name);
+        test_suite.set_system_out(suite_result.summary());
+        for (test_name, test_result) in &suite_result.test_results {
+            let test_status = if test_result.status.is_failure() {
+                let mut status = TestCaseStatus::non_success(NonSuccessKind::Failure);
+                status.set_message(test_result.reason.clone().unwrap_or_default());
+                status
+            } else if test_result.status.is_skipped() {
+                TestCaseStatus::skipped()
+            } else {
+                TestCaseStatus::success()
+            };
+
+            let mut test_case = TestCase::new(test_name, test_status);
+            test_case.set_time(test_result.duration);
+
+            let mut sys_out =
+                format!("{} {} {}", test_result, test_name, test_result.kind.report());
+            if verbosity >= 2 && !test_result.logs.is_empty() {
+                sys_out.push_str("\\nLogs:\\n");
+                let console_logs = decode_console_logs(&test_result.logs);
+                for log in console_logs {
+                    sys_out.push_str(format!("  {log}\\n").as_str());
+                }
+            }
+
+            if test_result.status.is_failure() {
+                test_case.set_system_err(sys_out);
+            } else {
+                test_case.set_system_out(sys_out);
+            }
+            test_suite.add_test_case(test_case);
+        }
+        junit_report.add_test_suite(test_suite);
+    }
+    junit_report
 }
 
 #[cfg(test)]
