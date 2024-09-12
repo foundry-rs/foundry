@@ -1648,12 +1648,10 @@ impl SimpleCast {
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
         let func = get_func(sig)?;
-        let calldata = match encode_function_args(&func, args) {
-            Ok(res) => hex::encode(res),
+        match encode_function_args(&func, args) {
+            Ok(res) => Ok(hex::encode_prefixed(&res[4..])),
             Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
-        };
-        let encoded = &calldata[8..];
-        Ok(format!("0x{encoded}"))
+        }
     }
 
     /// Performs packed ABI encoding based off of the function signature or tuple.
