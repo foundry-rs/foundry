@@ -37,7 +37,7 @@ use itertools::Itertools;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use revm::{
     interpreter::{
-        opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
+        opcode as op, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
@@ -526,10 +526,6 @@ impl Cheatcodes {
                 if let Some(new_origin) = prank.new_origin {
                     ecx.env.tx.caller = new_origin;
                 }
-
-                if prank.delegate_call {
-                    println!("******** create_common");
-                }
             }
         }
 
@@ -622,9 +618,6 @@ impl Cheatcodes {
 
         // Clean up pranks
         if let Some(prank) = &self.prank {
-            if prank.delegate_call {
-                println!("******** create_end_common");
-            }
             if ecx.journaled_state.depth() == prank.depth {
                 ecx.env.tx.caller = prank.prank_origin;
 
@@ -841,14 +834,14 @@ impl Cheatcodes {
 
         // Apply our prank
         if let Some(prank) = &self.prank {
-            // if let CallScheme::DelegateCall = call.scheme {
-            if prank.delegate_call {
-                println!("******** Call with executor");
-                call.target_address = prank.new_caller;
-                call.caller = prank.new_caller;
-                // call.bytecode_address = call.target_address;
+            if let CallScheme::DelegateCall = call.scheme {
+                if prank.delegate_call {
+                    call.target_address = prank.new_caller;
+                    call.caller = prank.new_caller;
+                    let acc = ecx.journaled_state.account(prank.new_caller);
+                    call.value = CallValue::Apparent(acc.info.balance);
+                }
             }
-            // }
             if ecx.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
                 let mut prank_applied = false;
 
@@ -1149,10 +1142,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if !cheatcode_call {
             // Clean up pranks
             if let Some(prank) = &self.prank {
-                if prank.delegate_call {
-                    println!("******** call_end");
-                    // println!("{:#?}", Backtrace::force_capture());
-                }
                 if ecx.journaled_state.depth() == prank.depth {
                     ecx.env.tx.caller = prank.prank_origin;
 

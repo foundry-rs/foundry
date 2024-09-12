@@ -89,13 +89,12 @@ contract NestedPranker {
     }
 }
 
-contract B is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+contract ImplementationTest {
     uint256 public num;
     address public sender;
 
-    function assertCorrectCaller(address expectedCaller) public {
-        require(msg.sender == expectedCaller);
+    function assertCorrectCaller(address expectedSender) public {
+        require(msg.sender == expectedSender);
     }
 
     function setNum(uint256 _num) public {
@@ -103,59 +102,35 @@ contract B is DSTest {
     }
 }
 
-contract A {
+contract ProxyTest {
     uint256 public num;
     address public sender;
 }
 
-// contract B {
-//     // NOTE: storage layout must be the same as contract A
-//     uint256 public num;
-//     address public sender;
-//     uint256 public value;
-
-//     function setVars(uint256 _num) public payable {
-//         num = _num;
-//         sender = msg.sender;
-//         value = msg.value;
-//     }
-// }
-
-// contract A {
-//     uint256 public num;
-//     address public sender;
-//     uint256 public value;
-
-//     function setVars(address _contract, uint256 _num) public payable {
-//         // A's storage is set, B is not modified.
-//         (bool success, bytes memory data) = _contract.delegatecall(
-//             abi.encodeWithSignature("setVars(uint256)", _num)
-//         );
-
-//         require(success);
-//     }
-// }
-
 contract PrankTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function testPrankDelegateCall(address sender, address origin) public {
-        A a = new A();
-        B b = new B();
-        vm.prank(address(a), origin, true);
-        // a.setVars(address(b), 42);
-        // require(a.num() == 42, "A's storage was not set correctly");
-        // Do deletegate call
-        // (bool success, ) = address(b).delegatecall(
-        //     abi.encodeWithSignature("setNum(uint256)", 42)
-        // );
-        (bool success, bytes memory data) = address(b).delegatecall(
-            abi.encodeWithSignature("assertCorrectCaller(address)", address(a))
+    function testPrankDelegateCall(address sender) public {
+        ProxyTest proxy = new ProxyTest();
+        ImplementationTest impl = new ImplementationTest();
+        vm.startPrank(address(proxy), sender, true);
+
+        // Assert correct `msg.sender`
+        (bool success, ) = address(impl).delegatecall(
+            abi.encodeWithSignature(
+                "assertCorrectCaller(address)",
+                address(proxy)
+            )
         );
-        require(success, "Delegate call failed");
-        require(a.sender() == address(a), "A's storage was not set correctly");
-        // require(success, "Delegate call failed");
-        // // require(a.num() == 42, "A's storage was not set correctly");
+        require(success, "delegate call failed assertCorrectCaller");
+
+        // Assert storage updates
+        uint256 num = 42;
+        (bool successTwo, ) = address(impl).delegatecall(
+            abi.encodeWithSignature("setNum(uint256)", num)
+        );
+        require(successTwo, "delegate call failed setNum");
+        require(proxy.num() == num, "A's storage was not set correctly");
     }
 
     function testPrankSender(address sender) public {

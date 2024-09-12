@@ -635,9 +635,6 @@ fn read_callers(state: &Cheatcodes, default_sender: &Address) -> Result {
         if let Some(new) = &prank.new_origin {
             new_origin = new;
         }
-        if prank.delegate_call {
-            println!("******** read_callers");
-        }
     } else if let Some(broadcast) = broadcast {
         mode = if broadcast.single_call {
             CallerMode::Broadcast
