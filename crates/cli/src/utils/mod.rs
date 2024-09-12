@@ -1,12 +1,10 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::U256;
 use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_rpc_types::AccessList;
 use alloy_transport::Transport;
-use eyre::{Context, ContextCompat, Result};
+use eyre::{ContextCompat, Result};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::{Chain, Config};
-use serde_json;
 use std::{
     ffi::OsStr,
     future::Future,
@@ -150,13 +148,6 @@ pub fn parse_delay(delay: &str) -> Result<Duration> {
         Duration::from_millis(delay as u64)
     };
     Ok(delay)
-}
-
-/// Parses an `AccessList` from a &str
-pub fn parse_access_list(s: &str) -> Result<AccessList> {
-    serde_json::from_str::<AccessList>(s)
-        .map(AccessList::from)
-        .wrap_err("Could not parse access list from string")
 }
 
 /// Returns the current time as a [`Duration`] since the Unix epoch.

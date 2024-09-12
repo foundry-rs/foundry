@@ -4,19 +4,20 @@ use alloy_network::{AnyNetwork, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{Authorization, TransactionInput, TransactionRequest};
+use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::Transport;
 use cast::revm::primitives::SignedAuthorization;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{self, parse_access_list, parse_function_args},
+    utils::{self, parse_function_args},
 };
 use foundry_common::ens::NameOrAddress;
 use foundry_config::{Chain, Config};
 use foundry_wallets::{WalletOpts, WalletSigner};
+use serde_json;
 
 /// Different sender kinds used by [`CastTxBuilder`].
 pub enum SenderKind<'a> {
@@ -187,7 +188,11 @@ where
             // --access-list provided with no value, call the provider to create it
             Some(None) => Some(provider.create_access_list(&tx).await?.access_list),
             // Access list provided as a string, attempt to parse it
-            Some(Some(ref s)) => Some(parse_access_list(s)?),
+            Some(Some(ref s)) => Some(
+                serde_json::from_str::<AccessList>(s)
+                    .map(AccessList::from)
+                    .wrap_err("Failed to parse access list from string")?,
+            ),
         } {
             tx.set_access_list(access_list);
         }
