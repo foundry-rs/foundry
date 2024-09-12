@@ -503,7 +503,7 @@ impl TestArgs {
 
         if self.junit {
             let results = runner.test_collect(filter);
-            println!("{}", junit_xml_report(&results, verbosity).to_string().unwrap());
+            println!("{}", junit_xml_report(&results, verbosity).to_string()?);
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
