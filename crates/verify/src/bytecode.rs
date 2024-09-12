@@ -142,7 +142,12 @@ impl VerifyBytecodeArgs {
             &config,
         )?;
 
+        // ignore flag setup
         let ignore_immutables = self.ignore_immutables;
+        let mut ignore = self.ignore;
+        if ignore_immutables && self.ignore.is_none() {
+            ignore = Some(BytecodeType::Creation);
+        }
 
         trace!(?ignore_immutables);
         // Get the bytecode at the address, bailing if it doesn't exist.
@@ -281,14 +286,15 @@ impl VerifyBytecodeArgs {
                 crate::utils::deploy_contract(&mut executor, &env, config.evm_spec_id(), &gen_tx)?;
 
             // Compare runtime bytecode
-            let (deployed_bytecode, onchain_runtime_code) = crate::utils::get_runtime_codes(
-                &mut executor,
-                &provider,
-                self.address,
-                fork_address,
-                None,
-            )
-            .await?;
+            let (mut deployed_bytecode, mut onchain_runtime_code) =
+                crate::utils::get_runtime_codes(
+                    &mut executor,
+                    &provider,
+                    self.address,
+                    fork_address,
+                    None,
+                )
+                .await?;
 
             if ignore_immutables {
                 // Locate immutable refs using the offsets in the artifact
@@ -300,12 +306,13 @@ impl VerifyBytecodeArgs {
                     // TODO: Extract those sections from both `deployed_bytecode` and
                     // `onchain_runtime_code`.
 
-                    println!("Extracting refs from deployed bytecode");
-                    let _ = crate::utils::extract_immutables_refs(refs.clone(), deployed_bytecode.clone());
+                    trace!("extracting refs from deployed bytecode");
+                    deployed_bytecode =
+                        crate::utils::extract_immutables_refs(refs.clone(), deployed_bytecode);
 
-                    println!("Extracting refs from onchain runtime code");
-                    let _ =
-                        crate::utils::extract_immutables_refs(refs, onchain_runtime_code.clone());
+                    trace!("extracting refs from onchain runtime code");
+                    onchain_runtime_code =
+                        crate::utils::extract_immutables_refs(refs, onchain_runtime_code);
                 }
             }
 
@@ -393,7 +400,7 @@ impl VerifyBytecodeArgs {
 
         trace!(ignore = ?self.ignore);
         // Check if `--ignore` is set to `creation`.
-        if !self.ignore.is_some_and(|b| b.is_creation()) {
+        if !ignore.is_some_and(|b| b.is_creation()) {
             // Compare creation code with locally built bytecode and `maybe_creation_code`.
             let match_type = crate::utils::match_bytecodes(
                 local_bytecode_vec.as_slice(),
@@ -429,7 +436,7 @@ impl VerifyBytecodeArgs {
             }
         }
 
-        if !self.ignore.is_some_and(|b| b.is_runtime()) {
+        if !ignore.is_some_and(|b| b.is_runtime()) {
             // Get contract creation block.
             let simulation_block = match self.block {
                 Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
@@ -497,14 +504,15 @@ impl VerifyBytecodeArgs {
             )?;
 
             // State commited using deploy_with_env, now get the runtime bytecode from the db.
-            let (fork_runtime_code, onchain_runtime_code) = crate::utils::get_runtime_codes(
-                &mut executor,
-                &provider,
-                self.address,
-                fork_address,
-                Some(simulation_block),
-            )
-            .await?;
+            let (mut fork_runtime_code, mut onchain_runtime_code) =
+                crate::utils::get_runtime_codes(
+                    &mut executor,
+                    &provider,
+                    self.address,
+                    fork_address,
+                    Some(simulation_block),
+                )
+                .await?;
 
             if ignore_immutables {
                 // Locate immutable refs using the offsets in the artifact
@@ -516,15 +524,13 @@ impl VerifyBytecodeArgs {
                     // TODO: Extract those sections from both `deployed_bytecode` and
                     // `onchain_runtime_code`.
 
-                    println!("Extracting refs from deployed bytecode");
-                    let _ = crate::utils::extract_immutables_refs(
-                        refs.clone(),
-                        fork_runtime_code.clone(),
-                    );
+                    trace!("extracting refs from fork runtime code");
+                    fork_runtime_code =
+                        crate::utils::extract_immutables_refs(refs.clone(), fork_runtime_code);
 
-                    println!("Extracting refs from onchain runtime code");
-                    let _ =
-                        crate::utils::extract_immutables_refs(refs, onchain_runtime_code.clone());
+                    trace!("extracting refs from onchain runtime code");
+                    onchain_runtime_code =
+                        crate::utils::extract_immutables_refs(refs, onchain_runtime_code);
                 }
             }
 
