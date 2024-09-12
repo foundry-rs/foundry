@@ -124,6 +124,7 @@ pub trait Db:
         best_number: U64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
+        historical_states: SerializableHistoricalStates,
     ) -> DatabaseResult<Option<SerializableState>>;
 
     /// Deserialize and add all chain data to the backend storage
@@ -198,6 +199,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         _best_number: U64,
         _blocks: Vec<SerializableBlock>,
         _transaction: Vec<SerializableTransaction>,
+        _historical_states: SerializableHistoricalStates,
     ) -> DatabaseResult<Option<SerializableState>> {
         Ok(None)
     }
@@ -280,6 +282,10 @@ impl StateDb {
     pub fn new(db: impl MaybeFullDatabase + Send + Sync + 'static) -> Self {
         Self(Box::new(db))
     }
+
+    pub fn serialize_state(&mut self) -> StateSnapshot {
+        self.clear_into_snapshot()
+    }
 }
 
 impl DatabaseRef for StateDb {
@@ -332,6 +338,11 @@ pub struct SerializableState {
     pub blocks: Vec<SerializableBlock>,
     #[serde(default)]
     pub transactions: Vec<SerializableTransaction>,
+    /// Historical states of accounts and storage at particular block hashes.
+    ///
+    /// Note: This is an Option for backwards compatibility.
+    #[serde(default)]
+    pub historical_states: Option<SerializableHistoricalStates>,
 }
 
 impl SerializableState {
@@ -444,3 +455,6 @@ impl From<SerializableTransaction> for MinedTransaction {
         }
     }
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct SerializableHistoricalStates(pub Vec<(B256, StateSnapshot)>);

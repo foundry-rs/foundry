@@ -3,7 +3,7 @@
 use crate::{
     eth::backend::db::{
         Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
-        SerializableState, SerializableTransaction, StateDb,
+        SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
     },
     mem::state::state_root,
     revm::{db::DbAccount, primitives::AccountInfo},
@@ -38,6 +38,7 @@ impl Db for MemDb {
         best_number: U64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
+        historical_states: SerializableHistoricalStates,
     ) -> DatabaseResult<Option<SerializableState>> {
         let accounts = self
             .inner
@@ -68,6 +69,7 @@ impl Db for MemDb {
             best_block_number: Some(best_number),
             blocks,
             transactions,
+            historical_states: Some(historical_states),
         }))
     }
 
@@ -163,7 +165,7 @@ mod tests {
 
         // blocks dumping/loading tested in storage.rs
         let state = dump_db
-            .dump_state(Default::default(), U64::ZERO, Vec::new(), Vec::new())
+            .dump_state(Default::default(), U64::ZERO, Vec::new(), Vec::new(), Default::default())
             .unwrap()
             .unwrap();
 

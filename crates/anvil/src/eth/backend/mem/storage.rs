@@ -1,7 +1,10 @@
 //! In-memory blockchain storage
 use crate::eth::{
     backend::{
-        db::{MaybeFullDatabase, SerializableBlock, SerializableTransaction, StateDb},
+        db::{
+            MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates, SerializableState,
+            SerializableTransaction, StateDb,
+        },
         mem::cache::DiskStateCache,
     },
     error::BlockchainError,
@@ -188,6 +191,27 @@ impl InMemoryBlockStates {
             self.disk_cache.remove(on_disk)
         }
     }
+
+    /// Serialize all states to a list of serializable historical states
+    pub fn serialized_states(&mut self) -> SerializableHistoricalStates {
+        // Get in-memory states and serialized them
+        let mut in_memory_states = self
+            .states
+            .iter_mut()
+            .map(|(hash, state)| (*hash, state.serialize_state()))
+            .collect::<Vec<_>>();
+
+        let disk_states = self
+            .on_disk_states
+            .iter_mut()
+            .map(|(hash, state)| (*hash, state.serialize_state()))
+            .collect::<Vec<_>>();
+
+        // Join the two lists
+        in_memory_states.extend(disk_states);
+
+        SerializableHistoricalStates(in_memory_states)
+    }
 }
 
 impl fmt::Debug for InMemoryBlockStates {
@@ -361,6 +385,7 @@ impl BlockchainStorage {
             let block: Block = serializable_block.clone().into();
             let block_hash = block.header.hash_slow();
             let block_number = block.header.number;
+            println!("Loading block number {} with hash {}", block_number, block_hash);
             self.blocks.insert(block_hash, block);
             self.hashes.insert(U64::from(block_number), block_hash);
         }
