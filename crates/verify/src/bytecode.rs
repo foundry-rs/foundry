@@ -216,6 +216,8 @@ impl VerifyBytecodeArgs {
             check_explorer_args(source_code.clone())?
         };
 
+        trace!(provided_constructor_args = ?constructor_args);
+
         // This fails only when the contract expects constructor args but NONE were provided OR
         // retrieved from explorer (in case of predeploys).
         crate::utils::check_args_len(&artifact, &constructor_args)?;
@@ -299,10 +301,7 @@ impl VerifyBytecodeArgs {
                     // `onchain_runtime_code`.
 
                     println!("Extracting refs from deployed bytecode");
-                    let _ = crate::utils::extract_immutables_refs(
-                        refs.clone(),
-                        deployed_bytecode.original_bytes(),
-                    );
+                    let _ = crate::utils::extract_immutables_refs(refs.clone(), deployed_bytecode.clone());
 
                     println!("Extracting refs from onchain runtime code");
                     let _ =
@@ -311,7 +310,7 @@ impl VerifyBytecodeArgs {
             }
 
             let match_type = crate::utils::match_bytecodes(
-                &deployed_bytecode.original_bytes(),
+                &deployed_bytecode,
                 &onchain_runtime_code,
                 &constructor_args,
                 true,
@@ -520,7 +519,7 @@ impl VerifyBytecodeArgs {
                     println!("Extracting refs from deployed bytecode");
                     let _ = crate::utils::extract_immutables_refs(
                         refs.clone(),
-                        fork_runtime_code.original_bytes(),
+                        fork_runtime_code.clone(),
                     );
 
                     println!("Extracting refs from onchain runtime code");
@@ -531,7 +530,7 @@ impl VerifyBytecodeArgs {
 
             // Compare the onchain runtime bytecode with the runtime code from the fork.
             let match_type = crate::utils::match_bytecodes(
-                &fork_runtime_code.original_bytes(),
+                &fork_runtime_code,
                 &onchain_runtime_code,
                 &constructor_args,
                 true,

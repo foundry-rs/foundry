@@ -16,8 +16,7 @@ use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecuto
 use reqwest::Url;
 use revm_primitives::{
     db::Database,
-    env::{EnvWithHandlerCfg, HandlerCfg},
-    Bytecode, Env, SpecId,
+    env::{EnvWithHandlerCfg, HandlerCfg},Env, SpecId,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -140,7 +139,7 @@ pub fn build_using_cache(
 pub fn get_immutable_refs(
     artifact: &CompactContractBytecode,
 ) -> Option<BTreeMap<String, Vec<Offsets>>> {
-    if artifact.deployed_bytecode.as_ref().is_some_and(|b| b.immutable_references.len() > 0) {
+    if artifact.deployed_bytecode.as_ref().is_some_and(|b| !b.immutable_references.is_empty()) {
         let immutable_refs =
             artifact.deployed_bytecode.as_ref().unwrap().immutable_references.clone();
 
@@ -451,7 +450,7 @@ pub async fn get_runtime_codes(
     address: Address,
     fork_address: Address,
     block: Option<u64>,
-) -> Result<(Bytecode, Bytes)> {
+) -> Result<(Bytes, Bytes)> {
     let fork_runtime_code = executor
         .backend_mut()
         .basic(fork_address)?
@@ -475,7 +474,7 @@ pub async fn get_runtime_codes(
         provider.get_code_at(address).await?
     };
 
-    Ok((fork_runtime_code, onchain_runtime_code))
+    Ok((fork_runtime_code.original_bytes(), onchain_runtime_code))
 }
 
 /// Returns `true` if the URL only consists of host.
