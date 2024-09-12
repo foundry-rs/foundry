@@ -124,7 +124,7 @@ impl ContractSources {
     /// Collects the contract sources and artifacts from the project compile output.
     pub fn from_project_output(
         output: &ProjectCompileOutput,
-        root: impl AsRef<Path>,
+        root: &Path,
         libraries: Option<&Libraries>,
     ) -> Result<Self> {
         let mut sources = Self::default();
@@ -135,13 +135,12 @@ impl ContractSources {
     pub fn insert<C: Compiler>(
         &mut self,
         output: &ProjectCompileOutput<C>,
-        root: impl AsRef<Path>,
+        root: &Path,
         libraries: Option<&Libraries>,
     ) -> Result<()>
     where
         C::Language: Into<MultiCompilerLanguage>,
     {
-        let root = root.as_ref();
         let link_data = libraries.map(|libraries| {
             let linker = Linker::new(root, output.artifact_ids().collect());
             (linker, libraries)
@@ -152,16 +151,16 @@ impl ContractSources {
             .collect::<Vec<_>>()
             .par_iter()
             .map(|(id, artifact)| {
-                let mut artifacts = Vec::new();
+                let mut new_artifact = None;
                 if let Some(file_id) = artifact.id {
                     let artifact = if let Some((linker, libraries)) = link_data.as_ref() {
-                        linker.link(id, libraries)?.into_contract_bytecode()
+                        linker.link(id, libraries)?
                     } else {
-                        (*artifact).clone().into_contract_bytecode()
+                        artifact.get_contract_bytecode()
                     };
                     let bytecode = compact_to_contract(artifact.into_contract_bytecode())?;
 
-                    artifacts.push((
+                    new_artifact = Some((
                         id.name.clone(),
                         ArtifactData::new(bytecode, id.build_id.clone(), file_id)?,
                     ));
@@ -169,14 +168,11 @@ impl ContractSources {
                     warn!(id = id.identifier(), "source not found");
                 };
 
-                Ok(artifacts)
+                Ok(new_artifact)
             })
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .flatten()
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
-        for (name, artifact) in artifacts {
+        for (name, artifact) in artifacts.into_iter().flatten() {
             self.artifacts_by_name.entry(name).or_default().push(artifact);
         }
 

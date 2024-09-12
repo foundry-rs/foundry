@@ -121,11 +121,17 @@ axum.opt-level = 3
 # keystores
 scrypt.opt-level = 3
 
-# Override packages which aren't perf-sensitive for faster compilation speed.
+# Override packages which aren't perf-sensitive for faster compilation speed and smaller binary size.
 [profile.release.package]
-mdbook.opt-level = 1
-protobuf.opt-level = 1
-trezor-client.opt-level = 1
+alloy-sol-macro-expander.opt-level = "z"
+html5ever.opt-level = "z"
+mdbook.opt-level = "z"
+prettyplease.opt-level = "z"
+protobuf.opt-level = "z"
+pulldown-cmark.opt-level = "z"
+syn-solidity.opt-level = "z"
+syn.opt-level = "z"
+trezor-client.opt-level = "z"
 
 [workspace.dependencies]
 anvil = { path = "crates/anvil" }
