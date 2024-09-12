@@ -65,9 +65,9 @@ pub struct TransactionOpts {
 
     /// EIP-2930 access list.
     ///
-    /// Can be either JSON encoded access list or empty to use the `accessList` output of an rpc
-    /// call to `eth_createAccessList`. To only get the access list portion, you can use `cast
-    /// access-list`.
+    /// Accepts either a JSON-encoded access list or an empty value to create the access list
+    /// via an RPC call to `eth_createAccessList`. To retrieve only the access list portion, use
+    /// the `cast access-list` command.
     #[arg(long)]
     pub access_list: Option<Option<String>>,
 }
