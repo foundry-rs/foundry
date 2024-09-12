@@ -529,7 +529,7 @@ Compiler run successful!
 Ran 1 test for test/Contract.t.sol:USDTCallingTest
 [PASS] test() ([GAS])
 Traces:
-  [9537] USDTCallingTest::test()
+  [9516] USDTCallingTest::test()
     ├─ [0] VM::createSelectFork("[..]")
     │   └─ ← [Return] 0
     ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
@@ -573,7 +573,7 @@ contract CustomTypesTest is Test {
 Compiler run successful!
 
 Ran 2 tests for test/Contract.t.sol:CustomTypesTest
-[FAIL. Reason: PoolNotInitialized()] testErr() ([GAS])
+[FAIL: PoolNotInitialized()] testErr() ([GAS])
 Traces:
   [254] CustomTypesTest::testErr()
     └─ ← [Revert] PoolNotInitialized()
@@ -590,7 +590,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/Contract.t.sol:CustomTypesTest
-[FAIL. Reason: PoolNotInitialized()] testErr() ([GAS])
+[FAIL: PoolNotInitialized()] testErr() ([GAS])
 
 Encountered a total of 1 failing tests, 1 tests succeeded
 
@@ -632,7 +632,8 @@ forgetest_init!(can_test_transient_storage_with_isolation, |prj, cmd| {
 
     prj.add_test(
         "Contract.t.sol",
-        r#"pragma solidity 0.8.24;
+        r#"
+pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 
 contract TransientTester {
@@ -687,7 +688,7 @@ forgetest_init!(can_disable_block_gas_limit, |prj, cmd| {
 
     prj.add_test(
         "Contract.t.sol",
-        &r#"pragma solidity 0.8.24;
+        &r#"
 import {Test} from "forge-std/Test.sol";
 
 contract C is Test {}
@@ -743,7 +744,7 @@ forgetest_init!(should_not_shrink_fuzz_failure, |prj, cmd| {
 
     prj.add_test(
         "CounterFuzz.t.sol",
-        r#"pragma solidity 0.8.24;
+        r#"
 import {Test} from "forge-std/Test.sol";
 
 contract Counter {
@@ -776,14 +777,14 @@ contract CounterTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/CounterFuzz.t.sol:CounterTest
-[FAIL. Reason: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 61, [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 61, [AVG_GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
-[FAIL. Reason: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 61, [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 61, [AVG_GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -794,7 +795,7 @@ forgetest_init!(should_exit_early_on_invariant_failure, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
         "CounterInvariant.t.sol",
-        r#"pragma solidity 0.8.24;
+        r#"
 import {Test} from "forge-std/Test.sol";
 
 contract Counter {
@@ -827,14 +828,14 @@ contract CounterTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/CounterInvariant.t.sol:CounterTest
-[FAIL. Reason: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
+[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterInvariant.t.sol:CounterTest
-[FAIL. Reason: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
+[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -845,7 +846,7 @@ forgetest_init!(should_replay_failures_only, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
         "ReplayFailures.t.sol",
-        r#"pragma solidity 0.8.24;
+        r#"
 import {Test} from "forge-std/Test.sol";
 
 contract ReplayFailuresTest is Test {
@@ -876,17 +877,17 @@ Compiler run successful!
 
 Ran 4 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
 [PASS] testA() ([GAS])
-[FAIL. Reason: revert: testB failed] testB() ([GAS])
+[FAIL: revert: testB failed] testB() ([GAS])
 [PASS] testC() ([GAS])
-[FAIL. Reason: revert: testD failed] testD() ([GAS])
+[FAIL: revert: testD failed] testD() ([GAS])
 Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 2 failed, 0 skipped (4 total tests)
 
 Failing tests:
 Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL. Reason: revert: testB failed] testB() ([GAS])
-[FAIL. Reason: revert: testD failed] testD() ([GAS])
+[FAIL: revert: testB failed] testB() ([GAS])
+[FAIL: revert: testD failed] testD() ([GAS])
 
 Encountered a total of 2 failing tests, 2 tests succeeded
 
@@ -900,16 +901,16 @@ Encountered a total of 2 failing tests, 2 tests succeeded
 No files changed, compilation skipped
 
 Ran 2 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL. Reason: revert: testB failed] testB() ([GAS])
-[FAIL. Reason: revert: testD failed] testD() ([GAS])
+[FAIL: revert: testB failed] testB() ([GAS])
+[FAIL: revert: testD failed] testD() ([GAS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 
 Failing tests:
 Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL. Reason: revert: testB failed] testB() ([GAS])
-[FAIL. Reason: revert: testD failed] testD() ([GAS])
+[FAIL: revert: testB failed] testB() ([GAS])
+[FAIL: revert: testD failed] testD() ([GAS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
 
@@ -924,6 +925,7 @@ forgetest_init!(should_show_precompile_labels, |prj, cmd| {
         "Contract.t.sol",
         r#"
 import {Test} from "forge-std/Test.sol";
+
 contract PrecompileLabelsTest is Test {
     function testPrecompileLabels() public {
         vm.deal(address(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D), 1 ether);
@@ -1011,14 +1013,15 @@ forgetest_init!(should_show_logs_when_fuzz_test, |prj, cmd| {
 
     prj.add_test(
         "ContractFuzz.t.sol",
-        r#"pragma solidity 0.8.24;
-        import {Test, console2} from "forge-std/Test.sol";
-    contract ContractFuzz is Test {
-      function testFuzzConsoleLog(uint256 x) public pure {
-        console2.log("inside fuzz test, x is:", x);
-      }
+        r#"
+import {Test, console} from "forge-std/Test.sol";
+
+contract ContractFuzz is Test {
+    function testFuzzConsoleLog(uint256 x) public pure {
+        console.log("inside fuzz test, x is:", x);
     }
-     "#,
+}
+    "#,
     )
     .unwrap();
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
@@ -1054,16 +1057,16 @@ forgetest_init!(should_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
 
     prj.add_test(
         "ContractFuzz.t.sol",
-        r#"pragma solidity 0.8.24;
-        import {Test, console2} from "forge-std/Test.sol";
-    contract ContractFuzz is Test {
+        r#"
+import {Test, console} from "forge-std/Test.sol";
 
-      /// forge-config: default.fuzz.show-logs = true
-      function testFuzzConsoleLog(uint256 x) public pure {
-        console2.log("inside fuzz test, x is:", x);
-      }
+contract ContractFuzz is Test {
+    /// forge-config: default.fuzz.show-logs = true
+    function testFuzzConsoleLog(uint256 x) public pure {
+        console.log("inside fuzz test, x is:", x);
     }
-     "#,
+}
+    "#,
     )
     .unwrap();
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
@@ -1101,12 +1104,12 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
 
     prj.add_test(
         "ContractFuzz.t.sol",
-        r#"pragma solidity 0.8.24;
-        import {Test, console2} from "forge-std/Test.sol";
+        r#"
+        import {Test, console} from "forge-std/Test.sol";
     contract ContractFuzz is Test {
 
       function testFuzzConsoleLog(uint256 x) public pure {
-        console2.log("inside fuzz test, x is:", x);
+        console.log("inside fuzz test, x is:", x);
       }
     }
      "#,
@@ -1140,15 +1143,15 @@ forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
 
     prj.add_test(
         "ContractFuzz.t.sol",
-        r#"pragma solidity 0.8.24;
-        import {Test, console2} from "forge-std/Test.sol";
-    contract ContractFuzz is Test {
+        r#"
+import {Test, console} from "forge-std/Test.sol";
 
-      /// forge-config: default.fuzz.show-logs = false
-      function testFuzzConsoleLog(uint256 x) public pure {
-        console2.log("inside fuzz test, x is:", x);
-      }
+contract ContractFuzz is Test {
+    /// forge-config: default.fuzz.show-logs = false
+    function testFuzzConsoleLog(uint256 x) public pure {
+        console.log("inside fuzz test, x is:", x);
     }
+}
      "#,
     )
     .unwrap();
@@ -1177,8 +1180,9 @@ forgetest_init!(internal_functions_trace, |prj, cmd| {
 
     prj.add_test(
         "Simple",
-        r#"pragma solidity 0.8.24;
-        import {Test, console2} from "forge-std/Test.sol";
+        r#"
+import {Test, console} from "forge-std/Test.sol";
+
 contract SimpleContract {
     uint256 public num;
     address public addr;
@@ -1254,8 +1258,8 @@ forgetest_init!(internal_functions_trace_memory, |prj, cmd| {
 
     prj.add_test(
         "Simple",
-        r#"pragma solidity 0.8.24;
-import {Test, console2} from "forge-std/Test.sol";
+        r#"
+import {Test, console} from "forge-std/Test.sol";
 
 contract SimpleContract {
     string public str = "initial value";
@@ -1283,7 +1287,7 @@ contract SimpleContractTest is Test {
         r#"
 ...
 Traces:
-  [421960] SimpleContractTest::test()
+  [421947] SimpleContractTest::test()
     ├─ [385978] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 1814 bytes of code
     ├─ [2534] SimpleContract::setStr("new value")
@@ -1506,7 +1510,7 @@ Logs:
 });
 
 // https://github.com/foundry-rs/foundry/issues/4370
-forgetest_init!(repro_4370, |prj, cmd| {
+forgetest_init!(pause_gas_metering_with_delete, |prj, cmd| {
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1543,7 +1547,7 @@ forgetest_init!(pause_tracing, |prj, cmd| {
 
     prj.add_source(
         "Pause.t.sol",
-        r#"pragma solidity 0.8.24;
+        r#"
 import {Vm} from "./Vm.sol";
 import {DSTest} from "./test.sol";
 contract TraceGenerator is DSTest {
@@ -1628,7 +1632,7 @@ forgetest_init!(gas_metering_reset, |prj, cmd| {
 
     prj.add_source(
         "ATest.t.sol",
-        r#"pragma solidity 0.8.24;
+        r#"
 import {Vm} from "./Vm.sol";
 import {DSTest} from "./test.sol";
 contract B {
@@ -1780,8 +1784,8 @@ contract CounterTest is Test {
 
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL. Reason: Error != expected error: NumberNotEven(1) != RandomError()] test_decode() ([GAS])
-[FAIL. Reason: Error != expected error: NumberNotEven(1) != NumberNotEven(2)] test_decode_with_args() ([GAS])
+[FAIL: Error != expected error: NumberNotEven(1) != RandomError()] test_decode() ([GAS])
+[FAIL: Error != expected error: NumberNotEven(1) != NumberNotEven(2)] test_decode_with_args() ([GAS])
 ...
 "#]]);
 });
@@ -1795,7 +1799,7 @@ forgetest_init!(test_expect_partial_revert, |prj, cmd| {
 
     prj.add_source(
         "Counter.t.sol",
-        r#"pragma solidity 0.8.24;
+        r#"
 import {Vm} from "./Vm.sol";
 import {DSTest} from "./test.sol";
 contract Counter {
@@ -1830,7 +1834,7 @@ contract CounterTest is DSTest {
 ...
 [PASS] testExpectPartialRevertWith4Bytes() ([GAS])
 [PASS] testExpectPartialRevertWithSelector() ([GAS])
-[FAIL. Reason: Error != expected error: WrongNumber(0) != custom error 238ace70:] testExpectRevert() ([GAS])
+[FAIL: Error != expected error: WrongNumber(0) != custom error 0x238ace70] testExpectRevert() ([GAS])
 ...
 "#]]);
 });
@@ -1849,7 +1853,7 @@ forgetest_init!(test_assume_no_revert, |prj, cmd| {
 
     prj.add_source(
         "Counter.t.sol",
-        r#"pragma solidity 0.8.24;
+        r#"
 import {Vm} from "./Vm.sol";
 import {DSTest} from "./test.sol";
 contract CounterWithRevert {
@@ -1912,10 +1916,66 @@ contract CounterRevertTest is DSTest {
 
     cmd.args(["test"]).with_no_redact().assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL. Reason: assertion failed; counterexample: [..]] test_assume_no_revert_fail_assert(uint256) [..]
-[FAIL. Reason: CheckError(); counterexample: [..]] test_assume_no_revert_fail_in_2nd_call(uint256) [..]
-[FAIL. Reason: CheckError(); counterexample: [..]] test_assume_no_revert_fail_in_3rd_call(uint256) [..]
+[FAIL; counterexample: [..]] test_assume_no_revert_fail_assert(uint256) [..]
+[FAIL: CheckError(); counterexample: [..]] test_assume_no_revert_fail_in_2nd_call(uint256) [..]
+[FAIL: CheckError(); counterexample: [..]] test_assume_no_revert_fail_in_3rd_call(uint256) [..]
 [PASS] test_assume_no_revert_pass(uint256) [..]
 ...
+"#]]);
+});
+
+forgetest_init!(skip_output, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"
+        import {Vm} from "./Vm.sol";
+        import {DSTest} from "./test.sol";
+
+        contract Skips is DSTest {
+            Vm constant vm = Vm(HEVM_ADDRESS);
+
+            function test_skipUnit() public {
+                vm.skip(true);
+            }
+            function test_skipUnitReason() public {
+                vm.skip(true, "unit");
+            }
+
+            function test_skipFuzz(uint) public {
+                vm.skip(true);
+            }
+            function test_skipFuzzReason(uint) public {
+                vm.skip(true, "fuzz");
+            }
+
+            function invariant_skipInvariant() public {
+                vm.skip(true);
+            }
+            function invariant_skipInvariantReason() public {
+                vm.skip(true, "invariant");
+            }
+        }
+    "#,
+    )
+    .unwrap();
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+Ran 6 tests for src/Counter.t.sol:Skips
+[SKIP] invariant_skipInvariant() (runs: 1, calls: 1, reverts: 1)
+[SKIP: invariant] invariant_skipInvariantReason() (runs: 1, calls: 1, reverts: 1)
+[SKIP] test_skipFuzz(uint256) (runs: 0, [AVG_GAS])
+[SKIP: fuzz] test_skipFuzzReason(uint256) (runs: 0, [AVG_GAS])
+[SKIP] test_skipUnit() ([GAS])
+[SKIP: unit] test_skipUnitReason() ([GAS])
+Suite result: ok. 0 passed; 0 failed; 6 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 6 skipped (6 total tests)
+
 "#]]);
 });
