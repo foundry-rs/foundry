@@ -164,7 +164,7 @@ impl Cheatcode for copyStorageCall {
         let Self { from, to } = self;
 
         ensure!(
-            !&ccx.state.has_arbitrary_storage(to),
+            !ccx.state.has_arbitrary_storage(to),
             "target address cannot have arbitrary storage"
         );
 
