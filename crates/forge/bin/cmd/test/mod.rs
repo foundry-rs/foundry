@@ -531,7 +531,7 @@ impl TestArgs {
 
         if self.decode_internal.is_some() {
             let sources =
-                ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
+                ContractSources::from_project_output(output, &config.root.0, Some(&libraries))?;
             builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
         }
         let mut decoder = builder.build();
