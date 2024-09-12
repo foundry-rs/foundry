@@ -1,3 +1,5 @@
+use std::backtrace::Backtrace;
+
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::Address;
 use toml::de;
@@ -100,8 +102,9 @@ impl Cheatcode for startPrank_1Call {
 
 impl Cheatcode for prank_2Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        println!("prank_2Call");
         let Self { msgSender, txOrigin, delegateCall } = self;
+        // println!("{:#?}", Backtrace::force_capture());
+        // println!("DelegateCall: {:#?}", self);
         prank(ccx, msgSender, Some(txOrigin), true, *delegateCall)
     }
 }

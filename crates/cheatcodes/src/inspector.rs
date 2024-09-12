@@ -47,6 +47,7 @@ use revm::{
 use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::{
+    backtrace::Backtrace,
     collections::{BTreeMap, HashMap, VecDeque},
     fs::File,
     io::BufReader,
@@ -525,6 +526,10 @@ impl Cheatcodes {
                 if let Some(new_origin) = prank.new_origin {
                     ecx.env.tx.caller = new_origin;
                 }
+
+                if prank.delegate_call {
+                    println!("******** create_common");
+                }
             }
         }
 
@@ -617,6 +622,9 @@ impl Cheatcodes {
 
         // Clean up pranks
         if let Some(prank) = &self.prank {
+            if prank.delegate_call {
+                println!("******** create_end_common");
+            }
             if ecx.journaled_state.depth() == prank.depth {
                 ecx.env.tx.caller = prank.prank_origin;
 
@@ -833,14 +841,16 @@ impl Cheatcodes {
 
         // Apply our prank
         if let Some(prank) = &self.prank {
+            // if let CallScheme::DelegateCall = call.scheme {
+            if prank.delegate_call {
+                println!("******** Call with executor");
+                call.target_address = prank.new_caller;
+                call.caller = prank.new_caller;
+                // call.bytecode_address = call.target_address;
+            }
+            // }
             if ecx.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
                 let mut prank_applied = false;
-                println!("{:#?}", prank);
-                if prank.delegate_call {
-                    println!("******** Entering delegate call");
-                    call.target_address = prank.new_caller;
-                    call.bytecode_address = call.target_address;
-                }
 
                 // At the target depth we set `msg.sender`
                 if ecx.journaled_state.depth() == prank.depth {
@@ -875,10 +885,6 @@ impl Cheatcodes {
 
                 // call: &mut CallInputs,
 
-                if let CallScheme::DelegateCall = call.scheme {
-                    // This is the new `msg.sender` from above
-                    println!("******** Entering delegate call");
-                }
                 // executor: &mut impl CheatcodesExecutor,
 
                 // contract My Test {
@@ -1143,6 +1149,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if !cheatcode_call {
             // Clean up pranks
             if let Some(prank) = &self.prank {
+                if prank.delegate_call {
+                    println!("******** call_end");
+                    // println!("{:#?}", Backtrace::force_capture());
+                }
                 if ecx.journaled_state.depth() == prank.depth {
                     ecx.env.tx.caller = prank.prank_origin;
 
