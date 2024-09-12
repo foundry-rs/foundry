@@ -266,16 +266,6 @@ pub struct ArbitraryStorage {
 }
 
 impl ArbitraryStorage {
-    /// Whether the given address has arbitrary storage.
-    pub fn is_arbitrary(&self, address: &Address) -> bool {
-        self.values.contains_key(address)
-    }
-
-    /// Whether the given address is a copy of an address with arbitrary storage.
-    pub fn is_copy(&self, address: &Address) -> bool {
-        self.copies.contains_key(address)
-    }
-
     /// Marks an address with arbitrary storage.
     pub fn mark_arbitrary(&mut self, address: &Address) {
         self.values.insert(*address, HashMap::default());
@@ -283,7 +273,7 @@ impl ArbitraryStorage {
 
     /// Maps an address that copies storage with the arbitrary storage address.
     pub fn mark_copy(&mut self, from: &Address, to: &Address) {
-        if self.is_arbitrary(from) {
+        if self.values.contains_key(from) {
             self.copies.insert(*to, *from);
         }
     }
@@ -456,7 +446,7 @@ pub struct Cheatcodes {
     pub ignored_traces: IgnoredTraces,
 
     /// Addresses with arbitrary storage.
-    pub arbitrary_storage: ArbitraryStorage,
+    pub arbitrary_storage: Option<ArbitraryStorage>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -1080,6 +1070,28 @@ impl Cheatcodes {
             None => StdRng::from_entropy(),
         })
     }
+
+    /// Returns existing or set a default `ArbitraryStorage` option.
+    /// Used by `setArbitraryStorage` cheatcode to track addresses with arbitrary storage.
+    pub fn ensure_arbitrary_storage(&mut self) -> &mut ArbitraryStorage {
+        self.arbitrary_storage.get_or_insert(ArbitraryStorage::default())
+    }
+
+    /// Whether the given address has arbitrary storage.
+    pub fn has_arbitrary_storage(&self, address: &Address) -> bool {
+        match &self.arbitrary_storage {
+            Some(storage) => storage.values.contains_key(address),
+            None => false,
+        }
+    }
+
+    /// Whether the given address is a copy of an address with arbitrary storage.
+    pub fn is_arbitrary_storage_copy(&self, address: &Address) -> bool {
+        match &self.arbitrary_storage {
+            Some(storage) => storage.copies.contains_key(address),
+            None => false,
+        }
+    }
 }
 
 impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
@@ -1146,10 +1158,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
 
         // `setArbitraryStorage` and `copyStorage`: add arbitrary values to storage.
-        if (self.arbitrary_storage.is_arbitrary(&interpreter.contract().target_address) ||
-            self.arbitrary_storage.is_copy(&interpreter.contract().target_address)) &&
-            interpreter.current_opcode() == op::SLOAD
-        {
+        if self.arbitrary_storage.is_some() {
             self.arbitrary_storage_end(interpreter, ecx);
         }
     }
@@ -1577,25 +1586,28 @@ impl Cheatcodes {
         interpreter: &mut Interpreter,
         ecx: &mut EvmContext<DB>,
     ) {
-        let key = try_or_return!(interpreter.stack().peek(0));
-        let target_address = interpreter.contract().target_address;
-        if let Ok(value) = ecx.sload(target_address, key) {
-            if value.is_cold && value.data.is_zero() {
-                let arbitrary_value = self.rng().gen();
-                if self.arbitrary_storage.is_copy(&target_address) {
-                    self.arbitrary_storage.copy(
-                        &mut ecx.inner,
-                        target_address,
-                        key,
-                        arbitrary_value,
-                    );
-                } else {
-                    self.arbitrary_storage.save(
-                        &mut ecx.inner,
-                        target_address,
-                        key,
-                        arbitrary_value,
-                    );
+        if interpreter.current_opcode() == op::SLOAD {
+            let key = try_or_return!(interpreter.stack().peek(0));
+            let target_address = interpreter.contract().target_address;
+            if let Ok(value) = ecx.sload(target_address, key) {
+                if value.is_cold && value.data.is_zero() {
+                    if self.has_arbitrary_storage(&target_address) {
+                        let arbitrary_value = self.rng().gen();
+                        self.arbitrary_storage.as_mut().unwrap().save(
+                            &mut ecx.inner,
+                            target_address,
+                            key,
+                            arbitrary_value,
+                        );
+                    } else if self.is_arbitrary_storage_copy(&target_address) {
+                        let arbitrary_value = self.rng().gen();
+                        self.arbitrary_storage.as_mut().unwrap().copy(
+                            &mut ecx.inner,
+                            target_address,
+                            key,
+                            arbitrary_value,
+                        );
+                    }
                 }
             }
         }
