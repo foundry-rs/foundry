@@ -576,7 +576,7 @@ impl Backend {
         slot: U256,
         val: B256,
     ) -> DatabaseResult<()> {
-        self.db.write().await.set_storage_at(address, slot, U256::from_be_bytes(val.0))
+        self.db.write().await.set_storage_at(address, slot.into(), val)
     }
 
     /// Returns the configured specid
@@ -2498,7 +2498,7 @@ impl Backend {
             self.db.write().await.clear();
             for (address, acc) in common_state {
                 for (key, value) in acc.storage {
-                    self.db.write().await.set_storage_at(address, key, value)?;
+                    self.db.write().await.set_storage_at(address, key.into(), value.into())?;
                 }
                 self.db.write().await.insert_account(address, acc.info);
             }
