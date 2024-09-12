@@ -89,6 +89,10 @@ pub struct VerifyBytecodeArgs {
     /// Ignore verification for creation or runtime bytecode.
     #[clap(long, value_name = "BYTECODE_TYPE")]
     pub ignore: Option<BytecodeType>,
+
+    /// Ignore immutable references while verifiying runtime bytecode
+    #[clap(long, default_value = "false")]
+    pub ignore_immutables: bool,
 }
 
 impl figment::Provider for VerifyBytecodeArgs {
@@ -138,6 +142,9 @@ impl VerifyBytecodeArgs {
             &config,
         )?;
 
+        let ignore_immutables = self.ignore_immutables;
+
+        trace!(?ignore_immutables);
         // Get the bytecode at the address, bailing if it doesn't exist.
         let code = provider.get_code_at(self.address).await?;
         if code.is_empty() {
@@ -280,6 +287,28 @@ impl VerifyBytecodeArgs {
                 None,
             )
             .await?;
+
+            if ignore_immutables {
+                // Locate immutable refs using the offsets in the artifact
+                let immutable_refs = crate::utils::get_immutable_refs(&artifact);
+
+                trace!(immutable_refs_found = immutable_refs.is_some());
+
+                if let Some(refs) = immutable_refs {
+                    // TODO: Extract those sections from both `deployed_bytecode` and
+                    // `onchain_runtime_code`.
+
+                    println!("Extracting refs from deployed bytecode");
+                    let _ = crate::utils::extract_immutables_refs(
+                        refs.clone(),
+                        deployed_bytecode.original_bytes(),
+                    );
+
+                    println!("Extracting refs from onchain runtime code");
+                    let _ =
+                        crate::utils::extract_immutables_refs(refs, onchain_runtime_code.clone());
+                }
+            }
 
             let match_type = crate::utils::match_bytecodes(
                 &deployed_bytecode.original_bytes(),
@@ -477,6 +506,28 @@ impl VerifyBytecodeArgs {
                 Some(simulation_block),
             )
             .await?;
+
+            if ignore_immutables {
+                // Locate immutable refs using the offsets in the artifact
+                let immutable_refs = crate::utils::get_immutable_refs(&artifact);
+
+                trace!(immutable_refs_found = immutable_refs.is_some());
+
+                if let Some(refs) = immutable_refs {
+                    // TODO: Extract those sections from both `deployed_bytecode` and
+                    // `onchain_runtime_code`.
+
+                    println!("Extracting refs from deployed bytecode");
+                    let _ = crate::utils::extract_immutables_refs(
+                        refs.clone(),
+                        fork_runtime_code.original_bytes(),
+                    );
+
+                    println!("Extracting refs from onchain runtime code");
+                    let _ =
+                        crate::utils::extract_immutables_refs(refs, onchain_runtime_code.clone());
+                }
+            }
 
             // Compare the onchain runtime bytecode with the runtime code from the fork.
             let match_type = crate::utils::match_bytecodes(
