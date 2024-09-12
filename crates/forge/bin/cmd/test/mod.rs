@@ -835,7 +835,7 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
     junit_report.set_timestamp(Utc::now());
     for (suite_name, suite_result) in results {
         let mut test_suite = TestSuite::new(suite_name);
-        total_duration = total_duration + suite_result.duration;
+        total_duration += suite_result.duration;
         test_suite.set_time(suite_result.duration);
         test_suite.set_system_out(suite_result.summary());
         for (test_name, test_result) in &suite_result.test_results {
