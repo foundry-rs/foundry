@@ -2,7 +2,7 @@
 use crate::eth::{
     backend::{
         db::{
-            MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates, SerializableState,
+            MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
         mem::cache::DiskStateCache,
@@ -28,6 +28,7 @@ use anvil_core::eth::{
 };
 use anvil_rpc::error::RpcError;
 use foundry_evm::{
+    backend::MemDb,
     revm::primitives::Env,
     traces::{
         CallKind, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig,
@@ -212,6 +213,15 @@ impl InMemoryBlockStates {
 
         SerializableHistoricalStates(in_memory_states)
     }
+
+    /// Load states from serialized data
+    pub fn load_states(&mut self, states: SerializableHistoricalStates) {
+        for (hash, snapshot) in states.0 {
+            let mut state_db = StateDb::new(MemDb::default());
+            state_db.init_from_snapshot(snapshot);
+            self.insert(hash, state_db);
+        }
+    }
 }
 
 impl fmt::Debug for InMemoryBlockStates {
@@ -385,7 +395,6 @@ impl BlockchainStorage {
             let block: Block = serializable_block.clone().into();
             let block_hash = block.header.hash_slow();
             let block_number = block.header.number;
-            println!("Loading block number {} with hash {}", block_number, block_hash);
             self.blocks.insert(block_hash, block);
             self.hashes.insert(U64::from(block_number), block_hash);
         }

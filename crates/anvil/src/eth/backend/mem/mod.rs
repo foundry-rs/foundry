@@ -809,6 +809,10 @@ impl Backend {
         self.blockchain.storage.write().load_blocks(state.blocks.clone());
         self.blockchain.storage.write().load_transactions(state.transactions.clone());
 
+        if let Some(historical_states) = state.historical_states {
+            self.states.write().load_states(historical_states);
+        }
+
         Ok(true)
     }
 
