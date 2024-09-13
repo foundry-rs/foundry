@@ -75,8 +75,8 @@ impl Shell {
         Self { output, verbosity }
     }
 
-    /// Returns a new shell that conforms to the specified verbosity arguments, where `json` takes
-    /// higher precedence
+    /// Returns a new shell that conforms to the specified verbosity arguments, where `json`
+    /// or `junit` takes higher precedence.
     pub fn from_args(silent: bool, json: bool) -> Self {
         match (silent, json) {
             (_, true) => Self::json(),
