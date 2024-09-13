@@ -149,12 +149,11 @@ pub struct NodeArgs {
     #[arg(long, value_name = "PATH", conflicts_with = "init")]
     pub dump_state: Option<PathBuf>,
 
-    /// Preserve historical state snapshots when dumping the state on shutdown.
+    /// Preserve historical state snapshots when dumping the state.
     ///
-    /// This will save the in-memory states of the chain at particular block hashes not just the
-    /// state at the tip.
+    /// This will save the in-memory states of the chain at particular block hashes.
     ///
-    /// These historical states will be loaded into the memory if called with `--load-state`, and
+    /// These historical states will be loaded into the memory when `--load-state` / `--state`, and
     /// aids in RPC calls beyond the block at which state was dumped.
     #[arg(long, conflicts_with = "init", default_value = "false")]
     pub preserve_historical_states: bool,
