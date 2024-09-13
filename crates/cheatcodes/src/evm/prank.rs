@@ -99,12 +99,26 @@ impl Cheatcode for startPrank_1Call {
 
 impl Cheatcode for prank_2Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { msgSender, delegateCall } = self;
+        prank(ccx, msgSender, None, true, *delegateCall)
+    }
+}
+
+impl Cheatcode for startPrank_2Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { msgSender, delegateCall } = self;
+        prank(ccx, msgSender, None, false, *delegateCall)
+    }
+}
+
+impl Cheatcode for prank_3Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { msgSender, txOrigin, delegateCall } = self;
         prank(ccx, msgSender, Some(txOrigin), true, *delegateCall)
     }
 }
 
-impl Cheatcode for startPrank_2Call {
+impl Cheatcode for startPrank_3Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { msgSender, txOrigin, delegateCall } = self;
         prank(ccx, msgSender, Some(txOrigin), false, *delegateCall)

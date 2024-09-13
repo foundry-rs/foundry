@@ -47,7 +47,6 @@ use revm::{
 use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::{
-    backtrace::Backtrace,
     collections::{BTreeMap, HashMap, VecDeque},
     fs::File,
     io::BufReader,
@@ -834,6 +833,7 @@ impl Cheatcodes {
 
         // Apply our prank
         if let Some(prank) = &self.prank {
+            // Apply delegate call. call.caller will not equal prank.prank_caller
             if let CallScheme::DelegateCall = call.scheme {
                 if prank.delegate_call {
                     call.target_address = prank.new_caller;
@@ -842,6 +842,7 @@ impl Cheatcodes {
                     call.value = CallValue::Apparent(acc.info.balance);
                 }
             }
+
             if ecx.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
                 let mut prank_applied = false;
 
@@ -863,49 +864,6 @@ impl Cheatcodes {
                         self.prank = Some(applied_prank);
                     }
                 }
-
-                // TODO(edwardJES): temp notes
-                // Flow:
-                // Check if delegate prank set
-                // Check if delegate call
-                // Check if pranked address has any code at the addr
-                // Check if target addr
-                // If so, delegate prank
-
-                // &mut self,
-
-                // ecx: &mut EvmContext<DB>,
-
-                // call: &mut CallInputs,
-
-                // executor: &mut impl CheatcodesExecutor,
-
-                // contract My Test {
-                //  let contract = NewLogicContract()
-                //  let proxy = NewProxyContract()
-                //  vm.startPrank(proxyContract)
-                //  contract.delegateCall(....)  <- this should now be executed with
-                // }
-
-                // Learning:
-                // call.bytecode_address is the bytecode at the target addr
-
-                //         // A's storage is set, B is not modified.
-                // (bool success, bytes memory data) = _contract.delegatecall(
-                //     abi.encodeWithSignature("setVars(uint256)", _num)
-                // );
-
-                // Errors:
-                // let msg =
-                // "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
-                // return Some(CallOutcome {
-                //     result: InterpreterResult {
-                //         result: InstructionResult::Revert,
-                //         output: Error::encode(msg),
-                //         gas,
-                //     },
-                //     memory_offset: call.return_memory_offset.clone(),
-                // });
             }
         }
 
