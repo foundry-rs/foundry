@@ -457,4 +457,19 @@ impl From<SerializableTransaction> for MinedTransaction {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub struct SerializableHistoricalStates(pub Vec<(B256, StateSnapshot)>);
+pub struct SerializableHistoricalStates(Vec<(B256, StateSnapshot)>);
+
+impl SerializableHistoricalStates {
+    pub const fn new(states: Vec<(B256, StateSnapshot)>) -> Self {
+        Self(states)
+    }
+}
+
+impl IntoIterator for SerializableHistoricalStates {
+    type Item = (B256, StateSnapshot);
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}

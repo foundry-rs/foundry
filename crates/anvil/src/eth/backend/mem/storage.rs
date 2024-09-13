@@ -196,7 +196,7 @@ impl InMemoryBlockStates {
     /// Serialize all states to a list of serializable historical states
     pub fn serialized_states(&mut self) -> SerializableHistoricalStates {
         // Get in-memory states and serialized them
-        let mut in_memory_states = self
+        let mut states = self
             .states
             .iter_mut()
             .map(|(hash, state)| (*hash, state.serialize_state()))
@@ -209,14 +209,14 @@ impl InMemoryBlockStates {
             .collect::<Vec<_>>();
 
         // Join the two lists
-        in_memory_states.extend(disk_states);
+        states.extend(disk_states);
 
-        SerializableHistoricalStates(in_memory_states)
+        SerializableHistoricalStates::new(states)
     }
 
     /// Load states from serialized data
     pub fn load_states(&mut self, states: SerializableHistoricalStates) {
-        for (hash, snapshot) in states.0 {
+        for (hash, snapshot) in states {
             let mut state_db = StateDb::new(MemDb::default());
             state_db.init_from_snapshot(snapshot);
             self.insert(hash, state_db);
