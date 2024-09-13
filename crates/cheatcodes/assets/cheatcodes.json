@@ -6534,7 +6534,7 @@
     {
       "func": {
         "id": "prank_2",
-        "description": "Sets the *next* delegate call's `msg.sender` to be the input address",
+        "description": "Sets the *next* delegate call's `msg.sender` to be the input address.",
         "declaration": "function prank(address msgSender, bool delegateCall) external;",
         "visibility": "external",
         "mutability": "",
@@ -8315,7 +8315,7 @@
       "func": {
         "id": "startPrank_3",
         "description": "Sets all subsequent delegate calls' `msg.sender` to be the input address until `stopPrank` is called, and the `tx.origin` to be the second input.",
-        "declaration": "function startPrank(address msgSender, address txOrigin, bool delegateCall) external;;",
+        "declaration": "function startPrank(address msgSender, address txOrigin, bool delegateCall) external;",
         "visibility": "external",
         "mutability": "",
         "signature": "startPrank(address,address,bool)",
