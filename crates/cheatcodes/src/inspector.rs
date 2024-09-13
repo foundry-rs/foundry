@@ -840,6 +840,9 @@ impl Cheatcodes {
                     call.caller = prank.new_caller;
                     let acc = ecx.journaled_state.account(prank.new_caller);
                     call.value = CallValue::Apparent(acc.info.balance);
+                    if let Some(new_origin) = prank.new_origin {
+                        ecx.env.tx.caller = new_origin;
+                    }
                 }
             }
 
