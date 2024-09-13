@@ -402,6 +402,7 @@ interface Vm {
     function sign(bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function skip(bool skipTest) external;
+    function skip(bool skipTest, string calldata reason) external;
     function sleep(uint256 duration) external;
     function snapshot() external returns (uint256 snapshotId);
     function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);

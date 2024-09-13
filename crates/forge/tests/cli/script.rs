@@ -215,20 +215,15 @@ contract DeployScript is Script {
         "--slow",
         "--broadcast",
         "--unlocked",
+        "--ignored-error-codes=2018", // `wasteGas` can be restricted to view
     ])
     .assert_success()
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to view
- [FILE]:7:5:
-  |
-7 |     function wasteGas(uint256 minGas) public {
-  |     ^ (Relevant source part starts here and spans across multiple lines).
-
+Compiler run successful!
 Traces:
-  [81040] DeployScript::run()
+  [81034] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [45299] → new GasWaster@[..]
@@ -336,7 +331,7 @@ Warning (2018): Function state mutability can be restricted to view
   |     ^ (Relevant source part starts here and spans across multiple lines).
 
 Traces:
-  [81040] DeployScript::run()
+  [81034] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [45299] → new GasWaster@[..]
