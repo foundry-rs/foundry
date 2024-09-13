@@ -153,7 +153,7 @@ impl Cheatcode for resumeTracingCall {
 impl Cheatcode for setArbitraryStorageCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { target } = self;
-        ccx.state.ensure_arbitrary_storage().mark_arbitrary(target);
+        ccx.state.arbitrary_storage().mark_arbitrary(target);
 
         Ok(Default::default())
     }
