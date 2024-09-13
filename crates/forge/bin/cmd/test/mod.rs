@@ -839,15 +839,12 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
         test_suite.set_time(suite_result.duration);
         test_suite.set_system_out(suite_result.summary());
         for (test_name, test_result) in &suite_result.test_results {
-            let test_status = if test_result.status.is_failure() {
-                let mut status = TestCaseStatus::non_success(NonSuccessKind::Failure);
-                status.set_message(test_result.reason.clone().unwrap_or_default());
-                status
-            } else if test_result.status.is_skipped() {
-                TestCaseStatus::skipped()
-            } else {
-                TestCaseStatus::success()
+            let mut test_status = match test_result.status {
+                TestStatus::Success => TestCaseStatus::success(),
+                TestStatus::Failure => TestCaseStatus::non_success(NonSuccessKind::Failure),
+                TestStatus::Skipped => TestCaseStatus::skipped(),
             };
+            test_status.set_message(test_result.reason.clone().unwrap_or_default());
 
             let mut test_case = TestCase::new(test_name, test_status);
             test_case.set_time(test_result.duration);
