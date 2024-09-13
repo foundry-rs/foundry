@@ -2045,7 +2045,7 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
             <system-out>[PASS] test_junit_pass_fuzz(uint256) (runs: 256, [AVG_GAS])</system-out>
         </testcase>
         <testcase name="test_junit_skip()" time="[..]">
-            <skipped message=""/>
+            <skipped/>
             <system-out>[SKIP] test_junit_skip() ([GAS])</system-out>
         </testcase>
         <testcase name="test_junit_skip_with_message()" time="[..]">

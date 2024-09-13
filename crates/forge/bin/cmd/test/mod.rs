@@ -844,7 +844,9 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
                 TestStatus::Failure => TestCaseStatus::non_success(NonSuccessKind::Failure),
                 TestStatus::Skipped => TestCaseStatus::skipped(),
             };
-            test_status.set_message(test_result.reason.clone().unwrap_or_default());
+            if let Some(reason) = &test_result.reason {
+                test_status.set_message(reason);
+            }
 
             let mut test_case = TestCase::new(test_name, test_status);
             test_case.set_time(test_result.duration);
