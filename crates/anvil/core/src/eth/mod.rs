@@ -1210,7 +1210,7 @@ mod tests {
 
     #[test]
     fn test_serde_custom_dump_state() {
-        let s = r#"{"method": "anvil_dumpState", "params": [] }"#;
+        let s = r#"{"method": "anvil_dumpState", "params": [false] }"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
