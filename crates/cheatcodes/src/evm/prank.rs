@@ -1,19 +1,6 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
 use alloy_primitives::Address;
 
-// Update prank so that you can use it for delegatecalling from a test contract, but throw an error
-// if the address passed to vm.prank(addr) before a delegatecall has no code (to ensure you can't
-// delegatecall from an EOA). Is there any related change to how pranking tx.origin is impacted? I
-// don't think anything around tx.origin needs to change, but just making sure
-
-// Cheat codes work by capture the transaction context and manipulating the environment based on
-// cheatcodes
-
-// Notes:
-// https://github.com/EdwardJES/foundry/blob/cb109b1699f82d009574d13aa59f1585a3fbfdb2/crates/cheatcodes/src/inspector.rs#L723
-// Call with executor: here we could intercept the the call with delegate call
-// Possibly intercept here https://github.com/EdwardJES/foundry/blob/cb109b1699f82d009574d13aa59f1585a3fbfdb2/crates/cheatcodes/src/inspector.rs#L834
-
 /// Prank information.
 #[derive(Clone, Debug, Default)]
 pub struct Prank {
