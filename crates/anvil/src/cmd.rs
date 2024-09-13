@@ -149,6 +149,16 @@ pub struct NodeArgs {
     #[arg(long, value_name = "PATH", conflicts_with = "init")]
     pub dump_state: Option<PathBuf>,
 
+    /// Preserve historical state snapshots when dumping the state on shutdown.
+    ///
+    /// This will save the in-memory states of the chain at particular block hashes not just the
+    /// state at the tip.
+    ///
+    /// These historical states will be loaded into the memory if called with `--load-state`, and
+    /// aids in RPC calls beyond the block at which state was dumped.
+    #[arg(long, conflicts_with = "init", default_value = "false")]
+    pub preserve_historical_states: bool,
+
     /// Initialize the chain from a previously saved state snapshot.
     #[arg(
         long,
@@ -306,6 +316,7 @@ impl NodeArgs {
         let dump_state = self.dump_state_path();
         let dump_interval =
             self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
+        let preserve_historical_states = self.preserve_historical_states;
 
         let (api, mut handle) = crate::try_spawn(self.into_node_config()?).await?;
 
@@ -320,7 +331,8 @@ impl NodeArgs {
         let task_manager = handle.task_manager();
         let mut on_shutdown = task_manager.on_shutdown();
 
-        let mut state_dumper = PeriodicStateDumper::new(api, dump_state, dump_interval);
+        let mut state_dumper =
+            PeriodicStateDumper::new(api, dump_state, dump_interval, preserve_historical_states);
 
         task_manager.spawn(async move {
             // wait for the SIGTERM signal on unix systems
@@ -588,11 +600,17 @@ struct PeriodicStateDumper {
     in_progress_dump: Option<Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>>,
     api: EthApi,
     dump_state: Option<PathBuf>,
+    preserve_historical_states: bool,
     interval: Interval,
 }
 
 impl PeriodicStateDumper {
-    fn new(api: EthApi, dump_state: Option<PathBuf>, interval: Duration) -> Self {
+    fn new(
+        api: EthApi,
+        dump_state: Option<PathBuf>,
+        interval: Duration,
+        preserve_historical_states: bool,
+    ) -> Self {
         let dump_state = dump_state.map(|mut dump_state| {
             if dump_state.is_dir() {
                 dump_state = dump_state.join("state.json");
@@ -602,19 +620,19 @@ impl PeriodicStateDumper {
 
         // periodically flush the state
         let interval = tokio::time::interval_at(Instant::now() + interval, interval);
-        Self { in_progress_dump: None, api, dump_state, interval }
+        Self { in_progress_dump: None, api, dump_state, preserve_historical_states, interval }
     }
 
     async fn dump(&self) {
         if let Some(state) = self.dump_state.clone() {
-            Self::dump_state(self.api.clone(), state).await
+            Self::dump_state(self.api.clone(), state, self.preserve_historical_states).await
         }
     }
 
     /// Infallible state dump
-    async fn dump_state(api: EthApi, dump_state: PathBuf) {
+    async fn dump_state(api: EthApi, dump_state: PathBuf, preserve_historical_states: bool) {
         trace!(path=?dump_state, "Dumping state on shutdown");
-        match api.serialized_state().await {
+        match api.serialized_state(preserve_historical_states).await {
             Ok(state) => {
                 if let Err(err) = foundry_common::fs::write_json_file(&dump_state, &state) {
                     error!(?err, "Failed to dump state");
@@ -655,7 +673,8 @@ impl Future for PeriodicStateDumper {
             if this.interval.poll_tick(cx).is_ready() {
                 let api = this.api.clone();
                 let path = this.dump_state.clone().expect("exists; see above");
-                this.in_progress_dump = Some(Box::pin(Self::dump_state(api, path)));
+                this.in_progress_dump =
+                    Some(Box::pin(Self::dump_state(api, path, this.preserve_historical_states)));
             } else {
                 break
             }
@@ -695,7 +714,7 @@ impl StateFile {
         Ok(state)
     }
 }
- 
+
 /// Represents the input URL for a fork with an optional trailing block number:
 /// `http://localhost:8545@1000000`
 #[derive(Clone, Debug, PartialEq, Eq)]

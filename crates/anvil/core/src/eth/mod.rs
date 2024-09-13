@@ -525,9 +525,9 @@ pub enum EthRequest {
     /// properties, etc.) into a savable data blob
     #[cfg_attr(
         feature = "serde",
-        serde(rename = "anvil_dumpState", alias = "hardhat_dumpState", with = "empty_params")
+        serde(rename = "anvil_dumpState", alias = "hardhat_dumpState", with = "sequence")
     )]
-    DumpState(()),
+    DumpState(bool),
 
     /// Adds state previously dumped with `DumpState` to the current chain
     #[cfg_attr(

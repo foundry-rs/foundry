@@ -14,7 +14,7 @@ async fn can_load_state() {
 
     let num = api.block_number().unwrap();
 
-    let state = api.serialized_state().await.unwrap();
+    let state = api.serialized_state(false).await.unwrap();
     foundry_common::fs::write_json_file(&state_file, &state).unwrap();
 
     let (api, _handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;

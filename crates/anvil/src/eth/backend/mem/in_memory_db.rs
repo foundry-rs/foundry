@@ -38,7 +38,7 @@ impl Db for MemDb {
         best_number: U64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
-        historical_states: SerializableHistoricalStates,
+        historical_states: Option<SerializableHistoricalStates>,
     ) -> DatabaseResult<Option<SerializableState>> {
         let accounts = self
             .inner
@@ -69,7 +69,7 @@ impl Db for MemDb {
             best_block_number: Some(best_number),
             blocks,
             transactions,
-            historical_states: Some(historical_states),
+            historical_states,
         }))
     }
 

@@ -124,7 +124,7 @@ pub trait Db:
         best_number: U64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
-        historical_states: SerializableHistoricalStates,
+        historical_states: Option<SerializableHistoricalStates>,
     ) -> DatabaseResult<Option<SerializableState>>;
 
     /// Deserialize and add all chain data to the backend storage
@@ -199,7 +199,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         _best_number: U64,
         _blocks: Vec<SerializableBlock>,
         _transaction: Vec<SerializableTransaction>,
-        _historical_states: SerializableHistoricalStates,
+        _historical_states: Option<SerializableHistoricalStates>,
     ) -> DatabaseResult<Option<SerializableState>> {
         Ok(None)
     }

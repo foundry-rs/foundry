@@ -758,12 +758,20 @@ impl Backend {
     }
 
     /// Get the current state.
-    pub async fn serialized_state(&self) -> Result<SerializableState, BlockchainError> {
+    pub async fn serialized_state(
+        &self,
+        preserve_historical_states: bool,
+    ) -> Result<SerializableState, BlockchainError> {
         let at = self.env.read().block.clone();
         let best_number = self.blockchain.storage.read().best_number;
         let blocks = self.blockchain.storage.read().serialized_blocks();
         let transactions = self.blockchain.storage.read().serialized_transactions();
-        let historical_states = self.states.write().serialized_states();
+        let historical_states = if preserve_historical_states {
+            Some(self.states.write().serialized_states())
+        } else {
+            None
+        };
+
         let state = self.db.read().await.dump_state(
             at,
             best_number,
@@ -778,8 +786,11 @@ impl Backend {
     }
 
     /// Write all chain data to serialized bytes buffer
-    pub async fn dump_state(&self) -> Result<Bytes, BlockchainError> {
-        let state = self.serialized_state().await?;
+    pub async fn dump_state(
+        &self,
+        preserve_historical_states: bool,
+    ) -> Result<Bytes, BlockchainError> {
+        let state = self.serialized_state(preserve_historical_states).await?;
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder
             .write_all(&serde_json::to_vec(&state).unwrap_or_default())
