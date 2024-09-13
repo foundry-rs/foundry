@@ -40,9 +40,9 @@ impl InvariantFuzzError {
             Self::BrokenInvariant(case_data) | Self::Revert(case_data) => {
                 (!case_data.revert_reason.is_empty()).then(|| case_data.revert_reason.clone())
             }
-            Self::MaxAssumeRejects(allowed) => Some(format!(
-                "The `vm.assume` cheatcode rejected too many inputs ({allowed} allowed)"
-            )),
+            Self::MaxAssumeRejects(allowed) => {
+                Some(format!("`vm.assume` rejected too many inputs ({allowed} allowed)"))
+            }
         }
     }
 }
