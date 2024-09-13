@@ -491,7 +491,7 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startPrank(address msgSender, address txOrigin) external;
 
-    /// Sets the *next* delegate call's `msg.sender` to be the input address
+    /// Sets the *next* delegate call's `msg.sender` to be the input address.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function prank(address msgSender, bool delegateCall) external;
 
