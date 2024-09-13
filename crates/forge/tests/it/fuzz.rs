@@ -198,7 +198,7 @@ contract InlineMaxRejectsTest is Test {
 
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL. Reason: The `vm.assume` cheatcode rejected too many inputs (1 allowed)] test_fuzz_bound(uint256) (runs: 0, [AVG_GAS])
+[FAIL: `vm.assume` rejected too many inputs (1 allowed)] test_fuzz_bound(uint256) (runs: 0, [AVG_GAS])
 ...
 "#]]);
 });

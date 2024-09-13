@@ -19,7 +19,7 @@ use foundry_evm_core::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
-    decode::RevertDecoder,
+    decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
@@ -649,15 +649,15 @@ impl std::ops::DerefMut for ExecutionErr {
 
 #[derive(Debug, thiserror::Error)]
 pub enum EvmError {
-    /// Error which occurred during execution of a transaction
+    /// Error which occurred during execution of a transaction.
     #[error(transparent)]
     Execution(#[from] Box<ExecutionErr>),
-    /// Error which occurred during ABI encoding/decoding
+    /// Error which occurred during ABI encoding/decoding.
     #[error(transparent)]
-    AbiError(#[from] alloy_dyn_abi::Error),
-    /// Error caused which occurred due to calling the skip() cheatcode.
-    #[error("Skipped")]
-    SkipError,
+    Abi(#[from] alloy_dyn_abi::Error),
+    /// Error caused which occurred due to calling the `skip` cheatcode.
+    #[error("{_0}")]
+    Skip(SkipReason),
     /// Any other error.
     #[error(transparent)]
     Eyre(#[from] eyre::Error),
@@ -671,7 +671,7 @@ impl From<ExecutionErr> for EvmError {
 
 impl From<alloy_sol_types::Error> for EvmError {
     fn from(err: alloy_sol_types::Error) -> Self {
-        Self::AbiError(err.into())
+        Self::Abi(err.into())
     }
 }
 
@@ -769,8 +769,8 @@ impl Default for RawCallResult {
 impl RawCallResult {
     /// Converts the result of the call into an `EvmError`.
     pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError {
-        if self.result[..] == crate::constants::MAGIC_SKIP[..] {
-            return EvmError::SkipError;
+        if let Some(reason) = SkipReason::decode(&self.result) {
+            return EvmError::Skip(reason);
         }
         let reason = rd.unwrap_or_default().decode(&self.result, Some(self.exit_reason));
         EvmError::Execution(Box::new(self.into_execution_error(reason)))
