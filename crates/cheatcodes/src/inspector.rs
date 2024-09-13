@@ -1586,29 +1586,33 @@ impl Cheatcodes {
         interpreter: &mut Interpreter,
         ecx: &mut EvmContext<DB>,
     ) {
-        if interpreter.current_opcode() == op::SLOAD {
-            let key = try_or_return!(interpreter.stack().peek(0));
-            let target_address = interpreter.contract().target_address;
-            if let Ok(value) = ecx.sload(target_address, key) {
-                if value.is_cold && value.data.is_zero() {
-                    if self.has_arbitrary_storage(&target_address) {
-                        let arbitrary_value = self.rng().gen();
-                        self.arbitrary_storage.as_mut().unwrap().save(
-                            &mut ecx.inner,
-                            target_address,
-                            key,
-                            arbitrary_value,
-                        );
-                    } else if self.is_arbitrary_storage_copy(&target_address) {
-                        let arbitrary_value = self.rng().gen();
-                        self.arbitrary_storage.as_mut().unwrap().copy(
-                            &mut ecx.inner,
-                            target_address,
-                            key,
-                            arbitrary_value,
-                        );
-                    }
-                }
+        let (key, target_address) = if interpreter.current_opcode() == op::SLOAD {
+            (try_or_return!(interpreter.stack().peek(0)), interpreter.contract().target_address)
+        } else {
+            return
+        };
+
+        let Ok(value) = ecx.sload(target_address, key) else {
+            return;
+        };
+
+        if value.is_cold && value.data.is_zero() {
+            if self.has_arbitrary_storage(&target_address) {
+                let arbitrary_value = self.rng().gen();
+                self.arbitrary_storage.as_mut().unwrap().save(
+                    &mut ecx.inner,
+                    target_address,
+                    key,
+                    arbitrary_value,
+                );
+            } else if self.is_arbitrary_storage_copy(&target_address) {
+                let arbitrary_value = self.rng().gen();
+                self.arbitrary_storage.as_mut().unwrap().copy(
+                    &mut ecx.inner,
+                    target_address,
+                    key,
+                    arbitrary_value,
+                );
             }
         }
     }
