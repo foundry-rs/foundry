@@ -4,6 +4,9 @@ pragma solidity 0.8.18;
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
+// make the uint type function correct 
+// 
+
 contract Foo {}
 
 contract WalletTest is DSTest {
@@ -13,33 +16,78 @@ contract WalletTest is DSTest {
     uint256 private constant UINT256_MAX =
         115792089237316195423570985008687907853269984665640564039457584007913129639935; // max num stored in uin256
 
+
+//
+// enums
+//
     enum DistributionType { Uniform, Logarithmic }  // enum for the distribution type
+    enum TypeUint {Uint8, Uint16, Uint32, Uint64, Uint128, Uint256} // enum for the uint type
+
+//
+// structs
+//
     struct ParamConfig {
         uint256 min;
         uint256 max;
-        DistributionType distributionType;
-        uint256[] fixtures;
-        uint256[] excluded;
-    } // struct  to changes the configs and all
+            DistributionType distributionType;
+            uint256[] fixtures;
+            uint256[] excluded;
+        } // struct  to changes the configs and all
 
+    struct UintValue{
+        TypeUint uintType;
+        TypeUint value;
+    }
+
+//
+// vars of structs
+//
     ParamConfig public pkConfig;
-
-     constructor() {
+    
+   constructor() {
         pkConfig = ParamConfig({
             min: 1,
             max: Q - 1,
             distributionType: DistributionType.Logarithmic,
             fixtures: new uint256[](0),
             excluded: new uint256[](0)
-        }); 
+        });
     }     // the constructor sets the DistributionType = Logarithmic 
-           // ask this doubt 
+           
+    // Separate functions for different uint types 
+    function getUintType(uint8 value) internal pure returns (UintValue memory) {
+        return UintValue(TypeUint.Uint8, TypeUint(value));
+    }
+
+    function getUintType(uint16 value) internal pure returns (UintValue memory) {
+        return UintValue(TypeUint.Uint16, TypeUint(value));
+    }
+
+    function getUintType(uint32 value) internal pure returns (UintValue memory) {
+        return UintValue(TypeUint.Uint32, TypeUint(value));
+    }
+
+    function getUintType(uint64 value) internal pure returns (UintValue memory) {
+        return UintValue(TypeUint.Uint64, TypeUint(value));
+    }
+
+    function getUintType(uint128 value) internal pure returns (UintValue memory) {
+        return UintValue(TypeUint.Uint128, TypeUint(value));
+    }
+
+    function getUintType(uint256 value) internal pure returns (UintValue memory) {
+        return UintValue(TypeUint.Uint256, TypeUint(value));
+    }
+
+    // solve for this max and make it TypeUint type and remove the uint256 from it in the paramConfig struct 
   function determineDistributionType(uint256 min, uint256 max) internal pure returns (DistributionType) {
-        string memory uintType = getUintType(max);
+        UintValue memory uintTypeValue = getUintType(max);
         if (
-            keccak256(abi.encodePacked(uintType)) == keccak256(abi.encodePacked("uint8")) ||
-            keccak256(abi.encodePacked(uintType)) == keccak256(abi.encodePacked("uint16")) ||
-            keccak256(abi.encodePacked(uintType)) == keccak256(abi.encodePacked("uint32"))) {
+            keccak256(abi.encodePacked(uintTypeValue.uintType)) == keccak256(abi.encodePacked("uint8")) ||
+            keccak256(abi.encodePacked(uintTypeValue.uintType)) == keccak256(abi.encodePacked("uint16")) ||
+            keccak256(abi.encodePacked(uintTypeValue.uintType)) == keccak256(abi.encodePacked("uint32")) ||
+            keccak256(abi.encodePacked(uintTypeValue.uintType)) == keccak256(abi.encodePacked("uint64"))
+            ) {
             return DistributionType.Uniform;
         } else {
             return DistributionType.Logarithmic;
@@ -49,32 +97,32 @@ contract WalletTest is DSTest {
     // converts Public key to Ethereum address using keccak256 hash
     function addressOf(uint256 x, uint256 y) internal pure returns (address) {
         return address(uint160(uint256(keccak256(abi.encode(x, y)))));
-    }
+    } 
 
     function bound(uint256 x, ParamConfig memory config)internal pure virtual returns (uint256 result) {
 
-     
+
    DistributionType actualDistributionType = determineDistributionType(config.min, config.max);
-        if (actualDistributionType == DistributionType.Logarithmic) {
+    if (actualDistributionType == DistributionType.Logarithmic) {
             return boundLog(x, config.min, config.max);
-        }
+    }
       require(config.min <= config.max, "min needs to be less than max");
-        // If x is between min and max, return x directly.
+    // If x is between min and max, return x directly.
        if (x >= config.min && x <= config.max) return x; 
 
         uint256 size = config.max - config.min + 1; 
         if (x <= 3 && size > x) return config.min + x;
         if (x >= UINT256_MAX - 3 && size > UINT256_MAX - x) return config.max - (UINT256_MAX - x);
 
-        // Otherwise, wrap x into the range [min, max], i.e. the range is inclusive.
+    // Otherwise, wrap x into the range [min, max], i.e. the range is inclusive.
         if (x > config.max) {
             uint256 diff = x - config.max;
-            uint256 rem = diff % size;
+        uint256 rem = diff % size;
             if (rem == 0) return config.max;
             return config.min + rem - 1;
         } else if (x < config.min) {
             uint256 diff = config.min - x;
-            uint256 rem = diff % size;
+        uint256 rem = diff % size;
             if (rem == 0) return config.min;
             return config.max - rem + 1;
         }
@@ -156,7 +204,6 @@ contract WalletTest is DSTest {
         expectedAddr = addressOf(wallet.publicKeyX, wallet.publicKeyY);
         assertEq(expectedAddr, wallet.addr);
     }
-
 
      // tests creation of PK using a seed and checks labels too 
     function testCreateWalletPrivKeyWithLabel(uint256 pkSeed) public {
