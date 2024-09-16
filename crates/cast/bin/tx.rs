@@ -135,7 +135,7 @@ pub struct CastTxBuilder<T, P, S> {
     auth: Option<String>,
     chain: Chain,
     etherscan_api_key: Option<String>,
-    create_access_list: bool,
+    access_list: Option<Option<String>>,
     state: S,
     _t: std::marker::PhantomData<T>,
 }
@@ -184,24 +184,6 @@ where
             tx.set_nonce(nonce.to());
         }
 
-        let mut create_access_list = false;
-        if let Some(access_list) = match tx_opts.access_list {
-            None => None,
-            // --access-list provided with no value, call the provider in _build to create it
-            Some(None) => {
-                create_access_list = true;
-                None
-            }
-            // Access list provided as a string, attempt to parse it
-            Some(Some(ref s)) => Some(
-                serde_json::from_str::<AccessList>(s)
-                    .map(AccessList::from)
-                    .wrap_err("Failed to parse access list from string")?,
-            ),
-        } {
-            tx.set_access_list(access_list);
-        }
-
         Ok(Self {
             provider,
             tx,
@@ -210,7 +192,7 @@ where
             chain,
             etherscan_api_key,
             auth: tx_opts.auth,
-            create_access_list,
+            access_list: tx_opts.access_list,
             state: InitState,
             _t: std::marker::PhantomData,
         })
@@ -227,7 +209,7 @@ where
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
-            create_access_list: self.create_access_list,
+            access_list: self.access_list,
             state: ToState { to },
             _t: self._t,
         })
@@ -288,7 +270,7 @@ where
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
-            create_access_list: self.create_access_list,
+            access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },
             _t: self._t,
         })
@@ -339,9 +321,18 @@ where
             return Ok((self.tx, self.state.func));
         }
 
-        if self.create_access_list && self.tx.access_list.is_none() {
-            self.tx.access_list =
-                Some(self.provider.create_access_list(&self.tx).await?.access_list);
+        if let Some(access_list) = match self.access_list {
+            None => None,
+            // --access-list provided with no value, call the provider to create it
+            Some(None) => Some(self.provider.create_access_list(&self.tx).await?.access_list),
+            // Access list provided as a string, attempt to parse it
+            Some(Some(ref s)) => Some(
+                serde_json::from_str::<AccessList>(s)
+                    .map(AccessList::from)
+                    .wrap_err("Failed to parse access list from string")?,
+            ),
+        } {
+            self.tx.set_access_list(access_list);
         }
 
         if self.legacy && self.tx.gas_price.is_none() {
