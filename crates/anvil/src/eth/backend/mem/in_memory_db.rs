@@ -112,6 +112,10 @@ impl MaybeFullDatabase for MemDb {
         self.inner.clear_into_snapshot()
     }
 
+    fn read_as_snapshot(&self) -> StateSnapshot {
+        self.inner.read_as_snapshot()
+    }
+
     fn clear(&mut self) {
         self.inner.clear();
     }

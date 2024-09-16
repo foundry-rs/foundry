@@ -32,6 +32,11 @@ pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
     /// Clear the state and move it into a new `StateSnapshot`
     fn clear_into_snapshot(&mut self) -> StateSnapshot;
 
+    /// Read the state snapshot
+    ///
+    /// This clones all the states and returns a new `StateSnapshot`
+    fn read_as_snapshot(&self) -> StateSnapshot;
+
     /// Clears the entire database
     fn clear(&mut self);
 
@@ -48,6 +53,10 @@ where
     }
 
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        unreachable!("never called for DatabaseRef")
+    }
+
+    fn read_as_snapshot(&self) -> StateSnapshot {
         unreachable!("never called for DatabaseRef")
     }
 
@@ -237,6 +246,22 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
         StateSnapshot { accounts, storage: account_storage, block_hashes }
     }
 
+    fn read_as_snapshot(&self) -> StateSnapshot {
+        let db_accounts = self.accounts.clone();
+        let mut accounts = HashMap::new();
+        let mut account_storage = HashMap::new();
+
+        for (addr, acc) in db_accounts {
+            account_storage.insert(addr, acc.storage.clone());
+            let mut info = acc.info;
+            info.code = self.contracts.get(&info.code_hash).cloned();
+            accounts.insert(addr, info);
+        }
+
+        let block_hashes = self.block_hashes.clone();
+        StateSnapshot { accounts, storage: account_storage, block_hashes }
+    }
+
     fn clear(&mut self) {
         self.clear_into_snapshot();
     }
@@ -284,7 +309,9 @@ impl StateDb {
     }
 
     pub fn serialize_state(&mut self) -> StateSnapshot {
-        self.clear_into_snapshot()
+        // Using read_as_snapshot makes sures we don't clear the historical state from the current
+        // instance.
+        self.read_as_snapshot()
     }
 }
 
@@ -314,6 +341,10 @@ impl MaybeFullDatabase for StateDb {
 
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         self.0.clear_into_snapshot()
+    }
+
+    fn read_as_snapshot(&self) -> StateSnapshot {
+        self.0.read_as_snapshot()
     }
 
     fn clear(&mut self) {

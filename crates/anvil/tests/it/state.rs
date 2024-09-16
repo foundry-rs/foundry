@@ -1,7 +1,7 @@
 //! general eth api tests
 
 use crate::abi::Greeter;
-use alloy_primitives::Uint;
+use alloy_primitives::{Bytes, Uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use anvil::{spawn, NodeConfig};
@@ -44,6 +44,42 @@ async fn can_load_existing_state() {
 
     let block_number = api.block_number().unwrap();
     assert_eq!(block_number, Uint::from(2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_make_sure_historical_state_is_not_cleared_on_dump() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state_file = tmp.path().join("state.json");
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let provider = handle.http_provider();
+
+    let greeter = Greeter::deploy(&provider, "Hello".to_string()).await.unwrap();
+
+    let address = greeter.address();
+
+    let _tx = greeter
+        .setGreeting("World!".to_string())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    api.mine_one().await;
+
+    let ser_state = api.serialized_state(true).await.unwrap();
+    foundry_common::fs::write_json_file(&state_file, &ser_state).unwrap();
+
+    let block_number = api.block_number().unwrap();
+    assert_eq!(block_number, Uint::from(3));
+
+    // Makes sure historical states of the new instance are not cleared.
+    let code = provider.get_code_at(*address).block_id(BlockId::number(2)).await.unwrap();
+
+    assert_ne!(code, Bytes::new());
 }
 
 #[tokio::test(flavor = "multi_thread")]

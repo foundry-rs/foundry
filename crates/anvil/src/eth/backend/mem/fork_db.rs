@@ -95,6 +95,14 @@ impl MaybeFullDatabase for ForkedDatabase {
         StateSnapshot { accounts, storage, block_hashes }
     }
 
+    fn read_as_snapshot(&self) -> StateSnapshot {
+        let db = self.inner().db();
+        let accounts = db.accounts.read().clone();
+        let storage = db.storage.read().clone();
+        let block_hashes = db.block_hashes.read().clone();
+        StateSnapshot { accounts, storage, block_hashes }
+    }
+
     fn clear(&mut self) {
         self.flush_cache();
         self.clear_into_snapshot();
@@ -112,6 +120,10 @@ impl MaybeFullDatabase for ForkedDatabase {
 impl MaybeFullDatabase for ForkDbSnapshot {
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         std::mem::take(&mut self.snapshot)
+    }
+
+    fn read_as_snapshot(&self) -> StateSnapshot {
+        self.snapshot.clone()
     }
 
     fn clear(&mut self) {
