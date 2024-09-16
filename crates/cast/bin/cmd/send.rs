@@ -168,8 +168,6 @@ impl SendTxArgs {
 
             tx::validate_from_address(eth.wallet.from, from)?;
 
-            println!("Sending transaction");
-
             let res = builder.build(&signer).await;
 
             let (tx, _) = match res {
