@@ -5,10 +5,11 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{b256, Address, TxHash, TxKind, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{optimism::OptimismTransactionFields, TransactionRequest};
+use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
 use anvil_core::eth::transaction::optimism::DepositTransaction;
+use op_alloy_rpc_types::OptimismTransactionFields;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposits_not_supported_if_optimism_disabled() {
@@ -32,6 +33,7 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
             )),
             mint: Some(0),
             is_system_tx: Some(true),
+            deposit_receipt_version: None,
         }
         .into(),
     };
@@ -72,6 +74,7 @@ async fn test_send_value_deposit_transaction() {
             )),
             mint: Some(0),
             is_system_tx: Some(true),
+            deposit_receipt_version: None,
         }
         .into(),
     };
@@ -126,6 +129,7 @@ async fn test_send_value_raw_deposit_transaction() {
             )),
             mint: Some(0),
             is_system_tx: Some(true),
+            deposit_receipt_version: None,
         }
         .into(),
     };

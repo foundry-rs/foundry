@@ -539,14 +539,16 @@ fn expect_emit(
     address: Option<Address>,
     anonymous: bool,
 ) -> Result {
-    state.expected_emits.push_back(ExpectedEmit {
-        depth,
-        checks,
-        address,
-        found: false,
-        log: None,
-        anonymous,
-    });
+    let expected_emit = ExpectedEmit { depth, checks, address, found: false, log: None, anonymous };
+    if let Some(found_emit_pos) = state.expected_emits.iter().position(|emit| emit.found) {
+        // The order of emits already found (back of queue) should not be modified, hence push any
+        // new emit before first found emit.
+        state.expected_emits.insert(found_emit_pos, expected_emit);
+    } else {
+        // If no expected emits then push new one at the back of queue.
+        state.expected_emits.push_back(expected_emit);
+    }
+
     Ok(Default::default())
 }
 
@@ -569,15 +571,25 @@ pub(crate) fn handle_expect_emit(
         return
     }
 
-    // If there's anything to fill, we need to pop back.
-    // Otherwise, if there are any events that are unmatched, we try to match to match them
-    // in the order declared, so we start popping from the front (like a queue).
-    let mut event_to_fill_or_check =
-        if state.expected_emits.iter().any(|expected| expected.log.is_none()) {
-            state.expected_emits.pop_back()
-        } else {
-            state.expected_emits.pop_front()
-        }
+    let should_fill_logs = state.expected_emits.iter().any(|expected| expected.log.is_none());
+    let index_to_fill_or_check = if should_fill_logs {
+        // If there's anything to fill, we start with the last event to match in the queue
+        // (without taking into account events already matched).
+        state
+            .expected_emits
+            .iter()
+            .position(|emit| emit.found)
+            .unwrap_or(state.expected_emits.len())
+            .saturating_sub(1)
+    } else {
+        // Otherwise, if all expected logs are filled, we start to check any unmatched event
+        // in the declared order, so we start from the front (like a queue).
+        0
+    };
+
+    let mut event_to_fill_or_check = state
+        .expected_emits
+        .remove(index_to_fill_or_check)
         .expect("we should have an emit to fill or check");
 
     let Some(expected) = &event_to_fill_or_check.log else {
@@ -585,7 +597,8 @@ pub(crate) fn handle_expect_emit(
         // filled.
         if event_to_fill_or_check.anonymous || log.topics().first().is_some() {
             event_to_fill_or_check.log = Some(log.data.clone());
-            state.expected_emits.push_back(event_to_fill_or_check);
+            // If we only filled the expected log then we put it back at the same position.
+            state.expected_emits.insert(index_to_fill_or_check, event_to_fill_or_check);
         } else {
             interpreter.instruction_result = InstructionResult::Revert;
             interpreter.next_action = InterpreterAction::Return {

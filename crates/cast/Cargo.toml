@@ -1,5 +1,5 @@
 [package]
-name = "cast"
+name = "foundry-cast"
 description = "Command-line tool for performing Ethereum RPC calls"
 
 version.workspace = true
@@ -12,6 +12,9 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[lib]
+name = "cast"
 
 [[bin]]
 name = "cast"
@@ -79,7 +82,7 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "signal"] }
 tracing.workspace = true
 yansi.workspace = true
-evmole = "0.3.1"
+evmole.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }

@@ -473,6 +473,15 @@ interface Vm {
     function mockCallRevert(address callee, uint256 msgValue, bytes calldata data, bytes calldata revertData)
         external;
 
+    /// Whenever a call is made to `callee` with calldata `data`, this cheatcode instead calls
+    /// `target` with the same calldata. This functionality is similar to a delegate call made to
+    /// `target` contract from `callee`.
+    /// Can be used to substitute a call to a function with another implementation that captures
+    /// the primary logic of the original function but is easier to reason about.
+    /// If calldata is not a strict match then partial match by selector is attempted.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockFunction(address callee, address target, bytes calldata data) external;
+
     // --- Impersonation (pranks) ---
 
     /// Sets the *next* call's `msg.sender` to be the input address.
@@ -850,9 +859,13 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectSafeMemoryCall(uint64 min, uint64 max) external;
 
-    /// Marks a test as skipped. Must be called at the top of the test.
+    /// Marks a test as skipped. Must be called at the top level of a test.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function skip(bool skipTest) external;
+
+    /// Marks a test as skipped with a reason. Must be called at the top level of a test.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function skip(bool skipTest, string calldata reason) external;
 
     /// Asserts that the given condition is true.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -2319,6 +2332,14 @@ interface Vm {
     /// Unpauses collection of call traces.
     #[cheatcode(group = Utilities)]
     function resumeTracing() external view;
+
+    /// Utility cheatcode to copy storage of `from` contract to another `to` contract.
+    #[cheatcode(group = Utilities)]
+    function copyStorage(address from, address to) external;
+
+    /// Utility cheatcode to set arbitrary storage for given target address.
+    #[cheatcode(group = Utilities)]
+    function setArbitraryStorage(address target) external;
 }
 }
 

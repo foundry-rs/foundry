@@ -94,15 +94,16 @@ pub enum ChiselSubcommand {
     ClearCache,
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+fn main() -> eyre::Result<()> {
     handler::install();
     utils::subscriber();
     utils::load_dotenv();
-
-    // Parse command args
     let args = Chisel::parse();
+    main_args(args)
+}
 
+#[tokio::main]
+async fn main_args(args: Chisel) -> eyre::Result<()> {
     // Keeps track of whether or not an interrupt was the last input
     let mut interrupt = false;
 

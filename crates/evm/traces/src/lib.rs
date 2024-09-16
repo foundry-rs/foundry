@@ -42,6 +42,8 @@ pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 pub mod debug;
 pub use debug::DebugTraceIdentifier;
 
+pub mod folded_stack_trace;
+
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
 /// Trace arena keeping track of ignored trace items.

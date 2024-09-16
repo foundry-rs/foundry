@@ -522,7 +522,7 @@ impl Config {
 
     /// Returns the current `Config`
     ///
-    /// See `Config::figment`
+    /// See [`figment`](Self::figment) for more details.
     #[track_caller]
     pub fn load() -> Self {
         Self::from_provider(Self::figment())
@@ -530,7 +530,7 @@ impl Config {
 
     /// Returns the current `Config` with the given `providers` preset
     ///
-    /// See `Config::to_figment`
+    /// See [`figment`](Self::figment) for more details.
     #[track_caller]
     pub fn load_with_providers(providers: FigmentProviders) -> Self {
         Self::default().to_figment(providers).extract().unwrap()
@@ -538,10 +538,10 @@ impl Config {
 
     /// Returns the current `Config`
     ///
-    /// See `Config::figment_with_root`
+    /// See [`figment_with_root`](Self::figment_with_root) for more details.
     #[track_caller]
-    pub fn load_with_root(root: impl Into<PathBuf>) -> Self {
-        Self::from_provider(Self::figment_with_root(root))
+    pub fn load_with_root(root: impl AsRef<Path>) -> Self {
+        Self::from_provider(Self::figment_with_root(root.as_ref()))
     }
 
     /// Extract a `Config` from `provider`, panicking if extraction fails.
@@ -1407,8 +1407,8 @@ impl Config {
     ///
     /// let my_config = Config::figment_with_root(".").extract::<Config>();
     /// ```
-    pub fn figment_with_root(root: impl Into<PathBuf>) -> Figment {
-        Self::with_root(root).into()
+    pub fn figment_with_root(root: impl AsRef<Path>) -> Figment {
+        Self::with_root(root.as_ref()).into()
     }
 
     /// Creates a new Config that adds additional context extracted from the provided root.
@@ -1419,10 +1419,13 @@ impl Config {
     /// use foundry_config::Config;
     /// let my_config = Config::with_root(".");
     /// ```
-    pub fn with_root(root: impl Into<PathBuf>) -> Self {
+    pub fn with_root(root: impl AsRef<Path>) -> Self {
+        Self::_with_root(root.as_ref())
+    }
+
+    fn _with_root(root: &Path) -> Self {
         // autodetect paths
-        let root = root.into();
-        let paths = ProjectPathsConfig::builder().build_with_root::<()>(&root);
+        let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         Self {
             root: paths.root.into(),
@@ -1432,7 +1435,7 @@ impl Config {
             remappings: paths
                 .remappings
                 .into_iter()
-                .map(|r| RelativeRemapping::new(r, &root))
+                .map(|r| RelativeRemapping::new(r, root))
                 .collect(),
             fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
             ..Self::default()
@@ -1481,7 +1484,7 @@ impl Config {
     ///
     /// **Note:** the closure will only be invoked if the `foundry.toml` file exists, See
     /// [Self::get_config_path()] and if the closure returns `true`.
-    pub fn update_at<F>(root: impl Into<PathBuf>, f: F) -> eyre::Result<()>
+    pub fn update_at<F>(root: &Path, f: F) -> eyre::Result<()>
     where
         F: FnOnce(&Self, &mut toml_edit::DocumentMut) -> bool,
     {

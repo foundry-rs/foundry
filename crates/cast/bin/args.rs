@@ -831,6 +831,48 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
+    /// Get the codehash for an account.
+    #[command()]
+    Codehash {
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        /// The address to get the codehash for.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
+
+        /// The storage slot numbers (hex or decimal).
+        #[arg(value_parser = parse_slot)]
+        slots: Vec<B256>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Get the storage root for an account.
+    #[command(visible_alias = "sr")]
+    StorageRoot {
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        /// The address to get the storage root for.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        who: NameOrAddress,
+
+        /// The storage slot numbers (hex or decimal).
+        #[arg(value_parser = parse_slot)]
+        slots: Vec<B256>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
     /// Get the source code of a contract from Etherscan.
     #[command(visible_aliases = &["et", "src"])]
     EtherscanSource {

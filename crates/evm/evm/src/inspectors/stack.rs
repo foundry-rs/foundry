@@ -726,6 +726,18 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
 
         ecx.journaled_state.depth += self.in_inner_context as usize;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
+            // Handle mocked functions, replace bytecode address with mock if matched.
+            if let Some(mocks) = cheatcodes.mocked_functions.get(&call.target_address) {
+                // Check if any mock function set for call data or if catch-all mock function set
+                // for selector.
+                if let Some(target) = mocks
+                    .get(&call.input)
+                    .or_else(|| call.input.get(..4).and_then(|selector| mocks.get(selector)))
+                {
+                    call.bytecode_address = *target;
+                }
+            }
+
             if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner) {
                 if output.result.result != InstructionResult::Continue {
                     ecx.journaled_state.depth -= self.in_inner_context as usize;
