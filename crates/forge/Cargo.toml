@@ -46,6 +46,7 @@ serde.workspace = true
 tracing.workspace = true
 yansi.workspace = true
 humantime-serde = "1.1.1"
+chrono.workspace = true
 
 # bin
 forge-doc.workspace = true
@@ -107,6 +108,7 @@ opener = "0.7"
 
 # soldeer
 soldeer.workspace = true
+quick-junit = "0.5.0"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }

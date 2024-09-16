@@ -8113,8 +8113,8 @@
     },
     {
       "func": {
-        "id": "skip",
-        "description": "Marks a test as skipped. Must be called at the top of the test.",
+        "id": "skip_0",
+        "description": "Marks a test as skipped. Must be called at the top level of a test.",
         "declaration": "function skip(bool skipTest) external;",
         "visibility": "external",
         "mutability": "",
@@ -8125,6 +8125,26 @@
           130,
           209,
           62
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "skip_1",
+        "description": "Marks a test as skipped with a reason. Must be called at the top level of a test.",
+        "declaration": "function skip(bool skipTest, string calldata reason) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "skip(bool,string)",
+        "selector": "0xc42a80a7",
+        "selectorBytes": [
+          196,
+          42,
+          128,
+          167
         ]
       },
       "group": "testing",
