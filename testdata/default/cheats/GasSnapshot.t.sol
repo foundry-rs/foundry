@@ -45,6 +45,16 @@ contract GasSnapshotTest is DSTest {
         vm.stopSnapshotGas();
     }
 
+    function testGasComplex() public {
+        TargetB target = new TargetB();
+
+        vm.startSnapshotGas("testAssertGasComplexA");
+
+        target.update(1);
+
+        vm.stopSnapshotGas();
+    }
+
     // Writes to `GasSnapshotTest` group with custom names.
     function testSnapshotValueDefaultGroup1() public {
         uint256 a = 123;
@@ -124,7 +134,10 @@ contract GasSnapshotTest is DSTest {
 
         f.run(256);
 
-        uint256 gasUsed = vm.stopSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
+        uint256 gasUsed = vm.stopSnapshotGas(
+            "CustomGroup",
+            "testSnapshotGasSectionGroupName"
+        );
         assertGt(gasUsed, 0);
     }
 

@@ -23,7 +23,7 @@ use crate::{
 use alloy_primitives::{hex, Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
+use foundry_common::{evm::Breakpoints, shell::println, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_config::Config;
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
@@ -239,6 +239,10 @@ pub struct GasMetering {
 
     /// True if gas metering is enabled.
     pub recording: bool,
+    /// Stores the last frame.
+    pub last_recorded_frame: u64,
+    /// Stores the last depth.
+    pub last_recorded_depth: u64,
     /// Stores recorded gas frames.
     pub recorded_frames: Vec<u64>,
     /// Gas records for the active snapshots.
@@ -254,14 +258,13 @@ impl GasMetering {
 
     /// Stop the gas recording.
     pub fn stop(&mut self) {
-        // self.gas_records.iter_mut().for_each(|record| {
-        //     record.gas_used = record
-        //         .gas_used
-        //         .saturating_add(self.recorded_frames.iter().map(|gas| gas.spent()).sum::<u64>());
-        // });
+        self.gas_records.iter_mut().for_each(|record| {
+            record.gas_used = self.recorded_frames.iter().sum::<u64>();
+        });
 
-        println!("Gas frames: {:?}", self.recorded_frames);
+        println!("gas records: {:?}", self.gas_records);
 
+        // reduce sum of gas frames to a single value
         self.recording = false;
         self.recorded_frames.clear();
     }
@@ -1080,9 +1083,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     }
 
     #[inline]
-    fn step_end(&mut self, interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         if self.gas_metering.recording {
-            self.meter_gas_record(interpreter);
+            self.meter_gas_record(interpreter, ecx);
         }
 
         if self.gas_metering.paused {
@@ -1476,9 +1479,30 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn meter_gas_record(&mut self, interpreter: &mut Interpreter) {
-        // Record gas for current frame.
-        self.gas_metering.recorded_frames.push(interpreter.gas.spent());
+    fn meter_gas_record<DB: DatabaseExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<DB>,
+    ) {
+        println!(
+            "{:?} - {:?} @ {}",
+            interpreter.instruction_result,
+            interpreter.gas.spent(),
+            ecx.journaled_state.depth()
+        );
+
+        if self.gas_metering.last_recorded_depth != ecx.journaled_state.depth() {
+            self.gas_metering.last_recorded_frame = 0;
+            self.gas_metering.last_recorded_depth = ecx.journaled_state.depth();
+        }
+
+        if matches!(interpreter.instruction_result, InstructionResult::Continue) {
+            self.gas_metering
+                .recorded_frames
+                .push(interpreter.gas.spent() - self.gas_metering.last_recorded_frame);
+
+            self.gas_metering.last_recorded_frame = interpreter.gas.spent();
+        }
     }
 
     #[cold]
