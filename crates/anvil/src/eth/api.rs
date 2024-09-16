@@ -351,9 +351,10 @@ impl EthApi {
             EthRequest::SetNextBlockBaseFeePerGas(gas) => {
                 self.anvil_set_next_block_base_fee_per_gas(gas).await.to_rpc_result()
             }
-            EthRequest::DumpState(preserve_historical_states) => {
-                self.anvil_dump_state(preserve_historical_states).await.to_rpc_result()
-            }
+            EthRequest::DumpState(preserve_historical_states) => self
+                .anvil_dump_state(preserve_historical_states.and_then(|s| s.params))
+                .await
+                .to_rpc_result(),
             EthRequest::LoadState(buf) => self.anvil_load_state(buf).await.to_rpc_result(),
             EthRequest::NodeInfo(_) => self.anvil_node_info().await.to_rpc_result(),
             EthRequest::AnvilMetadata(_) => self.anvil_metadata().await.to_rpc_result(),
@@ -1841,9 +1842,12 @@ impl EthApi {
     /// process by calling `anvil_loadState`
     ///
     /// Handler for RPC call: `anvil_dumpState`
-    pub async fn anvil_dump_state(&self, preserve_historical_states: bool) -> Result<Bytes> {
+    pub async fn anvil_dump_state(
+        &self,
+        preserve_historical_states: Option<bool>,
+    ) -> Result<Bytes> {
         node_info!("anvil_dumpState");
-        self.backend.dump_state(preserve_historical_states).await
+        self.backend.dump_state(preserve_historical_states.unwrap_or(false)).await
     }
 
     /// Returns the current state
