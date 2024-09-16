@@ -80,8 +80,9 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
         &self,
         ccx: &mut CheatsCtxt<DB>,
-        _executor: &mut E,
+        executor: &mut E,
     ) -> Result {
+        let _ = executor;
         self.apply_stateful(ccx)
     }
 }
