@@ -223,12 +223,12 @@ contract DeployScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [81034] DeployScript::run()
+  [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [45299] → new GasWaster@[..]
+    ├─ [..] → new GasWaster@[..]
     │   └─ ← [Return] 226 bytes of code
-    ├─ [226] GasWaster::wasteGas(200000 [2e5])
+    ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 
@@ -330,12 +330,12 @@ Warning (2018): Function state mutability can be restricted to view
   |     ^ (Relevant source part starts here and spans across multiple lines).
 
 Traces:
-  [81034] DeployScript::run()
+  [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [45299] → new GasWaster@[..]
+    ├─ [..] → new GasWaster@[..]
     │   └─ ← [Return] 226 bytes of code
-    ├─ [226] GasWaster::wasteGas(200000 [2e5])
+    ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 
@@ -515,10 +515,10 @@ contract DeployScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [116040] DeployScript::run()
+  [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [75723] → new HashChecker@[..]
+    ├─ [..] → new HashChecker@[..]
     │   └─ ← [Return] 378 bytes of code
     └─ ← [Stop] 
 
@@ -595,58 +595,58 @@ contract RunScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [51327] RunScript::run()
+  [..] RunScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [22394] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
-    ├─ [494] [..]::update()
-    │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
-    ├─ [494] [..]::update()
-    │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
-    ├─ [494] [..]::update()
-    │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [..] [..]::update()
+    │   └─ ← [Stop] 
+    ├─ [..] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [..] [..]::update()
+    │   └─ ← [Stop] 
+    ├─ [..] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [..] [..]::update()
+    │   └─ ← [Stop] 
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 
