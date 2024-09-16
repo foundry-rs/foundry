@@ -732,7 +732,6 @@ impl Cheatcodes {
                     &expected_revert,
                     outcome.result.result,
                     outcome.result.output.clone(),
-                    None,
                     &self.config.available_artifacts,
                 ) {
                     Ok((address, retdata)) => {
@@ -1234,8 +1233,17 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
-        // Handle expected reverts
-        if let Some(expected_revert) = &self.expected_revert {
+        // Handle expected reverts.
+        if let Some(expected_revert) = &mut self.expected_revert {
+            // Record current reverter address before processing the expect revert if call reverted,
+            // expect revert is set with expected reverter address and no actual reverter set yet.
+            if outcome.result.is_revert() &&
+                expected_revert.reverter.is_some() &&
+                expected_revert.reverted_by.is_none()
+            {
+                expected_revert.reverted_by = Some(call.target_address);
+            }
+
             if ecx.journaled_state.depth() <= expected_revert.depth {
                 let needs_processing = match expected_revert.kind {
                     ExpectedRevertKind::Default => !cheatcode_call,
@@ -1254,7 +1262,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                         &expected_revert,
                         outcome.result.result,
                         outcome.result.output.clone(),
-                        Some(call.target_address),
                         &self.config.available_artifacts,
                     ) {
                         Err(error) => {

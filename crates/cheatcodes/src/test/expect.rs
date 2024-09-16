@@ -82,6 +82,8 @@ pub struct ExpectedRevert {
     pub partial_match: bool,
     /// Contract expected to revert next call.
     pub reverter: Option<Address>,
+    /// Actual reverter of the call.
+    pub reverted_by: Option<Address>,
 }
 
 #[derive(Clone, Debug)]
@@ -672,6 +674,7 @@ fn expect_revert(
         },
         partial_match,
         reverter,
+        reverted_by: None,
     });
     Ok(Default::default())
 }
@@ -682,7 +685,6 @@ pub(crate) fn handle_expect_revert(
     expected_revert: &ExpectedRevert,
     status: InstructionResult,
     retdata: Bytes,
-    target_address: Option<Address>,
     known_contracts: &Option<ContractsByArtifact>,
 ) -> Result<(Option<Address>, Bytes)> {
     let success_return = || {
@@ -697,7 +699,7 @@ pub(crate) fn handle_expect_revert(
 
     // If expected reverter address is set then check it matches the actual reverter.
     if let (Some(expected_reverter), Some(actual_reverter)) =
-        (expected_revert.reverter, target_address)
+        (expected_revert.reverter, expected_revert.reverted_by)
     {
         if expected_reverter != actual_reverter {
             return Err(fmt_err!(
