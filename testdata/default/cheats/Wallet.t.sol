@@ -4,8 +4,6 @@ pragma solidity 0.8.18;
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
-// make the uint type function correct 
-// 
 
 contract Foo {}
 
@@ -17,18 +15,13 @@ contract WalletTest is DSTest {
         115792089237316195423570985008687907853269984665640564039457584007913129639935; // max num stored in uin256
 
 
-//
-// enums
-//
+
     enum DistributionType { Uniform, Logarithmic }  // enum for the distribution type
     enum TypeUint {Uint8, Uint16, Uint32, Uint64, Uint128, Uint256} // enum for the uint type
 
-//
-// structs
-//
     struct ParamConfig {
         uint256 min;
-        uint256 max;
+        TypeUint max;
             DistributionType distributionType;
             uint256[] fixtures;
             uint256[] excluded;
@@ -39,15 +32,12 @@ contract WalletTest is DSTest {
         TypeUint value;
     }
 
-//
-// vars of structs
-//
     ParamConfig public pkConfig;
     
    constructor() {
         pkConfig = ParamConfig({
             min: 1,
-            max: Q - 1,
+            max: TypeUint(Q - 1),
             distributionType: DistributionType.Logarithmic,
             fixtures: new uint256[](0),
             excluded: new uint256[](0)
@@ -55,39 +45,28 @@ contract WalletTest is DSTest {
     }     // the constructor sets the DistributionType = Logarithmic 
            
     // Separate functions for different uint types 
-    function getUintType(uint8 value) internal pure returns (UintValue memory) {
-        return UintValue(TypeUint.Uint8, TypeUint(value));
-    }
-
-    function getUintType(uint16 value) internal pure returns (UintValue memory) {
-        return UintValue(TypeUint.Uint16, TypeUint(value));
-    }
-
-    function getUintType(uint32 value) internal pure returns (UintValue memory) {
-        return UintValue(TypeUint.Uint32, TypeUint(value));
-    }
-
-    function getUintType(uint64 value) internal pure returns (UintValue memory) {
-        return UintValue(TypeUint.Uint64, TypeUint(value));
-    }
-
-    function getUintType(uint128 value) internal pure returns (UintValue memory) {
-        return UintValue(TypeUint.Uint128, TypeUint(value));
-    }
-
-    function getUintType(uint256 value) internal pure returns (UintValue memory) {
-        return UintValue(TypeUint.Uint256, TypeUint(value));
-    }
+   function getUintType(uint8 value) internal pure returns (UintValue memory) {
+    return UintValue(TypeUint.Uint8, TypeUint(value));
+}
+function getUintType(uint16 value) internal pure returns (UintValue memory) {
+    return UintValue(TypeUint.Uint16, TypeUint(value));
+}
+function getUintType(uint32 value) internal pure returns (UintValue memory) {
+    return UintValue(TypeUint.Uint32, TypeUint(value));
+}
+function getUintType(uint64 value) internal pure returns (UintValue memory) {
+    return UintValue(TypeUint.Uint64, TypeUint(value));
+}
+function getUintType(uint128 value) internal pure returns (UintValue memory) {
+    return UintValue(TypeUint.Uint128, TypeUint(value));
+}
+function getUintType(uint256 value) internal pure returns (UintValue memory) {
+    return UintValue(TypeUint.Uint256, TypeUint(value));
+}
 
     // solve for this max and make it TypeUint type and remove the uint256 from it in the paramConfig struct 
-  function determineDistributionType(uint256 min, uint256 max) internal pure returns (DistributionType) {
-        UintValue memory uintTypeValue = getUintType(max);
-        if (
-            keccak256(abi.encodePacked(uintTypeValue.uintType)) == keccak256(abi.encodePacked("uint8")) ||
-            keccak256(abi.encodePacked(uintTypeValue.uintType)) == keccak256(abi.encodePacked("uint16")) ||
-            keccak256(abi.encodePacked(uintTypeValue.uintType)) == keccak256(abi.encodePacked("uint32")) ||
-            keccak256(abi.encodePacked(uintTypeValue.uintType)) == keccak256(abi.encodePacked("uint64"))
-            ) {
+     function determineDistributionType(uint256 min, TypeUint max) internal pure returns (DistributionType) {
+        if (max == TypeUint.Uint8 || max == TypeUint.Uint16 || max == TypeUint.Uint32 || max == TypeUint.Uint64) {
             return DistributionType.Uniform;
         } else {
             return DistributionType.Logarithmic;
@@ -99,60 +78,51 @@ contract WalletTest is DSTest {
         return address(uint160(uint256(keccak256(abi.encode(x, y)))));
     } 
 
-    function bound(uint256 x, ParamConfig memory config)internal pure virtual returns (uint256 result) {
+  function getMaxValueForType(TypeUint uintType) internal pure returns (uint256) {
+        if (uintType == TypeUint.Uint8) return type(uint8).max;
+        if (uintType == TypeUint.Uint16) return type(uint16).max;
+        if (uintType == TypeUint.Uint32) return type(uint32).max;
+        if (uintType == TypeUint.Uint64) return type(uint64).max;
+        if (uintType == TypeUint.Uint128) return type(uint128).max;
+        return type(uint256).max;
+    }
 
-
-   DistributionType actualDistributionType = determineDistributionType(config.min, config.max);
+   function bound(uint256 x, ParamConfig memory config) internal pure virtual returns (uint256 result) {
+    uint256 maxValue = getMaxValueForType(config.max);
+    DistributionType actualDistributionType = determineDistributionType(config.min, config.max);
+    
     if (actualDistributionType == DistributionType.Logarithmic) {
-            return boundLog(x, config.min, config.max);
+        return boundLog(x, config.min, config.max);
     }
-      require(config.min <= config.max, "min needs to be less than max");
-    // If x is between min and max, return x directly.
-       if (x >= config.min && x <= config.max) return x; 
-
-        uint256 size = config.max - config.min + 1; 
-        if (x <= 3 && size > x) return config.min + x;
-        if (x >= UINT256_MAX - 3 && size > UINT256_MAX - x) return config.max - (UINT256_MAX - x);
-
-    // Otherwise, wrap x into the range [min, max], i.e. the range is inclusive.
-        if (x > config.max) {
-            uint256 diff = x - config.max;
+    require(config.min <= maxValue, "min needs to be less than max");
+    if (x >= config.min && x <= maxValue) return x;
+    uint256 size = maxValue - config.min + 1;
+    if (x <= 3 && size > x) return config.min + x;
+    if (x >= UINT256_MAX - 3 && size > UINT256_MAX - x) return maxValue - (UINT256_MAX - x);
+    if (x > maxValue) {
+        uint256 diff = x - maxValue;
         uint256 rem = diff % size;
-            if (rem == 0) return config.max;
-            return config.min + rem - 1;
-        } else if (x < config.min) {
-            uint256 diff = config.min - x;
+        if (rem == 0) return maxValue;
+        return config.min + rem - 1;
+    } else if (x < config.min) {
+        uint256 diff = config.min - x;
         uint256 rem = diff % size;
-            if (rem == 0) return config.min;
-            return config.max - rem + 1;
-        }
+        if (rem == 0) return config.min;
+        return maxValue - rem + 1;
     }
+}
 
-    function getUintType(uint256 value) internal pure returns(string memory) {
-        if(value <= type(uint8).max) return "uint8";
-        if(value <= type(uint16).max) return "uint16";
-        if(value <= type(uint32).max) return "uint32";
-        if(value <= type(uint64).max) return "uint64";
-        if(value <= type(uint128).max) return "uint128";
-        if(value <= type(uint256).max) return "uint256";
-    }
+function boundLog(uint256 x, uint256 min, TypeUint max) internal pure returns (uint256) {
+    require(min > 0, "min must be greater than 0 for log distribution");
+    uint256 maxValue = getMaxValueForType(max);
+    require(min < maxValue, "min must be less than max");
+    uint256 logMin = log2Approximation(2*min);
+    uint256 logMax = log2Approximation(2**(maxValue+1)-1);
+    uint256 logValue = bound(x, ParamConfig(logMin, TypeUint.Uint256, DistributionType.Uniform, new uint256[](0), new uint256[](0)));
+    return exp2Approximation(logValue);
+}
 
-
-     function boundLog(uint256 x, uint256 min, uint256 max) internal pure returns (uint256) {
-        // basic checks 
-        require(min < max, "min must be less than max");
-        require(min > 0, "min must be greater than 0 for log distribution");
-
-        // converts min and max to log min and max 
-        uint256 logMin = log2Approximation(2*min);
-        uint256 logMax = log2Approximation(2**(max+1)-1);
-        
-        uint256 logValue = bound(x, ParamConfig(logMin, logMax, DistributionType.Uniform, new uint256[](0), new uint256[](0)));
-        
-        return exp2Approximation(logValue);
-    }
-
-     function log2Approximation(uint256 x) internal pure returns (uint256) {
+    function log2Approximation(uint256 x) internal pure returns (uint256) {
         require(x > 0, "log2 of less than equal to zero is undefined");
        
         uint256 n = 0;
@@ -171,8 +141,17 @@ contract WalletTest is DSTest {
             result *= 2;
         }
         return result;
-    }
+    }  
 
+    function getUintType(uint256 value) internal pure returns(string memory) {
+        if(value <= type(uint8).max) return "uint8";
+        if(value <= type(uint16).max) return "uint16";
+        if(value <= type(uint32).max) return "uint32";
+        if(value <= type(uint64).max) return "uint64";
+        if(value <= type(uint128).max) return "uint128";
+        if(value <= type(uint256).max) return "uint256";
+    }
+  
     // tests that wallet is created with the address derived from PK and label is set correctly
     function testCreateWalletStringPrivAndLabel() public {
         bytes memory privKey = "this is a priv key";
