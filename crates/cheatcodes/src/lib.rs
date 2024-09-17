@@ -45,6 +45,7 @@ mod json;
 
 mod script;
 pub use script::{ScriptWallets, ScriptWalletsInner};
+use spec::Status;
 
 mod string;
 
@@ -82,6 +83,12 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
         ccx: &mut CheatsCtxt<DB>,
         executor: &mut E,
     ) -> Result {
+        if self.status() == Status::Deprecated {
+            error!(
+                "{} cheatcode is being deprecated and will be removed in future versions.",
+                self.signature()
+            );
+        }
         let _ = executor;
         self.apply_stateful(ccx)
     }
@@ -90,6 +97,8 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
 pub(crate) trait DynCheatcode {
     fn name(&self) -> &'static str;
     fn id(&self) -> &'static str;
+    fn signature(&self) -> &'static str;
+    fn status(&self) -> Status;
     fn as_debug(&self) -> &dyn std::fmt::Debug;
 }
 
@@ -99,6 +108,12 @@ impl<T: Cheatcode> DynCheatcode for T {
     }
     fn id(&self) -> &'static str {
         T::CHEATCODE.func.id
+    }
+    fn signature(&self) -> &'static str {
+        T::CHEATCODE.func.signature
+    }
+    fn status(&self) -> Status {
+        T::CHEATCODE.status
     }
     fn as_debug(&self) -> &dyn std::fmt::Debug {
         self
