@@ -162,7 +162,7 @@ pub trait Db:
             );
 
             for (k, v) in account.storage.into_iter() {
-                self.set_storage_at(addr, k, v)?;
+                self.set_storage_at(addr, k.into(), v.into())?;
             }
         }
         Ok(true)
@@ -398,7 +398,7 @@ pub struct SerializableAccountRecord {
     pub nonce: u64,
     pub balance: U256,
     pub code: Bytes,
-    pub storage: BTreeMap<B256, B256>,
+    pub storage: BTreeMap<SerializableWord, SerializableWord>,
 }
 
 /// Defines a backwards-compatible enum for transactions.
@@ -413,6 +413,14 @@ pub struct SerializableAccountRecord {
 pub enum SerializableTransactionType {
     TypedTransaction(TypedTransaction),
     MaybeImpersonatedTransaction(MaybeImpersonatedTransaction),
+}
+
+/// Defines a backwards-compatible B256
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(untagged)]
+pub enum SerializableWord {
+    B256(B256),
+    U256(U256)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -457,11 +465,32 @@ impl From<SerializableTransactionType> for MaybeImpersonatedTransaction {
     }
 }
 
+impl From<B256> for SerializableWord {
+    fn from(v: B256) -> Self {
+        Self::B256(v)
+    }
+}
+
+impl From<U256> for SerializableWord {
+    fn from(v: U256) -> Self {
+        Self::B256(v.into())
+    }
+}
+
+impl From<SerializableWord> for B256 {
+    fn from(raw: SerializableWord) -> Self {
+        match raw {
+            SerializableWord::B256(v) => v,
+            SerializableWord::U256(v) => v.into(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SerializableTransaction {
     pub info: TransactionInfo,
     pub receipt: TypedReceipt,
-    pub block_hash: B256,
+    pub block_hash: SerializableWord,
     pub block_number: u64,
 }
 
@@ -470,7 +499,7 @@ impl From<MinedTransaction> for SerializableTransaction {
         Self {
             info: transaction.info,
             receipt: transaction.receipt,
-            block_hash: transaction.block_hash,
+            block_hash: transaction.block_hash.into(),
             block_number: transaction.block_number,
         }
     }
@@ -481,7 +510,7 @@ impl From<SerializableTransaction> for MinedTransaction {
         Self {
             info: transaction.info,
             receipt: transaction.receipt,
-            block_hash: transaction.block_hash,
+            block_hash: transaction.block_hash.into(),
             block_number: transaction.block_number,
         }
     }
