@@ -180,6 +180,9 @@ impl RevertDecoder {
                 let e = Vm::expectRevert_1Call::abi_decode_raw(data, false).ok()?;
                 return self.maybe_decode(&e.revertData[..], status);
             }
+            Vm::UnemittedEventError::SELECTOR => {
+                return Some("log != expected log".to_string());
+            }
             _ => {}
         }
 

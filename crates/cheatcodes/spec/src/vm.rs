@@ -24,6 +24,9 @@ interface Vm {
     /// Error thrown by cheatcodes.
     error CheatcodeError(string message);
 
+    /// Error thrown by unemitted events
+    error UnemittedEventError(uint16 positionExpected);
+
     /// A modification applied to either `msg.sender` or `tx.origin`. Returned by `readCallers`.
     enum CallerMode {
         /// No caller modification is currently active.
