@@ -165,7 +165,7 @@ pub trait Db:
             );
 
             for (k, v) in account.storage.into_iter() {
-                self.set_storage_at(addr, k.into(), v.into())?;
+                self.set_storage_at(addr, k, v)?;
             }
         }
         Ok(true)
@@ -504,7 +504,7 @@ impl From<MinedTransaction> for SerializableTransaction {
         Self {
             info: transaction.info,
             receipt: transaction.receipt,
-            block_hash: transaction.block_hash.into(),
+            block_hash: transaction.block_hash,
             block_number: transaction.block_number,
         }
     }
@@ -515,7 +515,7 @@ impl From<SerializableTransaction> for MinedTransaction {
         Self {
             info: transaction.info,
             receipt: transaction.receipt,
-            block_hash: transaction.block_hash.into(),
+            block_hash: transaction.block_hash,
             block_number: transaction.block_number,
         }
     }
