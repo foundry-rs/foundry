@@ -420,7 +420,7 @@ pub enum SerializableTransactionType {
 #[serde(untagged)]
 pub enum SerializableWord {
     B256(B256),
-    U256(U256)
+    U256(U256),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
