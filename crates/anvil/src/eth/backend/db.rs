@@ -21,7 +21,7 @@ use foundry_evm::{
 };
 use serde::{
     de::{MapAccess, Visitor},
-    Deserialize, Serialize, Deserializer
+    Deserialize, Deserializer, Serialize,
 };
 use std::{collections::BTreeMap, fmt, path::Path};
 
