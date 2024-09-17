@@ -576,7 +576,7 @@ impl Backend {
         slot: U256,
         val: B256,
     ) -> DatabaseResult<()> {
-        self.db.write().await.set_storage_at(address, slot, U256::from_be_bytes(val.0))
+        self.db.write().await.set_storage_at(address, slot.into(), val)
     }
 
     /// Returns the configured specid
@@ -758,12 +758,27 @@ impl Backend {
     }
 
     /// Get the current state.
-    pub async fn serialized_state(&self) -> Result<SerializableState, BlockchainError> {
+    pub async fn serialized_state(
+        &self,
+        preserve_historical_states: bool,
+    ) -> Result<SerializableState, BlockchainError> {
         let at = self.env.read().block.clone();
         let best_number = self.blockchain.storage.read().best_number;
         let blocks = self.blockchain.storage.read().serialized_blocks();
         let transactions = self.blockchain.storage.read().serialized_transactions();
-        let state = self.db.read().await.dump_state(at, best_number, blocks, transactions)?;
+        let historical_states = if preserve_historical_states {
+            Some(self.states.write().serialized_states())
+        } else {
+            None
+        };
+
+        let state = self.db.read().await.dump_state(
+            at,
+            best_number,
+            blocks,
+            transactions,
+            historical_states,
+        )?;
         state.ok_or_else(|| {
             RpcError::invalid_params("Dumping state not supported with the current configuration")
                 .into()
@@ -771,8 +786,11 @@ impl Backend {
     }
 
     /// Write all chain data to serialized bytes buffer
-    pub async fn dump_state(&self) -> Result<Bytes, BlockchainError> {
-        let state = self.serialized_state().await?;
+    pub async fn dump_state(
+        &self,
+        preserve_historical_states: bool,
+    ) -> Result<Bytes, BlockchainError> {
+        let state = self.serialized_state(preserve_historical_states).await?;
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder
             .write_all(&serde_json::to_vec(&state).unwrap_or_default())
@@ -801,6 +819,10 @@ impl Backend {
 
         self.blockchain.storage.write().load_blocks(state.blocks.clone());
         self.blockchain.storage.write().load_transactions(state.transactions.clone());
+
+        if let Some(historical_states) = state.historical_states {
+            self.states.write().load_states(historical_states);
+        }
 
         Ok(true)
     }
@@ -2498,7 +2520,7 @@ impl Backend {
             self.db.write().await.clear();
             for (address, acc) in common_state {
                 for (key, value) in acc.storage {
-                    self.db.write().await.set_storage_at(address, key, value)?;
+                    self.db.write().await.set_storage_at(address, key.into(), value.into())?;
                 }
                 self.db.write().await.insert_account(address, acc.info);
             }

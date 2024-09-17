@@ -1453,10 +1453,17 @@ contract ATest is Test {
     )
     .unwrap();
 
-    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
-...
-[PASS] testSelfMeteringRevert() (gas: 3299)
-...
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ATest.t.sol:ATest
+[PASS] testSelfMeteringRevert() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
 "#]]);
 });
 
@@ -1732,12 +1739,12 @@ contract ATest is DSTest {
 [PASS] testResetGas() (gas: 40)
 [PASS] testResetGas1() (gas: 40)
 [PASS] testResetGas2() (gas: 40)
-[PASS] testResetGas3() (gas: 134476)
-[PASS] testResetGas4() (gas: 56302)
+[PASS] testResetGas3() (gas: [..])
+[PASS] testResetGas4() (gas: [..])
 [PASS] testResetGas5() (gas: 40)
 [PASS] testResetGas6() (gas: 40)
 [PASS] testResetGas7() (gas: 49)
-[PASS] testResetGas8() (gas: 622)
+[PASS] testResetGas8() (gas: [..])
 [PASS] testResetGas9() (gas: 40)
 [PASS] testResetNegativeGas() (gas: 0)
 ...

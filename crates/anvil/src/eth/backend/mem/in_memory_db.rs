@@ -3,7 +3,7 @@
 use crate::{
     eth::backend::db::{
         Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
-        SerializableState, SerializableTransaction, StateDb,
+        SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
     },
     mem::state::state_root,
     revm::{db::DbAccount, primitives::AccountInfo},
@@ -24,8 +24,8 @@ impl Db for MemDb {
         self.inner.insert_account_info(address, account)
     }
 
-    fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
-        self.inner.insert_account_storage(address, slot, val)
+    fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()> {
+        self.inner.insert_account_storage(address, slot.into(), val.into())
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
@@ -38,6 +38,7 @@ impl Db for MemDb {
         best_number: U64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
+        historical_states: Option<SerializableHistoricalStates>,
     ) -> DatabaseResult<Option<SerializableState>> {
         let accounts = self
             .inner
@@ -56,7 +57,7 @@ impl Db for MemDb {
                         nonce: v.info.nonce,
                         balance: v.info.balance,
                         code: code.original_bytes(),
-                        storage: v.storage.into_iter().collect(),
+                        storage: v.storage.into_iter().map(|(k, v)| (k.into(), v.into())).collect(),
                     },
                 ))
             })
@@ -68,6 +69,7 @@ impl Db for MemDb {
             best_block_number: Some(best_number),
             blocks,
             transactions,
+            historical_states,
         }))
     }
 
@@ -108,6 +110,10 @@ impl MaybeFullDatabase for MemDb {
 
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         self.inner.clear_into_snapshot()
+    }
+
+    fn read_as_snapshot(&self) -> StateSnapshot {
+        self.inner.read_as_snapshot()
     }
 
     fn clear(&mut self) {
@@ -159,11 +165,13 @@ mod tests {
                 nonce: 1234,
             },
         );
-        dump_db.set_storage_at(test_addr, U256::from(1234567), U256::from(1)).unwrap();
+        dump_db
+            .set_storage_at(test_addr, U256::from(1234567).into(), U256::from(1).into())
+            .unwrap();
 
         // blocks dumping/loading tested in storage.rs
         let state = dump_db
-            .dump_state(Default::default(), U64::ZERO, Vec::new(), Vec::new())
+            .dump_state(Default::default(), U64::ZERO, Vec::new(), Vec::new(), Default::default())
             .unwrap()
             .unwrap();
 
@@ -202,8 +210,8 @@ mod tests {
             },
         );
 
-        db.set_storage_at(test_addr, U256::from(1234567), U256::from(1)).unwrap();
-        db.set_storage_at(test_addr, U256::from(1234568), U256::from(2)).unwrap();
+        db.set_storage_at(test_addr, U256::from(1234567).into(), U256::from(1).into()).unwrap();
+        db.set_storage_at(test_addr, U256::from(1234568).into(), U256::from(2).into()).unwrap();
 
         let mut new_state = SerializableState::default();
 
@@ -218,7 +226,7 @@ mod tests {
         );
 
         let mut new_storage = BTreeMap::default();
-        new_storage.insert(U256::from(1234568), U256::from(5));
+        new_storage.insert(U256::from(1234568).into(), U256::from(5).into());
 
         new_state.accounts.insert(
             test_addr,
