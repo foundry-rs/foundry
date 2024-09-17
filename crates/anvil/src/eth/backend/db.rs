@@ -19,7 +19,7 @@ use foundry_evm::{
         Database, DatabaseCommit,
     },
 };
-use serde::{Deserialize, Serialize};
+use serde::{de::{MapAccess, Visitor}, Deserialize, Serialize, Deserializer};
 use std::{collections::BTreeMap, fmt, path::Path};
 
 /// Helper trait get access to the full state data of the database
@@ -398,7 +398,38 @@ pub struct SerializableAccountRecord {
     pub nonce: u64,
     pub balance: U256,
     pub code: Bytes,
-    pub storage: BTreeMap<SerializableWord, SerializableWord>,
+
+    #[serde(deserialize_with = "deserialize_btree")]
+    pub storage: BTreeMap<B256, B256>,
+}
+
+fn deserialize_btree<'de, D>(deserializer: D) -> Result<BTreeMap<B256, B256>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct BTreeVisitor;
+
+    impl<'de> Visitor<'de> for BTreeVisitor {
+        type Value = BTreeMap<B256, B256>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a mapping of hex encoded storage slots to hex encoded state data")
+        }
+
+        fn visit_map<M>(self, mut mapping: M) -> Result<BTreeMap<B256, B256>, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut btree = BTreeMap::new();
+            while let Some((key, value)) = mapping.next_entry::<U256, U256>()? {
+                btree.insert(B256::from(key), B256::from(value));
+            }
+
+            Ok(btree)
+        }
+    }
+
+    deserializer.deserialize_map(BTreeVisitor)
 }
 
 /// Defines a backwards-compatible enum for transactions.
@@ -413,14 +444,6 @@ pub struct SerializableAccountRecord {
 pub enum SerializableTransactionType {
     TypedTransaction(TypedTransaction),
     MaybeImpersonatedTransaction(MaybeImpersonatedTransaction),
-}
-
-/// Defines a backwards-compatible B256
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(untagged)]
-pub enum SerializableWord {
-    B256(B256),
-    U256(U256)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -465,32 +488,11 @@ impl From<SerializableTransactionType> for MaybeImpersonatedTransaction {
     }
 }
 
-impl From<B256> for SerializableWord {
-    fn from(v: B256) -> Self {
-        Self::B256(v)
-    }
-}
-
-impl From<U256> for SerializableWord {
-    fn from(v: U256) -> Self {
-        Self::B256(v.into())
-    }
-}
-
-impl From<SerializableWord> for B256 {
-    fn from(raw: SerializableWord) -> Self {
-        match raw {
-            SerializableWord::B256(v) => v,
-            SerializableWord::U256(v) => v.into(),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SerializableTransaction {
     pub info: TransactionInfo,
     pub receipt: TypedReceipt,
-    pub block_hash: SerializableWord,
+    pub block_hash: B256,
     pub block_number: u64,
 }
 
