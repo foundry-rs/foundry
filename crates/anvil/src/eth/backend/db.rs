@@ -19,7 +19,10 @@ use foundry_evm::{
         Database, DatabaseCommit,
     },
 };
-use serde::{de::{MapAccess, Visitor}, Deserialize, Serialize, Deserializer};
+use serde::{
+    de::{MapAccess, Visitor},
+    Deserialize, Serialize, Deserializer
+};
 use std::{collections::BTreeMap, fmt, path::Path};
 
 /// Helper trait get access to the full state data of the database
