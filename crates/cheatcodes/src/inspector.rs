@@ -993,12 +993,12 @@ impl Cheatcodes {
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
-                    let prev = account.info.nonce;
-
-                    // Touch account to ensure that incremented nonce is committed
-                    account.mark_touch();
-                    account.info.nonce += 1;
-                    debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
+                    // Explicitly increment nonce if calls are not isolated.
+                    if !self.config.evm_opts.isolate {
+                        let prev = account.info.nonce;
+                        account.info.nonce += 1;
+                        debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
+                    }
                 } else if broadcast.single_call {
                     let msg =
                     "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
