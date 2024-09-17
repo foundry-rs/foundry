@@ -16,7 +16,8 @@ use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecuto
 use reqwest::Url;
 use revm_primitives::{
     db::Database,
-    env::{EnvWithHandlerCfg, HandlerCfg},Env, SpecId,
+    env::{EnvWithHandlerCfg, HandlerCfg},
+    Env, SpecId,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
