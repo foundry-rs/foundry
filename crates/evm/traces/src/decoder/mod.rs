@@ -8,6 +8,7 @@ use crate::{
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{Address, LogData, Selector, B256};
+use alloy_sol_types::SolError;
 use foundry_common::{
     abi::get_indexed_event, fmt::format_token, get_contract_name, ContractsByArtifact, SELECTOR_LEN,
 };
@@ -17,13 +18,14 @@ use foundry_evm_core::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
         TEST_CONTRACT_ADDRESS,
     },
-    decode::{RevertDecoder, VmErr},
+    decode::RevertDecoder,
     precompiles::{
         BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
         RIPEMD_160, SHA_256,
     },
 };
 use itertools::Itertools;
+use owo_colors::OwoColorize;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use rustc_hash::FxHashMap;
 use std::{
@@ -328,14 +330,20 @@ impl CallTraceDecoder {
         for node in traces {
             node.trace.decoded = self.decode_function(&node.trace).await;
 
-            if let VmErr::UnemittedEventError(error_index) =
-                self.revert_decoder.decode_structured(&node.trace.output, Some(node.trace.status))
-            {
-                node.logs[error_index as usize].unmatched = true;
-            }
-
             for log in node.logs.iter_mut() {
                 log.decoded = self.decode_event(&log.raw_log).await;
+            }
+
+            if let Ok(e) = Vm::UnemittedEventError::abi_decode(&node.trace.output, false) {
+                let log_name = node.logs[e.positionExpected as usize]
+                    .decoded
+                    .name
+                    .as_mut()
+                    .expect("already decoded");
+
+                // set color to red fo the given event Id
+                node.logs[e.positionExpected as usize].decoded.name =
+                    Some(log_name.red().to_string());
             }
 
             if let Some(debug) = self.debug_identifier.as_ref() {
@@ -482,7 +490,7 @@ impl CallTraceDecoder {
             "parseJsonBytes32Array" |
             "writeJson" |
             // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
-            "keyExists" | 
+            "keyExists" |
             "keyExistsJson" |
             "serializeBool" |
             "serializeUint" |
@@ -498,7 +506,7 @@ impl CallTraceDecoder {
                     let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
                     let token = if func.name.as_str() == "parseJson" ||
                         // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
-                        func.name.as_str() == "keyExists" || 
+                        func.name.as_str() == "keyExists" ||
                         func.name.as_str() == "keyExistsJson"
                     {
                         "<JSON file>"

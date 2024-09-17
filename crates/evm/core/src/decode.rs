@@ -43,11 +43,6 @@ impl fmt::Display for SkipReason {
     }
 }
 
-pub enum VmErr {
-    UnemittedEventError(u16),
-    None,
-}
-
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
     logs.iter().filter_map(decode_console_log).collect()
@@ -140,32 +135,10 @@ impl RevertDecoder {
         })
     }
 
-    pub fn decode_structured(&self, err: &[u8], status: Option<InstructionResult>) -> VmErr {
-        if err.len() < SELECTOR_LEN || status != Some(InstructionResult::Revert) {
-            return VmErr::None;
-        }
-
-        let (selector, data) = err.split_at(SELECTOR_LEN);
-        let selector: &[u8; 4] = selector.try_into().unwrap();
-
-        match *selector {
-            Vm::UnemittedEventError::SELECTOR => {
-                let Some(e) = Vm::UnemittedEventError::abi_decode_raw(data, false).ok() else {
-                    return VmErr::None;
-                };
-                return VmErr::UnemittedEventError(e.positionExpected);
-            }
-            _ => {
-                return VmErr::None;
-            }
-        }
-    }
-
     /// Tries to decode an error message from the given revert bytes.
     ///
     /// See [`decode`](Self::decode) for more information.
     pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
-        // TODO: Convert to return an optional structured error as a tuple
         if err.len() < SELECTOR_LEN {
             if let Some(status) = status {
                 if !status.is_ok() {

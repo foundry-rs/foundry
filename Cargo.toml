@@ -231,6 +231,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "std",
 ] }
 color-eyre = "0.6"
+owo-colors = "3"
 derive_more = { version = "1.0", features = ["full"] }
 dunce = "1"
 evm-disassembler = "0.5"

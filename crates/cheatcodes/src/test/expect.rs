@@ -1,8 +1,11 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Error, Result, Vm::*};
+use crate::{
+    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, DatabaseExt, Error, Result, Vm::*,
+};
 use alloy_primitives::{address, hex, Address, Bytes, LogData as RawLog, U256};
 use alloy_sol_types::{SolError, SolValue};
 use foundry_common::ContractsByArtifact;
 use foundry_evm_core::decode::RevertDecoder;
+use foundry_evm_traces::TracingInspector;
 use revm::interpreter::{
     return_ok, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
 };
@@ -208,10 +211,20 @@ impl Cheatcode for expectCallMinGas_1Call {
 }
 
 impl Cheatcode for expectEmit_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
+
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+            return Ok(Default::default());
+        };
+
         expect_emit(
             ccx.state,
+            tracer,
             ccx.ecx.journaled_state.depth(),
             [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             None,
@@ -221,10 +234,19 @@ impl Cheatcode for expectEmit_0Call {
 }
 
 impl Cheatcode for expectEmit_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+            return Ok(Default::default());
+        };
+
         expect_emit(
             ccx.state,
+            tracer,
             ccx.ecx.journaled_state.depth(),
             [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             Some(emitter),
@@ -234,24 +256,53 @@ impl Cheatcode for expectEmit_1Call {
 }
 
 impl Cheatcode for expectEmit_2Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let Self {} = self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, false)
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+            return Ok(Default::default());
+        };
+        expect_emit(ccx.state, tracer, ccx.ecx.journaled_state.depth(), [true; 5], None, false)
     }
 }
 
 impl Cheatcode for expectEmit_3Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let Self { emitter } = *self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), false)
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+            return Ok(Default::default());
+        };
+        expect_emit(
+            ccx.state,
+            tracer,
+            ccx.ecx.journaled_state.depth(),
+            [true; 5],
+            Some(emitter),
+            false,
+        )
     }
 }
 
 impl Cheatcode for expectEmitAnonymous_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+            return Ok(Default::default());
+        };
         expect_emit(
             ccx.state,
+            tracer,
             ccx.ecx.journaled_state.depth(),
             [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
             None,
@@ -261,10 +312,18 @@ impl Cheatcode for expectEmitAnonymous_0Call {
 }
 
 impl Cheatcode for expectEmitAnonymous_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+            return Ok(Default::default());
+        };
         expect_emit(
             ccx.state,
+            tracer,
             ccx.ecx.journaled_state.depth(),
             [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
             Some(emitter),
@@ -274,16 +333,37 @@ impl Cheatcode for expectEmitAnonymous_1Call {
 }
 
 impl Cheatcode for expectEmitAnonymous_2Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let Self {} = self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], None, true)
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+            return Ok(Default::default());
+        };
+        expect_emit(ccx.state, tracer, ccx.ecx.journaled_state.depth(), [true; 5], None, true)
     }
 }
 
 impl Cheatcode for expectEmitAnonymous_3Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
+        &self,
+        ccx: &mut CheatsCtxt<DB>,
+        executor: &mut E,
+    ) -> Result {
         let Self { emitter } = *self;
-        expect_emit(ccx.state, ccx.ecx.journaled_state.depth(), [true; 5], Some(emitter), true)
+        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+            return Ok(Default::default());
+        };
+        expect_emit(
+            ccx.state,
+            tracer,
+            ccx.ecx.journaled_state.depth(),
+            [true; 5],
+            Some(emitter),
+            true,
+        )
     }
 }
 
@@ -461,13 +541,20 @@ fn expect_call(
 
 fn expect_emit(
     state: &mut Cheatcodes,
+    tracer: &TracingInspector,
     depth: u64,
     checks: [bool; 5],
     address: Option<Address>,
     anonymous: bool,
 ) -> Result {
-    let expected_emit = ExpectedEmit { depth, checks, address, found: false, log: None, anonymous,
-    sequence: tracer.traces().nodes().last().expect("no traces").logs.len() as u16
+    let expected_emit = ExpectedEmit {
+        depth,
+        checks,
+        address,
+        found: false,
+        log: None,
+        anonymous,
+        sequence: tracer.traces().nodes().last().expect("no traces").logs.len() as u16,
     };
     if let Some(found_emit_pos) = state.expected_emits.iter().position(|emit| emit.found) {
         // The order of emits already found (back of queue) should not be modified, hence push any
