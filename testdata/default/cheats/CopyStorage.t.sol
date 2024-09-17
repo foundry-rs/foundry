@@ -87,7 +87,7 @@ contract CopyStorageTest is DSTest {
         // Make the storage of first contract symbolic
         vm.setArbitraryStorage(address(csc_1));
         // and explicitly put a constrained symbolic value into the slot for `x`
-        uint256 x_1 = vm.randomUint();
+        uint256 x_1 = vm.arbitraryUint();
         _storeUInt256(address(csc_1), 0, x_1);
         // `x` of second contract is uninitialized
         assert(csc_2.x() == 0);
@@ -101,8 +101,8 @@ contract CopyStorageTest is DSTest {
         // Make the storage of first contract symbolic
         vm.setArbitraryStorage(address(csc_1));
         vm.copyStorage(address(csc_1), address(csc_2));
-        uint256 slot1 = vm.randomUint(0, 100);
-        uint256 slot2 = vm.randomUint(0, 100);
+        uint256 slot1 = vm.arbitraryUint(0, 100);
+        uint256 slot2 = vm.arbitraryUint(0, 100);
         bytes32 value1 = vm.load(address(csc_1), bytes32(slot1));
         bytes32 value2 = vm.load(address(csc_1), bytes32(slot2));
 
@@ -120,8 +120,8 @@ contract CopyStorageTest is DSTest {
         // Copy arbitrary storage to 2 contracts.
         vm.copyStorage(address(csc_1), address(csc_2));
         vm.copyStorage(address(csc_1), address(csc_3));
-        uint256 slot1 = vm.randomUint(0, 100);
-        uint256 slot2 = vm.randomUint(0, 100);
+        uint256 slot1 = vm.arbitraryUint(0, 100);
+        uint256 slot2 = vm.arbitraryUint(0, 100);
 
         // Load slot 1 from 1st copied contract and slot2 from symbolic contract.
         bytes32 value3 = vm.load(address(csc_2), bytes32(slot1));
@@ -134,7 +134,7 @@ contract CopyStorageTest is DSTest {
         assertEq(value3, value1);
         assertEq(value2, value4);
 
-        uint256 x_1 = vm.randomUint();
+        uint256 x_1 = vm.arbitraryUint();
         // Change slot1 of 1st copied contract.
         _storeUInt256(address(csc_2), slot1, x_1);
         value3 = vm.load(address(csc_2), bytes32(slot1));
@@ -144,7 +144,7 @@ contract CopyStorageTest is DSTest {
         // Make sure same values for 2nd contract copied and symbolic contract.
         assertEq(value5, value1);
 
-        uint256 x_2 = vm.randomUint();
+        uint256 x_2 = vm.arbitraryUint();
         // Change slot2 of symbolic contract.
         _storeUInt256(address(csc_1), slot2, x_2);
         value2 = vm.load(address(csc_1), bytes32(slot2));

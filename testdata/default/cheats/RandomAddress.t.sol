@@ -8,6 +8,6 @@ contract RandomAddress is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testRandomAddress() public {
-        vm.randomAddress();
+        vm.arbitraryAddress();
     }
 }
