@@ -84,10 +84,7 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
         executor: &mut E,
     ) -> Result {
         if self.status() == Status::Deprecated {
-            error!(
-                "{} cheatcode is being deprecated and will be removed in future versions.",
-                self.signature()
-            );
+            ccx.state.deprecated.insert(self.signature().to_string());
         }
         let _ = executor;
         self.apply_stateful(ccx)

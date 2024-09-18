@@ -14,9 +14,10 @@ use foundry_evm::{
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::{self, Write},
     time::Duration,
 };
@@ -217,6 +218,18 @@ impl SuiteResult {
         test_results: BTreeMap<String, TestResult>,
         warnings: Vec<String>,
     ) -> Self {
+        let mut warnings = warnings;
+        // Add deprecated cheatcodes warning, if any of them used in current test suite.
+        let mut cheatcodes: HashSet<String> = HashSet::new();
+        test_results
+            .values()
+            .for_each(|test| cheatcodes.extend(test.deprecated_cheatcodes.clone()));
+        if !cheatcodes.is_empty() {
+            warnings.push(format!(
+                "Deprecated {} cheatcode(s) will be removed in future versions.",
+                cheatcodes.iter().join(", ")
+            ));
+        }
         Self { duration, test_results, warnings }
     }
 
@@ -390,6 +403,10 @@ pub struct TestResult {
 
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
+
+    /// Deprecated cheatcodes used in current test.
+    #[serde(skip)]
+    pub deprecated_cheatcodes: HashSet<String>,
 }
 
 impl fmt::Display for TestResult {
@@ -501,9 +518,14 @@ impl TestResult {
             false => TestStatus::Failure,
         };
         self.reason = reason;
-        self.breakpoints = raw_call_result.cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
         self.duration = Duration::default();
         self.gas_report_traces = Vec::new();
+
+        if let Some(cheatcodes) = raw_call_result.cheatcodes {
+            self.breakpoints = cheatcodes.breakpoints;
+            self.deprecated_cheatcodes = cheatcodes.deprecated;
+        }
+
         self
     }
 

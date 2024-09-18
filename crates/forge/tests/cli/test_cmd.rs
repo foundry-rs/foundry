@@ -2100,31 +2100,31 @@ contract JunitReportTest is Test {
 "#]]);
 });
 
-forgetest_init!(test_deprecated_cheatcode_err, |prj, cmd| {
+// Tests single test suite warning for deprecated cheatcode.
+forgetest_init!(test_deprecated_cheatcode_warning, |prj, cmd| {
     prj.add_test(
         "DeprecatedCheatcodeTest.t.sol",
         r#"
         import "forge-std/Test.sol";
         contract DeprecatedCheatcodeTest is Test {
-            function test_deprecated_cheatcode() public view {
+            function test_single_deprecated_cheatcode() public view {
                 vm.keyExists('{"a": 123}', ".a");
+            }
+
+            function test_multiple_deprecated_cheatcode() public view {
+                vm.keyExists('{"a": 123}', ".a");
+                vm.keyExists('{"a": 123}', ".a");
+            }
+
+            function test_no_deprecated_cheatcode() public view {
             }
         }
    "#,
     )
     .unwrap();
 
-    cmd.args(["test", "--mt", "test_deprecated_cheatcode"]).assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-[..] ERROR foundry_cheatcodes: keyExists(string,string) cheatcode is being deprecated and will be removed in future versions.
-
-Ran 1 test for test/DeprecatedCheatcodeTest.t.sol:DeprecatedCheatcodeTest
-[PASS] test_deprecated_cheatcode() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+    cmd.args(["test", "--mc", "DeprecatedCheatcodeTest"]).assert_success().stderr_eq(str![[r#"
+Warning: Deprecated keyExists(string,string) cheatcode(s) will be removed in future versions.
 
 "#]]);
 });

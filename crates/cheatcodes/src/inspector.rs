@@ -47,7 +47,7 @@ use revm::{
 use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     fs::File,
     io::BufReader,
     ops::Range,
@@ -447,6 +447,9 @@ pub struct Cheatcodes {
 
     /// Addresses with arbitrary storage.
     pub arbitrary_storage: Option<ArbitraryStorage>,
+
+    // Deprecated cheatcodes. Used to report warnings on test results.
+    pub deprecated: HashSet<String>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -491,6 +494,7 @@ impl Cheatcodes {
             rng: Default::default(),
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
+            deprecated: Default::default(),
         }
     }
 
