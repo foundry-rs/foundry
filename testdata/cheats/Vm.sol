@@ -242,9 +242,13 @@ interface Vm {
     function expectEmit() external;
     function expectEmit(address emitter) external;
     function expectPartialRevert(bytes4 revertData) external;
+    function expectPartialRevert(bytes4 revertData, address reverter) external;
     function expectRevert() external;
     function expectRevert(bytes4 revertData) external;
     function expectRevert(bytes calldata revertData) external;
+    function expectRevert(address reverter) external;
+    function expectRevert(bytes4 revertData, address reverter) external;
+    function expectRevert(bytes calldata revertData, address reverter) external;
     function expectSafeMemory(uint64 min, uint64 max) external;
     function expectSafeMemoryCall(uint64 min, uint64 max) external;
     function fee(uint256 newBasefee) external;

@@ -4913,7 +4913,7 @@
     },
     {
       "func": {
-        "id": "expectPartialRevert",
+        "id": "expectPartialRevert_0",
         "description": "Expects an error on next call that starts with the revert data.",
         "declaration": "function expectPartialRevert(bytes4 revertData) external;",
         "visibility": "external",
@@ -4925,6 +4925,26 @@
           251,
           91,
           156
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectPartialRevert_1",
+        "description": "Expects an error on next call to reverter address, that starts with the revert data.",
+        "declaration": "function expectPartialRevert(bytes4 revertData, address reverter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectPartialRevert(bytes4,address)",
+        "selector": "0x51aa008a",
+        "selectorBytes": [
+          81,
+          170,
+          0,
+          138
         ]
       },
       "group": "testing",
@@ -4985,6 +5005,66 @@
           141,
           206,
           179
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_3",
+        "description": "Expects an error with any revert data on next call to reverter address.",
+        "declaration": "function expectRevert(address reverter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(address)",
+        "selector": "0xd814f38a",
+        "selectorBytes": [
+          216,
+          20,
+          243,
+          138
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_4",
+        "description": "Expects an error from reverter address on next call, with any revert data.",
+        "declaration": "function expectRevert(bytes4 revertData, address reverter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(bytes4,address)",
+        "selector": "0x260bc5de",
+        "selectorBytes": [
+          38,
+          11,
+          197,
+          222
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_5",
+        "description": "Expects an error from reverter address on next call, that exactly matches the revert data.",
+        "declaration": "function expectRevert(bytes calldata revertData, address reverter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(bytes,address)",
+        "selector": "0x61ebcf12",
+        "selectorBytes": [
+          97,
+          235,
+          207,
+          18
         ]
       },
       "group": "testing",
