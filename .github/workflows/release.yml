@@ -103,13 +103,7 @@ jobs:
             svm_target_platform: windows-amd64
             platform: win32
             arch: amd64
-    env:
-      SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
-      PLATFORM_NAME: ${{ matrix.platform }}
-      TARGET: ${{ matrix.target }}
-      PROFILE: maxperf
-      OUT_DIR: target/${{ env.TARGET }}/${{ env.PROFILE }}
-      VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
+
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -134,6 +128,10 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build binaries
+        env:
+          TARGET: ${{ matrix.target }}
+          PROFILE: maxperf
+          OUT_DIR: target/${{ env.TARGET }}/${{ env.PROFILE }}
         shell: bash
         run: |
           set -eo pipefail
@@ -161,6 +159,12 @@ jobs:
 
       - name: Archive binaries
         id: artifacts
+        env:
+          SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
+          PLATFORM_NAME: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
+          PROFILE: maxperf
+          OUT_DIR: target/${{ env.TARGET }}/${{ env.PROFILE }}
         shell: bash
         run: |
           if [ "$PLATFORM_NAME" == "linux" ]; then
@@ -181,6 +185,10 @@ jobs:
       - name: Build man page
         id: man
         if: matrix.target == 'x86_64-unknown-linux-gnu'
+        env:
+          TARGET: ${{ matrix.target }}
+          PROFILE: maxperf
+          OUT_DIR: target/${{ env.TARGET }}/${{ env.PROFILE }}
         shell: bash
         run: |
           sudo apt-get -y install help2man
