@@ -19,7 +19,10 @@ use foundry_evm::{
         Database, DatabaseCommit,
     },
 };
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{MapAccess, Visitor},
+    Deserialize, Deserializer, Serialize,
+};
 use std::{collections::BTreeMap, fmt, path::Path};
 
 /// Helper trait get access to the full state data of the database
@@ -398,7 +401,38 @@ pub struct SerializableAccountRecord {
     pub nonce: u64,
     pub balance: U256,
     pub code: Bytes,
+
+    #[serde(deserialize_with = "deserialize_btree")]
     pub storage: BTreeMap<B256, B256>,
+}
+
+fn deserialize_btree<'de, D>(deserializer: D) -> Result<BTreeMap<B256, B256>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct BTreeVisitor;
+
+    impl<'de> Visitor<'de> for BTreeVisitor {
+        type Value = BTreeMap<B256, B256>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a mapping of hex encoded storage slots to hex encoded state data")
+        }
+
+        fn visit_map<M>(self, mut mapping: M) -> Result<BTreeMap<B256, B256>, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut btree = BTreeMap::new();
+            while let Some((key, value)) = mapping.next_entry::<U256, U256>()? {
+                btree.insert(B256::from(key), B256::from(value));
+            }
+
+            Ok(btree)
+        }
+    }
+
+    deserializer.deserialize_map(BTreeVisitor)
 }
 
 /// Defines a backwards-compatible enum for transactions.
