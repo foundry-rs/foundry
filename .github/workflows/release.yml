@@ -129,6 +129,7 @@ jobs:
 
       - name: Build binaries
         env:
+          SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           PLATFORM_NAME: ${{ matrix.platform }}
           TARGET: ${{ matrix.target }}
           OUT_DIR: target/${{ env.TARGET }}/${{ env.PROFILE }}
