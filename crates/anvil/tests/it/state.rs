@@ -37,6 +37,16 @@ async fn can_load_existing_state_legacy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_load_existing_state_legacy_stress() {
+    let state_file = "test-data/state-dump-legacy-stress.json";
+
+    let (api, _handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;
+
+    let block_number = api.block_number().unwrap();
+    assert_eq!(block_number, Uint::from(5));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_load_existing_state() {
     let state_file = "test-data/state-dump.json";
 
