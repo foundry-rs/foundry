@@ -1310,24 +1310,24 @@ import {Test, console} from "forge-std/Test.sol";
 
 contract DeterministicRandomnessTest is Test {
 
-    function testDeterministicArbitraryUint() public {
-        console.log(vm.arbitraryUint());
-        console.log(vm.arbitraryUint());
-        console.log(vm.arbitraryUint());
+    function testDeterministicRandomUint() public {
+        console.log(vm.randomUint());
+        console.log(vm.randomUint());
+        console.log(vm.randomUint());
     }
 
-    function testDeterministicArbitraryUintRange() public {
+    function testDeterministicRandomUintRange() public {
         uint256 min = 0;
         uint256 max = 1000000000;
-        console.log(vm.arbitraryUint(min, max));
-        console.log(vm.arbitraryUint(min, max));
-        console.log(vm.arbitraryUint(min, max));
+        console.log(vm.randomUint(min, max));
+        console.log(vm.randomUint(min, max));
+        console.log(vm.randomUint(min, max));
     }
 
-    function testDeterministicArbitraryAddress() public {
-        console.log(vm.arbitraryAddress());
-        console.log(vm.arbitraryAddress());
-        console.log(vm.arbitraryAddress());
+    function testDeterministicRandomAddress() public {
+        console.log(vm.randomAddress());
+        console.log(vm.randomAddress());
+        console.log(vm.randomAddress());
     }
 }
 "#,
