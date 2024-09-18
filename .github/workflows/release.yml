@@ -132,7 +132,7 @@ jobs:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           PLATFORM_NAME: ${{ matrix.platform }}
           TARGET: ${{ matrix.target }}
-          OUT_DIR: target/${{ env.TARGET }}/${{ env.PROFILE }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
         shell: bash
         run: |
           set -eo pipefail
