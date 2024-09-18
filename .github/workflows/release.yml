@@ -152,7 +152,9 @@ jobs:
           bins=(anvil cast chisel forge)
           for name in "${bins[@]}"; do
             bin=$OUT_DIR/$name$ext
+            echo ""
             file "$bin" || true
+            du -h "$bin" || true
             ldd "$bin" || true
             $bin --version || true
           done
