@@ -6,7 +6,7 @@ import "cheats/Vm.sol";
 import "../logs/console.sol";
 
 library TomlStructs {
-        address constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     // forge eip712 testdata/default/cheats/Toml.t.sol -R 'cheats=testdata/cheats' -R 'ds-test=testdata/lib/ds-test/src' | grep ^FlatToml
@@ -307,7 +307,6 @@ contract ParseTomlTest is DSTest {
     // forge eip712 testdata/default/cheats/Toml.t.sol -R 'cheats=testdata/cheats' -R 'ds-test=testdata/lib/ds-test/src' | grep ^NestedToml
     string constant schema_NestedToml =
         "NestedToml(FlatToml[] members,AnotherFlatToml inner,string name)AnotherFlatToml(bytes4 fixedBytes)FlatToml(uint256 a,int24[][] arr,string str,bytes b,address addr,bytes32 fixedBytes)";
-
 
     function test_parseTomlType() public {
         string memory readToml = vm.readFile("fixtures/Toml/nested_toml_struct.toml");
