@@ -1,6 +1,6 @@
 //! Various utilities to decode test results.
 
-use crate::abi::{Console, Vm};
+use crate::abi::{console, Vm};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Error, JsonAbi};
 use alloy_primitives::{hex, map::HashMap, Log, Selector};
@@ -52,7 +52,7 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
 pub fn decode_console_log(log: &Log) -> Option<String> {
-    Console::ConsoleEvents::decode_log(log, false).ok().map(|decoded| decoded.to_string())
+    console::ds::ConsoleEvents::decode_log(log, false).ok().map(|decoded| decoded.to_string())
 }
 
 /// Decodes revert data.
