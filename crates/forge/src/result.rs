@@ -563,6 +563,7 @@ impl TestResult {
         self.duration = Duration::default();
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
         self.breakpoints = result.breakpoints.unwrap_or_default();
+        self.deprecated_cheatcodes = result.deprecated_cheatcodes;
 
         self
     }
