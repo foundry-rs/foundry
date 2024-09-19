@@ -40,7 +40,16 @@ pub type RetryProvider<N = AnyNetwork> = RootProvider<RetryBackoffService<Runtim
 /// Helper type alias for a retry provider with a signer
 pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
     JoinFill<
-        JoinFill<JoinFill<JoinFill<Identity, GasFiller>, NonceFiller>, ChainIdFiller>,
+        JoinFill<
+            Identity,
+            JoinFill<
+                GasFiller,
+                JoinFill<
+                    alloy_provider::fillers::BlobGasFiller,
+                    JoinFill<NonceFiller, ChainIdFiller>,
+                >,
+            >,
+        >,
         WalletFiller<EthereumWallet>,
     >,
     RootProvider<RetryBackoffService<RuntimeTransport>, N>,
