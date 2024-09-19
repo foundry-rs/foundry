@@ -65,7 +65,7 @@ split-debuginfo = "unpacked"
 opt-level = 3
 lto = "thin"
 debug = "line-tables-only"
-strip = "symbols"
+strip = "debuginfo"
 panic = "abort"
 codegen-units = 16
 
@@ -124,6 +124,9 @@ scrypt.opt-level = 3
 # Override packages which aren't perf-sensitive for faster compilation speed and smaller binary size.
 [profile.release.package]
 alloy-sol-macro-expander.opt-level = "z"
+figment.opt-level = "z"
+foundry-compilers-artifacts-solc.opt-level = "z"
+foundry-config.opt-level = "z"
 html5ever.opt-level = "z"
 mdbook.opt-level = "z"
 prettyplease.opt-level = "z"
