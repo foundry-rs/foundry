@@ -2134,6 +2134,19 @@ interface Vm {
         pure
         returns (bytes32[] memory);
 
+    /// Parses a string of TOML data and coerces it to type corresponding to `typeDescription`.
+    #[cheatcode(group = Toml)]
+    function parseTomlType(string calldata toml, string calldata typeDescription) external pure returns (bytes memory);
+    /// Parses a string of TOML data at `key` and coerces it to type corresponding to `typeDescription`.
+    #[cheatcode(group = Toml)]
+    function parseTomlType(string calldata toml, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
+    /// Parses a string of TOML data at `key` and coerces it to type array corresponding to `typeDescription`.
+    #[cheatcode(group = Toml)]
+    function parseTomlTypeArray(string calldata toml, string calldata key, string calldata typeDescription)
+        external
+        pure
+        returns (bytes memory);
+
     /// Returns an array of all the keys in a TOML table.
     #[cheatcode(group = Toml)]
     function parseTomlKeys(string calldata toml, string calldata key) external pure returns (string[] memory keys);
