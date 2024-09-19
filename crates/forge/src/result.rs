@@ -221,9 +221,15 @@ impl SuiteResult {
         let mut warnings = warnings;
         // Add deprecated cheatcodes warning, if any of them used in current test suite.
         let mut cheatcodes: HashSet<String> = HashSet::new();
-        test_results
-            .values()
-            .for_each(|test| cheatcodes.extend(test.deprecated_cheatcodes.clone()));
+        for test_result in test_results.values() {
+            for cheatcode in &test_result.deprecated_cheatcodes {
+                let mut warning = cheatcode.0.to_string();
+                if let Some(replacement) = cheatcode.1 {
+                    write!(warning, " (replaced by {replacement})").unwrap();
+                }
+                cheatcodes.insert(warning);
+            }
+        }
         if !cheatcodes.is_empty() {
             warnings.push(format!(
                 "Deprecated {} cheatcode(s) will be removed in future versions.",
@@ -404,9 +410,9 @@ pub struct TestResult {
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
 
-    /// Deprecated cheatcodes used in current test.
+    /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
     #[serde(skip)]
-    pub deprecated_cheatcodes: HashSet<String>,
+    pub deprecated_cheatcodes: HashMap<String, Option<String>>,
 }
 
 impl fmt::Display for TestResult {

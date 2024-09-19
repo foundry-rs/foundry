@@ -191,6 +191,7 @@
         "description",
         "id",
         "mutability",
+        "replacement",
         "selector",
         "selectorBytes",
         "signature",
@@ -216,6 +217,10 @@
               "$ref": "#/definitions/Mutability"
             }
           ]
+        },
+        "replacement": {
+          "description": "The replacement function (if any) for deprecated cheatcodes.",
+          "type": "string"
         },
         "selector": {
           "description": "The hex-encoded, \"0x\"-prefixed 4-byte function selector, which is the Keccak-256 hash of `signature`.",

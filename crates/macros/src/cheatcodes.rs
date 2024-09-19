@@ -1,6 +1,6 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, quote_spanned};
-use syn::{Attribute, Data, DataStruct, DeriveInput, Error, Result};
+use syn::{Attribute, Data, DataStruct, DeriveInput, Error, LitStr, Result};
 
 pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
@@ -22,6 +22,7 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
     let mut group = None::<Ident>;
     let mut status = None::<Ident>;
     let mut safety = None::<Ident>;
+    let mut replacement = None;
     for attr in attrs.iter().filter(|a| a.path().is_ident("cheatcode")) {
         attr.meta.require_list()?.parse_nested_meta(|meta| {
             let path = meta.path.get_ident().ok_or_else(|| meta.error("expected ident"))?;
@@ -30,6 +31,11 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
                 "group" if group.is_none() => group = Some(meta.value()?.parse()?),
                 "status" if status.is_none() => status = Some(meta.value()?.parse()?),
                 "safety" if safety.is_none() => safety = Some(meta.value()?.parse()?),
+                "replacement" if replacement.is_none() => {
+                    let value = meta.value()?;
+                    let s: LitStr = value.parse()?;
+                    replacement = Some(s.value())
+                }
                 _ => return Err(meta.error("unexpected attribute")),
             };
             Ok(())
@@ -69,6 +75,7 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
         emit_warning!(name.span(), "missing documentation for a cheatcode")
     }
     let description = description.replace("\n ", "\n");
+    let replacement = replacement.unwrap_or_default();
 
     Ok(quote! {
         impl CheatcodeDef for #name {
@@ -82,6 +89,7 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
                     signature: #signature,
                     selector: #selector,
                     selector_bytes: <Self as ::alloy_sol_types::SolCall>::SELECTOR,
+                    replacement: #replacement,
                 },
                 group: Group::#group,
                 status: Status::#status,

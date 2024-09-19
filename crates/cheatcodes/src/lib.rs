@@ -84,7 +84,12 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
         executor: &mut E,
     ) -> Result {
         if self.status() == Status::Deprecated {
-            ccx.state.deprecated.insert(self.signature().to_string());
+            let replacement = if self.replacement().is_empty() {
+                None
+            } else {
+                Some(self.replacement().to_string())
+            };
+            ccx.state.deprecated.insert(self.signature().to_string(), replacement);
         }
         let _ = executor;
         self.apply_stateful(ccx)
@@ -96,6 +101,7 @@ pub(crate) trait DynCheatcode {
     fn id(&self) -> &'static str;
     fn signature(&self) -> &'static str;
     fn status(&self) -> Status;
+    fn replacement(&self) -> &'static str;
     fn as_debug(&self) -> &dyn std::fmt::Debug;
 }
 
@@ -111,6 +117,9 @@ impl<T: Cheatcode> DynCheatcode for T {
     }
     fn status(&self) -> Status {
         T::CHEATCODE.status
+    }
+    fn replacement(&self) -> &'static str {
+        T::CHEATCODE.func.replacement
     }
     fn as_debug(&self) -> &dyn std::fmt::Debug {
         self

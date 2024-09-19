@@ -2124,7 +2124,7 @@ forgetest_init!(test_deprecated_cheatcode_warning, |prj, cmd| {
     .unwrap();
 
     cmd.args(["test", "--mc", "DeprecatedCheatcodeTest"]).assert_success().stderr_eq(str![[r#"
-Warning: Deprecated keyExists(string,string) cheatcode(s) will be removed in future versions.
+Warning: Deprecated keyExists(string,string) (replaced by keyExistsJson) cheatcode(s) will be removed in future versions.
 
 "#]]);
 });
