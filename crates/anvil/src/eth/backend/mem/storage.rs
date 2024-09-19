@@ -541,7 +541,8 @@ impl MinedTransaction {
                     }
                     GethDebugBuiltInTracerType::PreStateTracer |
                     GethDebugBuiltInTracerType::NoopTracer |
-                    GethDebugBuiltInTracerType::MuxTracer => {}
+                    GethDebugBuiltInTracerType::MuxTracer |
+                    GethDebugBuiltInTracerType::FlatCallTracer => {}
                 },
                 GethDebugTracerType::JsTracer(_code) => {}
             }
