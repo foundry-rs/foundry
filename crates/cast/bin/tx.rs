@@ -1,6 +1,8 @@
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_json_abi::Function;
-use alloy_network::{AnyNetwork, TransactionBuilder};
+use alloy_network::{
+    AnyNetwork, TransactionBuilder, TransactionBuilder4844, TransactionBuilder7702,
+};
 use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rlp::Decodable;
