@@ -404,7 +404,7 @@ contract WriteTomlTest is DSTest {
         assertEq(decodedData.a, 123);
         assertEq(decodedData.b, "test");
 
-        // write toml3 to key b
+        // write json3 to key b
         vm.writeToml(finalJson, path, ".b");
         // read again
         toml = vm.readFile(path);
