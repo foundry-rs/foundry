@@ -1068,7 +1068,7 @@ impl Backend {
                 // log some tx info
                 node_info!("    Transaction: {:?}", info.transaction_hash);
                 if let Some(contract) = &info.contract_address {
-                    node_info!("    Contract created: {contract:?}");
+                    node_info!("    Contract created: {contract}");
                 }
                 node_info!("    Gas used: {}", receipt.cumulative_gas_used());
                 if !info.exit.is_ok() {
