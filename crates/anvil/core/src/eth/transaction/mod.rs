@@ -390,7 +390,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             block_number: None,
             transaction_index: None,
             from,
-            to: t.tx().to.to().copied(),
+            to: Some(t.tx().to),
             value: t.tx().value,
             gas_price: Some(t.tx().max_fee_per_gas),
             max_fee_per_gas: Some(t.tx().max_fee_per_gas),
@@ -602,7 +602,7 @@ impl PendingTransaction {
                 } = tx.tx();
                 TxEnv {
                     caller,
-                    transact_to: *to,
+                    transact_to: TxKind::Call(*to),
                     data: input.clone(),
                     chain_id: Some(*chain_id),
                     nonce: Some(*nonce),
@@ -851,7 +851,7 @@ impl TypedTransaction {
                 access_list: t.tx().tx().access_list.clone(),
             },
             Self::EIP7702(t) => TransactionEssentials {
-                kind: t.tx().to,
+                kind: TxKind::Call(t.tx().to),
                 input: t.tx().input.clone(),
                 nonce: t.tx().nonce,
                 gas_limit: t.tx().gas_limit,
@@ -975,7 +975,7 @@ impl TypedTransaction {
             Self::EIP2930(tx) => tx.tx().to,
             Self::EIP1559(tx) => tx.tx().to,
             Self::EIP4844(tx) => TxKind::Call(tx.tx().tx().to),
-            Self::EIP7702(tx) => tx.tx().to,
+            Self::EIP7702(tx) => TxKind::Call(tx.tx().to),
             Self::Deposit(tx) => tx.kind,
         }
     }
@@ -1105,7 +1105,7 @@ impl TryFrom<RpcTransaction> for TypedTransaction {
                     max_priority_fee_per_gas: tx
                         .max_priority_fee_per_gas
                         .ok_or(ConversionError::MissingMaxPriorityFeePerGas)?,
-                    to: tx.to.map_or(TxKind::Create, TxKind::Call),
+                    to: tx.to.ok_or(ConversionError::MissingTo)?,
                     value: tx.value,
                     access_list: tx.access_list.ok_or(ConversionError::MissingAccessList)?,
                     input: tx.input,
@@ -1406,7 +1406,7 @@ impl From<TypedReceipt<alloy_rpc_types::Log>> for OtsReceipt {
         let receipt = ReceiptWithBloom::<alloy_rpc_types::Log>::from(value);
         let status = receipt.status();
         let cumulative_gas_used = receipt.cumulative_gas_used() as u64;
-        let logs = receipt.receipt.logs.into_iter().map(|x| x.inner).collect();
+        let logs = receipt.logs().to_vec();
         let logs_bloom = receipt.logs_bloom;
 
         Self { status, cumulative_gas_used, logs: Some(logs), logs_bloom: Some(logs_bloom), r#type }

@@ -144,12 +144,8 @@ async fn ots_get_internal_operations_contract_selfdestruct(hardfork: EthereumHar
 
     let receipt = contract.goodbye().send().await.unwrap().get_receipt().await.unwrap();
 
-    // TODO: This is currently not supported by revm-inspectors
-    let (expected_to, expected_value) = if hardfork < EthereumHardfork::Cancun {
-        (address!("DcDD539DA22bfFAa499dBEa4d37d086Dde196E75"), value)
-    } else {
-        (Address::ZERO, U256::ZERO)
-    };
+    let expected_to = address!("DcDD539DA22bfFAa499dBEa4d37d086Dde196E75");
+    let expected_value = value;
 
     let res = api.ots_get_internal_operations(receipt.transaction_hash).await.unwrap();
     assert_eq!(

@@ -506,6 +506,7 @@ forgetest!(can_set_gas_price, |prj, cmd| {
 
 // test that we can detect remappings from foundry.toml
 forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
+    std::env::remove_var("DAPP_REMAPPINGS");
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     similar_asserts::assert_eq!(
@@ -546,6 +547,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     let toml_file = nested.join("foundry.toml");
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
+    std::env::remove_var("DAPP_REMAPPINGS");
     let another_config = cmd.config();
     let remappings =
         another_config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
@@ -565,6 +567,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
 
     config.src = "custom-source-dir".into();
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
+    std::env::remove_var("DAPP_REMAPPINGS");
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     similar_asserts::assert_eq!(
@@ -690,7 +693,8 @@ forgetest_init!(can_parse_default_fs_permissions, |_prj, cmd| {
     let config = cmd.config();
 
     assert_eq!(config.fs_permissions.len(), 1);
-    let out_permission = config.fs_permissions.find_permission(Path::new("out")).unwrap();
+    let permissions = config.fs_permissions.joined(Path::new("test"));
+    let out_permission = permissions.find_permission(Path::new("test/out")).unwrap();
     assert_eq!(FsAccessPermission::Read, out_permission);
 });
 

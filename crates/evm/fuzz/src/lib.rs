@@ -155,6 +155,8 @@ pub struct FuzzTestResult {
     /// properly, or that there was a revert and that the test was expected to fail
     /// (prefixed with `testFail`)
     pub success: bool,
+    /// Whether the test case was skipped. `reason` will contain the skip reason, if any.
+    pub skipped: bool,
 
     /// If there was a revert, this field will be populated. Note that the test can
     /// still be successful (i.e self.success == true) when it's expected to fail.
@@ -188,6 +190,9 @@ pub struct FuzzTestResult {
 
     /// Any captured gas snapshots along the test's execution which should be accumulated.
     pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
+
+    // Deprecated cheatcodes mapped to their replacements.
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 impl FuzzTestResult {

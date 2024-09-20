@@ -12,7 +12,7 @@ Foundry cheatcodes definitions and implementations.
 
 All cheatcodes are defined in a single [`sol!`] macro call in [`spec/src/vm.rs`].
 
-This, combined with the use of an internal [`Cheatcode`](../macros/impl/src/cheatcodes.rs) derive macro,
+This, combined with the use of an internal [`Cheatcode`](../../crates/cheatcodes/spec/src/cheatcode.rs) derive macro,
 allows us to generate both the Rust definitions and the JSON specification of the cheatcodes.
 
 Cheatcodes are manually implemented through the `Cheatcode` trait, which is called in the

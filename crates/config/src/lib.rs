@@ -214,7 +214,16 @@ pub struct Config {
     pub offline: bool,
     /// Whether to activate optimizer
     pub optimizer: bool,
-    /// Sets the optimizer runs
+    /// The number of runs specifies roughly how often each opcode of the deployed code will be
+    /// executed across the life-time of the contract. This means it is a trade-off parameter
+    /// between code size (deploy cost) and code execution cost (cost after deployment).
+    /// An `optimizer_runs` parameter of `1` will produce short but expensive code. In contrast, a
+    /// larger `optimizer_runs` parameter will produce longer but more gas efficient code. The
+    /// maximum value of the parameter is `2**32-1`.
+    ///
+    /// A common misconception is that this parameter specifies the number of iterations of the
+    /// optimizer. This is not true: The optimizer will always run as many times as it can
+    /// still improve the code.
     pub optimizer_runs: usize,
     /// Switch optimizer components on or off in detail.
     /// The "enabled" switch above provides two defaults which can be
