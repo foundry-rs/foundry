@@ -191,7 +191,6 @@
         "description",
         "id",
         "mutability",
-        "replacement",
         "selector",
         "selectorBytes",
         "signature",
@@ -217,10 +216,6 @@
               "$ref": "#/definitions/Mutability"
             }
           ]
-        },
-        "replacement": {
-          "description": "The replacement function (if any) for deprecated cheatcodes.",
-          "type": "string"
         },
         "selector": {
           "description": "The hex-encoded, \"0x\"-prefixed 4-byte function selector, which is the Keccak-256 hash of `signature`.",
@@ -390,10 +385,16 @@
         },
         {
           "description": "The cheatcode has been deprecated, meaning it will be removed in a future release.\n\nUse of deprecated cheatcodes is discouraged and will result in a warning.",
-          "type": "string",
-          "enum": [
+          "type": "object",
+          "required": [
             "deprecated"
-          ]
+          ],
+          "properties": {
+            "deprecated": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
         },
         {
           "description": "The cheatcode has been removed and is no longer available for use.\n\nUse of removed cheatcodes will result in a hard error.",

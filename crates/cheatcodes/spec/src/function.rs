@@ -31,8 +31,6 @@ pub struct Function<'a> {
     pub selector: &'a str,
     /// The 4-byte function selector as a byte array.
     pub selector_bytes: [u8; 4],
-    /// The replacement function (if any) for deprecated cheatcodes.
-    pub replacement: &'a str,
 }
 
 impl fmt::Display for Function<'_> {

@@ -14,6 +14,7 @@ extern crate tracing;
 use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
 use revm::{ContextPrecompiles, InnerEvmContext};
+use spec::Status;
 
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
@@ -45,7 +46,6 @@ mod json;
 
 mod script;
 pub use script::{ScriptWallets, ScriptWalletsInner};
-use spec::Status;
 
 mod string;
 
@@ -83,13 +83,14 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
         ccx: &mut CheatsCtxt<DB>,
         executor: &mut E,
     ) -> Result {
-        if self.status() == Status::Deprecated {
-            let replacement = if self.replacement().is_empty() {
-                None
+        if let Status::Deprecated(replacement) = self.status() {
+            if replacement.is_empty() {
+                ccx.state.deprecated.insert(self.signature().to_string(), None);
             } else {
-                Some(self.replacement().to_string())
+                ccx.state
+                    .deprecated
+                    .insert(self.signature().to_string(), Some(replacement.to_string()));
             };
-            ccx.state.deprecated.insert(self.signature().to_string(), replacement);
         }
         let _ = executor;
         self.apply_stateful(ccx)
@@ -101,7 +102,6 @@ pub(crate) trait DynCheatcode {
     fn id(&self) -> &'static str;
     fn signature(&self) -> &'static str;
     fn status(&self) -> Status;
-    fn replacement(&self) -> &'static str;
     fn as_debug(&self) -> &dyn std::fmt::Debug;
 }
 
@@ -116,10 +116,7 @@ impl<T: Cheatcode> DynCheatcode for T {
         T::CHEATCODE.func.signature
     }
     fn status(&self) -> Status {
-        T::CHEATCODE.status
-    }
-    fn replacement(&self) -> &'static str {
-        T::CHEATCODE.func.replacement
+        T::CHEATCODE.status.clone()
     }
     fn as_debug(&self) -> &dyn std::fmt::Debug {
         self

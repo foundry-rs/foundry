@@ -1,6 +1,6 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, quote_spanned};
-use syn::{Attribute, Data, DataStruct, DeriveInput, Error, LitStr, Result};
+use syn::{Attribute, Data, DataStruct, DeriveInput, Error, Result};
 
 pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
@@ -20,9 +20,8 @@ pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
 /// Implements `CheatcodeDef` for a function call struct.
 fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<TokenStream> {
     let mut group = None::<Ident>;
-    let mut status = None::<Ident>;
+    let mut status = None::<TokenStream>;
     let mut safety = None::<Ident>;
-    let mut replacement = None;
     for attr in attrs.iter().filter(|a| a.path().is_ident("cheatcode")) {
         attr.meta.require_list()?.parse_nested_meta(|meta| {
             let path = meta.path.get_ident().ok_or_else(|| meta.error("expected ident"))?;
@@ -31,11 +30,6 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
                 "group" if group.is_none() => group = Some(meta.value()?.parse()?),
                 "status" if status.is_none() => status = Some(meta.value()?.parse()?),
                 "safety" if safety.is_none() => safety = Some(meta.value()?.parse()?),
-                "replacement" if replacement.is_none() => {
-                    let value = meta.value()?;
-                    let s: LitStr = value.parse()?;
-                    replacement = Some(s.value())
-                }
                 _ => return Err(meta.error("unexpected attribute")),
             };
             Ok(())
@@ -44,7 +38,7 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
     let group = group.ok_or_else(|| {
         syn::Error::new(name.span(), "missing #[cheatcode(group = ...)] attribute")
     })?;
-    let status = status.unwrap_or_else(|| Ident::new("Stable", Span::call_site()));
+    let status = status.unwrap_or_else(|| quote!(Stable));
     let safety = if let Some(safety) = safety {
         quote!(Safety::#safety)
     } else {
@@ -75,7 +69,6 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
         emit_warning!(name.span(), "missing documentation for a cheatcode")
     }
     let description = description.replace("\n ", "\n");
-    let replacement = replacement.unwrap_or_default();
 
     Ok(quote! {
         impl CheatcodeDef for #name {
@@ -89,7 +82,6 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
                     signature: #signature,
                     selector: #selector,
                     selector_bytes: <Self as ::alloy_sol_types::SolCall>::SELECTOR,
-                    replacement: #replacement,
                 },
                 group: Group::#group,
                 status: Status::#status,
