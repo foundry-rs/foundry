@@ -243,14 +243,14 @@ contract ParseTomlTest is DSTest {
         assertEq(bytesArray[1], hex"02");
     }
 
-    struct Nested {
+    struct NestedStruct {
         uint256 number;
         string str;
     }
 
     function test_nestedObject() public {
         bytes memory data = vm.parseToml(toml, ".nestedObject");
-        Nested memory nested = abi.decode(data, (Nested));
+        NestedStruct memory nested = abi.decode(data, (NestedStruct));
         assertEq(nested.number, 9223372036854775807); // TOML is limited to 64-bit integers
         assertEq(nested.str, "NEST");
     }
