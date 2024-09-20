@@ -33,13 +33,13 @@ impl fmt::Display for FormatSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("%")?;
         match *self {
-            FormatSpec::String => f.write_str("s"),
-            FormatSpec::Number => f.write_str("d"),
-            FormatSpec::Integer => f.write_str("i"),
-            FormatSpec::Object => f.write_str("o"),
-            FormatSpec::Exponential(Some(n)) => write!(f, "{n}e"),
-            FormatSpec::Exponential(None) => f.write_str("e"),
-            FormatSpec::Hexadecimal => f.write_str("x"),
+            Self::String => f.write_str("s"),
+            Self::Number => f.write_str("d"),
+            Self::Integer => f.write_str("i"),
+            Self::Object => f.write_str("o"),
+            Self::Exponential(Some(n)) => write!(f, "{n}e"),
+            Self::Exponential(None) => f.write_str("e"),
+            Self::Hexadecimal => f.write_str("x"),
         }
     }
 }
@@ -144,34 +144,32 @@ impl<'a> Iterator for Parser<'a> {
     type Item = Piece<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some((mut start, ch)) = self.peek() {
-            let mut skip = 0;
-            if ch == '%' {
-                let prev = self.chars.clone();
-                self.chars.next();
-                match self.argument() {
-                    Ok(arg) => {
-                        debug_assert_eq!(arg.to_string(), self.input[start..self.current_pos()]);
-                        return Some(Piece::NextArgument(arg));
-                    }
+        let (mut start, ch) = self.peek()?;
+        let mut skip = 0;
+        if ch == '%' {
+            let prev = self.chars.clone();
+            self.chars.next();
+            match self.argument() {
+                Ok(arg) => {
+                    debug_assert_eq!(arg.to_string(), self.input[start..self.current_pos()]);
+                    return Some(Piece::NextArgument(arg));
+                }
 
-                    // Skip the argument if we encountered "%%".
-                    Err(ParseArgError::Skip) => {
-                        start = self.current_pos();
-                        skip += 1;
-                    }
+                // Skip the argument if we encountered "%%".
+                Err(ParseArgError::Skip) => {
+                    start = self.current_pos();
+                    skip += 1;
+                }
 
-                    // Reset the iterator if we failed to parse the argument, and include any
-                    // parsed and unparsed specifier in `String`.
-                    Err(ParseArgError::Err) => {
-                        self.chars = prev;
-                        skip += 1;
-                    }
+                // Reset the iterator if we failed to parse the argument, and include any
+                // parsed and unparsed specifier in `String`.
+                Err(ParseArgError::Err) => {
+                    self.chars = prev;
+                    skip += 1;
                 }
             }
-            return Some(Piece::String(self.string(start, skip)));
         }
-        None
+        Some(Piece::String(self.string(start, skip)))
     }
 }
 
