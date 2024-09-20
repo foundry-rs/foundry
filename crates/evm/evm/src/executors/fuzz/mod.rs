@@ -40,7 +40,7 @@ pub struct FuzzTestData {
     // Stores logs for all fuzz cases
     pub logs: Vec<Log>,
     // Deprecated cheatcodes mapped to their replacements.
-    pub deprecated_cheatcodes: HashMap<String, Option<String>>,
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].

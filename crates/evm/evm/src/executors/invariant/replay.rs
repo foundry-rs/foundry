@@ -30,7 +30,7 @@ pub fn replay_run(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     coverage: &mut Option<HitMaps>,
-    deprecated_cheatcodes: &mut HashMap<String, Option<String>>,
+    deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     inputs: &[BasicTxDetails],
 ) -> Result<Vec<BaseCounterExample>> {
     // We want traces for a failed case.
@@ -114,7 +114,7 @@ pub fn replay_error(
     logs: &mut Vec<Log>,
     traces: &mut Traces,
     coverage: &mut Option<HitMaps>,
-    deprecated_cheatcodes: &mut HashMap<String, Option<String>>,
+    deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
 ) -> Result<Vec<BaseCounterExample>> {
     match failed_case.test_error {

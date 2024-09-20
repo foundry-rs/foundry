@@ -44,8 +44,10 @@ pub enum Status<'a> {
     Experimental,
     /// The cheatcode has been deprecated, meaning it will be removed in a future release.
     ///
+    /// Contains the optional reason for deprecation.
+    ///
     /// Use of deprecated cheatcodes is discouraged and will result in a warning.
-    Deprecated(&'a str),
+    Deprecated(Option<&'a str>),
     /// The cheatcode has been removed and is no longer available for use.
     ///
     /// Use of removed cheatcodes will result in a hard error.

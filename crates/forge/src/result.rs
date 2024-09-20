@@ -14,10 +14,9 @@ use foundry_evm::{
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     fmt::{self, Write},
     time::Duration,
 };
@@ -216,26 +215,26 @@ impl SuiteResult {
     pub fn new(
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
-        warnings: Vec<String>,
+        mut warnings: Vec<String>,
     ) -> Self {
-        let mut warnings = warnings;
         // Add deprecated cheatcodes warning, if any of them used in current test suite.
-        let mut cheatcodes: HashSet<String> = HashSet::new();
+        let mut deprecated_cheatcodes = HashMap::new();
         for test_result in test_results.values() {
-            for cheatcode in &test_result.deprecated_cheatcodes {
-                let mut warning = cheatcode.0.to_string();
-                if let Some(replacement) = cheatcode.1 {
-                    write!(warning, " (replaced by {replacement})").unwrap();
+            deprecated_cheatcodes.extend(test_result.deprecated_cheatcodes.clone());
+        }
+        if !deprecated_cheatcodes.is_empty() {
+            let mut warning = format!(
+                "the following cheatcode(s) are deprecated and will be removed in future versions:"
+            );
+            for (cheatcode, reason) in deprecated_cheatcodes {
+                write!(warning, "\n  {cheatcode}").unwrap();
+                if let Some(reason) = reason {
+                    write!(warning, ": {reason}").unwrap();
                 }
-                cheatcodes.insert(warning);
             }
+            warnings.push(warning);
         }
-        if !cheatcodes.is_empty() {
-            warnings.push(format!(
-                "Deprecated {} cheatcode(s) will be removed in future versions.",
-                cheatcodes.iter().join(", ")
-            ));
-        }
+
         Self { duration, test_results, warnings }
     }
 
@@ -412,7 +411,7 @@ pub struct TestResult {
 
     /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
     #[serde(skip)]
-    pub deprecated_cheatcodes: HashMap<String, Option<String>>,
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 impl fmt::Display for TestResult {

@@ -185,7 +185,7 @@ pub struct FuzzTestResult {
     pub breakpoints: Option<Breakpoints>,
 
     // Deprecated cheatcodes mapped to their replacements.
-    pub deprecated_cheatcodes: HashMap<String, Option<String>>,
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 impl FuzzTestResult {

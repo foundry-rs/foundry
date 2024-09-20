@@ -21,7 +21,7 @@ pub struct CaseOutcome {
     /// logs of a single fuzz test case.
     pub logs: Vec<Log>,
     // Deprecated cheatcodes mapped to their replacements.
-    pub deprecated_cheatcodes: HashMap<String, Option<String>>,
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 /// Returned by a single fuzz when a counterexample has been discovered
