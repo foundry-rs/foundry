@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, Bytes, Uint, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
@@ -14,7 +14,7 @@ use foundry_evm_core::{
     backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
-use foundry_evm_traces::TracingInspectorConfig;
+use foundry_evm_traces::StackSnapshotType;
 use rand::Rng;
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
@@ -661,7 +661,12 @@ impl Cheatcode for startDebugTraceRecordingCall {
         };
 
         // turn on tracer configuration for recording
-        tracer.update_config(|_config| TracingInspectorConfig::all());
+        tracer.update_config(|config| {
+            config
+                .set_steps(true)
+                .set_memory_snapshots(true)
+                .set_stack_snapshots(StackSnapshotType::Full)
+        });
 
         // track where the recording starts
         if let Some(last_node) = tracer.traces().nodes().last() {
@@ -673,7 +678,7 @@ impl Cheatcode for startDebugTraceRecordingCall {
     }
 }
 
-impl Cheatcode for stopDebugTraceRecordingCall {
+impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
     fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
         &self,
         ccx: &mut CheatsCtxt<DB>,
@@ -698,31 +703,11 @@ impl Cheatcode for stopDebugTraceRecordingCall {
         // store the recorded debug steps
         let debug_steps: Vec<DebugStep> =
             steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
-        ccx.state.recorded_debug_steps = Some(debug_steps);
 
         // Clean up the recording info
         ccx.state.record_debug_steps_info = None;
 
-        // return the length of the debug steps
-        let length = ccx.state.recorded_debug_steps.as_ref().map_or(0, |v| v.len());
-        let length_uint = Uint::<256, 4>::from(length);
-        Ok(length_uint.abi_encode())
-    }
-}
-
-impl Cheatcode for getDebugTraceByIndexCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { index } = self;
-        let idx: usize =
-            index.try_into().map_err(|_| format!("index [{index}] cannot convert to usize"))?;
-
-        if let Some(debug_steps) = state.recorded_debug_steps.as_ref() {
-            if let Some(debug_step) = debug_steps.get(idx) {
-                return Ok(debug_step.abi_encode());
-            }
-        }
-
-        Err(Error::from("debug trace access failed"))
+        Ok(debug_steps.abi_encode())
     }
 }
 

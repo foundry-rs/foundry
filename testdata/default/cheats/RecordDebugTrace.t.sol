@@ -80,13 +80,13 @@ contract RecordDebugTraceTest is DSTest {
         uint256 val = testContract.storeAndLoadValueFromMemory();
         assertTrue(val == testContract.expectedValueInMemory());
 
-        uint256 stepsLen = cheats.stopDebugTraceRecording();
+        Vm.DebugStep[] memory steps = cheats.stopAndReturnDebugTraceRecording();
 
         bool mstoreCalled = false;
         bool mloadCalled = false;
 
-        for (uint256 i = 0; i < stepsLen; i++) {
-            Vm.DebugStep memory step = cheats.getDebugTraceByIndex(i);
+        for (uint256 i = 0; i < steps.length; i++) {
+            Vm.DebugStep memory step = steps[i];
             if (
                 step.opcode == 0x52 /*MSTORE*/ && step.stack[0] == testContract.memPtr() // MSTORE offset
                     && step.stack[1] == testContract.expectedValueInMemory() // MSTORE val
@@ -118,12 +118,12 @@ contract RecordDebugTraceTest is DSTest {
 
         first.callSecondLayer();
 
-        uint256 stepsLen = cheats.stopDebugTraceRecording();
+        Vm.DebugStep[] memory steps = cheats.stopAndReturnDebugTraceRecording();
 
         bool goToDepthTwo = false;
         bool goToDepthThree = false;
-        for (uint256 i = 0; i < stepsLen; i++) {
-            Vm.DebugStep memory step = cheats.getDebugTraceByIndex(i);
+        for (uint256 i = 0; i < steps.length; i++) {
+            Vm.DebugStep memory step = steps[i];
 
             if (step.depth == 2) {
                 assertTrue(step.contractAddr == address(first), "must be first layer on depth 2");
@@ -149,17 +149,17 @@ contract RecordDebugTraceTest is DSTest {
 
         testContract.triggerOOG();
 
-        uint256 stepsLen = cheats.stopDebugTraceRecording();
+        Vm.DebugStep[] memory steps = cheats.stopAndReturnDebugTraceRecording();
 
         bool isOOG = false;
-        for (uint256 i = 0; i < stepsLen; i++) {
-            Vm.DebugStep memory step = cheats.getDebugTraceByIndex(i);
+        for (uint256 i = 0; i < steps.length; i++) {
+            Vm.DebugStep memory step = steps[i];
 
             // https://github.com/bluealloy/revm/blob/5a47ae0d2bb0909cc70d1b8ae2b6fc721ab1ca7d/crates/interpreter/src/instruction_result.rs#L23
             if (step.isOutOfGas) {
                 isOOG = true;
             }
         }
-        assertTrue(isOOG, "should have OOG instruction result");
+        assertTrue(isOOG, "should OOG");
     }
 }

@@ -399,11 +399,6 @@ pub struct Cheatcodes {
     /// merged into the previous vector.
     pub recorded_account_diffs_stack: Option<Vec<Vec<AccountAccess>>>,
 
-    /// Recorded debug trace/steps during the call.
-    /// This field stores a debug trace that were recorded during the call.
-    /// It is empty if nothing were recorded.
-    pub recorded_debug_steps: Option<Vec<crate::Vm::DebugStep>>,
-
     /// The information of the debug step recording.
     pub record_debug_steps_info: Option<RecordDebugStepInfo>,
 
@@ -499,7 +494,6 @@ impl Cheatcodes {
             accesses: Default::default(),
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
-            recorded_debug_steps: Default::default(),
             record_debug_steps_info: Default::default(),
             mocked_calls: Default::default(),
             mocked_functions: Default::default(),

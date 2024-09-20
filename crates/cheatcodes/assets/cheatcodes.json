@@ -5233,26 +5233,6 @@
     },
     {
       "func": {
-        "id": "getDebugTraceByIndex",
-        "description": "Get the recorded debug trace by step index.",
-        "declaration": "function getDebugTraceByIndex(uint256 index) external returns (DebugStep memory step);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "getDebugTraceByIndex(uint256)",
-        "selector": "0x69490d3d",
-        "selectorBytes": [
-          105,
-          73,
-          13,
-          61
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "getDeployedCode",
         "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
         "declaration": "function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);",
@@ -8821,6 +8801,26 @@
     },
     {
       "func": {
+        "id": "stopAndReturnDebugTraceRecording",
+        "description": "Stop debug trace recording and returns the recorded debug trace.",
+        "declaration": "function stopAndReturnDebugTraceRecording() external returns (DebugStep[] memory step);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopAndReturnDebugTraceRecording()",
+        "selector": "0xced398a2",
+        "selectorBytes": [
+          206,
+          211,
+          152,
+          162
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "stopAndReturnStateDiff",
         "description": "Returns an ordered array of all account accesses from a `vm.startStateDiffRecording` session.",
         "declaration": "function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);",
@@ -8856,26 +8856,6 @@
         ]
       },
       "group": "scripting",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "stopDebugTraceRecording",
-        "description": "Stop debug trace recording and returns the total size of the recorded debug trace.",
-        "declaration": "function stopDebugTraceRecording() external returns (uint256 size);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "stopDebugTraceRecording()",
-        "selector": "0x9fe39f92",
-        "selectorBytes": [
-          159,
-          227,
-          159,
-          146
-        ]
-      },
-      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },

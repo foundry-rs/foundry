@@ -313,14 +313,9 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function startDebugTraceRecording() external;
 
-    /// Stop debug trace recording and returns the total size of the recorded debug trace.
+    /// Stop debug trace recording and returns the recorded debug trace.
     #[cheatcode(group = Evm, safety = Safe)]
-    function stopDebugTraceRecording() external returns (uint256 size);
-
-
-    /// Get the recorded debug trace by step index.
-    #[cheatcode(group = Evm, safety = Safe)]
-    function getDebugTraceByIndex(uint256 index) external returns (DebugStep memory step);
+    function stopAndReturnDebugTraceRecording() external returns (DebugStep[] memory step);
 
 
     // -------- Record Storage --------

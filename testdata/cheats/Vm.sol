@@ -256,7 +256,6 @@ interface Vm {
     function getBlockNumber() external view returns (uint256 height);
     function getBlockTimestamp() external view returns (uint256 timestamp);
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
-    function getDebugTraceByIndex(uint256 index) external returns (DebugStep memory step);
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
     function getFoundryVersion() external view returns (string memory version);
     function getLabel(address account) external view returns (string memory currentLabel);
@@ -435,9 +434,9 @@ interface Vm {
     function startPrank(address msgSender) external;
     function startPrank(address msgSender, address txOrigin) external;
     function startStateDiffRecording() external;
+    function stopAndReturnDebugTraceRecording() external returns (DebugStep[] memory step);
     function stopAndReturnStateDiff() external returns (AccountAccess[] memory accountAccesses);
     function stopBroadcast() external;
-    function stopDebugTraceRecording() external returns (uint256 size);
     function stopExpectSafeMemory() external;
     function stopMappingRecording() external;
     function stopPrank() external;
