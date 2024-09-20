@@ -447,6 +447,9 @@ pub struct Cheatcodes {
 
     /// Addresses with arbitrary storage.
     pub arbitrary_storage: Option<ArbitraryStorage>,
+
+    /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
+    pub deprecated: HashMap<&'static str, Option<&'static str>>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -491,6 +494,7 @@ impl Cheatcodes {
             rng: Default::default(),
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
+            deprecated: Default::default(),
         }
     }
 
@@ -2071,6 +2075,7 @@ fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
     ccx: &mut CheatsCtxt<DB>,
     executor: &mut E,
 ) -> Result {
+    // TODO: Replace with `<dyn Cheatcode>::apply_full` once it's object-safe.
     macro_rules! dispatch {
         ($($variant:ident),*) => {
             match calls {
@@ -2079,10 +2084,13 @@ fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
         };
     }
 
-    let mut dyn_cheat = DynCheatCache::new(calls);
-    let _guard = trace_span_and_call(&mut dyn_cheat);
+    let cheat = calls_as_dyn_cheatcode(calls);
+    if let spec::Status::Deprecated(replacement) = *cheat.status() {
+        ccx.state.deprecated.insert(cheat.signature(), replacement);
+    }
+    let _guard = trace_span_and_call(cheat);
     let mut result = vm_calls!(dispatch);
-    fill_and_trace_return(&mut dyn_cheat, &mut result);
+    fill_and_trace_return(cheat, &mut result);
     result
 }
 
@@ -2091,34 +2099,17 @@ fn will_exit(ir: InstructionResult) -> bool {
     !matches!(ir, InstructionResult::Continue | InstructionResult::CallOrCreate)
 }
 
-// Caches the result of `calls_as_dyn_cheatcode`.
-// TODO: Remove this once Cheatcode is object-safe, as caching would not be necessary anymore.
-struct DynCheatCache<'a> {
-    calls: &'a Vm::VmCalls,
-    slot: Option<&'a dyn DynCheatcode>,
-}
-
-impl<'a> DynCheatCache<'a> {
-    fn new(calls: &'a Vm::VmCalls) -> Self {
-        Self { calls, slot: None }
-    }
-
-    fn get(&mut self) -> &dyn DynCheatcode {
-        *self.slot.get_or_insert_with(|| calls_as_dyn_cheatcode(self.calls))
-    }
-}
-
-fn trace_span_and_call(dyn_cheat: &mut DynCheatCache) -> tracing::span::EnteredSpan {
-    let span = debug_span!(target: "cheatcodes", "apply", id = %dyn_cheat.get().id());
+fn trace_span_and_call(cheat: &dyn DynCheatcode) -> tracing::span::EnteredSpan {
+    let span = debug_span!(target: "cheatcodes", "apply", id = %cheat.id());
     let entered = span.entered();
-    trace!(target: "cheatcodes", cheat = ?dyn_cheat.get().as_debug(), "applying");
+    trace!(target: "cheatcodes", cheat = ?cheat.as_debug(), "applying");
     entered
 }
 
-fn fill_and_trace_return(dyn_cheat: &mut DynCheatCache, result: &mut Result) {
+fn fill_and_trace_return(cheat: &dyn DynCheatcode, result: &mut Result) {
     if let Err(e) = result {
         if e.is_str() {
-            let name = dyn_cheat.get().name();
+            let name = cheat.name();
             // Skip showing the cheatcode name for:
             // - assertions: too verbose, and can already be inferred from the error message
             // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
@@ -2136,7 +2127,6 @@ fn fill_and_trace_return(dyn_cheat: &mut DynCheatCache, result: &mut Result) {
     );
 }
 
-#[cold]
 fn calls_as_dyn_cheatcode(calls: &Vm::VmCalls) -> &dyn DynCheatcode {
     macro_rules! as_dyn {
         ($($variant:ident),*) => {

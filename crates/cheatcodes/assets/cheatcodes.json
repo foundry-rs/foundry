@@ -5408,7 +5408,9 @@
         ]
       },
       "group": "json",
-      "status": "deprecated",
+      "status": {
+        "deprecated": "replaced by `keyExistsJson`"
+      },
       "safety": "safe"
     },
     {

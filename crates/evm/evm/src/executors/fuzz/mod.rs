@@ -17,7 +17,7 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashMap};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -39,6 +39,8 @@ pub struct FuzzTestData {
     pub coverage: Option<HitMaps>,
     // Stores logs for all fuzz cases
     pub logs: Vec<Log>,
+    // Deprecated cheatcodes mapped to their replacements.
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
@@ -124,6 +126,7 @@ impl FuzzedExecutor {
                         Some(prev) => prev.merge(case.coverage.unwrap()),
                         opt => *opt = case.coverage,
                     }
+                    data.deprecated_cheatcodes = case.deprecated_cheatcodes;
 
                     Ok(())
                 }
@@ -168,6 +171,7 @@ impl FuzzedExecutor {
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
             coverage: fuzz_result.coverage,
+            deprecated_cheatcodes: fuzz_result.deprecated_cheatcodes,
         };
 
         match run_result {
@@ -230,10 +234,10 @@ impl FuzzedExecutor {
             return Err(TestCaseError::reject(FuzzError::AssumeReject))
         }
 
-        let breakpoints = call
-            .cheatcodes
-            .as_ref()
-            .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
+        let (breakpoints, deprecated_cheatcodes) =
+            call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {
+                (cheats.breakpoints.clone(), cheats.deprecated.clone())
+            });
 
         let success = self.executor.is_raw_call_mut_success(address, &mut call, should_fail);
         if success {
@@ -243,6 +247,7 @@ impl FuzzedExecutor {
                 coverage: call.coverage,
                 breakpoints,
                 logs: call.logs,
+                deprecated_cheatcodes,
             }))
         } else {
             Ok(FuzzOutcome::CounterExample(CounterExampleOutcome {

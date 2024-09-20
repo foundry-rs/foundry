@@ -530,6 +530,7 @@ impl<'a> ContractRunner<'a> {
                         &mut test_result.logs,
                         &mut test_result.traces,
                         &mut test_result.coverage,
+                        &mut test_result.deprecated_cheatcodes,
                         &txes,
                     );
                     return test_result.invariant_replay_fail(
@@ -572,6 +573,7 @@ impl<'a> ContractRunner<'a> {
                         &mut test_result.logs,
                         &mut test_result.traces,
                         &mut test_result.coverage,
+                        &mut test_result.deprecated_cheatcodes,
                         progress.as_ref(),
                     ) {
                         Ok(call_sequence) => {
@@ -607,6 +609,7 @@ impl<'a> ContractRunner<'a> {
                     &mut test_result.logs,
                     &mut test_result.traces,
                     &mut test_result.coverage,
+                    &mut test_result.deprecated_cheatcodes,
                     &invariant_result.last_run_inputs,
                 ) {
                     error!(%err, "Failed to replay last invariant run");

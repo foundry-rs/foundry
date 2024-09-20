@@ -2099,3 +2099,78 @@ contract JunitReportTest is Test {
 
 "#]]);
 });
+
+forgetest_init!(
+    // Enable this if no cheatcodes are deprecated.
+    // #[ignore = "no cheatcodes are deprecated"]
+    test_deprecated_cheatcode_warning,
+    |prj, cmd| {
+        prj.add_test(
+            "DeprecatedCheatcodeTest.t.sol",
+            r#"
+        import "forge-std/Test.sol";
+        contract DeprecatedCheatcodeTest is Test {
+            function test_deprecated_cheatcode() public view {
+                vm.keyExists('{"a": 123}', ".a");
+                vm.keyExists('{"a": 123}', ".a");
+            }
+        }
+
+        contract DeprecatedCheatcodeFuzzTest is Test {
+            function test_deprecated_cheatcode(uint256 a) public view {
+                vm.keyExists('{"a": 123}', ".a");
+            }
+        }
+
+        contract Counter {
+            uint256 a;
+
+            function count() public {
+                a++;
+            }
+        }
+
+        contract DeprecatedCheatcodeInvariantTest is Test {
+            function setUp() public {
+                Counter counter = new Counter();
+            }
+
+            /// forge-config: default.invariant.runs = 1
+            function invariant_deprecated_cheatcode() public {
+                vm.keyExists('{"a": 123}', ".a");
+            }
+        }
+   "#,
+        )
+        .unwrap();
+
+        // Tests deprecated cheatcode warning for unit tests.
+        cmd.args(["test", "--mc", "DeprecatedCheatcodeTest"]).assert_success().stderr_eq(str![[
+            r#"
+Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
+  keyExists(string,string): replaced by `keyExistsJson`
+
+"#
+        ]]);
+
+        // Tests deprecated cheatcode warning for fuzz tests.
+        cmd.forge_fuse()
+            .args(["test", "--mc", "DeprecatedCheatcodeFuzzTest"])
+            .assert_success()
+            .stderr_eq(str![[r#"
+Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
+  keyExists(string,string): replaced by `keyExistsJson`
+
+"#]]);
+
+        // Tests deprecated cheatcode warning for invariant tests.
+        cmd.forge_fuse()
+            .args(["test", "--mc", "DeprecatedCheatcodeInvariantTest"])
+            .assert_success()
+            .stderr_eq(str![[r#"
+Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
+  keyExists(string,string): replaced by `keyExistsJson`
+
+"#]]);
+    }
+);
