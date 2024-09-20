@@ -7010,7 +7010,9 @@
         ]
       },
       "group": "utilities",
-      "status": "deprecated",
+      "status": {
+        "deprecated": "replaced by `arbitraryAddress`"
+      },
       "safety": "safe"
     },
     {
@@ -7030,7 +7032,9 @@
         ]
       },
       "group": "utilities",
-      "status": "deprecated",
+      "status": {
+        "deprecated": "replaced by `arbitraryUint`"
+      },
       "safety": "safe"
     },
     {
@@ -7050,7 +7054,9 @@
         ]
       },
       "group": "utilities",
-      "status": "deprecated",
+      "status": {
+        "deprecated": "replaced by `arbitraryUint`"
+      },
       "safety": "safe"
     },
     {

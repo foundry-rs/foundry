@@ -2314,17 +2314,17 @@ interface Vm {
 
     /// Returns a random uint256 value.
     /// `randomUint` is being deprecated in favor of `arbitraryUint`. It will be removed in future versions.
-    #[cheatcode(group = Utilities, status = Deprecated)]
+    #[cheatcode(group = Utilities, status = Deprecated(Some("replaced by `arbitraryUint`")))]
     function randomUint() external returns (uint256);
 
     /// Returns random uin256 value between the provided range (=min..=max).
     /// `randomUint` is being deprecated in favor of `arbitraryUint`. It will be removed in future versions.
-    #[cheatcode(group = Utilities, status = Deprecated)]
+    #[cheatcode(group = Utilities, status = Deprecated(Some("replaced by `arbitraryUint`")))]
     function randomUint(uint256 min, uint256 max) external returns (uint256);
 
     /// Returns a random `address`.
     /// `randomAddress` is being deprecated in favor of `arbitraryAddress`. It will be removed in future versions
-    #[cheatcode(group = Utilities, status = Deprecated)]
+    #[cheatcode(group = Utilities, status = Deprecated(Some("replaced by `arbitraryAddress`")))]
     function randomAddress() external returns (address);
 
     /// Pauses collection of call traces. Useful in cases when you want to skip tracing of
