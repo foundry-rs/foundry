@@ -1,5 +1,5 @@
 use proc_macro2::{Ident, Span, TokenStream};
-use quote::{quote, quote_spanned};
+use quote::quote;
 use syn::{Attribute, Data, DataStruct, DeriveInput, Error, Result};
 
 pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
@@ -42,13 +42,10 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
     let safety = if let Some(safety) = safety {
         quote!(Safety::#safety)
     } else {
-        let panic = quote_spanned! {name.span()=>
-            panic!("cannot determine safety from the group, add a `#[cheatcode(safety = ...)]` attribute")
-        };
         quote! {
             match Group::#group.safety() {
                 Some(s) => s,
-                None => #panic,
+                None => panic_unknown_safety(),
             }
         }
     };
