@@ -334,36 +334,36 @@ contract ParseTomlTest is DSTest {
 contract WriteTomlTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    string toml1;
-    string toml2;
+    string json1;
+    string json2;
 
     function setUp() public {
-        toml1 = "example";
-        toml2 = "example2";
+        json1 = "example";
+        json2 = "example2";
     }
 
-    struct simpleToml {
+    struct simpleStruct {
         uint256 a;
         string b;
     }
 
-    struct notSimpleToml {
+    struct nestedStruct {
         uint256 a;
         string b;
-        simpleToml c;
+        simpleStruct c;
     }
 
-    function test_serializeNotSimpleToml() public {
-        string memory toml3 = "toml3";
+    function test_serializeNestedStructToml() public {
+        string memory json3 = "json3";
         string memory path = "fixtures/Toml/write_complex_test.toml";
-        vm.serializeUint(toml3, "a", uint256(123));
-        string memory semiFinal = vm.serializeString(toml3, "b", "test");
-        string memory finalToml = vm.serializeString(toml3, "c", semiFinal);
-        console.log(finalToml);
-        vm.writeToml(finalToml, path);
+        vm.serializeUint(json3, "a", uint256(123));
+        string memory semiFinal = vm.serializeString(json3, "b", "test");
+        string memory finalJson = vm.serializeString(json3, "c", semiFinal);
+        console.log(finalJson);
+        vm.writeToml(finalJson, path);
         string memory toml = vm.readFile(path);
         bytes memory data = vm.parseToml(toml);
-        notSimpleToml memory decodedData = abi.decode(data, (notSimpleToml));
+        nestedStruct memory decodedData = abi.decode(data, (nestedStruct));
         console.log(decodedData.a);
         assertEq(decodedData.a, 123);
     }
@@ -372,7 +372,7 @@ contract WriteTomlTest is DSTest {
         string memory path = "fixtures/Toml/write_complex_test.toml";
         string memory toml = vm.readFile(path);
         bytes memory data = vm.parseToml(toml, ".");
-        notSimpleToml memory decodedData = abi.decode(data, (notSimpleToml));
+        nestedStruct memory decodedData = abi.decode(data, (nestedStruct));
         console.log(decodedData.a);
         assertEq(decodedData.a, 123);
     }
@@ -392,24 +392,24 @@ contract WriteTomlTest is DSTest {
     }
 
     function test_writeToml() public {
-        string memory toml3 = "toml3";
+        string memory json3 = "json3";
         string memory path = "fixtures/Toml/write_test.toml";
-        vm.serializeUint(toml3, "a", uint256(123));
-        string memory finalToml = vm.serializeString(toml3, "b", "test");
-        vm.writeToml(finalToml, path);
+        vm.serializeUint(json3, "a", uint256(123));
+        string memory finalJson = vm.serializeString(json3, "b", "test");
+        vm.writeToml(finalJson, path);
 
         string memory toml = vm.readFile(path);
         bytes memory data = vm.parseToml(toml);
-        simpleToml memory decodedData = abi.decode(data, (simpleToml));
+        simpleStruct memory decodedData = abi.decode(data, (simpleStruct));
         assertEq(decodedData.a, 123);
         assertEq(decodedData.b, "test");
 
         // write toml3 to key b
-        vm.writeToml(finalToml, path, ".b");
+        vm.writeToml(finalJson, path, ".b");
         // read again
         toml = vm.readFile(path);
         data = vm.parseToml(toml, ".b");
-        decodedData = abi.decode(data, (simpleToml));
+        decodedData = abi.decode(data, (simpleStruct));
         assertEq(decodedData.a, 123);
         assertEq(decodedData.b, "test");
 
