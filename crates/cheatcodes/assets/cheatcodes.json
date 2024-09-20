@@ -3583,7 +3583,9 @@
         ]
       },
       "group": "evm",
-      "status": "deprecated",
+      "status": {
+        "deprecated": "replaced by `deleteStateSnapshot`"
+      },
       "safety": "unsafe"
     },
     {
@@ -3603,7 +3605,9 @@
         ]
       },
       "group": "evm",
-      "status": "deprecated",
+      "status": {
+        "deprecated": "replaced by `deleteStateSnapshots`"
+      },
       "safety": "unsafe"
     },
     {
@@ -7305,7 +7309,9 @@
         ]
       },
       "group": "evm",
-      "status": "deprecated",
+      "status": {
+        "deprecated": "replaced by `revertToState`"
+      },
       "safety": "unsafe"
     },
     {
@@ -7325,7 +7331,9 @@
         ]
       },
       "group": "evm",
-      "status": "deprecated",
+      "status": {
+        "deprecated": "replaced by `revertToStateAndDelete`"
+      },
       "safety": "unsafe"
     },
     {
@@ -8345,7 +8353,9 @@
         ]
       },
       "group": "evm",
-      "status": "deprecated",
+      "status": {
+        "deprecated": "replaced by `snapshotState`"
+      },
       "safety": "unsafe"
     },
     {
