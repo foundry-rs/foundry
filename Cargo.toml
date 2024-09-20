@@ -65,7 +65,7 @@ split-debuginfo = "unpacked"
 opt-level = 3
 lto = "thin"
 debug = "line-tables-only"
-strip = "symbols"
+strip = "debuginfo"
 panic = "abort"
 codegen-units = 16
 
@@ -124,6 +124,9 @@ scrypt.opt-level = 3
 # Override packages which aren't perf-sensitive for faster compilation speed and smaller binary size.
 [profile.release.package]
 alloy-sol-macro-expander.opt-level = "z"
+figment.opt-level = "z"
+foundry-compilers-artifacts-solc.opt-level = "z"
+foundry-config.opt-level = "z"
 html5ever.opt-level = "z"
 mdbook.opt-level = "z"
 prettyplease.opt-level = "z"
@@ -163,42 +166,42 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.7.1", default-features = false }
-foundry-compilers = { version = "0.11.0", default-features = false }
+foundry-block-explorers = { version = "0.7.3", default-features = false }
+foundry-compilers = { version = "0.11.1", default-features = false }
 foundry-fork-db = "0.3"
 solang-parser = "=0.3.3"
 
 ## revm
 # no default features to avoid c-kzg
-revm = { version = "14.0.1", default-features = false }
-revm-primitives = { version = "9.0.1", default-features = false }
-revm-inspectors = { version = "0.6", features = ["serde"] }
+revm = { version = "14.0.2", default-features = false }
+revm-primitives = { version = "9.0.2", default-features = false }
+revm-inspectors = { version = "0.7", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
 
 ## alloy
-alloy-consensus = { version = "0.3.3", default-features = false }
-alloy-contract = { version = "0.3.3", default-features = false }
-alloy-eips = { version = "0.3.3", default-features = false }
-alloy-genesis = { version = "0.3.3", default-features = false }
-alloy-json-rpc = { version = "0.3.3", default-features = false }
-alloy-network = { version = "0.3.3", default-features = false }
-alloy-provider = { version = "0.3.3", default-features = false }
-alloy-pubsub = { version = "0.3.3", default-features = false }
-alloy-rpc-client = { version = "0.3.3", default-features = false }
-alloy-rpc-types = { version = "0.3.3", default-features = true }
-alloy-serde = { version = "0.3.3", default-features = false }
-alloy-signer = { version = "0.3.3", default-features = false }
-alloy-signer-aws = { version = "0.3.3", default-features = false }
-alloy-signer-gcp = { version = "0.3.3", default-features = false }
-alloy-signer-ledger = { version = "0.3.3", default-features = false }
-alloy-signer-local = { version = "0.3.3", default-features = false }
-alloy-signer-trezor = { version = "0.3.3", default-features = false }
-alloy-transport = { version = "0.3.3", default-features = false }
-alloy-transport-http = { version = "0.3.3", default-features = false }
-alloy-transport-ipc = { version = "0.3.3", default-features = false }
-alloy-transport-ws = { version = "0.3.3", default-features = false }
+alloy-consensus = { version = "0.3.6", default-features = false }
+alloy-contract = { version = "0.3.6", default-features = false }
+alloy-eips = { version = "0.3.6", default-features = false }
+alloy-genesis = { version = "0.3.6", default-features = false }
+alloy-json-rpc = { version = "0.3.6", default-features = false }
+alloy-network = { version = "0.3.6", default-features = false }
+alloy-provider = { version = "0.3.6", default-features = false }
+alloy-pubsub = { version = "0.3.6", default-features = false }
+alloy-rpc-client = { version = "0.3.6", default-features = false }
+alloy-rpc-types = { version = "0.3.6", default-features = true }
+alloy-serde = { version = "0.3.6", default-features = false }
+alloy-signer = { version = "0.3.6", default-features = false }
+alloy-signer-aws = { version = "0.3.6", default-features = false }
+alloy-signer-gcp = { version = "0.3.6", default-features = false }
+alloy-signer-ledger = { version = "0.3.6", default-features = false }
+alloy-signer-local = { version = "0.3.6", default-features = false }
+alloy-signer-trezor = { version = "0.3.6", default-features = false }
+alloy-transport = { version = "0.3.6", default-features = false }
+alloy-transport-http = { version = "0.3.6", default-features = false }
+alloy-transport-ipc = { version = "0.3.6", default-features = false }
+alloy-transport-ws = { version = "0.3.6", default-features = false }
 
 ## alloy-core
 alloy-dyn-abi = "0.8.1"
@@ -241,7 +244,7 @@ itertools = "0.13"
 jsonpath_lib = "0.3"
 k256 = "0.13"
 parking_lot = "0.12"
-mesc = "0.2.1"
+mesc = "0.3"
 rand = "0.8"
 rustc-hash = "2.0"
 semver = "1"

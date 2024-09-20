@@ -1865,7 +1865,7 @@ interface Vm {
 
     /// Checks if `key` exists in a JSON object
     /// `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
-    #[cheatcode(group = Json, status = Deprecated)]
+    #[cheatcode(group = Json, status = Deprecated(Some("replaced by `keyExistsJson`")))]
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     /// Checks if `key` exists in a JSON object.
     #[cheatcode(group = Json)]
@@ -2400,4 +2400,9 @@ impl PartialEq for ForgeContext {
             _ => false,
         }
     }
+}
+
+#[track_caller]
+const fn panic_unknown_safety() -> ! {
+    panic!("cannot determine safety from the group, add a `#[cheatcode(safety = ...)]` attribute")
 }

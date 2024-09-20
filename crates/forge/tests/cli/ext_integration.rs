@@ -71,6 +71,7 @@ fn solady() {
 
 #[test]
 #[cfg_attr(windows, ignore = "weird git fail")]
+#[cfg(not(feature = "isolate-by-default"))]
 fn geb() {
     ExtTester::new("reflexer-labs", "geb", "1a59f16a377386c49f520006ed0f7fd9d128cb09")
         .env("FOUNDRY_LEGACY_ASSERTIONS", "true")

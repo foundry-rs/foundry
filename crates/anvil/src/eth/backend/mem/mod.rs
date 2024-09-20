@@ -1334,7 +1334,8 @@ impl Backend {
                         GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
                         GethDebugBuiltInTracerType::FourByteTracer |
                         GethDebugBuiltInTracerType::PreStateTracer |
-                        GethDebugBuiltInTracerType::MuxTracer => {
+                        GethDebugBuiltInTracerType::MuxTracer |
+                        GethDebugBuiltInTracerType::FlatCallTracer => {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
                         }
                     },

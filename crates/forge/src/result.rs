@@ -215,8 +215,26 @@ impl SuiteResult {
     pub fn new(
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
-        warnings: Vec<String>,
+        mut warnings: Vec<String>,
     ) -> Self {
+        // Add deprecated cheatcodes warning, if any of them used in current test suite.
+        let mut deprecated_cheatcodes = HashMap::new();
+        for test_result in test_results.values() {
+            deprecated_cheatcodes.extend(test_result.deprecated_cheatcodes.clone());
+        }
+        if !deprecated_cheatcodes.is_empty() {
+            let mut warning =
+                "the following cheatcode(s) are deprecated and will be removed in future versions:"
+                    .to_string();
+            for (cheatcode, reason) in deprecated_cheatcodes {
+                write!(warning, "\n  {cheatcode}").unwrap();
+                if let Some(reason) = reason {
+                    write!(warning, ": {reason}").unwrap();
+                }
+            }
+            warnings.push(warning);
+        }
+
         Self { duration, test_results, warnings }
     }
 
@@ -390,6 +408,10 @@ pub struct TestResult {
 
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
+
+    /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
+    #[serde(skip)]
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 impl fmt::Display for TestResult {
@@ -501,9 +523,14 @@ impl TestResult {
             false => TestStatus::Failure,
         };
         self.reason = reason;
-        self.breakpoints = raw_call_result.cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
         self.duration = Duration::default();
         self.gas_report_traces = Vec::new();
+
+        if let Some(cheatcodes) = raw_call_result.cheatcodes {
+            self.breakpoints = cheatcodes.breakpoints;
+            self.deprecated_cheatcodes = cheatcodes.deprecated;
+        }
+
         self
     }
 
@@ -535,6 +562,7 @@ impl TestResult {
         self.duration = Duration::default();
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
         self.breakpoints = result.breakpoints.unwrap_or_default();
+        self.deprecated_cheatcodes = result.deprecated_cheatcodes;
 
         self
     }
