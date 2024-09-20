@@ -2145,11 +2145,13 @@ forgetest_init!(
         .unwrap();
 
         // Tests deprecated cheatcode warning for unit tests.
-        cmd.args(["test", "--mc", "DeprecatedCheatcodeTest"]).assert_success().stderr_eq(str![[r#"
+        cmd.args(["test", "--mc", "DeprecatedCheatcodeTest"]).assert_success().stderr_eq(str![[
+            r#"
 Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
   keyExists(string,string): replaced by `keyExistsJson`
 
-"#]]);
+"#
+        ]]);
 
         // Tests deprecated cheatcode warning for fuzz tests.
         cmd.forge_fuse()

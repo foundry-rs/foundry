@@ -223,9 +223,9 @@ impl SuiteResult {
             deprecated_cheatcodes.extend(test_result.deprecated_cheatcodes.clone());
         }
         if !deprecated_cheatcodes.is_empty() {
-            let mut warning = format!(
+            let mut warning =
                 "the following cheatcode(s) are deprecated and will be removed in future versions:"
-            );
+                    .to_string();
             for (cheatcode, reason) in deprecated_cheatcodes {
                 write!(warning, "\n  {cheatcode}").unwrap();
                 if let Some(reason) = reason {

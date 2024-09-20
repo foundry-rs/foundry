@@ -5409,7 +5409,7 @@
       },
       "group": "json",
       "status": {
-        "deprecated": "keyExistsJson"
+        "deprecated": "replaced by `keyExistsJson`"
       },
       "safety": "safe"
     },
