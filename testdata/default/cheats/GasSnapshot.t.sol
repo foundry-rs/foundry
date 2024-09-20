@@ -134,10 +134,7 @@ contract GasSnapshotTest is DSTest {
 
         f.run(256);
 
-        uint256 gasUsed = vm.stopSnapshotGas(
-            "CustomGroup",
-            "testSnapshotGasSectionGroupName"
-        );
+        uint256 gasUsed = vm.stopSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
         assertGt(gasUsed, 0);
     }
 
