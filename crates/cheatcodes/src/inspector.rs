@@ -448,7 +448,7 @@ pub struct Cheatcodes {
     /// Addresses with arbitrary storage.
     pub arbitrary_storage: Option<ArbitraryStorage>,
 
-    // Deprecated cheatcodes mapped to their replacements. Used to report warnings on test results.
+    /// Deprecated cheatcodes mapped to their replacements. Used to report warnings on test results.
     pub deprecated: HashMap<String, Option<String>>,
 }
 
