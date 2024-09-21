@@ -2494,7 +2494,7 @@ impl EthApi {
         // If we have non-zero gas price, cap gas limit by sender balance
         if gas_price > 0 {
             if let Some(from) = request.from {
-                let mut available_funds = self.backend.get_balance_with_state(&state, from)?;
+                let mut available_funds = self.backend.get_balance_with_state(state, from)?;
                 if let Some(value) = request.value {
                     if value > available_funds {
                         return Err(InvalidTransactionError::InsufficientFunds.into());
