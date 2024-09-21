@@ -7100,7 +7100,7 @@
     {
       "func": {
         "id": "randomUint_1",
-        "description": "Returns random uin256 value between the provided range (=min..=max).\n`randomUint` is being deprecated in favor of `arbitraryUint`. It will be removed in future versions.",
+        "description": "Returns random uint256 value between the provided range (=min..=max).\n`randomUint` is being deprecated in favor of `arbitraryUint`. It will be removed in future versions.",
         "declaration": "function randomUint(uint256 min, uint256 max) external returns (uint256);",
         "visibility": "external",
         "mutability": "",
