@@ -69,8 +69,8 @@ pub struct TestArgs {
 
     /// Run a test in the debugger.
     ///
-    /// The argument passed to this flag is the name of the test function you want to run, and it
-    /// works the same as --match-test.
+    /// The argument passed to this flag is the **regex** of the test function signature you want
+    /// to run, and it works the same as --match-test.
     ///
     /// If more than one test matches your specified criteria, you must add additional filters
     /// until only one test is found (see --match-contract and --match-path).
