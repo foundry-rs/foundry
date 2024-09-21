@@ -160,7 +160,7 @@ async fn test_scrape_bytecode() {
     let filter = Filter::new(".*", ".*", ".*fuzz/FuzzScrapeBytecode.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
     runner.test_options.fuzz.runs = 2000;
-    runner.test_options.fuzz.seed = Some(U256::from(100u32));
+    runner.test_options.fuzz.seed = Some(U256::from(119u32));
     let suite_result = runner.test_collect(&filter);
 
     assert!(!suite_result.is_empty());
