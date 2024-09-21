@@ -6635,6 +6635,66 @@
     },
     {
       "func": {
+        "id": "parseTomlTypeArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to type array corresponding to `typeDescription`.",
+        "declaration": "function parseTomlTypeArray(string calldata toml, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlTypeArray(string,string,string)",
+        "selector": "0x49be3743",
+        "selectorBytes": [
+          73,
+          190,
+          55,
+          67
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlType_0",
+        "description": "Parses a string of TOML data and coerces it to type corresponding to `typeDescription`.",
+        "declaration": "function parseTomlType(string calldata toml, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlType(string,string)",
+        "selector": "0x47fa5e11",
+        "selectorBytes": [
+          71,
+          250,
+          94,
+          17
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlType_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to type corresponding to `typeDescription`.",
+        "declaration": "function parseTomlType(string calldata toml, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlType(string,string,string)",
+        "selector": "0xf9fa5cdb",
+        "selectorBytes": [
+          249,
+          250,
+          92,
+          219
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "parseTomlUint",
         "description": "Parses a string of TOML data at `key` and coerces it to `uint256`.",
         "declaration": "function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);",

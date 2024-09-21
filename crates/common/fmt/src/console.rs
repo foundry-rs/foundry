@@ -1,61 +1,175 @@
 use super::UIfmt;
 use alloy_primitives::{Address, Bytes, FixedBytes, I256, U256};
-use std::iter::Peekable;
+use std::fmt::{self, Write};
+
+/// A piece is a portion of the format string which represents the next part to emit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Piece<'a> {
+    /// A literal string which should directly be emitted.
+    String(&'a str),
+    /// A format specifier which should be replaced with the next argument.
+    NextArgument(FormatSpec),
+}
 
 /// A format specifier.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum FormatSpec {
-    /// %s format spec
+    /// `%s`
     #[default]
     String,
-    /// %d format spec
+    /// `%d`
     Number,
-    /// %i format spec
+    /// `%i`
     Integer,
-    /// %o format spec
+    /// `%o`
     Object,
-    /// %e format spec with an optional precision
+    /// `%e`, `%18e`
     Exponential(Option<usize>),
-    /// %x format spec
+    /// `%x`
     Hexadecimal,
 }
 
-impl FormatSpec {
-    fn from_chars<I>(iter: &mut Peekable<I>) -> Result<Self, String>
-    where
-        I: Iterator<Item = char>,
-    {
-        match iter.next().ok_or_else(String::new)? {
-            's' => Ok(Self::String),
-            'd' => Ok(Self::Number),
-            'i' => Ok(Self::Integer),
-            'o' => Ok(Self::Object),
-            'e' => Ok(Self::Exponential(None)),
-            'x' => Ok(Self::Hexadecimal),
-            ch if ch.is_ascii_digit() => {
-                let mut num = ch.to_string();
-                while let Some(&ch) = iter.peek() {
-                    if ch.is_ascii_digit() {
-                        num.push(ch);
-                        iter.next();
-                    } else {
-                        break;
-                    }
+impl fmt::Display for FormatSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("%")?;
+        match *self {
+            Self::String => f.write_str("s"),
+            Self::Number => f.write_str("d"),
+            Self::Integer => f.write_str("i"),
+            Self::Object => f.write_str("o"),
+            Self::Exponential(Some(n)) => write!(f, "{n}e"),
+            Self::Exponential(None) => f.write_str("e"),
+            Self::Hexadecimal => f.write_str("x"),
+        }
+    }
+}
+
+enum ParseArgError {
+    /// Failed to parse the argument.
+    Err,
+    /// Escape `%%`.
+    Skip,
+}
+
+/// Parses a format string into a sequence of [pieces][Piece].
+#[derive(Debug)]
+pub struct Parser<'a> {
+    input: &'a str,
+    chars: std::str::CharIndices<'a>,
+}
+
+impl<'a> Parser<'a> {
+    /// Creates a new parser for the given input.
+    pub fn new(input: &'a str) -> Self {
+        Self { input, chars: input.char_indices() }
+    }
+
+    /// Parses a string until the next format specifier.
+    ///
+    /// `skip` is the number of format specifier characters (`%`) to ignore before returning the
+    /// string.
+    fn string(&mut self, start: usize, mut skip: usize) -> &'a str {
+        while let Some((pos, c)) = self.peek() {
+            if c == '%' {
+                if skip == 0 {
+                    return &self.input[start..pos];
                 }
-                if let Some(&ch) = iter.peek() {
-                    if ch == 'e' {
-                        let num = num.parse().map_err(|_| num)?;
-                        iter.next();
-                        Ok(Self::Exponential(Some(num)))
-                    } else {
-                        Err(num)
-                    }
-                } else {
-                    Err(num)
+                skip -= 1;
+            }
+            self.chars.next();
+        }
+        &self.input[start..]
+    }
+
+    /// Parses a format specifier.
+    ///
+    /// If `Err` is returned, the internal iterator may have been advanced and it may be in an
+    /// invalid state.
+    fn argument(&mut self) -> Result<FormatSpec, ParseArgError> {
+        let (start, ch) = self.peek().ok_or(ParseArgError::Err)?;
+        let simple_spec = match ch {
+            's' => Some(FormatSpec::String),
+            'd' => Some(FormatSpec::Number),
+            'i' => Some(FormatSpec::Integer),
+            'o' => Some(FormatSpec::Object),
+            'e' => Some(FormatSpec::Exponential(None)),
+            'x' => Some(FormatSpec::Hexadecimal),
+            // "%%" is a literal '%'.
+            '%' => return Err(ParseArgError::Skip),
+            _ => None,
+        };
+        if let Some(spec) = simple_spec {
+            self.chars.next();
+            return Ok(spec);
+        }
+
+        // %<n>e
+        if ch.is_ascii_digit() {
+            let n = self.integer(start);
+            if let Some((_, 'e')) = self.peek() {
+                self.chars.next();
+                return Ok(FormatSpec::Exponential(n));
+            }
+        }
+
+        Err(ParseArgError::Err)
+    }
+
+    fn integer(&mut self, start: usize) -> Option<usize> {
+        let mut end = start;
+        while let Some((pos, ch)) = self.peek() {
+            if !ch.is_ascii_digit() {
+                end = pos;
+                break;
+            }
+            self.chars.next();
+        }
+        self.input[start..end].parse().ok()
+    }
+
+    fn current_pos(&mut self) -> usize {
+        self.peek().map(|(n, _)| n).unwrap_or(self.input.len())
+    }
+
+    fn peek(&mut self) -> Option<(usize, char)> {
+        self.peek_n(0)
+    }
+
+    fn peek_n(&mut self, n: usize) -> Option<(usize, char)> {
+        self.chars.clone().nth(n)
+    }
+}
+
+impl<'a> Iterator for Parser<'a> {
+    type Item = Piece<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (mut start, ch) = self.peek()?;
+        let mut skip = 0;
+        if ch == '%' {
+            let prev = self.chars.clone();
+            self.chars.next();
+            match self.argument() {
+                Ok(arg) => {
+                    debug_assert_eq!(arg.to_string(), self.input[start..self.current_pos()]);
+                    return Some(Piece::NextArgument(arg));
+                }
+
+                // Skip the argument if we encountered "%%".
+                Err(ParseArgError::Skip) => {
+                    start = self.current_pos();
+                    skip += 1;
+                }
+
+                // Reset the iterator if we failed to parse the argument, and include any
+                // parsed and unparsed specifier in `String`.
+                Err(ParseArgError::Err) => {
+                    self.chars = prev;
+                    skip += 1;
                 }
             }
-            ch => Err(String::from(ch)),
         }
+        Some(Piece::String(self.string(start, skip)))
     }
 }
 
@@ -249,7 +363,7 @@ impl ConsoleFmt for [u8] {
 /// assert_eq!(formatted, "foo has 3 characters");
 /// ```
 pub fn console_format(spec: &str, values: &[&dyn ConsoleFmt]) -> String {
-    let mut values = values.iter().copied().peekable();
+    let mut values = values.iter().copied();
     let mut result = String::with_capacity(spec.len());
 
     // for the first space
@@ -275,45 +389,19 @@ pub fn console_format(spec: &str, values: &[&dyn ConsoleFmt]) -> String {
 
 fn format_spec<'a>(
     s: &str,
-    values: &mut Peekable<impl Iterator<Item = &'a dyn ConsoleFmt>>,
+    mut values: impl Iterator<Item = &'a dyn ConsoleFmt>,
     result: &mut String,
 ) {
-    let mut expect_fmt = false;
-    let mut chars = s.chars().peekable();
-
-    while chars.peek().is_some() {
-        if expect_fmt {
-            expect_fmt = false;
-            match FormatSpec::from_chars(&mut chars) {
-                Ok(spec) => {
-                    let value = values.next().expect("value existence is checked");
-                    // format and write the value
+    for piece in Parser::new(s) {
+        match piece {
+            Piece::String(s) => result.push_str(s),
+            Piece::NextArgument(spec) => {
+                if let Some(value) = values.next() {
                     result.push_str(&value.fmt(spec));
-                }
-                Err(consumed) => {
-                    // on parser failure, write '%' and consumed characters
-                    result.push('%');
-                    result.push_str(&consumed);
-                }
-            }
-        } else {
-            let ch = chars.next().unwrap();
-            if ch == '%' {
-                if let Some(&next_ch) = chars.peek() {
-                    if next_ch == '%' {
-                        result.push('%');
-                        chars.next();
-                    } else if values.peek().is_some() {
-                        // only try formatting if there are values to format
-                        expect_fmt = true;
-                    } else {
-                        result.push(ch);
-                    }
                 } else {
-                    result.push(ch);
+                    // Write the format specifier as-is if there are no more values.
+                    write!(result, "{spec}").unwrap();
                 }
-            } else {
-                result.push(ch);
             }
         }
     }
