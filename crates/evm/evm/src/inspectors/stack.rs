@@ -304,11 +304,11 @@ pub struct InspectorStackRefMut<'a> {
 }
 
 impl CheatcodesExecutor for InspectorStackInner {
-    fn get_inspector<'a, DB: DatabaseExt>(
+    fn get_inspector<'a>(
         &'a mut self,
         cheats: &'a mut Cheatcodes,
-    ) -> impl InspectorExt<DB> + 'a {
-        InspectorStackRefMut { cheatcodes: Some(cheats), inner: self }
+    ) -> Box<dyn InspectorExt<&'a mut dyn DatabaseExt> + 'a> {
+        Box::new(InspectorStackRefMut { cheatcodes: Some(cheats), inner: self })
     }
 
     fn tracing_inspector(&mut self) -> Option<&mut Option<TracingInspector>> {

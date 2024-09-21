@@ -200,7 +200,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<Backend>,
+        inspector: &mut dyn InspectorExt<&mut dyn DatabaseExt>,
     ) -> eyre::Result<()>;
 
     /// Executes a given TransactionRequest, commits the new state to the DB
@@ -209,7 +209,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         transaction: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<Backend>,
+        inspector: &mut dyn InspectorExt<&mut dyn DatabaseExt>,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -1229,7 +1229,7 @@ impl DatabaseExt for Backend {
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<Self>,
+        inspector: &mut dyn InspectorExt<&mut dyn DatabaseExt>,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -1270,7 +1270,7 @@ impl DatabaseExt for Backend {
         tx: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<Self>,
+        inspector: &mut dyn InspectorExt<&mut dyn DatabaseExt>,
     ) -> eyre::Result<()> {
         trace!(?tx, "execute signed transaction");
 
@@ -1294,7 +1294,10 @@ impl DatabaseExt for Backend {
         self.commit(journaled_state.state.clone());
 
         let res = {
-            let db = self.clone();
+            let mut db = self.clone();
+            let db = &mut db as &mut dyn DatabaseExt;
+            let db =
+                unsafe { std::mem::transmute::<&mut dyn DatabaseExt, &mut dyn DatabaseExt>(db) };
             let env = self.env_with_handler_cfg(env);
             let mut evm = new_evm_with_inspector(db, env, inspector);
             evm.context.evm.journaled_state.depth = journaled_state.depth + 1;
@@ -1921,7 +1924,7 @@ fn commit_transaction(
     fork: &mut Fork,
     fork_id: &ForkId,
     persistent_accounts: &HashSet<Address>,
-    inspector: &mut dyn InspectorExt<Backend>,
+    inspector: &mut dyn InspectorExt<&mut dyn DatabaseExt>,
 ) -> eyre::Result<()> {
     configure_tx_env(&mut env.env, tx);
 
@@ -1930,7 +1933,9 @@ fn commit_transaction(
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let depth = journaled_state.depth;
-        let db = Backend::new_with_fork(fork_id, fork, journaled_state);
+        let mut db = Backend::new_with_fork(fork_id, fork, journaled_state);
+        let db = &mut db as &mut dyn DatabaseExt;
+        let db = unsafe { std::mem::transmute::<&mut dyn DatabaseExt, &mut dyn DatabaseExt>(db) };
 
         let mut evm = crate::utils::new_evm_with_inspector(db, env, inspector);
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
