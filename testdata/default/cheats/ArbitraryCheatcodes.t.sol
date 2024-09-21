@@ -11,7 +11,10 @@ contract ArbitraryCheatcodesTest is DSTest {
     int128 constant max = 170141183460469231731687303715884105727;
 
     function test_int128() public {
-        int256 val = vm.arbitraryInt(128);
+        vm.expectRevert("vm.arbitraryInt: number of bits cannot exceed 256");
+        int256 val = vm.arbitraryInt(type(uint256).max);
+
+        val = vm.arbitraryInt(128);
         assertGe(val, min);
         assertLe(val, max);
     }
@@ -25,6 +28,11 @@ contract ArbitraryCheatcodesTest is DSTest {
         address fresh_address = vm.arbitraryAddress();
         assert(fresh_address != address(this));
         assert(fresh_address != address(vm));
+    }
+
+    function test_arbitraryUintLimit() public {
+        vm.expectRevert("vm.arbitraryUint: number of bits cannot exceed 256");
+        uint256 val = vm.arbitraryUint(type(uint256).max);
     }
 
     function test_arbitraryUints(uint256 x) public {
@@ -56,6 +64,11 @@ contract ArbitraryBytesTest is DSTest {
     function manip_symbolic_bytes(bytes memory b) public {
         uint256 middle = b.length / 2;
         b[middle] = hex"aa";
+    }
+
+    function test_symbolic_bytes_revert() public {
+        vm.expectRevert();
+        bytes memory val = vm.arbitraryBytes(type(uint256).max);
     }
 
     function test_symbolic_bytes_1() public {

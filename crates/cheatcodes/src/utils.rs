@@ -220,6 +220,10 @@ impl Cheatcode for arbitraryBoolCall {
 impl Cheatcode for arbitraryBytesCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { len } = *self;
+        ensure!(
+            len <= U256::from(usize::MAX),
+            format!("bytes length cannot exceed {}", usize::MAX)
+        );
         let mut val = DynSolValue::type_strategy(&DynSolType::Bytes)
             .new_tree(state.test_runner())
             .unwrap()
@@ -249,9 +253,8 @@ fn arbitrary_uint(
 ) -> Result {
     if let Some(bits) = bits {
         // Generate arbitrary with specified bits.
-        let no_bits = bits.to::<usize>();
-        ensure!(no_bits <= 256, "no of bits cannot exceed 256");
-        return Ok(DynSolValue::type_strategy(&DynSolType::Uint(no_bits))
+        ensure!(bits <= U256::from(256), "number of bits cannot exceed 256");
+        return Ok(DynSolValue::type_strategy(&DynSolType::Uint(bits.to::<usize>()))
             .new_tree(state.test_runner())
             .unwrap()
             .current()
@@ -290,9 +293,9 @@ fn arbitrary_address(state: &mut Cheatcodes) -> Result {
 
 /// Helper to generate an arbitrary `int` value (with given bits if specified) from type strategy.
 fn arbitrary_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
-    let no_bits = bits.unwrap_or(U256::from(256)).to::<usize>();
-    ensure!(no_bits <= 256, "no of bits cannot exceed 256");
-    Ok(DynSolValue::type_strategy(&DynSolType::Int(no_bits))
+    let no_bits = bits.unwrap_or(U256::from(256));
+    ensure!(no_bits <= U256::from(256), "number of bits cannot exceed 256");
+    Ok(DynSolValue::type_strategy(&DynSolType::Int(no_bits.to::<usize>()))
         .new_tree(state.test_runner())
         .unwrap()
         .current()

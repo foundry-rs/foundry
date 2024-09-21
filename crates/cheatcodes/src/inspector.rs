@@ -1068,6 +1068,10 @@ impl Cheatcodes {
         None
     }
 
+    pub fn rng(&mut self) -> &mut impl Rng {
+        self.test_runner().rng()
+    }
+
     pub fn test_runner(&mut self) -> &mut TestRunner {
         self.test_runner.get_or_insert_with(|| match self.config.seed {
             Some(seed) => TestRunner::new_with_rng(
@@ -1613,7 +1617,7 @@ impl Cheatcodes {
 
         if value.is_cold && value.data.is_zero() {
             if self.has_arbitrary_storage(&target_address) {
-                let arbitrary_value = self.test_runner().rng().gen();
+                let arbitrary_value = self.rng().gen();
                 self.arbitrary_storage.as_mut().unwrap().save(
                     &mut ecx.inner,
                     target_address,
@@ -1621,7 +1625,7 @@ impl Cheatcodes {
                     arbitrary_value,
                 );
             } else if self.is_arbitrary_storage_copy(&target_address) {
-                let arbitrary_value = self.test_runner().rng().gen();
+                let arbitrary_value = self.rng().gen();
                 self.arbitrary_storage.as_mut().unwrap().copy(
                     &mut ecx.inner,
                     target_address,
