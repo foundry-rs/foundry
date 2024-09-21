@@ -2330,7 +2330,7 @@ interface Vm {
     #[cheatcode(group = Utilities, status = Deprecated(Some("replaced by `arbitraryUint`")))]
     function randomUint() external returns (uint256);
 
-    /// Returns random uin256 value between the provided range (=min..=max).
+    /// Returns random uint256 value between the provided range (=min..=max).
     /// `randomUint` is being deprecated in favor of `arbitraryUint`. It will be removed in future versions.
     #[cheatcode(group = Utilities, status = Deprecated(Some("replaced by `arbitraryUint`")))]
     function randomUint(uint256 min, uint256 max) external returns (uint256);
