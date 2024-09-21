@@ -26,7 +26,6 @@ use serde::{
 use std::{collections::BTreeMap, fmt, path::Path};
 
 /// Helper trait get access to the full state data of the database
-#[auto_impl::auto_impl(Box)]
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
     /// Returns a reference to the database as a `dyn DatabaseRef`.
     // TODO: Required until trait upcasting is stabilized: <https://github.com/rust-lang/rust/issues/65991>
@@ -49,13 +48,6 @@ pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
 
     /// Reverses `clear_into_snapshot` by initializing the db's state with the snapshot
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot);
-}
-
-impl dyn MaybeFullDatabase {
-    // TODO: Required until trait upcasting is stabilized: <https://github.com/rust-lang/rust/issues/65991>
-    pub fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
-        MaybeFullDatabase::as_dyn(self)
-    }
 }
 
 impl<'a, T: 'a + MaybeFullDatabase + ?Sized> MaybeFullDatabase for &'a T
@@ -84,7 +76,6 @@ where
 }
 
 /// Helper trait to reset the DB if it's forked
-#[auto_impl::auto_impl(Box)]
 pub trait MaybeForkedDatabase {
     fn maybe_reset(&mut self, _url: Option<String>, block_number: BlockId) -> Result<(), String>;
 
@@ -94,7 +85,6 @@ pub trait MaybeForkedDatabase {
 }
 
 /// This bundles all required revm traits
-#[auto_impl::auto_impl(Box)]
 pub trait Db:
     DatabaseRef<Error = DatabaseError>
     + Database<Error = DatabaseError>

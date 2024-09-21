@@ -873,7 +873,6 @@ dependencies = [
  "anvil-rpc",
  "anvil-server",
  "async-trait",
- "auto_impl",
  "axum",
  "bytes",
  "chrono",

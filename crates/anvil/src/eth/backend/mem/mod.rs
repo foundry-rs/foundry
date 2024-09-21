@@ -1014,7 +1014,7 @@ impl Backend {
                 env.block.timestamp = U256::from(self.time.next_timestamp());
 
                 let executor = TransactionExecutor {
-                    db: &mut *db,
+                    db: &mut **db,
                     validator: self,
                     pending: pool_transactions.into_iter(),
                     block_env: env.block.clone(),
@@ -1911,7 +1911,7 @@ impl Backend {
 
         let db = self.db.read().await;
         let block = self.env.read().block.clone();
-        Ok(f(Box::new(&*db), block))
+        Ok(f(Box::new(&**db), block))
     }
 
     pub async fn storage_at(
