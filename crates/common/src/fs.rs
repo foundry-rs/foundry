@@ -43,9 +43,8 @@ pub fn read_to_string(path: impl AsRef<Path>) -> Result<String> {
 pub fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
     // read the file into a byte array first
     // https://github.com/serde-rs/json/issues/160
-    let bytes = read(path)?;
-    serde_json::from_slice(&bytes)
-        .map_err(|source| FsPathError::ReadJson { source, path: path.into() })
+    let s = read_to_string(path)?;
+    serde_json::from_str(&s).map_err(|source| FsPathError::ReadJson { source, path: path.into() })
 }
 
 /// Writes the object as a JSON object.
