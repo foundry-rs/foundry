@@ -857,16 +857,19 @@ impl Backend {
     }
 
     /// Creates an EVM instance with optionally injected precompiles.
-    fn new_evm_with_inspector_ref<DB, I>(
+    #[allow(clippy::type_complexity)]
+    fn new_evm_with_inspector_ref<'i, 'db>(
         &self,
-        db: DB,
+        db: &'db dyn DatabaseRef<Error = DatabaseError>,
         env: EnvWithHandlerCfg,
-        inspector: I,
-    ) -> revm::Evm<'_, I, WrapDatabaseRef<DB>>
-    where
-        DB: revm::DatabaseRef,
-        I: InspectorExt<WrapDatabaseRef<DB>>,
-    {
+        inspector: &'i mut dyn InspectorExt<
+            WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
+        >,
+    ) -> revm::Evm<
+        '_,
+        &'i mut dyn InspectorExt<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>,
+        WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
+    > {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
         if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
@@ -892,7 +895,7 @@ impl Backend {
 
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
-        let mut evm = self.new_evm_with_inspector_ref(&**db, env, &mut inspector);
+        let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), env, &mut inspector);
         let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
@@ -1011,7 +1014,7 @@ impl Backend {
                 env.block.timestamp = U256::from(self.time.next_timestamp());
 
                 let executor = TransactionExecutor {
-                    db: &mut *db,
+                    db: &mut **db,
                     validator: self,
                     pending: pool_transactions.into_iter(),
                     block_env: env.block.clone(),
@@ -1151,10 +1154,10 @@ impl Backend {
         self.with_database_at(block_request, |state, block| {
             let block_number = block.number.to::<u64>();
             let (exit, out, gas, state) = match overrides {
-                None => self.call_with_state(state, request, fee_details, block),
+                None => self.call_with_state(state.as_dyn(), request, fee_details, block),
                 Some(overrides) => {
                     let state = state::apply_state_override(overrides.into_iter().collect(), state)?;
-                    self.call_with_state(state, request, fee_details, block)
+                    self.call_with_state(state.as_dyn(), request, fee_details, block)
                 },
             }?;
             trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
@@ -1263,16 +1266,13 @@ impl Backend {
         inspector
     }
 
-    pub fn call_with_state<D>(
+    pub fn call_with_state(
         &self,
-        state: D,
+        state: &dyn DatabaseRef<Error = DatabaseError>,
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError>
-    where
-        D: DatabaseRef<Error = DatabaseError>,
-    {
+    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         let mut inspector = self.build_inspector();
 
         let env = self.build_call_env(request, fee_details, block_env);
@@ -1319,8 +1319,11 @@ impl Backend {
                             );
 
                             let env = self.build_call_env(request, fee_details, block);
-                            let mut evm =
-                                self.new_evm_with_inspector_ref(state, env, &mut inspector);
+                            let mut evm = self.new_evm_with_inspector_ref(
+                                state.as_dyn(),
+                                env,
+                                &mut inspector,
+                            );
                             let ResultAndState { result, state: _ } = evm.transact()?;
 
                             drop(evm);
@@ -1352,7 +1355,7 @@ impl Backend {
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
-            let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
+            let mut evm = self.new_evm_with_inspector_ref(state.as_dyn(), env, &mut inspector);
             let ResultAndState { result, state: _ } = evm.transact()?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -1381,16 +1384,13 @@ impl Backend {
         .await?
     }
 
-    pub fn build_access_list_with_state<D>(
+    pub fn build_access_list_with_state(
         &self,
-        state: D,
+        state: &dyn DatabaseRef<Error = DatabaseError>,
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError>
-    where
-        D: DatabaseRef<Error = DatabaseError>,
-    {
+    ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError> {
         let from = request.from.unwrap_or_default();
         let to = if let Some(TxKind::Call(to)) = request.to {
             to
@@ -1911,7 +1911,7 @@ impl Backend {
 
         let db = self.db.read().await;
         let block = self.env.read().block.clone();
-        Ok(f(Box::new(&*db), block))
+        Ok(f(Box::new(&**db), block))
     }
 
     pub async fn storage_at(
@@ -1937,17 +1937,14 @@ impl Backend {
         address: Address,
         block_request: Option<BlockRequest>,
     ) -> Result<Bytes, BlockchainError> {
-        self.with_database_at(block_request, |db, _| self.get_code_with_state(db, address)).await?
+        self.with_database_at(block_request, |db, _| self.get_code_with_state(&db, address)).await?
     }
 
-    pub fn get_code_with_state<D>(
+    pub fn get_code_with_state(
         &self,
-        state: D,
+        state: &dyn DatabaseRef<Error = DatabaseError>,
         address: Address,
-    ) -> Result<Bytes, BlockchainError>
-    where
-        D: DatabaseRef<Error = DatabaseError>,
-    {
+    ) -> Result<Bytes, BlockchainError> {
         trace!(target: "backend", "get code for {:?}", address);
         let account = state.basic_ref(address)?.unwrap_or_default();
         if account.code_hash == KECCAK_EMPTY {
