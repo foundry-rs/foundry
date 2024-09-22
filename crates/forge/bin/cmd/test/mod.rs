@@ -328,19 +328,15 @@ impl TestArgs {
         let env = evm_opts.evm_env().await?;
 
         // Enable internal tracing for more informative flamegraph.
-        if should_draw {
+        if should_draw && self.decode_internal.is_none() {
             self.decode_internal = Some(None);
         }
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
-        let decode_internal = if let Some(maybe_fn) = self.decode_internal.as_ref() {
-            if maybe_fn.is_some() {
-                // If function filter is provided, we enable full tracing.
-                InternalTraceMode::Full
-            } else {
-                // If no function filter is provided, we enable simple tracing.
-                InternalTraceMode::Simple
-            }
+        let decode_internal = if self.decode_internal.is_some() {
+            // If more than one function matched, we enable simple tracing.
+            // If only one function matched, we enable full tracing. This is done in `run_tests`.
+            InternalTraceMode::Simple
         } else {
             InternalTraceMode::None
         };
@@ -388,18 +384,10 @@ impl TestArgs {
             let (suite_name, test_name, mut test_result) =
                 outcome.remove_first().ok_or_eyre("no tests were executed")?;
 
-            let arena = test_result
+            let (_, arena) = test_result
                 .traces
                 .iter_mut()
-                .find_map(
-                    |(kind, arena)| {
-                        if *kind == TraceKind::Execution {
-                            Some(arena)
-                        } else {
-                            None
-                        }
-                    },
-                )
+                .find(|(kind, _)| *kind == TraceKind::Execution)
                 .unwrap();
 
             // Decode traces.
@@ -412,6 +400,7 @@ impl TestArgs {
             let test_name = test_name.trim_end_matches("()");
             let file_name = format!("cache/{label}_{contract}_{test_name}.svg");
             let file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
+            let file = std::io::BufWriter::new(file);
 
             let mut options = inferno::flamegraph::Options::default();
             options.title = format!("{label} {contract}::{test_name}");
@@ -422,13 +411,13 @@ impl TestArgs {
             }
 
             // Generate SVG.
-            inferno::flamegraph::from_lines(&mut options, fst.iter().map(|s| s.as_str()), file)
+            inferno::flamegraph::from_lines(&mut options, fst.iter().map(String::as_str), file)
                 .wrap_err("failed to write svg")?;
             println!("\nSaved to {file_name}");
 
             // Open SVG in default program.
-            if opener::open(&file_name).is_err() {
-                println!("\nFailed to open {file_name}. Please open it manually.");
+            if let Err(e) = opener::open(&file_name) {
+                eprintln!("\nFailed to open {file_name}; please open it manually: {e}");
             }
         }
 
@@ -492,6 +481,11 @@ impl TestArgs {
                 "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to {action}.\n\n\
                  Use --match-contract and --match-path to further limit the search.{filter}",
             );
+        }
+
+        // If exactly one test matched, we enable full tracing.
+        if num_filtered == 1 && self.decode_internal.is_some() {
+            runner.decode_internal = InternalTraceMode::Full;
         }
 
         if self.json {
