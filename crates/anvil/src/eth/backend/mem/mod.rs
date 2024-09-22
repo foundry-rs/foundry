@@ -441,12 +441,14 @@ impl Backend {
                     *self.fork.write() = Some(fork);
                     *self.env.write() = env;
                 } else {
+                    let gas_limit = self.node_config.read().await.clone().fork_gas_limit(&fork_block);
                     let mut env = self.env.write();
+
                     env.cfg.chain_id = fork.chain_id();
                     env.block = BlockEnv {
                         number: U256::from(fork_block_number),
                         timestamp: U256::from(fork_block.header.timestamp),
-                        gas_limit: U256::from(fork_block.header.gas_limit),
+                        gas_limit: U256::from(gas_limit),
                         difficulty: fork_block.header.difficulty,
                         prevrandao: Some(fork_block.header.mix_hash.unwrap_or_default()),
                         // Keep previous `coinbase` and `basefee` value
@@ -459,7 +461,7 @@ impl Backend {
                     // the next block
                     let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
                         fork_block.header.gas_used,
-                        fork_block.header.gas_limit,
+                        gas_limit,
                         fork_block.header.base_fee_per_gas.unwrap_or_default(),
                     );
 
