@@ -312,7 +312,8 @@ Gas Limit
                 } else {
                     self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT).to_string()
                 }
-            }.green()
+            }
+            .green()
         );
 
         let _ = write!(
@@ -1175,7 +1176,7 @@ latest block number: {latest_block}"
                     gas_limit,
                     block.header.base_fee_per_gas.unwrap_or_default(),
                 );
-                
+
                 // update next base fee
                 fees.set_base_fee(next_block_base_fee);
             }
@@ -1275,12 +1276,12 @@ latest block number: {latest_block}"
                 return block.header.gas_limit;
             }
         }
-        
+
         u64::MAX as u128
     }
 
     /// Returns the gas limit to use for the fork
-    /// 
+    ///
     /// Checks the config for the `disable_block_gas_limit` flag
     pub(crate) fn gas_limit(&self) -> u128 {
         if self.disable_block_gas_limit {
