@@ -45,7 +45,7 @@ use tokio::{
 mod service;
 
 mod config;
-pub use config::{AccountGenerator, ForkChoice, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
+pub use config::{AccountGenerator, ForkChoice, NodeConfig, CHAIN_ID, VERSION_MESSAGE, DEFAULT_GAS_LIMIT};
 
 mod hardfork;
 pub use hardfork::EthereumHardfork;
