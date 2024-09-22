@@ -310,7 +310,13 @@ Gas Limit
                 if self.disable_block_gas_limit {
                     "Disabled".to_string()
                 } else {
-                    self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT).to_string()
+                    self.gas_limit.map(|l| l.to_string()).unwrap_or_else(|| {
+                        if self.fork_choice.is_some() {
+                            "Forked".to_string()
+                        } else {
+                            DEFAULT_GAS_LIMIT.to_string()
+                        }
+                    })
                 }
             }
             .green()
@@ -348,6 +354,15 @@ Genesis Timestamp
             wallet_description.insert("mnemonic".to_string(), phrase);
         };
 
+        let gas_limit = match self.gas_limit {
+            // if we have a disabled flag we should max out the limit
+            Some(_) | None if self.disable_block_gas_limit => {
+                serde_json::Value::String(u64::MAX.to_string())
+            }
+            Some(limit) => serde_json::Value::String(limit.to_string()),
+            _ => serde_json::Value::Null,
+        };
+
         if let Some(fork) = fork {
             json!({
               "available_accounts": available_accounts,
@@ -359,7 +374,7 @@ Genesis Timestamp
               "wallet": wallet_description,
               "base_fee": format!("{}", self.get_base_fee()),
               "gas_price": format!("{}", self.get_gas_price()),
-              "gas_limit": format!("{}", self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)),
+              "gas_limit": gas_limit,
             })
         } else {
             json!({
@@ -368,7 +383,7 @@ Genesis Timestamp
               "wallet": wallet_description,
               "base_fee": format!("{}", self.get_base_fee()),
               "gas_price": format!("{}", self.get_gas_price()),
-              "gas_limit": format!("{}", self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)),
+              "gas_limit": gas_limit,
               "genesis_timestamp": format!("{}", self.get_genesis_timestamp()),
             })
         }
