@@ -20,7 +20,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell};
+use foundry_common::{cli_warn, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -67,29 +67,20 @@ pub struct TestArgs {
     #[arg(value_hint = ValueHint::FilePath)]
     pub path: Option<GlobMatcher>,
 
-    /// Run a test in the debugger.
-    ///
-    /// The argument passed to this flag is the **regex** of the test function signature you want
-    /// to run, and it works the same as --match-test.
-    ///
-    /// If more than one test matches your specified criteria, you must add additional filters
-    /// until only one test is found (see --match-contract and --match-path).
+    /// Run a single test in the debugger.
     ///
     /// The matching test will be opened in the debugger regardless of the outcome of the test.
     ///
     /// If the matching test is a fuzz test, then it will open the debugger on the first failure
-    /// case.
-    /// If the fuzz test does not fail, it will open the debugger on the last fuzz case.
-    ///
-    /// For more fine-grained control of which fuzz case is run, see forge run.
-    #[arg(long, value_name = "TEST_FUNCTION")]
-    debug: Option<Regex>,
+    /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
+    #[arg(long, value_name = "DEPRECATED_TEST_FUNCTION_REGEX")]
+    debug: Option<Option<Regex>>,
 
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
     ///
     /// A flame graph is used to visualize which functions or operations within the smart contract
     /// are consuming the most gas overall in a sorted manner.
-    #[arg(long, conflicts_with = "flamechart")]
+    #[arg(long)]
     flamegraph: bool,
 
     /// Generate a flamechart for a single test. Implies `--decode-internal`.
@@ -99,18 +90,13 @@ pub struct TestArgs {
     #[arg(long, conflicts_with = "flamegraph")]
     flamechart: bool,
 
-    /// Whether to identify internal functions in traces.
+    /// Identify internal functions in traces.
     ///
-    /// If no argument is passed to this flag, it will trace internal functions scope and decode
-    /// stack parameters, but parameters stored in memory (such as bytes or arrays) will not be
-    /// decoded.
+    /// This will trace internal functions and decode stack parameters.
     ///
-    /// To decode memory parameters, you should pass an argument with a test function name,
-    /// similarly to --debug and --match-test.
-    ///
-    /// If more than one test matches your specified criteria, you must add additional filters
-    /// until only one test is found (see --match-contract and --match-path).
-    #[arg(long, value_name = "TEST_FUNCTION")]
+    /// Parameters stored in memory (such as bytes or arrays) are currently decoded only when a
+    /// single function is matched, similarly to `--debug`, for performance reasons.
+    #[arg(long, value_name = "DEPRECATED_TEST_FUNCTION_REGEX")]
     decode_internal: Option<Option<Regex>>,
 
     /// Print a gas report.
@@ -373,13 +359,18 @@ impl TestArgs {
             .alphanet(evm_opts.alphanet)
             .build(project_root, &output, env, evm_opts)?;
 
-        let mut maybe_override_mt = |flag, maybe_regex: Option<&Regex>| {
-            if let Some(regex) = maybe_regex {
+        let mut maybe_override_mt = |flag, maybe_regex: Option<&Option<Regex>>| {
+            if let Some(Some(regex)) = maybe_regex {
+                cli_warn!(
+                    "specifying argument for --{flag} is deprecated and will be removed in the future, \
+                     use --match-test instead"
+                );
+
                 let test_pattern = &mut filter.args_mut().test_pattern;
                 if test_pattern.is_some() {
                     eyre::bail!(
                         "Cannot specify both --{flag} and --match-test. \
-                        Use --match-contract and --match-path to further limit the search instead."
+                         Use --match-contract and --match-path to further limit the search instead."
                     );
                 }
                 *test_pattern = Some(regex.clone());
@@ -387,12 +378,8 @@ impl TestArgs {
 
             Ok(())
         };
-
         maybe_override_mt("debug", self.debug.as_ref())?;
-        maybe_override_mt(
-            "decode-internal",
-            self.decode_internal.as_ref().and_then(|v| v.as_ref()),
-        )?;
+        maybe_override_mt("decode-internal", self.decode_internal.as_ref())?;
 
         let libraries = runner.libraries.clone();
         let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
@@ -488,12 +475,7 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         let num_filtered = runner.matching_test_functions(filter).count();
-        if (self.debug.is_some() ||
-            self.decode_internal.as_ref().map_or(false, |v| v.is_some()) ||
-            self.flamegraph ||
-            self.flamechart) &&
-            num_filtered != 1
-        {
+        if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
             let action = if self.flamegraph {
                 "generate a flamegraph"
             } else if self.flamechart {
