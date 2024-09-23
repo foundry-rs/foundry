@@ -1352,10 +1352,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Store the total gas used for all active gas records started by `startSnapshotGas`.
         self.gas_metering.gas_records.iter_mut().for_each(|record| {
-            // Only record top-level gas usage, excluding root call.
-            if ecx.journaled_state.depth() == 1 {
-                record.gas_used = record.gas_used.saturating_add(gas.spent());
-            }
+            record.gas_used = record.gas_used.saturating_add(gas.spent());
+            record.depth = ecx.journaled_state.depth();
         });
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the

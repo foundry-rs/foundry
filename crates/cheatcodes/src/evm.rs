@@ -72,6 +72,8 @@ pub struct GasRecord {
     pub name: String,
     /// The total gas used in the gas snapshot.
     pub gas_used: u64,
+    /// Depth of the gas snapshot.
+    pub depth: u64,
 }
 
 impl Cheatcode for addrCall {
@@ -830,6 +832,7 @@ fn inner_start_gas_snapshot<DB: DatabaseExt>(
         group: group.to_string(),
         name: name.clone(),
         gas_used: 0,
+        depth: 0,
     });
 
     ccx.state.gas_metering.last_snapshot_name = Some(name);
