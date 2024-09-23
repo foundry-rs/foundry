@@ -178,7 +178,15 @@ pub async fn decode_trace_arena(
 
 /// Render a collection of call traces to a string.
 pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
-    let mut w = TraceWriter::new(Vec::<u8>::new());
+    render_trace_arena_with_bytecodes(arena, false)
+}
+
+/// Render a collection of call traces to a string optionally including contract creation bytecodes.
+pub fn render_trace_arena_with_bytecodes(
+    arena: &SparsedTraceArena,
+    with_bytecodes: bool,
+) -> String {
+    let mut w = TraceWriter::new(Vec::<u8>::new()).write_bytecodes(with_bytecodes);
     w.write_arena(&arena.resolve_arena()).expect("Failed to write traces");
     String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
 }

@@ -242,7 +242,16 @@ impl RunArgs {
             }
         };
 
-        handle_traces(result, &config, chain, self.label, self.debug, self.decode_internal).await?;
+        handle_traces(
+            result,
+            &config,
+            chain,
+            self.label,
+            self.debug,
+            self.decode_internal,
+            self.verbose,
+        )
+        .await?;
 
         Ok(())
     }
