@@ -261,9 +261,13 @@ impl Cheatcode for getArtifactPathCall {
                 artifacts
                     .iter()
                     .find(|(id, _)| {
-                        let id_name = id.name.split('.').next().unwrap();
+                        // artifactId.name might be in the form of "Counter.0.8.23"
+                        let id_name = id
+                            .name
+                            .split_once('.')
+                            .map_or(id.name.clone(), |(name, _)| name.to_string());
 
-                        return id_name == name
+                        id_name == *name
                     })
                     .map(|(id, _)| id.path.clone())
             })
