@@ -514,8 +514,7 @@ impl ChiselDispatcher {
                         let json = response.json::<EtherscanABIResponse>().await.unwrap();
                         if json.status == "1" && json.result.is_some() {
                             let abi = json.result.unwrap();
-                            let abi: serde_json::Result<JsonAbi> =
-                                serde_json::from_slice(abi.as_bytes());
+                            let abi: serde_json::Result<JsonAbi> = serde_json::from_str(&abi);
                             if let Ok(abi) = abi {
                                 let mut interface = format!(
                                     "// Interface of {}\ninterface {} {{\n",
