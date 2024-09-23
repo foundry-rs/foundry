@@ -72,7 +72,16 @@ pub struct GasRecord {
     pub name: String,
     /// The total gas used in the gas snapshot.
     pub gas_used: u64,
-    /// Depth of the gas snapshot.
+    /// Depth at which the gas snapshot was taken.
+    pub depth: u64,
+}
+
+/// Used for capturing gas frames.
+#[derive(Clone, Debug)]
+pub struct GasFrame {
+    /// The total gas used in the frame.
+    pub gas_used: u64,
+    /// Depth at which the frame was taken.
     pub depth: u64,
 }
 
@@ -832,7 +841,7 @@ fn inner_start_gas_snapshot<DB: DatabaseExt>(
         group: group.to_string(),
         name: name.clone(),
         gas_used: 0,
-        depth: 0,
+        depth: ccx.ecx.journaled_state.depth(),
     });
 
     ccx.state.gas_metering.last_snapshot_name = Some(name);

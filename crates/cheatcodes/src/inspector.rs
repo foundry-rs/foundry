@@ -5,7 +5,7 @@ use crate::{
         mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
-        DealRecord, GasRecord, RecordAccess,
+        DealRecord, GasFrame, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
     script::{Broadcast, ScriptWallets},
@@ -17,8 +17,8 @@ use crate::{
         },
     },
     utils::IgnoredTraces,
-    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
-    Vm::AccountAccess,
+    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
+    Vm::{self, AccountAccess},
 };
 use alloy_primitives::{hex, Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
@@ -244,7 +244,7 @@ pub struct GasMetering {
     /// Stores the last depth.
     pub last_recorded_depth: u64,
     /// Stores recorded gas frames.
-    pub recorded_frames: Vec<u64>,
+    pub recorded_frames: Vec<GasFrame>,
     /// Gas records for the active snapshots.
     pub gas_records: Vec<GasRecord>,
 }
@@ -258,11 +258,13 @@ impl GasMetering {
 
     /// Stop the gas recording.
     pub fn stop(&mut self) {
-        self.gas_records.iter_mut().for_each(|record| {
-            record.gas_used = self.recorded_frames.iter().sum::<u64>();
-        });
+        println!("recorded frames: {:?}", self.recorded_frames);
 
-        println!("gas records: {:?}", self.gas_records);
+        // self.gas_records.iter_mut().for_each(|record| {
+        //     record.gas_used = self.recorded_frames.iter().sum::<u64>();
+        // });
+
+        // println!("gas records: {:?}", self.gas_records);
 
         // reduce sum of gas frames to a single value
         self.recording = false;
@@ -791,10 +793,11 @@ impl Cheatcodes {
             }
         }
 
-        // Store the total gas used for all active gas records started by `startSnapshotGas`
+        // Store the total gas used for all active gas records started by `startSnapshotGas`.
         self.gas_metering.gas_records.iter_mut().for_each(|record| {
-            record.gas_used = record.gas_used.saturating_add(outcome.result.gas.spent());
-            record.depth = ecx.journaled_state.depth();
+            if ecx.journaled_state.depth() == record.depth + 1 {
+                record.gas_used = record.gas_used.saturating_add(outcome.result.gas.spent());
+            }
         });
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -1358,8 +1361,9 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
         // Store the total gas used for all active gas records started by `startSnapshotGas`.
         self.gas_metering.gas_records.iter_mut().for_each(|record| {
-            record.gas_used = record.gas_used.saturating_add(gas.spent());
-            record.depth = ecx.journaled_state.depth();
+            if ecx.journaled_state.depth() == record.depth + 1 {
+                record.gas_used = record.gas_used.saturating_add(gas.spent());
+            }
         });
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -1615,24 +1619,36 @@ impl Cheatcodes {
         interpreter: &mut Interpreter,
         ecx: &mut EvmContext<DB>,
     ) {
-        println!(
-            "{:?} - {:?} @ {}",
-            interpreter.instruction_result,
-            interpreter.gas.spent(),
-            ecx.journaled_state.depth()
-        );
+        let target_depth = self.gas_metering.gas_records.last().unwrap().depth;
 
-        if self.gas_metering.last_recorded_depth != ecx.journaled_state.depth() {
-            self.gas_metering.last_recorded_frame = 0;
-            self.gas_metering.last_recorded_depth = ecx.journaled_state.depth();
-        }
+        if ecx.journaled_state.depth() == target_depth &&
+            matches!(interpreter.instruction_result, InstructionResult::Continue)
+        {
+            match interpreter.current_opcode() {
+                op::CALL |
+                op::CREATE |
+                op::CREATE2 |
+                op::STATICCALL |
+                op::DELEGATECALL |
+                op::EXTSTATICCALL |
+                op::EXTDELEGATECALL => {
+                    println!("ignored: {:?}", interpreter.current_opcode());
+                    // This is already handled in `call_end` / `create_end`.
+                }
+                _ => {
+                    println!(
+                        "{:?} - {:?} - {:?} @ {}",
+                        interpreter.instruction_result,
+                        interpreter.current_opcode(),
+                        interpreter.gas.spent(),
+                        target_depth
+                    );
 
-        if matches!(interpreter.instruction_result, InstructionResult::Continue) {
-            self.gas_metering
-                .recorded_frames
-                .push(interpreter.gas.spent() - self.gas_metering.last_recorded_frame);
-
-            self.gas_metering.last_recorded_frame = interpreter.gas.spent();
+                    self.gas_metering
+                        .recorded_frames
+                        .push(GasFrame { depth: target_depth, gas_used: interpreter.gas.spent() });
+                }
+            }
         }
     }
 
