@@ -195,7 +195,7 @@ forgetest_init!(can_override_config, |prj, cmd| {
     // remappings work
     let remappings_txt =
         prj.create_file("remappings.txt", "ds-test/=lib/forge-std/lib/ds-test/from-file/");
-    let config = forge_utils::load_config_with_root(Some(prj.root().into()));
+    let config = forge_utils::load_config_with_root(Some(prj.root()));
     assert_eq!(
         format!(
             "ds-test/={}/",
@@ -206,7 +206,7 @@ forgetest_init!(can_override_config, |prj, cmd| {
 
     // env vars work
     std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/forge-std/lib/ds-test/from-env/");
-    let config = forge_utils::load_config_with_root(Some(prj.root().into()));
+    let config = forge_utils::load_config_with_root(Some(prj.root()));
     assert_eq!(
         format!(
             "ds-test/={}/",
@@ -283,7 +283,7 @@ Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmat
         "remappings.txt",
         "solmate/=lib/solmate/src/\nsolmate-contracts/=lib/solmate/src/",
     );
-    let config = forge_utils::load_config_with_root(Some(prj.root().into()));
+    let config = forge_utils::load_config_with_root(Some(prj.root()));
     // trailing slashes are removed on windows `to_slash_lossy`
     let path = prj.root().join("lib/solmate/src/").to_slash_lossy().into_owned();
     #[cfg(windows)]
@@ -505,6 +505,7 @@ forgetest!(can_set_gas_price, |prj, cmd| {
 
 // test that we can detect remappings from foundry.toml
 forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
+    std::env::remove_var("DAPP_REMAPPINGS");
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     similar_asserts::assert_eq!(
@@ -545,6 +546,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     let toml_file = nested.join("foundry.toml");
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
+    std::env::remove_var("DAPP_REMAPPINGS");
     let another_config = cmd.config();
     let remappings =
         another_config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
@@ -564,6 +566,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
 
     config.src = "custom-source-dir".into();
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
+    std::env::remove_var("DAPP_REMAPPINGS");
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     similar_asserts::assert_eq!(
@@ -689,7 +692,8 @@ forgetest_init!(can_parse_default_fs_permissions, |_prj, cmd| {
     let config = cmd.config();
 
     assert_eq!(config.fs_permissions.len(), 1);
-    let out_permission = config.fs_permissions.find_permission(Path::new("out")).unwrap();
+    let permissions = config.fs_permissions.joined(Path::new("test"));
+    let out_permission = permissions.find_permission(Path::new("test/out")).unwrap();
     assert_eq!(FsAccessPermission::Read, out_permission);
 });
 

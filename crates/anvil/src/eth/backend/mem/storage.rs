@@ -1,7 +1,10 @@
 //! In-memory blockchain storage
 use crate::eth::{
     backend::{
-        db::{MaybeFullDatabase, SerializableBlock, SerializableTransaction, StateDb},
+        db::{
+            MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
+            SerializableTransaction, StateDb,
+        },
         mem::cache::DiskStateCache,
     },
     error::BlockchainError,
@@ -25,6 +28,7 @@ use anvil_core::eth::{
 };
 use anvil_rpc::error::RpcError;
 use foundry_evm::{
+    backend::MemDb,
     revm::primitives::Env,
     traces::{
         CallKind, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig,
@@ -188,6 +192,34 @@ impl InMemoryBlockStates {
             self.disk_cache.remove(on_disk)
         }
     }
+
+    /// Serialize all states to a list of serializable historical states
+    pub fn serialized_states(&mut self) -> SerializableHistoricalStates {
+        // Get in-memory states
+        let mut states = self
+            .states
+            .iter_mut()
+            .map(|(hash, state)| (*hash, state.serialize_state()))
+            .collect::<Vec<_>>();
+
+        // Get on-disk state snapshots
+        self.on_disk_states.iter().for_each(|(hash, _)| {
+            if let Some(snapshot) = self.disk_cache.read(*hash) {
+                states.push((*hash, snapshot));
+            }
+        });
+
+        SerializableHistoricalStates::new(states)
+    }
+
+    /// Load states from serialized data
+    pub fn load_states(&mut self, states: SerializableHistoricalStates) {
+        for (hash, snapshot) in states {
+            let mut state_db = StateDb::new(MemDb::default());
+            state_db.init_from_snapshot(snapshot);
+            self.insert(hash, state_db);
+        }
+    }
 }
 
 impl fmt::Debug for InMemoryBlockStates {
@@ -269,6 +301,23 @@ impl BlockchainStorage {
             transactions: Default::default(),
             total_difficulty,
         }
+    }
+
+    /// Unwind the chain state back to the given block in storage.
+    ///
+    /// The block identified by `block_number` and `block_hash` is __non-inclusive__, i.e. it will
+    /// remain in the state.
+    pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) {
+        let best_num: u64 = self.best_number.try_into().unwrap_or(0);
+        for i in (block_number + 1)..=best_num {
+            if let Some(hash) = self.hashes.remove(&U64::from(i)) {
+                if let Some(block) = self.blocks.remove(&hash) {
+                    self.remove_block_transactions_by_number(block.header.number);
+                }
+            }
+        }
+        self.best_hash = block_hash;
+        self.best_number = U64::from(block_number);
     }
 
     #[allow(unused)]
@@ -492,7 +541,8 @@ impl MinedTransaction {
                     }
                     GethDebugBuiltInTracerType::PreStateTracer |
                     GethDebugBuiltInTracerType::NoopTracer |
-                    GethDebugBuiltInTracerType::MuxTracer => {}
+                    GethDebugBuiltInTracerType::MuxTracer |
+                    GethDebugBuiltInTracerType::FlatCallTracer => {}
                 },
                 GethDebugTracerType::JsTracer(_code) => {}
             }

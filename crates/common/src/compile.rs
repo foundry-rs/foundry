@@ -407,7 +407,7 @@ pub fn etherscan_project(
 
     Ok(ProjectBuilder::<SolcCompiler>::default()
         .settings(SolcSettings {
-            settings: SolcConfig::builder().settings(settings).build().settings,
+            settings: SolcConfig::builder().settings(settings).build(),
             ..Default::default()
         })
         .paths(paths)

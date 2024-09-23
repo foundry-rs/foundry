@@ -45,9 +45,10 @@ pub trait InspectorExt<DB: Database>: Inspector<DB> {
         false
     }
 
-    // Simulates `console.log` invocation.
+    /// Simulates `console.log` invocation.
     fn console_log(&mut self, _input: String) {}
 
+    /// Returns `true` if the current network is Alphanet.
     fn is_alphanet(&self) -> bool {
         false
     }

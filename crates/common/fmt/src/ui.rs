@@ -3,10 +3,10 @@
 use alloy_consensus::{AnyReceiptEnvelope, Eip658Value, Receipt, ReceiptWithBloom, TxType};
 use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, B256, I256, U256, U64};
 use alloy_rpc_types::{
-    AccessListItem, AnyTransactionReceipt, Block, BlockTransactions, Log, Transaction,
-    TransactionReceipt,
+    AccessListItem, AnyNetworkBlock, AnyTransactionReceipt, Block, BlockTransactions, Log,
+    Transaction, TransactionReceipt,
 };
-use alloy_serde::OtherFields;
+use alloy_serde::{OtherFields, WithOtherFields};
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -267,7 +267,7 @@ transactionIndex: {}",
     }
 }
 
-impl UIfmt for Block {
+impl<T: UIfmt> UIfmt for Block<T> {
     fn pretty(&self) -> String {
         format!(
             "
@@ -338,7 +338,7 @@ to                   {}
 transactionIndex     {}
 type                 {}
 value                {}
-yParity              {}{}",
+yParity              {}",
                 self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
@@ -356,7 +356,6 @@ yParity              {}{}",
                 self.transaction_type.unwrap(),
                 self.value.pretty(),
                 self.signature.map(|s| s.v).pretty(),
-                self.other.pretty()
             ),
             Some(2) => format!(
                 "
@@ -377,7 +376,7 @@ to                   {}
 transactionIndex     {}
 type                 {}
 value                {}
-yParity              {}{}",
+yParity              {}",
                 self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
@@ -396,7 +395,6 @@ yParity              {}{}",
                 self.transaction_type.unwrap(),
                 self.value.pretty(),
                 self.signature.map(|s| s.v).pretty(),
-                self.other.pretty()
             ),
             Some(3) => format!(
                 "
@@ -419,7 +417,7 @@ to                   {}
 transactionIndex     {}
 type                 {}
 value                {}
-yParity              {}{}",
+yParity              {}",
                 self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
                 self.blob_versioned_hashes.as_deref().unwrap_or(&[]).pretty(),
                 self.block_hash.pretty(),
@@ -440,7 +438,6 @@ yParity              {}{}",
                 self.transaction_type.unwrap(),
                 self.value.pretty(),
                 self.signature.map(|s| s.v).pretty(),
-                self.other.pretty()
             ),
             Some(4) => format!(
                 "
@@ -462,7 +459,7 @@ to                   {}
 transactionIndex     {}
 type                 {}
 value                {}
-yParity              {}{}",
+yParity              {}",
                 self.access_list.as_deref().map(Vec::as_slice).unwrap_or(&[]).pretty(),
                 self.authorization_list
                     .as_ref()
@@ -485,7 +482,6 @@ yParity              {}{}",
                 self.transaction_type.unwrap(),
                 self.value.pretty(),
                 self.signature.map(|s| s.v).pretty(),
-                self.other.pretty()
             ),
             _ => format!(
                 "
@@ -502,7 +498,7 @@ s                    {}
 to                   {}
 transactionIndex     {}
 v                    {}
-value                {}{}",
+value                {}",
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.from.pretty(),
@@ -517,9 +513,14 @@ value                {}{}",
                 self.transaction_index.pretty(),
                 self.signature.map(|s| s.v).pretty(),
                 self.value.pretty(),
-                self.other.pretty()
             ),
         }
+    }
+}
+
+impl<T: UIfmt> UIfmt for WithOtherFields<T> {
+    fn pretty(&self) -> String {
+        format!("{}{}", self.inner.pretty(), self.other.pretty())
     }
 }
 
@@ -570,17 +571,12 @@ pub fn get_pretty_tx_attr(transaction: &Transaction, attr: &str) -> Option<Strin
         "transactionIndex" | "transaction_index" => Some(transaction.transaction_index.pretty()),
         "v" => transaction.signature.map(|s| s.v.pretty()),
         "value" => Some(transaction.value.pretty()),
-        other => {
-            if let Some(value) = transaction.other.get(other) {
-                return Some(value.to_string().trim_matches('"').to_string())
-            }
-            None
-        }
+        _ => None,
     }
 }
 
 /// Returns the `UiFmt::pretty()` formatted attribute of the given block
-pub fn get_pretty_block_attr(block: &Block, attr: &str) -> Option<String> {
+pub fn get_pretty_block_attr(block: &AnyNetworkBlock, attr: &str) -> Option<String> {
     match attr {
         "baseFeePerGas" | "base_fee_per_gas" => Some(block.header.base_fee_per_gas.pretty()),
         "difficulty" => Some(block.header.difficulty.pretty()),
@@ -611,7 +607,7 @@ pub fn get_pretty_block_attr(block: &Block, attr: &str) -> Option<String> {
     }
 }
 
-fn pretty_block_basics(block: &Block) -> String {
+fn pretty_block_basics<T>(block: &Block<T>) -> String {
     format!(
         "
 baseFeePerGas        {}
@@ -633,7 +629,7 @@ size                 {}
 stateRoot            {}
 timestamp            {} ({})
 withdrawalsRoot      {}
-totalDifficulty      {}{}",
+totalDifficulty      {}",
         block.header.base_fee_per_gas.pretty(),
         block.header.difficulty.pretty(),
         block.header.extra_data.pretty(),
@@ -657,7 +653,6 @@ totalDifficulty      {}{}",
             .to_rfc2822(),
         block.header.withdrawals_root.pretty(),
         block.header.total_difficulty.pretty(),
-        block.other.pretty()
     )
 }
 
@@ -711,7 +706,7 @@ mod tests {
     }
         "#;
 
-        let tx: Transaction = serde_json::from_str(s).unwrap();
+        let tx: WithOtherFields<Transaction> = serde_json::from_str(s).unwrap();
         assert_eq!(tx.pretty().trim(),
                    r"
 blockHash            0x02b853cf50bc1c335b70790f93d5a390a35a166bea9c895e685cc866e4961cae
@@ -1058,7 +1053,7 @@ value                0".to_string();
           }
         );
 
-        let block: Block = serde_json::from_value(json).unwrap();
+        let block: AnyNetworkBlock = serde_json::from_value(json).unwrap();
 
         assert_eq!(None, get_pretty_block_attr(&block, ""));
         assert_eq!(Some("7".to_string()), get_pretty_block_attr(&block, "baseFeePerGas"));

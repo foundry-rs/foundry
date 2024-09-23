@@ -27,11 +27,11 @@ use std::time::Instant;
 #[macro_use]
 extern crate foundry_common;
 
+pub mod args;
 pub mod cmd;
-pub mod opts;
 pub mod tx;
 
-use opts::{Cast as Opts, CastSubcommand, ToBaseArgs};
+use args::{Cast as CastArgs, CastSubcommand, ToBaseArgs};
 
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
@@ -50,10 +50,14 @@ async fn run() -> Result<()> {
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
+    let args = CastArgs::parse();
+    args.shell.shell().set();
+    main_args(args)
+}
 
-    let opts = Opts::parse();
-    opts.shell.shell().set();
-    match opts.cmd {
+#[tokio::main]
+async fn main_args(args: CastArgs) -> Result<()> {
+    match args.cmd {
         // Constants
         CastSubcommand::MaxInt { r#type } => {
             println!("{}", SimpleCast::max_int(&r#type)?);
@@ -267,13 +271,14 @@ async fn run() -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let number = match block {
-                Some(id) => provider
-                    .get_block(id, false.into())
-                    .await?
-                    .ok_or_else(|| eyre::eyre!("block {id:?} not found"))?
-                    .header
-                    .number
-                    .ok_or_else(|| eyre::eyre!("block {id:?} has no block number"))?,
+                Some(id) => {
+                    provider
+                        .get_block(id, false.into())
+                        .await?
+                        .ok_or_else(|| eyre::eyre!("block {id:?} not found"))?
+                        .header
+                        .number
+                }
                 None => Cast::new(provider).block_number().await?,
             };
             println!("{number}");
@@ -369,6 +374,18 @@ async fn run() -> Result<()> {
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
+        }
+        CastSubcommand::Codehash { block, who, slots, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
+            let who = who.resolve(&provider).await?;
+            println!("{}", Cast::new(provider).codehash(who, slots, block).await?);
+        }
+        CastSubcommand::StorageRoot { block, who, slots, rpc } => {
+            let config = Config::from(&rpc);
+            let provider = utils::get_provider(&config)?;
+            let who = who.resolve(&provider).await?;
+            println!("{}", Cast::new(provider).storage_root(who, slots, block).await?);
         }
         CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = Config::from(&rpc);
@@ -567,11 +584,11 @@ async fn run() -> Result<()> {
         }
         CastSubcommand::Wallet { command } => command.run().await?,
         CastSubcommand::Completions { shell } => {
-            generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
+            generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
         }
         CastSubcommand::GenerateFigSpec => clap_complete::generate(
             clap_complete_fig::Fig,
-            &mut Opts::command(),
+            &mut CastArgs::command(),
             "cast",
             &mut std::io::stdout(),
         ),

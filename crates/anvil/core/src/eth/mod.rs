@@ -1,4 +1,4 @@
-use crate::eth::subscription::SubscriptionId;
+use crate::{eth::subscription::SubscriptionId, types::ReorgOptions};
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_types::{
     anvil::{Forking, MineOptions},
@@ -523,11 +523,8 @@ pub enum EthRequest {
 
     /// Serializes the current state (including contracts code, contract's storage, accounts
     /// properties, etc.) into a savable data blob
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_dumpState", alias = "hardhat_dumpState", with = "empty_params")
-    )]
-    DumpState(()),
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_dumpState", alias = "hardhat_dumpState"))]
+    DumpState(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<bool>>>),
 
     /// Adds state previously dumped with `DumpState` to the current chain
     #[cfg_attr(
@@ -768,6 +765,10 @@ pub enum EthRequest {
         serde(rename = "anvil_removePoolTransactions", with = "sequence")
     )]
     RemovePoolTransactions(Address),
+
+    /// Reorg the chain
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_reorg",))]
+    Reorg(ReorgOptions),
 }
 
 /// Represents ethereum JSON-RPC API
@@ -1206,9 +1207,19 @@ mod tests {
 
     #[test]
     fn test_serde_custom_dump_state() {
-        let s = r#"{"method": "anvil_dumpState", "params": [] }"#;
+        let s = r#"{"method": "anvil_dumpState", "params": [true]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "anvil_dumpState"}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::DumpState(param) => {
+                assert!(param.is_none());
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
@@ -1592,6 +1603,81 @@ true}]}"#;
     #[test]
     fn test_remove_pool_transactions() {
         let s = r#"{"method": "anvil_removePoolTransactions",  "params":["0x364d6D0333432C3Ac016Ca832fb8594A8cE43Ca6"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_anvil_reorg() {
+        // TransactionData::JSON
+        let s = r#"
+        {
+            "method": "anvil_reorg",
+            "params": [
+                5,
+                [
+                    [
+                        {
+                            "from": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+                            "to": "0x1199bc69f16FDD6690DC40339EC445FaE1b6DD11",
+                            "value": 100
+                        },
+                        1
+                    ],
+                    [
+                        {
+                            "from": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+                            "to": "0x1199bc69f16FDD6690DC40339EC445FaE1b6DD11",
+                            "value": 200
+                        },
+                        2
+                    ]
+                ]
+            ]
+        }
+        "#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        // TransactionData::Raw
+        let s = r#"
+        {
+            "method": "anvil_reorg",
+            "params": [
+                5,
+                [
+                    [
+                        "0x19d55c67e1ba8f1bbdfed75f8ad524ebf087e4ecb848a2d19881d7a5e3d2c54e1732cb1b462da3b3fdb05bdf4c4d3c8e3c9fcebdc2ab5fa5d59a3f752888f27e1b",
+                        1
+                    ]
+                ]
+            ]
+        }
+        "#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        // TransactionData::Raw and TransactionData::JSON
+        let s = r#"
+        {
+            "method": "anvil_reorg",
+            "params": [
+                5,
+                [
+                    [
+                        "0x19d55c67e1ba8f1bbdfed75f8ad524ebf087e4ecb848a2d19881d7a5e3d2c54e1732cb1b462da3b3fdb05bdf4c4d3c8e3c9fcebdc2ab5fa5d59a3f752888f27e1b",
+                        1
+                    ],
+                    [
+                        {
+                            "from": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+                            "to": "0x1199bc69f16FDD6690DC40339EC445FaE1b6DD11",
+                            "value": 200
+                        },
+                        2
+                    ]
+                ]
+            ]
+        }
+        "#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

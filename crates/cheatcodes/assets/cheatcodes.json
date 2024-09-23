@@ -3333,6 +3333,26 @@
     },
     {
       "func": {
+        "id": "copyStorage",
+        "description": "Utility cheatcode to copy storage of `from` contract to another `to` contract.",
+        "declaration": "function copyStorage(address from, address to) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "copyStorage(address,address)",
+        "selector": "0x203dac0d",
+        "selectorBytes": [
+          32,
+          61,
+          172,
+          13
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "createDir",
         "description": "Creates a new, empty directory at the provided path.\nThis cheatcode will revert in the following situations, but is not limited to just these cases:\n- User lacks permissions to modify `path`.\n- A parent of the given path doesn't exist and `recursive` is false.\n- `path` already exists and `recursive` is false.\n`path` is relative to the project root.",
         "declaration": "function createDir(string calldata path, bool recursive) external;",
@@ -4733,7 +4753,7 @@
     },
     {
       "func": {
-        "id": "expectPartialRevert",
+        "id": "expectPartialRevert_0",
         "description": "Expects an error on next call that starts with the revert data.",
         "declaration": "function expectPartialRevert(bytes4 revertData) external;",
         "visibility": "external",
@@ -4745,6 +4765,26 @@
           251,
           91,
           156
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectPartialRevert_1",
+        "description": "Expects an error on next call to reverter address, that starts with the revert data.",
+        "declaration": "function expectPartialRevert(bytes4 revertData, address reverter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectPartialRevert(bytes4,address)",
+        "selector": "0x51aa008a",
+        "selectorBytes": [
+          81,
+          170,
+          0,
+          138
         ]
       },
       "group": "testing",
@@ -4805,6 +4845,66 @@
           141,
           206,
           179
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_3",
+        "description": "Expects an error with any revert data on next call to reverter address.",
+        "declaration": "function expectRevert(address reverter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(address)",
+        "selector": "0xd814f38a",
+        "selectorBytes": [
+          216,
+          20,
+          243,
+          138
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_4",
+        "description": "Expects an error from reverter address on next call, with any revert data.",
+        "declaration": "function expectRevert(bytes4 revertData, address reverter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(bytes4,address)",
+        "selector": "0x260bc5de",
+        "selectorBytes": [
+          38,
+          11,
+          197,
+          222
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_5",
+        "description": "Expects an error from reverter address on next call, that exactly matches the revert data.",
+        "declaration": "function expectRevert(bytes calldata revertData, address reverter) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(bytes,address)",
+        "selector": "0x61ebcf12",
+        "selectorBytes": [
+          97,
+          235,
+          207,
+          18
         ]
       },
       "group": "testing",
@@ -5308,7 +5408,9 @@
         ]
       },
       "group": "json",
-      "status": "deprecated",
+      "status": {
+        "deprecated": "replaced by `keyExistsJson`"
+      },
       "safety": "safe"
     },
     {
@@ -5585,6 +5687,26 @@
           64,
           155,
           145
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockFunction",
+        "description": "Whenever a call is made to `callee` with calldata `data`, this cheatcode instead calls\n`target` with the same calldata. This functionality is similar to a delegate call made to\n`target` contract from `callee`.\nCan be used to substitute a call to a function with another implementation that captures\nthe primary logic of the original function but is easier to reason about.\nIf calldata is not a strict match then partial match by selector is attempted.",
+        "declaration": "function mockFunction(address callee, address target, bytes calldata data) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockFunction(address,address,bytes)",
+        "selector": "0xadf84d21",
+        "selectorBytes": [
+          173,
+          248,
+          77,
+          33
         ]
       },
       "group": "evm",
@@ -6345,6 +6467,66 @@
           98,
           146,
           129
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlTypeArray",
+        "description": "Parses a string of TOML data at `key` and coerces it to type array corresponding to `typeDescription`.",
+        "declaration": "function parseTomlTypeArray(string calldata toml, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlTypeArray(string,string,string)",
+        "selector": "0x49be3743",
+        "selectorBytes": [
+          73,
+          190,
+          55,
+          67
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlType_0",
+        "description": "Parses a string of TOML data and coerces it to type corresponding to `typeDescription`.",
+        "declaration": "function parseTomlType(string calldata toml, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlType(string,string)",
+        "selector": "0x47fa5e11",
+        "selectorBytes": [
+          71,
+          250,
+          94,
+          17
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlType_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to type corresponding to `typeDescription`.",
+        "declaration": "function parseTomlType(string calldata toml, string calldata key, string calldata typeDescription) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlType(string,string,string)",
+        "selector": "0xf9fa5cdb",
+        "selectorBytes": [
+          249,
+          250,
+          92,
+          219
         ]
       },
       "group": "toml",
@@ -7793,6 +7975,26 @@
     },
     {
       "func": {
+        "id": "setArbitraryStorage",
+        "description": "Utility cheatcode to set arbitrary storage for given target address.",
+        "declaration": "function setArbitraryStorage(address target) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setArbitraryStorage(address)",
+        "selector": "0xe1631837",
+        "selectorBytes": [
+          225,
+          99,
+          24,
+          55
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "setBlockhash",
         "description": "Set blockhash for the current block.\nIt only sets the blockhash for blocks where `block.number - 256 <= number < block.number`.",
         "declaration": "function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;",
@@ -8053,8 +8255,8 @@
     },
     {
       "func": {
-        "id": "skip",
-        "description": "Marks a test as skipped. Must be called at the top of the test.",
+        "id": "skip_0",
+        "description": "Marks a test as skipped. Must be called at the top level of a test.",
         "declaration": "function skip(bool skipTest) external;",
         "visibility": "external",
         "mutability": "",
@@ -8065,6 +8267,26 @@
           130,
           209,
           62
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "skip_1",
+        "description": "Marks a test as skipped with a reason. Must be called at the top level of a test.",
+        "declaration": "function skip(bool skipTest, string calldata reason) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "skip(bool,string)",
+        "selector": "0xc42a80a7",
+        "selectorBytes": [
+          196,
+          42,
+          128,
+          167
         ]
       },
       "group": "testing",

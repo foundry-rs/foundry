@@ -53,8 +53,8 @@ impl TtyWidth {
     /// Returns the width used by progress bars for the tty.
     pub fn progress_max_width(&self) -> Option<usize> {
         match *self {
-            TtyWidth::NoTty => None,
-            TtyWidth::Known(width) | TtyWidth::Guess(width) => Some(width),
+            Self::NoTty => None,
+            Self::Known(width) | Self::Guess(width) => Some(width),
         }
     }
 }
@@ -75,19 +75,19 @@ impl Verbosity {
     /// Returns true if the verbosity level is `Verbose`.
     #[inline]
     pub fn is_verbose(self) -> bool {
-        self == Verbosity::Verbose
+        self == Self::Verbose
     }
 
     /// Returns true if the verbosity level is `Normal`.
     #[inline]
     pub fn is_normal(self) -> bool {
-        self == Verbosity::Normal
+        self == Self::Normal
     }
 
     /// Returns true if the verbosity level is `Quiet`.
     #[inline]
     pub fn is_quiet(self) -> bool {
-        self == Verbosity::Quiet
+        self == Self::Quiet
     }
 }
 
@@ -339,7 +339,7 @@ impl Shell {
 
     /// Runs the callback only if we are in verbose mode.
     #[inline]
-    pub fn verbose(&mut self, mut callback: impl FnMut(&mut Shell) -> Result<()>) -> Result<()> {
+    pub fn verbose(&mut self, mut callback: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
         match self.verbosity {
             Verbosity::Verbose => callback(self),
             _ => Ok(()),
@@ -348,7 +348,7 @@ impl Shell {
 
     /// Runs the callback if we are not in verbose mode.
     #[inline]
-    pub fn concise(&mut self, mut callback: impl FnMut(&mut Shell) -> Result<()>) -> Result<()> {
+    pub fn concise(&mut self, mut callback: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
         match self.verbosity {
             Verbosity::Verbose => Ok(()),
             _ => callback(self),
@@ -546,4 +546,31 @@ fn supports_color(choice: anstream::ColorChoice) -> bool {
         anstream::ColorChoice::Auto => true,
         anstream::ColorChoice::Never => false,
     }
+}
+
+/// Deprecated
+///
+/// Get a mutable reference to the global shell.
+pub fn with_shell<T>(callback: impl FnOnce(&mut Shell) -> T) -> T {
+    let mut shell = Shell::get();
+    callback(&mut shell)
+}
+
+/// Deprecated
+///
+/// Prints the given message to the shell.
+pub fn println(msg: impl fmt::Display) -> Result<()> {
+    with_shell(|shell| if !shell.verbosity.is_quiet() { shell.print_out(msg) } else { Ok(()) })
+}
+
+/// Deprecated
+///
+/// Prints the given message serialized to JSON to the shell.
+pub fn print_json<T: serde::Serialize>(obj: &T) -> Result<()> {
+    with_shell(|shell| shell.print_json(obj))
+}
+
+/// Prints the given message to the shell
+pub fn eprintln(msg: impl fmt::Display) -> Result<()> {
+    with_shell(|shell| if !shell.verbosity.is_quiet() { shell.print_err(msg) } else { Ok(()) })
 }

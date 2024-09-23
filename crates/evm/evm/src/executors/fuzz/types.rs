@@ -5,30 +5,33 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::FuzzCase;
 use foundry_evm_traces::SparsedTraceArena;
 use revm::interpreter::InstructionResult;
+use std::collections::HashMap;
 
 /// Returned by a single fuzz in the case of a successful run
 #[derive(Debug)]
 pub struct CaseOutcome {
-    /// Data of a single fuzz test case
+    /// Data of a single fuzz test case.
     pub case: FuzzCase,
-    /// The traces of the call
+    /// The traces of the call.
     pub traces: Option<SparsedTraceArena>,
-    /// The coverage info collected during the call
+    /// The coverage info collected during the call.
     pub coverage: Option<HitMaps>,
-    /// Breakpoints char pc map
+    /// Breakpoints char pc map.
     pub breakpoints: Breakpoints,
-    /// logs of a single fuzz test case
+    /// logs of a single fuzz test case.
     pub logs: Vec<Log>,
+    // Deprecated cheatcodes mapped to their replacements.
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 /// Returned by a single fuzz when a counterexample has been discovered
 #[derive(Debug)]
 pub struct CounterExampleOutcome {
-    /// Minimal reproduction test case for failing test
+    /// Minimal reproduction test case for failing test.
     pub counterexample: (Bytes, RawCallResult),
-    /// The status of the call
+    /// The status of the call.
     pub exit_reason: InstructionResult,
-    /// Breakpoints char pc map
+    /// Breakpoints char pc map.
     pub breakpoints: Breakpoints,
 }
 

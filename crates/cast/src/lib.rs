@@ -494,6 +494,72 @@ where
         Ok(self.provider.get_transaction_count(who).block_id(block.unwrap_or_default()).await?)
     }
 
+    /// #Example
+    ///
+    /// ```
+    /// use alloy_primitives::{Address, FixedBytes};
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use cast::Cast;
+    /// use std::str::FromStr;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let slots = vec![FixedBytes::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")?];
+    /// let codehash = cast.codehash(addr, slots, None).await?;
+    /// println!("{}", codehash);
+    /// # Ok(())
+    /// # }
+    pub async fn codehash(
+        &self,
+        who: Address,
+        slots: Vec<B256>,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        Ok(self
+            .provider
+            .get_proof(who, slots)
+            .block_id(block.unwrap_or_default())
+            .await?
+            .code_hash
+            .to_string())
+    }
+
+    /// #Example
+    ///
+    /// ```
+    /// use alloy_primitives::{Address, FixedBytes};
+    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use cast::Cast;
+    /// use std::str::FromStr;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let slots = vec![FixedBytes::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")?];
+    /// let storage_root = cast.storage_root(addr, slots, None).await?;
+    /// println!("{}", storage_root);
+    /// # Ok(())
+    /// # }
+    pub async fn storage_root(
+        &self,
+        who: Address,
+        slots: Vec<B256>,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        Ok(self
+            .provider
+            .get_proof(who, slots)
+            .block_id(block.unwrap_or_default())
+            .await?
+            .storage_hash
+            .to_string())
+    }
+
     /// # Example
     ///
     /// ```
@@ -872,7 +938,7 @@ where
                 BlockId::Hash(hash) => {
                     let block =
                         self.provider.get_block_by_hash(hash.block_hash, false.into()).await?;
-                    Ok(block.map(|block| block.header.number.unwrap()).map(BlockNumberOrTag::from))
+                    Ok(block.map(|block| block.header.number).map(BlockNumberOrTag::from))
                 }
             },
             None => Ok(None),
@@ -937,7 +1003,7 @@ where
                     Either::Right(futures::future::pending())
                 } => {
                     if let (Some(block), Some(to_block)) = (block, to_block_number) {
-                        if block.header.number.map_or(false, |bn| bn > to_block) {
+                        if block.header.number  > to_block {
                             break;
                         }
                     }
@@ -1582,12 +1648,10 @@ impl SimpleCast {
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
         let func = get_func(sig)?;
-        let calldata = match encode_function_args(&func, args) {
-            Ok(res) => hex::encode(res),
+        match encode_function_args(&func, args) {
+            Ok(res) => Ok(hex::encode_prefixed(&res[4..])),
             Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
-        };
-        let encoded = &calldata[8..];
-        Ok(format!("0x{encoded}"))
+        }
     }
 
     /// Performs packed ABI encoding based off of the function signature or tuple.
@@ -1981,7 +2045,7 @@ impl SimpleCast {
                 (
                     hex::encode_prefixed(s),
                     evmole::function_arguments(&code, &s, 0),
-                    evmole::function_state_mutability(&code, &s, 0),
+                    evmole::function_state_mutability(&code, &s, 0).as_json_str(),
                 )
             })
             .collect())

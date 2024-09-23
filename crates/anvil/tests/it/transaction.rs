@@ -1,5 +1,5 @@
 use crate::{
-    abi::{Greeter, MulticallContract, SimpleStorage},
+    abi::{Greeter, Multicall, SimpleStorage},
     utils::{connect_pubsub, http_provider_with_signer},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
@@ -477,7 +477,7 @@ async fn get_blocktimestamp_works() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
-    let contract = MulticallContract::deploy(provider.clone()).await.unwrap();
+    let contract = Multicall::deploy(provider.clone()).await.unwrap();
 
     let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap().timestamp;
 
@@ -557,8 +557,7 @@ async fn call_past_state() {
         .unwrap()
         .unwrap()
         .header
-        .hash
-        .unwrap();
+        .hash;
     let value = contract.getValue().block(BlockId::Hash(hash.into())).call().await.unwrap();
     assert_eq!(value._0, "initial value");
 }
@@ -996,7 +995,7 @@ async fn test_tx_access_list() {
 
     let sender = Address::random();
     let other_acc = Address::random();
-    let multicall = MulticallContract::deploy(provider.clone()).await.unwrap();
+    let multicall = Multicall::deploy(provider.clone()).await.unwrap();
     let simple_storage = SimpleStorage::deploy(provider.clone(), "foo".to_string()).await.unwrap();
 
     // when calling `setValue` on SimpleStorage, both the `lastSender` and `_value` storages are
@@ -1044,7 +1043,7 @@ async fn test_tx_access_list() {
 
     // With a subcall to another contract, the AccessList should be the same as when calling the
     // subcontract directly (given that the proxy contract doesn't read/write any state)
-    let subcall_tx = multicall.aggregate(vec![MulticallContract::Call {
+    let subcall_tx = multicall.aggregate(vec![Multicall::Call {
         target: *simple_storage.address(),
         callData: set_value_calldata.to_owned(),
     }]);

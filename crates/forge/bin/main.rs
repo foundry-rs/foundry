@@ -38,14 +38,7 @@ fn main() -> Result<()> {
                 outcome.ensure_ok()
             }
         }
-        ForgeSubcommand::Script(cmd) => {
-            // install the shell before executing the command
-            foundry_common::shell::set_shell(foundry_common::shell::Shell::from_args(
-                cmd.opts.silent,
-                cmd.json,
-            ))?;
-            utils::block_on(cmd.run_script())
-        }
+        ForgeSubcommand::Script(cmd) => utils::block_on(cmd.run_script()),
         ForgeSubcommand::Coverage(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Bind(cmd) => cmd.run(),
         ForgeSubcommand::Build(cmd) => {
@@ -84,7 +77,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         ForgeSubcommand::Clean { root } => {
-            let config = utils::load_config_with_root(root);
+            let config = utils::load_config_with_root(root.as_deref());
             let project = config.project()?;
             config.cleanup(&project)?;
             Ok(())

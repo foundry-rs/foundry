@@ -103,7 +103,6 @@ clap = { version = "4", features = [
 ], optional = true }
 clap_complete = { version = "4", optional = true }
 chrono.workspace = true
-auto_impl.workspace = true
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
 clap_complete_fig = "4"
@@ -122,6 +121,7 @@ alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
 similar-asserts.workspace = true
 tokio = { workspace = true, features = ["full"] }
+op-alloy-rpc-types.workspace = true
 
 [features]
 default = ["cli", "jemalloc"]

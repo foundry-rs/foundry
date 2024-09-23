@@ -2,7 +2,6 @@
 
 use crate::Config;
 use alloy_primitives::U256;
-use eyre::WrapErr;
 use figment::value::Value;
 use foundry_compilers::artifacts::{
     remappings::{Remapping, RemappingError},
@@ -11,6 +10,7 @@ use foundry_compilers::artifacts::{
 use revm_primitives::SpecId;
 use serde::{de::Error, Deserialize, Deserializer};
 use std::{
+    io,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -21,36 +21,31 @@ pub fn load_config() -> Config {
     load_config_with_root(None)
 }
 
-/// Loads the config for the current project workspace or the provided root path
-pub fn load_config_with_root(root: Option<PathBuf>) -> Config {
-    if let Some(root) = root {
-        Config::load_with_root(root)
-    } else {
-        Config::load_with_root(find_project_root_path(None).unwrap())
-    }
-    .sanitized()
-}
-
-/// Returns the path of the top-level directory of the working git tree. If there is no working
-/// tree, an error is returned.
-pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf> {
-    let path = relative_to.as_ref();
-    let path = std::process::Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(path)
-        .output()
-        .wrap_err_with(|| {
-            format!("Failed detect git root path in current dir: {}", path.display())
-        })?
-        .stdout;
-    let path = std::str::from_utf8(&path)?.trim_end_matches('\n');
-    Ok(PathBuf::from(path))
-}
-
-/// Returns the root path to set for the project root
+/// Loads the config for the current project workspace or the provided root path.
 ///
-/// traverse the dir tree up and look for a `foundry.toml` file starting at the given path or cwd,
-/// but only until the root dir of the current repo so that
+/// # Panics
+///
+/// Panics if the project root cannot be found. See [`find_project_root`].
+#[track_caller]
+pub fn load_config_with_root(root: Option<&Path>) -> Config {
+    let root = match root {
+        Some(root) => root,
+        None => &find_project_root(None),
+    };
+    Config::load_with_root(root).sanitized()
+}
+
+/// Returns the path of the top-level directory of the working git tree.
+pub fn find_git_root(relative_to: &Path) -> io::Result<Option<PathBuf>> {
+    let root =
+        if relative_to.is_absolute() { relative_to } else { &dunce::canonicalize(relative_to)? };
+    Ok(root.ancestors().find(|p| p.join(".git").is_dir()).map(Path::to_path_buf))
+}
+
+/// Returns the root path to set for the project root.
+///
+/// Traverse the dir tree up and look for a `foundry.toml` file starting at the given path or cwd,
+/// but only until the root dir of the current repo so that:
 ///
 /// ```text
 /// -- foundry.toml
@@ -60,29 +55,37 @@ pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf
 ///   |__sub
 ///      |__ [given_path | cwd]
 /// ```
-/// will still detect `repo` as root
-pub fn find_project_root_path(path: Option<&PathBuf>) -> std::io::Result<PathBuf> {
-    let cwd = &std::env::current_dir()?;
-    let cwd = path.unwrap_or(cwd);
-    let boundary = find_git_root_path(cwd)
-        .ok()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| cwd.clone());
-    let mut cwd = cwd.as_path();
-    // traverse as long as we're in the current git repo cwd
-    while cwd.starts_with(&boundary) {
-        let file_path = cwd.join(Config::FILE_NAME);
-        if file_path.is_file() {
-            return Ok(cwd.to_path_buf())
-        }
-        if let Some(parent) = cwd.parent() {
-            cwd = parent;
-        } else {
-            break
-        }
-    }
-    // no foundry.toml found
-    Ok(boundary)
+///
+/// will still detect `repo` as root.
+///
+/// Returns `repo` or `cwd` if no `foundry.toml` is found in the tree.
+///
+/// # Panics
+///
+/// Panics if:
+/// - `cwd` is `Some` and is not a valid directory;
+/// - `cwd` is `None` and the [`std::env::current_dir`] call fails.
+#[track_caller]
+pub fn find_project_root(cwd: Option<&Path>) -> PathBuf {
+    try_find_project_root(cwd).expect("Could not find project root")
+}
+
+/// Returns the root path to set for the project root.
+///
+/// Same as [`find_project_root`], but returns an error instead of panicking.
+pub fn try_find_project_root(cwd: Option<&Path>) -> io::Result<PathBuf> {
+    let cwd = match cwd {
+        Some(path) => path,
+        None => &std::env::current_dir()?,
+    };
+    let boundary = find_git_root(cwd)?;
+    let found = cwd
+        .ancestors()
+        // Don't look outside of the git repo if it exists.
+        .take_while(|p| if let Some(boundary) = &boundary { p.starts_with(boundary) } else { true })
+        .find(|p| p.join(Config::FILE_NAME).is_file())
+        .map(Path::to_path_buf);
+    Ok(found.or(boundary).unwrap_or_else(|| cwd.to_path_buf()))
 }
 
 /// Returns all [`Remapping`]s contained in the `remappings` str separated by newlines
@@ -160,7 +163,7 @@ pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_dir())
-        .filter_map(|e| foundry_compilers::utils::canonicalize(e.path()).ok())
+        .filter_map(|e| dunce::canonicalize(e.path()).ok())
         .filter(|p| p.join(Config::FILE_NAME).exists())
         .collect()
 }
