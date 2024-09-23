@@ -356,11 +356,9 @@ Genesis Timestamp
 
         let gas_limit = match self.gas_limit {
             // if we have a disabled flag we should max out the limit
-            Some(_) | None if self.disable_block_gas_limit => {
-                serde_json::Value::String(u64::MAX.to_string())
-            }
-            Some(limit) => serde_json::Value::String(limit.to_string()),
-            _ => serde_json::Value::Null,
+            Some(_) | None if self.disable_block_gas_limit => Some(u64::MAX.to_string()),
+            Some(limit) => Some(limit.to_string()),
+            _ => None,
         };
 
         if let Some(fork) = fork {
