@@ -151,6 +151,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eof_version: None,
         alphanet: false,
         transaction_timeout: 120,
+        additional_compiler_profiles: vec![],
+        compilation_restrictions: vec![],
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());

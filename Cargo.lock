@@ -3709,9 +3709,8 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d91e510bd537970f68f8462dea0e8df0a2302d4749fb57bc8e10bbd32a283e2"
+version = "0.11.0"
+source = "git+https://github.com/foundry-rs/compilers?rev=5b42d05#5b42d05032bde83e36d59d52ba6e9d7b7b6b6a99"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3747,9 +3746,8 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9971eefe4eae1cf2ac707beb4d40f63304b34c81c0961d299e461c14a23b1e7"
+version = "0.11.0"
+source = "git+https://github.com/foundry-rs/compilers?rev=5b42d05#5b42d05032bde83e36d59d52ba6e9d7b7b6b6a99"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3757,9 +3755,8 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cde3d12776c295ad85bcdbbae18f4601e384f40a62b0e3371d880bbcd91c65c"
+version = "0.11.0"
+source = "git+https://github.com/foundry-rs/compilers?rev=5b42d05#5b42d05032bde83e36d59d52ba6e9d7b7b6b6a99"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3781,9 +3778,8 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "569a769f6105248816c253715ec39977d61d369e9c67e4774d6870da8f64dffc"
+version = "0.11.0"
+source = "git+https://github.com/foundry-rs/compilers?rev=5b42d05#5b42d05032bde83e36d59d52ba6e9d7b7b6b6a99"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3796,9 +3792,8 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f10ade77fa0eab75e142a76711c42a258781bad0c4516ad64aa413297ebb72e"
+version = "0.11.0"
+source = "git+https://github.com/foundry-rs/compilers?rev=5b42d05#5b42d05032bde83e36d59d52ba6e9d7b7b6b6a99"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -6488,9 +6483,9 @@ dependencies = [
 
 [[package]]
 name = "pkg-config"
-version = "0.3.30"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d231b230927b5e4ad203db57bbcbee2802f6bce620b1e4a9024a07d94e2907ec"
+checksum = "953ec861398dccce10c670dfeaf3ec4911ca479e9c02154b3a215178c5f566f2"
 
 [[package]]
 name = "plotters"
@@ -7161,9 +7156,9 @@ dependencies = [
 
 [[package]]
 name = "revm-inspectors"
-version = "0.7.4"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48294aab02ed5d1940ad9b06f2a3230c3f0d98db6eacd618878cf143e204f6b0"
+checksum = "b57b33a24b5b8b8efa1da3f60d44f02d6e649f06ef925d7780723ff14ff55321"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth",
@@ -8431,18 +8426,18 @@ checksum = "3369f5ac52d5eb6ab48c6b4ffdc8efbcad6b89c765749064ba298f2c68a16a76"
 
 [[package]]
 name = "thiserror"
-version = "1.0.63"
+version = "1.0.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0342370b38b6a11b6cc11d6a805569958d54cfa061a29969c3b5ce2ea405724"
+checksum = "d50af8abc119fb8bb6dbabcfa89656f46f84aa0ac7688088608076ad2b459a84"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.63"
+version = "1.0.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4558b58466b9ad7ca0f102865eccc95938dca1a74a856f2b57b6629050da261"
+checksum = "08904e7672f5eb876eaaf87e0ce17857500934f4981c4a0ab2b4aa98baac7fc3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8910,9 +8905,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-tracy"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6a90519f16f55e5c62ffd5976349f10744435a919ecff83d918300575dfb69b"
+checksum = "dc775fdaf33c3dfd19dc354729e65e87914bc67dcdc390ca1210807b8bee5902"
 dependencies = [
  "tracing-core",
  "tracing-subscriber",
@@ -8921,9 +8916,9 @@ dependencies = [
 
 [[package]]
 name = "tracy-client"
-version = "0.17.3"
+version = "0.17.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "373db47331c3407b343538df77eea2516884a0b126cdfb4b135acfd400015dd7"
+checksum = "746b078c6a09ebfd5594609049e07116735c304671eaab06ce749854d23435bc"
 dependencies = [
  "loom",
  "once_cell",
@@ -8932,9 +8927,9 @@ dependencies = [
 
 [[package]]
 name = "tracy-client-sys"
-version = "0.24.0"
+version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49cf0064dcb31c99aa1244c1b93439359e53f72ed217eef5db50abd442241e9a"
+checksum = "68613466112302fdbeabc5fa55f7d57462a0b247d5a6b7d7e09401fb471a144d"
 dependencies = [
  "cc",
 ]

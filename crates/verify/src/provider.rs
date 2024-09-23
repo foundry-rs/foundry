@@ -9,7 +9,7 @@ use eyre::{OptionExt, Result};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
     artifacts::{output_selection::OutputSelection, Metadata, Source},
-    compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler, CompilerSettings},
+    compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler},
     solc::Solc,
     Graph, Project,
 };
@@ -46,7 +46,7 @@ impl VerificationContext {
     /// Compiles target contract requesting only ABI and returns it.
     pub fn get_target_abi(&self) -> Result<JsonAbi> {
         let mut project = self.project.clone();
-        project.settings.update_output_selection(|selection| {
+        project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection(["abi".to_string()])
         });
 
@@ -65,7 +65,7 @@ impl VerificationContext {
     /// Compiles target file requesting only metadata and returns it.
     pub fn get_target_metadata(&self) -> Result<Metadata> {
         let mut project = self.project.clone();
-        project.settings.update_output_selection(|selection| {
+        project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection(["metadata".to_string()]);
         });
 
