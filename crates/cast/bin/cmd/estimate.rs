@@ -31,6 +31,10 @@ pub struct EstimateArgs {
     #[arg(long, short = 'B')]
     block: Option<BlockId>,
 
+    /// The prank address initiates the call.
+    #[arg(long, short = 'p', value_parser = NameOrAddress::from_str)]
+    prank: Option<NameOrAddress>,
+
     #[command(subcommand)]
     command: Option<EstimateSubcommands>,
 
@@ -67,7 +71,7 @@ pub enum EstimateSubcommands {
 
 impl EstimateArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, mut sig, mut args, mut tx, block, eth, command } = self;
+        let Self { to, mut sig, mut args, mut tx, block, prank, eth, command } = self;
 
         let config = Config::from(&eth);
         let provider = utils::get_provider(&config)?;
@@ -90,7 +94,7 @@ impl EstimateArgs {
             None
         };
 
-        let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
+        let (mut tx, _) = CastTxBuilder::new(&provider, tx, &config)
             .await?
             .with_to(to)
             .await?
@@ -98,6 +102,10 @@ impl EstimateArgs {
             .await?
             .build_raw(sender)
             .await?;
+
+        if let Some(prank) = prank {
+            tx.from = prank.resolve(&provider).await.ok();
+        }
 
         let gas = provider.estimate_gas(&tx).block(block.unwrap_or_default()).await?;
         println!("{gas}");
@@ -113,5 +121,12 @@ mod tests {
     fn parse_estimate_value() {
         let args: EstimateArgs = EstimateArgs::parse_from(["foundry-cli", "--value", "100"]);
         assert!(args.tx.value.is_some());
+    }
+
+    #[test]
+    fn parse_estimate_prank() {
+        let prank = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045";
+        let args: EstimateArgs = EstimateArgs::parse_from(["foundry-cli", "--prank", prank]);
+        assert!(args.prank.is_some_and(|p| p == NameOrAddress::Address(prank.parse().unwrap())));
     }
 }

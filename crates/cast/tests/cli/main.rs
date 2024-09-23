@@ -151,7 +151,7 @@ Validation succeeded. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf signed 
         .args(["wallet", "verify", "-a", address, "other msg", expected])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: 
+Error:
 Validation failed. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf did not sign this message.
 
 "#]]);
@@ -431,6 +431,29 @@ casttest!(estimate_function_gas, |_prj, cmd| {
     assert!(output.ge(&0));
 });
 
+casttest!(estimate_gas_with_prank_address, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    let output: u32 = cmd
+        .args([
+            "estimate",
+            "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f", // univ2 router
+            "setFeeTo(address)",
+            "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", // vitalik.eth
+            "--prank",
+            "0x18e433c7Bf8A2E1d0197CE5d8f9AFAda1A771360", // feeToSetter
+            "--rpc-url",
+            eth_rpc_url.as_str(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(output.ge(&0));
+});
+
 // tests that `cast estimate --create` is working correctly.
 casttest!(estimate_contract_deploy_gas, |_prj, cmd| {
     let eth_rpc_url = next_http_rpc_endpoint();
@@ -683,21 +706,21 @@ casttest!(receipt_revert_reason, |_prj, cmd| {
 
 blockHash               0x2cfe65be49863676b6dbc04d58176a14f39b123f1e2f4fea0383a2d82c2c50d0
 blockNumber             16239315
-contractAddress         
+contractAddress
 cumulativeGasUsed       10743428
 effectiveGasPrice       10539984136
 from                    0x199D5ED7F45F4eE35960cF22EAde2076e95B253F
 gasUsed                 21000
 logs                    []
 logsBloom               0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-root                    
+root
 status                  1 (success)
 transactionHash         0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e
 transactionIndex        116
 type                    0
-blobGasPrice            
-blobGasUsed             
-authorizationList       
+blobGasPrice
+blobGasUsed
+authorizationList
 to                      0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
 
 "#]]);
@@ -715,21 +738,21 @@ to                      0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
 
 blockHash               0x883f974b17ca7b28cb970798d1c80f4d4bb427473dc6d39b2a7fe24edc02902d
 blockNumber             14839405
-contractAddress         
+contractAddress
 cumulativeGasUsed       20273649
 effectiveGasPrice       21491736378
 from                    0x3cF412d970474804623bb4e3a42dE13F9bCa5436
 gasUsed                 24952
 logs                    []
 logsBloom               0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-root                    
+root
 status                  0 (failed)
 transactionHash         0x0e07d8b53ed3d91314c80e53cf25bcde02084939395845cbb625b029d568135c
 transactionIndex        173
 type                    2
-blobGasPrice            
-blobGasUsed             
-authorizationList       
+blobGasPrice
+blobGasUsed
+authorizationList
 to                      0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45
 revertReason            Transaction too old, data: "0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000135472616e73616374696f6e20746f6f206f6c6400000000000000000000000000"
 
@@ -881,7 +904,7 @@ casttest!(mktx_requires_to, |_prj, cmd| {
         "0x0000000000000000000000000000000000000000000000000000000000000001",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
+Error:
 Must specify a recipient address or contract code to deploy
 
 "#]]);
@@ -899,7 +922,7 @@ casttest!(mktx_signer_from_mismatch, |_prj, cmd| {
         "0x0000000000000000000000000000000000000001",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
+Error:
 The specified sender via CLI/env vars does not match the sender configured via
 the hardware wallet's HD Path.
 Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
@@ -969,7 +992,7 @@ casttest!(send_requires_to, |_prj, cmd| {
         "0x0000000000000000000000000000000000000000000000000000000000000001",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
+Error:
 Must specify a recipient address or contract code to deploy
 
 "#]]);
@@ -1222,7 +1245,7 @@ casttest!(ens_resolve_no_dot_eth, |_prj, cmd| {
     cmd.args(["resolve-name", "emo", "--rpc-url", &eth_rpc_url, "--verify"])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: 
+Error:
 ENS resolver not found for name "emo"
 
 "#]]);
@@ -1238,7 +1261,7 @@ casttest!(index7201, |_prj, cmd| {
 casttest!(index7201_unknown_formula_id, |_prj, cmd| {
     cmd.args(["index-erc7201", "test", "--formula-id", "unknown"]).assert_failure().stderr_eq(
         str![[r#"
-Error: 
+Error:
 unsupported formula ID: unknown
 
 "#]],
