@@ -5013,6 +5013,26 @@
     },
     {
       "func": {
+        "id": "getArtifactPath",
+        "description": "Gets the artifact path for a contract name.",
+        "declaration": "function getArtifactPath(string contractName) external view returns (string memory path);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getArtifactPath(string)",
+        "selector": "0x8b12a435",
+        "selectorBytes": [
+          139,
+          18,
+          164,
+          53
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getBlobBaseFee",
         "description": "Gets the current `block.blobbasefee`.\nYou should use this instead of `block.blobbasefee` if you use `vm.blobBaseFee`, as `block.blobbasefee` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
         "declaration": "function getBlobBaseFee() external view returns (uint256 blobBaseFee);",
