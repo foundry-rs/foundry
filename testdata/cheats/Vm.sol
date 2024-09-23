@@ -246,7 +246,7 @@ interface Vm {
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
-    function getArtifactPath(string contractName) external view returns (string memory path);
+    function getArtifactPath(string calldata contractName) external view returns (string memory path);
     function getBlobBaseFee() external view returns (uint256 blobBaseFee);
     function getBlobhashes() external view returns (bytes32[] memory hashes);
     function getBlockNumber() external view returns (uint256 height);

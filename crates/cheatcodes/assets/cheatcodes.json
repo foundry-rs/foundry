@@ -5015,7 +5015,7 @@
       "func": {
         "id": "getArtifactPath",
         "description": "Gets the artifact path for a contract name.",
-        "declaration": "function getArtifactPath(string contractName) external view returns (string memory path);",
+        "declaration": "function getArtifactPath(string calldata contractName) external view returns (string memory path);",
         "visibility": "external",
         "mutability": "view",
         "signature": "getArtifactPath(string)",
