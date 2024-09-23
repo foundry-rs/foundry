@@ -1646,7 +1646,8 @@ impl Cheatcodes {
         }
 
         println!(
-            "RECORD: {:?} @ {:?}",
+            "RECORD [{:?}]: {:?} @ {:?}",
+            ecx.journaled_state.depth(),
             revm::interpreter::OpCode::new(interpreter.current_opcode()).unwrap().as_str(),
             self.gas_metering.gas_records
         );

@@ -220,12 +220,14 @@ contract GasComparisonTest is DSTest {
         vm.snapshotValue("ComparisonGroup", "testGasComparisonExternalB", _snapEnd());
     }
 
-    function testGasComparisonCreate() public {
+    function testGasComparisonCreateA() public {
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonCreateA");
         new TargetEmpty();
         vm.stopSnapshotGas();
+    }
 
+    function testGasComparisonCreateB() public {
         // Start a comparitive Solidity snapshot.
         _snapStart();
         new TargetEmpty();
@@ -240,7 +242,7 @@ contract GasComparisonTest is DSTest {
 
     // Internal function to end a Solidity snapshot.
     function _snapEnd() internal returns (uint256 gasUsed) {
-        gasUsed = cachedGas - gasleft() - 100;
+        gasUsed = cachedGas - gasleft() - 174;
         cachedGas = 2;
     }
 }
