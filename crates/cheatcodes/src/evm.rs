@@ -847,8 +847,6 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
     group: Option<String>,
     name: Option<String>,
 ) -> Result {
-    ccx.state.gas_metering.stop();
-
     let group = group.as_deref().unwrap_or(
         ccx.state.config.running_contract.as_deref().expect("expected running contract"),
     );
@@ -868,6 +866,13 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
             .entry(group.to_string())
             .or_default()
             .insert(name.clone(), value.to_string());
+
+        ccx.state.gas_metering.stop();
+
+        ccx.state
+            .gas_metering
+            .gas_records
+            .retain(|record| record.group != group || record.name != name);
 
         Ok(value.abi_encode())
     } else {
