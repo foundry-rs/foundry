@@ -791,6 +791,12 @@ impl Cheatcodes {
             }
         }
 
+        // Store the total gas used for all active gas records started by `startSnapshotGas`
+        self.gas_metering.gas_records.iter_mut().for_each(|record| {
+            record.gas_used = record.gas_used.saturating_add(outcome.result.gas.spent());
+            record.depth = ecx.journaled_state.depth();
+        });
+
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
