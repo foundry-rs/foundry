@@ -5,7 +5,7 @@ use crate::{
         mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
-        DealRecord, GasFrame, GasRecord, RecordAccess,
+        DealRecord, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
     script::{Broadcast, ScriptWallets},
@@ -239,12 +239,8 @@ pub struct GasMetering {
 
     /// True if gas metering is enabled.
     pub recording: bool,
-    /// Stores the last frame.
-    pub last_recorded_frame: u64,
-    /// Stores the last depth.
-    pub last_recorded_depth: u64,
-    /// Stores recorded gas frames.
-    pub recorded_frames: Vec<GasFrame>,
+    /// The gas used in the last frame.
+    pub last_gas_used: u64,
     /// Gas records for the active snapshots.
     pub gas_records: Vec<GasRecord>,
 }
@@ -253,22 +249,18 @@ impl GasMetering {
     /// Start the gas recording.
     pub fn start(&mut self) {
         self.recording = true;
-        self.recorded_frames.clear();
     }
 
     /// Stop the gas recording.
     pub fn stop(&mut self) {
-        println!("recorded frames: {:?}", self.recorded_frames);
+        println!("gas records: {:?}", self.gas_records);
 
         // self.gas_records.iter_mut().for_each(|record| {
-        //     record.gas_used = self.recorded_frames.iter().sum::<u64>();
+        //     record.gas_used.saturating_add(self.recorded_frames.iter().sum::<u64>());
         // });
-
-        // println!("gas records: {:?}", self.gas_records);
 
         // reduce sum of gas frames to a single value
         self.recording = false;
-        self.recorded_frames.clear();
     }
 
     /// Resume paused gas metering.
@@ -1619,11 +1611,7 @@ impl Cheatcodes {
         interpreter: &mut Interpreter,
         ecx: &mut EvmContext<DB>,
     ) {
-        let target_depth = self.gas_metering.gas_records.last().unwrap().depth;
-
-        if ecx.journaled_state.depth() == target_depth &&
-            matches!(interpreter.instruction_result, InstructionResult::Continue)
-        {
+        if matches!(interpreter.instruction_result, InstructionResult::Continue) {
             match interpreter.current_opcode() {
                 op::CALL |
                 op::CREATE |
@@ -1632,21 +1620,31 @@ impl Cheatcodes {
                 op::DELEGATECALL |
                 op::EXTSTATICCALL |
                 op::EXTDELEGATECALL => {
-                    println!("ignored: {:?}", interpreter.current_opcode());
-                    // This is already handled in `call_end` / `create_end`.
+                    // Reset gas used when entering a new frame.
+                    self.gas_metering.last_gas_used = 0;
                 }
                 _ => {
-                    println!(
-                        "{:?} - {:?} - {:?} @ {}",
-                        interpreter.instruction_result,
-                        interpreter.current_opcode(),
-                        interpreter.gas.spent(),
-                        target_depth
-                    );
+                    self.gas_metering.gas_records.iter_mut().for_each(|record| {
+                        if ecx.journaled_state.depth() == record.depth + 1 {
+                            // Initialize after new frame, use this as the starting point.
+                            if self.gas_metering.last_gas_used == 0 {
+                                self.gas_metering.last_gas_used = interpreter.gas.spent();
+                                return;
+                            }
 
-                    self.gas_metering
-                        .recorded_frames
-                        .push(GasFrame { depth: target_depth, gas_used: interpreter.gas.spent() });
+                            // Calculate the gas difference between the last and current frame.
+                            let gas_diff = interpreter
+                                .gas
+                                .spent()
+                                .saturating_sub(self.gas_metering.last_gas_used);
+
+                            // Update the gas record.
+                            record.gas_used = record.gas_used.saturating_add(gas_diff);
+
+                            // Update for next iteration.
+                            self.gas_metering.last_gas_used = interpreter.gas.spent();
+                        }
+                    });
                 }
             }
         }

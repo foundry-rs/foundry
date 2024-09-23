@@ -76,15 +76,6 @@ pub struct GasRecord {
     pub depth: u64,
 }
 
-/// Used for capturing gas frames.
-#[derive(Clone, Debug)]
-pub struct GasFrame {
-    /// The total gas used in the frame.
-    pub gas_used: u64,
-    /// Depth at which the frame was taken.
-    pub depth: u64,
-}
-
 impl Cheatcode for addrCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
