@@ -3,9 +3,11 @@ pragma solidity 0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
+import "../logs/console.sol";
 
 contract GasSnapshotTest is DSTest {
     uint256 public slot0;
+    uint256 public cachedGas = 0;
 
     Vm constant vm = Vm(HEVM_ADDRESS);
 
@@ -48,11 +50,38 @@ contract GasSnapshotTest is DSTest {
     function testGasComplex() public {
         TargetB target = new TargetB();
 
-        vm.startSnapshotGas("testAssertGasComplexA");
-
+        // Warm up the cache.
         target.update(1);
 
-        vm.stopSnapshotGas();
+        // Start a cheatcode snapshot.
+        vm.startSnapshotGas("testAssertGasComplexA");
+
+        target.update(2);
+
+        uint256 gasA = vm.stopSnapshotGas();
+        console.log("gas native A", gasA);
+
+        // Start a comparitive Solidity snapshot.
+
+        // Warm up the cache.
+        cachedGas = 1;
+
+        // Start the Solidity snapshot.
+        cachedGas = gasleft();
+
+        target.update(3);
+
+        uint256 gasAfter = gasleft();
+
+        console.log("gas solidity", cachedGas - gasAfter - 100);
+
+        // Start a cheatcode snapshot.
+        vm.startSnapshotGas("testAssertGasComplexB");
+
+        target.update(4);
+
+        uint256 gasB = vm.stopSnapshotGas();
+        console.log("gas native B", gasB);
     }
 
     // Writes to `GasSnapshotTest` group with custom names.

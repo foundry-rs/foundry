@@ -253,13 +253,6 @@ impl GasMetering {
 
     /// Stop the gas recording.
     pub fn stop(&mut self) {
-        println!("gas records: {:?}", self.gas_records);
-
-        // self.gas_records.iter_mut().for_each(|record| {
-        //     record.gas_used.saturating_add(self.recorded_frames.iter().sum::<u64>());
-        // });
-
-        // reduce sum of gas frames to a single value
         self.recording = false;
     }
 
