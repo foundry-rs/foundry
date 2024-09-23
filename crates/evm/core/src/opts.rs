@@ -3,7 +3,6 @@ use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::AnyNetworkBlock;
-use eyre::WrapErr;
 use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::{Chain, Config};
 use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
@@ -101,8 +100,10 @@ impl EvmOpts {
             self.disable_block_gas_limit,
         )
         .await
-        .wrap_err_with(|| {
-            format!("Could not instantiate forked environment with fork url: {fork_url}")
+        .map_err(|err| {
+            eyre::eyre!(
+                "Could not instantiate forked environment with fork url: {fork_url} due to {err}"
+            )
         })
     }
 

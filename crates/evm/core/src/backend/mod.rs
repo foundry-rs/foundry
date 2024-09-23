@@ -761,7 +761,8 @@ impl Backend {
             inspector,
         );
 
-        let res = evm.transact().wrap_err("backend: failed while inspecting")?;
+        let res =
+            evm.transact().map_err(|err| eyre::eyre!("backend: failed while inspecting: {err}"))?;
 
         env.env = evm.context.evm.inner.env;
 

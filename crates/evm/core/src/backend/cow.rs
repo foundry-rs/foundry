@@ -11,7 +11,6 @@ use crate::{
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::TransactionRequest;
-use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
     db::DatabaseRef,
@@ -77,7 +76,8 @@ impl<'a> CowBackend<'a> {
             inspector,
         );
 
-        let res = evm.transact().wrap_err("backend: failed while inspecting")?;
+        let res =
+            evm.transact().map_err(|err| eyre::eyre!("backend: failed while inspecting: {err}"))?;
 
         env.env = evm.context.evm.inner.env;
 
