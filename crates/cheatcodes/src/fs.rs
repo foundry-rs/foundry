@@ -250,6 +250,28 @@ impl Cheatcode for writeLineCall {
     }
 }
 
+impl Cheatcode for getArtifactPathCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName: name } = self;
+        let path = state
+            .config
+            .available_artifacts
+            .as_ref()
+            .and_then(|artifacts| {
+                artifacts
+                    .iter()
+                    .find(|(id, _)| {
+                        let id_name = id.name.split('.').next().unwrap();
+
+                        return id_name == name
+                    })
+                    .map(|(id, _)| id.path.clone())
+            })
+            .ok_or_else(|| fmt_err!("no matching artifact found"))?;
+        Ok(path.to_string_lossy().abi_encode())
+    }
+}
+
 impl Cheatcode for getCodeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { artifactPath: path } = self;
