@@ -2174,3 +2174,34 @@ Warning: the following cheatcode(s) are deprecated and will be removed in future
 "#]]);
     }
 );
+
+forgetest_init!(requires_single_test, |prj, cmd| {
+    cmd.args(["test", "--debug"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+2 tests matched your criteria, but exactly 1 test must match in order to run the debugger.
+
+Use --match-contract and --match-path to further limit the search.
+
+"#]]);
+    cmd.forge_fuse().args(["test", "--flamegraph"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+2 tests matched your criteria, but exactly 1 test must match in order to generate a flamegraph.
+
+Use --match-contract and --match-path to further limit the search.
+
+"#]]);
+    cmd.forge_fuse().args(["test", "--flamechart"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+2 tests matched your criteria, but exactly 1 test must match in order to generate a flamechart.
+
+Use --match-contract and --match-path to further limit the search.
+
+"#]]);
+});
+
+forgetest_init!(deprecated_regex_arg, |prj, cmd| {
+    cmd.args(["test", "--decode-internal", "test_Increment"]).assert_success().stderr_eq(str![[r#"
+warning: specifying argument for --decode-internal is deprecated and will be removed in the future, use --match-test instead
+
+"#]]);
+});

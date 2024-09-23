@@ -8,15 +8,14 @@ use crate::{
 use alloy_primitives::{Address, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
-    backend::{BlockchainDb, DatabaseResult, RevertSnapshotAction, StateSnapshot},
+    backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertSnapshotAction, StateSnapshot},
     fork::database::ForkDbSnapshot,
-    revm::Database,
+    revm::{primitives::BlockEnv, Database},
 };
+use revm::DatabaseRef;
 
 pub use foundry_evm::fork::database::ForkedDatabase;
-use foundry_evm::revm::primitives::BlockEnv;
 
-/// Implement the helper for the fork database
 impl Db for ForkedDatabase {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.database_mut().insert_account(address, account)
@@ -87,6 +86,10 @@ impl Db for ForkedDatabase {
 }
 
 impl MaybeFullDatabase for ForkedDatabase {
+    fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        self
+    }
+
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = std::mem::take(&mut *db.accounts.write());
@@ -118,6 +121,10 @@ impl MaybeFullDatabase for ForkedDatabase {
 }
 
 impl MaybeFullDatabase for ForkDbSnapshot {
+    fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        self
+    }
+
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         std::mem::take(&mut self.snapshot)
     }

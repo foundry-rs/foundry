@@ -26,8 +26,11 @@ use serde::{
 use std::{collections::BTreeMap, fmt, path::Path};
 
 /// Helper trait get access to the full state data of the database
-#[auto_impl::auto_impl(Box)]
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
+    /// Returns a reference to the database as a `dyn DatabaseRef`.
+    // TODO: Required until trait upcasting is stabilized: <https://github.com/rust-lang/rust/issues/65991>
+    fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError>;
+
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         None
     }
@@ -51,6 +54,10 @@ impl<'a, T: 'a + MaybeFullDatabase + ?Sized> MaybeFullDatabase for &'a T
 where
     &'a T: DatabaseRef<Error = DatabaseError>,
 {
+    fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        T::as_dyn(self)
+    }
+
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         T::maybe_as_full_db(self)
     }
@@ -69,7 +76,6 @@ where
 }
 
 /// Helper trait to reset the DB if it's forked
-#[auto_impl::auto_impl(Box)]
 pub trait MaybeForkedDatabase {
     fn maybe_reset(&mut self, _url: Option<String>, block_number: BlockId) -> Result<(), String>;
 
@@ -79,7 +85,6 @@ pub trait MaybeForkedDatabase {
 }
 
 /// This bundles all required revm traits
-#[auto_impl::auto_impl(Box)]
 pub trait Db:
     DatabaseRef<Error = DatabaseError>
     + Database<Error = DatabaseError>
@@ -188,6 +193,13 @@ pub trait Db:
     fn current_state(&self) -> StateDb;
 }
 
+impl dyn Db {
+    // TODO: Required until trait upcasting is stabilized: <https://github.com/rust-lang/rust/issues/65991>
+    pub fn as_dbref(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        self.as_dyn()
+    }
+}
+
 /// Convenience impl only used to use any `Db` on the fly as the db layer for revm's CacheDB
 /// This is useful to create blocks without actually writing to the `Db`, but rather in the cache of
 /// the `CacheDB` see also
@@ -230,6 +242,10 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
 }
 
 impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
+    fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        self
+    }
+
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         Some(&self.accounts)
     }
@@ -338,6 +354,10 @@ impl DatabaseRef for StateDb {
 }
 
 impl MaybeFullDatabase for StateDb {
+    fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        self.0.as_dyn()
+    }
+
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         self.0.maybe_as_full_db()
     }

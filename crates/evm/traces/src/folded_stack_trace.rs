@@ -30,14 +30,13 @@ impl EvmFoldedStackTraceBuilder {
         let node = &nodes[idx];
 
         let func_name = if node.trace.kind.is_any_create() {
-            let default_contract_name = "Contract".to_string();
-            let contract_name = node.trace.decoded.label.as_ref().unwrap_or(&default_contract_name);
+            let contract_name = node.trace.decoded.label.as_deref().unwrap_or("Contract");
             format!("new {contract_name}")
         } else {
             let selector = node
                 .selector()
                 .map(|selector| selector.encode_hex_with_prefix())
-                .unwrap_or("fallback".to_string());
+                .unwrap_or_else(|| "fallback".to_string());
             let signature =
                 node.trace.decoded.call_data.as_ref().map(|dc| &dc.signature).unwrap_or(&selector);
 
@@ -114,9 +113,11 @@ impl EvmFoldedStackTraceBuilder {
 /// Helps to translate a function enter-exit flow into a folded stack trace.
 ///
 /// Example:
-/// fn top() { child_a(); child_b() } // consumes 500 gas
-/// fn child_a() {} // consumes 100 gas
-/// fn child_b() {} // consumes 200 gas
+/// ```solidity
+/// function top() { child_a(); child_b() } // consumes 500 gas
+/// function child_a() {} // consumes 100 gas
+/// function child_b() {} // consumes 200 gas
+/// ```
 ///
 /// For execution of the `top` function looks like:
 /// 1. enter `top`
