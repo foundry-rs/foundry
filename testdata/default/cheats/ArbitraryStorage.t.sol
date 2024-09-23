@@ -57,8 +57,8 @@ contract CounterArbitraryStorageWithSeedTest is DSTest {
     function test_arbitrary_storage_multiple_read_writes() public {
         Counter counter = new Counter();
         vm.setArbitraryStorage(address(counter));
-        uint256 slot1 = vm.arbitraryUint(0, 100);
-        uint256 slot2 = vm.arbitraryUint(0, 100);
+        uint256 slot1 = vm.randomUint(0, 100);
+        uint256 slot2 = vm.randomUint(0, 100);
         require(slot1 != slot2, "random positions should be different");
         address alice = counter.owners(slot1);
         address bob = counter.owners(slot2);
@@ -100,7 +100,7 @@ contract SymbolicStorageWithSeedTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
 
     function test_SymbolicStorage() public {
-        uint256 slot = vm.arbitraryUint(0, 100);
+        uint256 slot = vm.randomUint(0, 100);
         address addr = 0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8;
         vm.setArbitraryStorage(addr);
         bytes32 value = vm.load(addr, bytes32(slot));
@@ -111,7 +111,7 @@ contract SymbolicStorageWithSeedTest is DSTest {
     }
 
     function test_SymbolicStorage1() public {
-        uint256 slot = vm.arbitraryUint(0, 100);
+        uint256 slot = vm.randomUint(0, 100);
         SymbolicStore myStore = new SymbolicStore();
         vm.setArbitraryStorage(address(myStore));
         bytes32 value = vm.load(address(myStore), bytes32(uint256(slot)));

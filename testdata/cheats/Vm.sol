@@ -27,14 +27,6 @@ interface Vm {
     function activeFork() external view returns (uint256 forkId);
     function addr(uint256 privateKey) external pure returns (address keyAddr);
     function allowCheatcodes(address account) external;
-    function arbitraryAddress() external view returns (address);
-    function arbitraryBool() external view returns (bool);
-    function arbitraryBytes(uint256 len) external view returns (bytes memory);
-    function arbitraryInt() external view returns (int256);
-    function arbitraryInt(uint256 bits) external view returns (int256);
-    function arbitraryUint() external view returns (uint256);
-    function arbitraryUint(uint256 min, uint256 max) external view returns (uint256);
-    function arbitraryUint(uint256 bits) external view returns (uint256);
     function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals) external pure;
     function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals, string calldata error) external pure;
     function assertApproxEqAbsDecimal(int256 left, int256 right, uint256 maxDelta, uint256 decimals) external pure;
@@ -349,8 +341,13 @@ interface Vm {
     function promptUint(string calldata promptText) external returns (uint256);
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
     function randomAddress() external returns (address);
+    function randomBool() external view returns (bool);
+    function randomBytes(uint256 len) external view returns (bytes memory);
+    function randomInt() external view returns (int256);
+    function randomInt(uint256 bits) external view returns (int256);
     function randomUint() external returns (uint256);
     function randomUint(uint256 min, uint256 max) external returns (uint256);
+    function randomUint(uint256 bits) external view returns (uint256);
     function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
     function readDir(string calldata path) external view returns (DirEntry[] memory entries);
     function readDir(string calldata path, uint64 maxDepth) external view returns (DirEntry[] memory entries);

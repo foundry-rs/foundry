@@ -8,21 +8,21 @@ contract RandomUint is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testRandomUint() public {
-        vm.arbitraryUint();
+        vm.randomUint();
     }
 
     function testRandomUintRangeOverflow() public {
-        vm.arbitraryUint(0, uint256(int256(-1)));
+        vm.randomUint(0, uint256(int256(-1)));
     }
 
     function testRandomUintSame(uint256 val) public {
-        uint256 rand = vm.arbitraryUint(val, val);
+        uint256 rand = vm.randomUint(val, val);
         assertTrue(rand == val);
     }
 
     function testRandomUintRange(uint256 min, uint256 max) public {
         vm.assume(max >= min);
-        uint256 rand = vm.arbitraryUint(min, max);
+        uint256 rand = vm.randomUint(min, max);
         assertTrue(rand >= min, "rand >= min");
         assertTrue(rand <= max, "rand <= max");
     }
