@@ -6,10 +6,19 @@ import "cheats/Vm.sol";
 import "../logs/console.sol";
 
 contract GasSnapshotTest is DSTest {
-    uint256 public slot0;
-    uint256 public cachedGas = 0;
-
     Vm constant vm = Vm(HEVM_ADDRESS);
+
+    /// @notice Gas overhead for the Solidity snapshotting function itself.
+    uint256 private constant GAS_CALIBRATION = 100;
+
+    /// @notice Transient variable for the start gas.
+    uint256 private cachedGas;
+
+    /// @notice Transient variable for the snapshot name.
+    string private cachedName;
+
+    /// @notice Arbitrary slot to write to.
+    uint256 private slot;
 
     function testGasExternal() public {
         Flare f = new Flare();
@@ -24,64 +33,58 @@ contract GasSnapshotTest is DSTest {
     function testGasInternal() public {
         vm.startSnapshotGas("testAssertGasInternalA");
 
-        slot0 = 1;
+        slot = 1;
 
         vm.stopSnapshotGas();
 
         vm.startSnapshotGas("testAssertGasInternalB");
 
-        slot0 = 2;
+        slot = 2;
 
         vm.stopSnapshotGas();
 
         vm.startSnapshotGas("testAssertGasInternalC");
 
-        slot0 = 0;
+        slot = 0;
 
         vm.stopSnapshotGas();
 
         vm.startSnapshotGas("testAssertGasInternalD");
 
-        slot0 = 1;
+        slot = 1;
+
+        vm.stopSnapshotGas();
+
+        vm.startSnapshotGas("testAssertGasInternalE");
+
+        slot = 2;
 
         vm.stopSnapshotGas();
     }
 
-    function testGasComplex() public {
+    function testGasComparison() public {
         TargetB target = new TargetB();
 
         // Warm up the cache.
         target.update(1);
 
         // Start a cheatcode snapshot.
-        vm.startSnapshotGas("testAssertGasComplexA");
+        vm.startSnapshotGas("ComparisonGroup", "testGasComparisonA");
 
         target.update(2);
 
         uint256 gasA = vm.stopSnapshotGas();
-        console.log("gas native A", gasA);
+        console.log("gas A", gasA);
 
         // Start a comparitive Solidity snapshot.
-
-        // Warm up the cache.
-        cachedGas = 1;
-
-        // Start the Solidity snapshot.
-        cachedGas = gasleft();
+        _snapStart("testGasComparisonB");
 
         target.update(3);
 
-        uint256 gasAfter = gasleft();
+        uint256 gasB = _snapEnd();
+        console.log("gas B", gasB);
 
-        console.log("gas solidity", cachedGas - gasAfter - 100);
-
-        // Start a cheatcode snapshot.
-        vm.startSnapshotGas("testAssertGasComplexB");
-
-        target.update(4);
-
-        uint256 gasB = vm.stopSnapshotGas();
-        console.log("gas native B", gasB);
+        vm.snapshotValue("ComparisonGroup", "testGasComparisonB", gasB);
     }
 
     // Writes to `GasSnapshotTest` group with custom names.
@@ -131,14 +134,27 @@ contract GasSnapshotTest is DSTest {
     }
 
     // Writes to `GasSnapshotTest` group with `testSnapshotGasDefault` name.
-    function testSnapshotGasSectionDefaultStop() public {
+    function testSnapshotGasSectionDefaultGroupStop() public {
         Flare f = new Flare();
 
-        vm.startSnapshotGas("testSnapshotGasSectionDefault");
+        vm.startSnapshotGas("testSnapshotGasSection");
 
         f.run(256);
 
         // vm.stopSnapshotGas() will use the last snapshot name.
+        uint256 gasUsed = vm.stopSnapshotGas();
+        assertGt(gasUsed, 0);
+    }
+
+    // Writes to `GasSnapshotTest` group with `testSnapshotGasCustom` name.
+    function testSnapshotGasSectionCustomGroupStop() public {
+        Flare f = new Flare();
+
+        vm.startSnapshotGas("CustomGroup", "testSnapshotGasSection");
+
+        f.run(256);
+
+        // vm.stopSnapshotGas() will use the last snapshot name, even with custom group.
         uint256 gasUsed = vm.stopSnapshotGas();
         assertGt(gasUsed, 0);
     }
@@ -183,6 +199,19 @@ contract GasSnapshotTest is DSTest {
         f.run(1);
 
         vm.snapshotGasLastCall("CustomGroup", "testSnapshotGasGroupName");
+    }
+
+    function _snapStart(string memory name) internal {
+        // Warm up cachedGas so the only sstore after calling `gasleft` is exactly 100 gas
+        cachedGas = 1;
+        cachedName = name;
+        cachedGas = gasleft();
+    }
+
+    function _snapEnd() internal returns (uint256 gasUsed) {
+        uint256 newGasLeft = gasleft();
+        gasUsed = cachedGas - newGasLeft - GAS_CALIBRATION;
+        cachedGas = 0;
     }
 }
 
