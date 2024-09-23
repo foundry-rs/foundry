@@ -580,10 +580,7 @@ impl Cheatcode for startSnapshotGas_1Call {
 impl Cheatcode for stopSnapshotGas_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        let Some(name) = &ccx.state.gas_metering.last_snapshot_name else {
-            bail!("no gas snapshot was started yet");
-        };
-        inner_stop_gas_snapshot(ccx, None, Some(name.clone()))
+        inner_stop_gas_snapshot(ccx, None, None)
     }
 }
 
@@ -813,20 +810,21 @@ fn inner_start_gas_snapshot<DB: DatabaseExt>(
     group: Option<String>,
     name: Option<String>,
 ) -> Result {
+    // Revert if there is an active gas snapshot as we can only have one active snapshot at a time.
+    if ccx.state.gas_metering.last_snapshot_group.is_some() ||
+        ccx.state.gas_metering.last_snapshot_name.is_some()
+    {
+        bail!(
+            "gas snapshot was already started with group: {:?} and name: {:?}",
+            ccx.state.gas_metering.last_snapshot_group,
+            ccx.state.gas_metering.last_snapshot_name
+        );
+    }
+
     let group = group.as_deref().unwrap_or(
         ccx.state.config.running_contract.as_deref().expect("expected running contract"),
     );
     let name = name.as_deref().unwrap_or("default").to_string();
-
-    if ccx
-        .state
-        .gas_metering
-        .gas_records
-        .iter()
-        .any(|record| record.group == group && record.name == name)
-    {
-        bail!("gas snapshot already active: {name} in group: {group}");
-    }
 
     ccx.state.gas_metering.gas_records.push(GasRecord {
         group: group.to_string(),
@@ -835,6 +833,7 @@ fn inner_start_gas_snapshot<DB: DatabaseExt>(
         depth: ccx.ecx.journaled_state.depth() - 1,
     });
 
+    ccx.state.gas_metering.last_snapshot_group = Some(group.to_string());
     ccx.state.gas_metering.last_snapshot_name = Some(name);
 
     ccx.state.gas_metering.start();
@@ -847,10 +846,27 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
     group: Option<String>,
     name: Option<String>,
 ) -> Result {
-    let group = group.as_deref().unwrap_or(
-        ccx.state.config.running_contract.as_deref().expect("expected running contract"),
-    );
-    let name = name.as_deref().unwrap_or("default").to_string();
+    // If group and name are not provided, use the last snapshot group and name.
+    let group = group
+        .as_deref()
+        .unwrap_or(
+            ccx.state
+                .gas_metering
+                .last_snapshot_group
+                .as_deref()
+                .expect("no gas snapshot was started with this group"),
+        )
+        .to_string();
+    let name = name
+        .as_deref()
+        .unwrap_or(
+            ccx.state
+                .gas_metering
+                .last_snapshot_name
+                .as_deref()
+                .expect("no gas snapshot was started with this name"),
+        )
+        .to_string();
 
     if let Some(record) = ccx
         .state
@@ -867,12 +883,22 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
             .or_default()
             .insert(name.clone(), value.to_string());
 
+        // Stop the gas metering.
         ccx.state.gas_metering.stop();
 
+        // Remove the gas record.
         ccx.state
             .gas_metering
             .gas_records
-            .retain(|record| record.group != group || record.name != name);
+            .retain(|record| record.group != group && record.name != name);
+
+        // Clear last snapshot cache.
+        if ccx.state.gas_metering.last_snapshot_group == Some(group.to_string()) &&
+            ccx.state.gas_metering.last_snapshot_name == Some(name)
+        {
+            ccx.state.gas_metering.last_snapshot_group = None;
+            ccx.state.gas_metering.last_snapshot_name = None;
+        }
 
         Ok(value.abi_encode())
     } else {

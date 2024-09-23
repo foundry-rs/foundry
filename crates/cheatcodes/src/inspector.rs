@@ -230,6 +230,8 @@ pub struct GasMetering {
     /// Stores paused gas frames.
     pub paused_frames: Vec<Gas>,
 
+    /// The group of the last snapshot taken.
+    pub last_snapshot_group: Option<String>,
     /// The name of the last snapshot taken.
     pub last_snapshot_name: Option<String>,
 
@@ -1606,11 +1608,12 @@ impl Cheatcodes {
     ) {
         if matches!(interpreter.instruction_result, InstructionResult::Continue) {
             match interpreter.current_opcode() {
-                op::CALL |
                 op::CREATE |
+                op::CALL |
+                op::CALLCODE |
+                op::DELEGATECALL |
                 op::CREATE2 |
                 op::STATICCALL |
-                op::DELEGATECALL |
                 op::EXTSTATICCALL |
                 op::EXTDELEGATECALL => {
                     // Reset gas used when entering a new frame.
@@ -1641,6 +1644,12 @@ impl Cheatcodes {
                 }
             }
         }
+
+        println!(
+            "RECORD: {:?} @ {:?}",
+            revm::interpreter::OpCode::new(interpreter.current_opcode()).unwrap().as_str(),
+            self.gas_metering.gas_records
+        );
     }
 
     #[cold]
