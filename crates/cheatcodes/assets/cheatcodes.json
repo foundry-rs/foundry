@@ -5013,7 +5013,7 @@
     },
     {
       "func": {
-        "id": "getArtifactPath",
+        "id": "getArtifactPath_0",
         "description": "Gets the artifact path for a contract name.",
         "declaration": "function getArtifactPath(string calldata contractName) external view returns (string memory path);",
         "visibility": "external",
@@ -5025,6 +5025,26 @@
           18,
           164,
           53
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getArtifactPath_1",
+        "description": "Gets the artifact path from the creation code.",
+        "declaration": "function getArtifactPath(bytes calldata creationCode) external view returns (string memory path);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getArtifactPath(bytes)",
+        "selector": "0xdbd87939",
+        "selectorBytes": [
+          219,
+          216,
+          121,
+          57
         ]
       },
       "group": "filesystem",
