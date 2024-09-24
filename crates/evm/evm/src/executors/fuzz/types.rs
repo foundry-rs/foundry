@@ -5,7 +5,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::FuzzCase;
 use foundry_evm_traces::SparsedTraceArena;
 use revm::interpreter::InstructionResult;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Returned by a single fuzz in the case of a successful run
 #[derive(Debug)]
@@ -20,6 +20,8 @@ pub struct CaseOutcome {
     pub breakpoints: Breakpoints,
     /// logs of a single fuzz test case.
     pub logs: Vec<Log>,
+    /// Gas snapshots of a single fuzz test case
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
     // Deprecated cheatcodes mapped to their replacements.
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }

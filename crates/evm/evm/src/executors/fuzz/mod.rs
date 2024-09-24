@@ -17,7 +17,10 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, HashMap},
+};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -39,6 +42,8 @@ pub struct FuzzTestData {
     pub coverage: Option<HitMaps>,
     // Stores logs for all fuzz cases
     pub logs: Vec<Log>,
+    // Stores gas snapshots for all fuzz cases
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
     // Deprecated cheatcodes mapped to their replacements.
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
@@ -108,9 +113,11 @@ impl FuzzedExecutor {
                 FuzzOutcome::Case(case) => {
                     let mut data = execution_data.borrow_mut();
                     data.gas_by_case.push((case.case.gas, case.case.stipend));
+
                     if data.first_case.is_none() {
                         data.first_case.replace(case.case);
                     }
+
                     if let Some(call_traces) = case.traces {
                         if data.traces.len() == max_traces_to_collect {
                             data.traces.pop();
@@ -118,14 +125,25 @@ impl FuzzedExecutor {
                         data.traces.push(call_traces);
                         data.breakpoints.replace(case.breakpoints);
                     }
+
                     if show_logs {
                         data.logs.extend(case.logs);
                     }
+
+                    // Collect gas snapshots.
+                    for (group, new_snapshots) in case.gas_snapshots.iter() {
+                        data.gas_snapshots
+                            .entry(group.clone())
+                            .or_default()
+                            .extend(new_snapshots.clone());
+                    }
+
                     // Collect and merge coverage if `forge snapshot` context.
                     match &mut data.coverage {
                         Some(prev) => prev.merge(case.coverage.unwrap()),
                         opt => *opt = case.coverage,
                     }
+
                     data.deprecated_cheatcodes = case.deprecated_cheatcodes;
 
                     Ok(())
@@ -171,6 +189,7 @@ impl FuzzedExecutor {
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
             coverage: fuzz_result.coverage,
+            gas_snapshots: fuzz_result.gas_snapshots,
             deprecated_cheatcodes: fuzz_result.deprecated_cheatcodes,
         };
 
@@ -239,6 +258,11 @@ impl FuzzedExecutor {
                 (cheats.breakpoints.clone(), cheats.deprecated.clone())
             });
 
+        let gas_snapshots = call
+            .cheatcodes
+            .as_ref()
+            .map_or_else(Default::default, |cheats| cheats.gas_snapshots.clone());
+
         let success = self.executor.is_raw_call_mut_success(address, &mut call, should_fail);
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
@@ -247,6 +271,7 @@ impl FuzzedExecutor {
                 coverage: call.coverage,
                 breakpoints,
                 logs: call.logs,
+                gas_snapshots,
                 deprecated_cheatcodes,
             }))
         } else {

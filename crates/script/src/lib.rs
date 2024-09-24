@@ -609,6 +609,7 @@ impl ScriptConfig {
                             self.evm_opts.clone(),
                             Some(known_contracts),
                             Some(script_wallets),
+                            Some(target.name),
                             Some(target.version),
                         )
                         .into(),

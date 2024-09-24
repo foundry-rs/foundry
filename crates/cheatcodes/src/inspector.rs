@@ -5,7 +5,7 @@ use crate::{
         mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
-        DealRecord, RecordAccess,
+        DealRecord, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
     script::{Broadcast, ScriptWallets},
@@ -17,8 +17,8 @@ use crate::{
         },
     },
     utils::IgnoredTraces,
-    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
-    Vm::AccountAccess,
+    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
+    Vm::{self, AccountAccess},
 };
 use alloy_primitives::{hex, Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
@@ -230,12 +230,34 @@ pub struct GasMetering {
     /// Stores frames paused gas.
     pub paused_frames: Vec<Gas>,
 
+    /// The group of the last snapshot taken.
+    pub last_snapshot_group: Option<String>,
+    /// The name of the last snapshot taken.
+    pub last_snapshot_name: Option<String>,
+
     /// Cache of the amount of gas used in previous call.
     /// This is used by the `lastCallGas` cheatcode.
     pub last_call_gas: Option<crate::Vm::Gas>,
+
+    /// True if gas recording is enabled.
+    pub recording: bool,
+    /// The gas used in the last frame.
+    pub last_gas_used: u64,
+    /// Gas records for the active snapshots.
+    pub gas_records: Vec<GasRecord>,
 }
 
 impl GasMetering {
+    /// Start the gas recording.
+    pub fn start(&mut self) {
+        self.recording = true;
+    }
+
+    /// Stop the gas recording.
+    pub fn stop(&mut self) {
+        self.recording = false;
+    }
+
     /// Resume paused gas metering.
     pub fn resume(&mut self) {
         if self.paused {
@@ -430,6 +452,10 @@ pub struct Cheatcodes {
     /// Gas metering state.
     pub gas_metering: GasMetering,
 
+    /// Contains gas snapshots made over the course of a test suite.
+    // **Note**: both must a BTreeMap to ensure the order of the keys is deterministic.
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
+
     /// Mapping slots.
     pub mapping_slots: Option<HashMap<Address, MappingSlots>>,
 
@@ -488,6 +514,7 @@ impl Cheatcodes {
             serialized_jsons: Default::default(),
             eth_deals: Default::default(),
             gas_metering: Default::default(),
+            gas_snapshots: Default::default(),
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
@@ -752,6 +779,13 @@ impl Cheatcodes {
                 };
             }
         }
+
+        // Store the total gas used for all active gas records started by `startSnapshotGas`.
+        self.gas_metering.gas_records.iter_mut().for_each(|record| {
+            if ecx.journaled_state.depth() == record.depth + 1 {
+                record.gas_used = record.gas_used.saturating_add(outcome.result.gas.spent());
+            }
+        });
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
@@ -1152,6 +1186,10 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
 
     #[inline]
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+        if self.gas_metering.recording {
+            self.meter_gas_record(interpreter, ecx);
+        }
+
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1307,6 +1345,13 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             gasMemoryUsed: 0,
             gasRefunded: gas.refunded(),
             gasRemaining: gas.remaining(),
+        });
+
+        // Store the total gas used for all active gas records started by `startSnapshotGas`.
+        self.gas_metering.gas_records.iter_mut().for_each(|record| {
+            if ecx.journaled_state.depth() == record.depth + 1 {
+                record.gas_used = record.gas_used.saturating_add(gas.spent());
+            }
         });
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -1554,6 +1599,59 @@ impl Cheatcodes {
             // Record frame paused gas.
             self.gas_metering.paused_frames.push(interpreter.gas);
         }
+    }
+
+    #[cold]
+    fn meter_gas_record<DB: DatabaseExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<DB>,
+    ) {
+        if matches!(interpreter.instruction_result, InstructionResult::Continue) {
+            match interpreter.current_opcode() {
+                op::CREATE |
+                op::CALL |
+                op::CALLCODE |
+                op::DELEGATECALL |
+                op::CREATE2 |
+                op::STATICCALL |
+                op::EXTSTATICCALL |
+                op::EXTDELEGATECALL => {
+                    // Reset gas used when entering a new frame.
+                    self.gas_metering.last_gas_used = 0;
+                }
+                _ => {
+                    self.gas_metering.gas_records.iter_mut().for_each(|record| {
+                        if ecx.journaled_state.depth() == record.depth + 1 {
+                            // Initialize after new frame, use this as the starting point.
+                            if self.gas_metering.last_gas_used == 0 {
+                                self.gas_metering.last_gas_used = interpreter.gas.spent();
+                                return;
+                            }
+
+                            // Calculate the gas difference between the last and current frame.
+                            let gas_diff = interpreter
+                                .gas
+                                .spent()
+                                .saturating_sub(self.gas_metering.last_gas_used);
+
+                            // Update the gas record.
+                            record.gas_used = record.gas_used.saturating_add(gas_diff);
+
+                            // Update for next iteration.
+                            self.gas_metering.last_gas_used = interpreter.gas.spent();
+                        }
+                    });
+                }
+            }
+        }
+
+        println!(
+            "RECORD [{:?}]: {:?} @ {:?}",
+            ecx.journaled_state.depth(),
+            revm::interpreter::OpCode::new(interpreter.current_opcode()).unwrap().as_str(),
+            self.gas_metering.gas_records
+        );
     }
 
     #[cold]

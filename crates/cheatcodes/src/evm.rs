@@ -52,6 +52,19 @@ impl RecordAccess {
     }
 }
 
+/// Records the `snapshotGas*` cheatcodes.
+#[derive(Clone, Debug)]
+pub struct GasRecord {
+    /// The group name of the gas snapshot.
+    pub group: String,
+    /// The name of the gas snapshot.
+    pub name: String,
+    /// The total gas used in the gas snapshot.
+    pub gas_used: u64,
+    /// Depth at which the gas snapshot was taken.
+    pub depth: u64,
+}
+
 /// Records `deal` cheatcodes
 #[derive(Clone, Debug)]
 pub struct DealRecord {
@@ -506,6 +519,85 @@ impl Cheatcode for readCallersCall {
     }
 }
 
+impl Cheatcode for snapshotValue_0Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name, value } = self;
+        inner_create_value_snapshot(ccx, None, Some(name.clone()), value.to_string())
+    }
+}
+
+impl Cheatcode for snapshotValue_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { group, name, value } = self;
+        inner_create_value_snapshot(ccx, Some(group.clone()), Some(name.clone()), value.to_string())
+    }
+}
+
+impl Cheatcode for snapshotGasLastCall_0Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name } = self;
+        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
+            bail!("no external call was made yet");
+        };
+        inner_create_value_snapshot(
+            ccx,
+            None,
+            Some(name.clone()),
+            last_call_gas.gasTotalUsed.to_string(),
+        )
+    }
+}
+
+impl Cheatcode for snapshotGasLastCall_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name, group } = self;
+        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
+            bail!("no external call was made yet");
+        };
+        inner_create_value_snapshot(
+            ccx,
+            Some(group.clone()),
+            Some(name.clone()),
+            last_call_gas.gasTotalUsed.to_string(),
+        )
+    }
+}
+
+impl Cheatcode for startSnapshotGas_0Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name } = self;
+        inner_start_gas_snapshot(ccx, None, Some(name.clone()))
+    }
+}
+
+impl Cheatcode for startSnapshotGas_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { group, name } = self;
+        inner_start_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
+    }
+}
+
+impl Cheatcode for stopSnapshotGas_0Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        inner_stop_gas_snapshot(ccx, None, None)
+    }
+}
+
+impl Cheatcode for stopSnapshotGas_1Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { name } = self;
+        inner_stop_gas_snapshot(ccx, None, Some(name.clone()))
+    }
+}
+
+impl Cheatcode for stopSnapshotGas_2Call {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { group, name } = self;
+        inner_stop_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
+    }
+}
+
 // Deprecated in favor of `snapshotStateCall`
 impl Cheatcode for snapshotCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
@@ -693,6 +785,127 @@ fn inner_delete_state_snapshot<DB: DatabaseExt>(
 fn inner_delete_state_snapshots<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result {
     ccx.ecx.db.delete_state_snapshots();
     Ok(Default::default())
+}
+
+fn inner_create_value_snapshot<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    group: Option<String>,
+    name: Option<String>,
+    value: String,
+) -> Result {
+    let cheatcodes = ccx.state.clone();
+    let group = group
+        .as_deref()
+        .unwrap_or(cheatcodes.config.running_contract.as_ref().expect("expected running contract"))
+        .to_string();
+    let name = name.as_deref().unwrap_or("default").to_string();
+
+    ccx.state.gas_snapshots.entry(group).or_default().insert(name, value);
+
+    Ok(Default::default())
+}
+
+fn inner_start_gas_snapshot<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    group: Option<String>,
+    name: Option<String>,
+) -> Result {
+    // Revert if there is an active gas snapshot as we can only have one active snapshot at a time.
+    if ccx.state.gas_metering.last_snapshot_group.is_some() ||
+        ccx.state.gas_metering.last_snapshot_name.is_some()
+    {
+        bail!(
+            "gas snapshot was already started with group: {:?} and name: {:?}",
+            ccx.state.gas_metering.last_snapshot_group,
+            ccx.state.gas_metering.last_snapshot_name
+        );
+    }
+
+    let group = group.as_deref().unwrap_or(
+        ccx.state.config.running_contract.as_deref().expect("expected running contract"),
+    );
+    let name = name.as_deref().unwrap_or("default").to_string();
+
+    ccx.state.gas_metering.gas_records.push(GasRecord {
+        group: group.to_string(),
+        name: name.clone(),
+        gas_used: 0,
+        depth: ccx.ecx.journaled_state.depth() - 1,
+    });
+
+    ccx.state.gas_metering.last_snapshot_group = Some(group.to_string());
+    ccx.state.gas_metering.last_snapshot_name = Some(name);
+
+    ccx.state.gas_metering.start();
+
+    Ok(Default::default())
+}
+
+fn inner_stop_gas_snapshot<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    group: Option<String>,
+    name: Option<String>,
+) -> Result {
+    // If group and name are not provided, use the last snapshot group and name.
+    let group = group
+        .as_deref()
+        .unwrap_or(
+            ccx.state
+                .gas_metering
+                .last_snapshot_group
+                .as_deref()
+                .expect("no gas snapshot was started with this group"),
+        )
+        .to_string();
+    let name = name
+        .as_deref()
+        .unwrap_or(
+            ccx.state
+                .gas_metering
+                .last_snapshot_name
+                .as_deref()
+                .expect("no gas snapshot was started with this name"),
+        )
+        .to_string();
+
+    if let Some(record) = ccx
+        .state
+        .gas_metering
+        .gas_records
+        .iter_mut()
+        .find(|record| record.group == group && record.name == name)
+    {
+        // Calculate the gas used since the snapshot was started.
+        // We subtract 151 from the gas used to account for gas used by the snapshot itself.
+        let value = record.gas_used - 151;
+
+        ccx.state
+            .gas_snapshots
+            .entry(group.to_string())
+            .or_default()
+            .insert(name.clone(), value.to_string());
+
+        // Stop the gas metering.
+        ccx.state.gas_metering.stop();
+
+        // Remove the gas record.
+        ccx.state
+            .gas_metering
+            .gas_records
+            .retain(|record| record.group != group && record.name != name);
+
+        // Clear last snapshot cache.
+        if ccx.state.gas_metering.last_snapshot_group == Some(group.to_string()) &&
+            ccx.state.gas_metering.last_snapshot_name == Some(name)
+        {
+            ccx.state.gas_metering.last_snapshot_group = None;
+            ccx.state.gas_metering.last_snapshot_name = None;
+        }
+
+        Ok(value.abi_encode())
+    } else {
+        bail!("no gas snapshot was started with the name: {name} in group: {group}");
+    }
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
