@@ -149,7 +149,7 @@ pub struct Backend {
     /// which the write-lock is active depends on whether the `ForkDb` can provide all requested
     /// data from memory or whether it has to retrieve it via RPC calls first. This means that it
     /// potentially blocks for some time, even taking into account the rate limits of RPC
-    /// endpoints. Therefor the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
+    /// endpoints. Therefore the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
     /// need to read from it, while it's currently written to, don't block. E.g. a new block is
     /// currently mined and a new [`Self::set_storage_at()`] request is being executed.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,

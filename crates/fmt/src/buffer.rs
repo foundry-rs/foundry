@@ -173,7 +173,7 @@ impl<W: Write> FormatBuffer<W> {
         let mut comment_state = self.state.comment_state();
         while let Some(line) = lines.next() {
             // remove the whitespace that covered by the base indent length (this is normally the
-            // case with temporary buffers as this will be readded by the underlying IndentWriter
+            // case with temporary buffers as this will be re-added by the underlying IndentWriter
             // later on
             let (new_comment_state, line_start) = line
                 .comment_state_char_indices()

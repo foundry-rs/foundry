@@ -522,7 +522,7 @@ pub enum EthRequest {
     EvmSetTime(U256),
 
     /// Serializes the current state (including contracts code, contract's storage, accounts
-    /// properties, etc.) into a savable data blob
+    /// properties, etc.) into a saveable data blob
     #[cfg_attr(feature = "serde", serde(rename = "anvil_dumpState", alias = "hardhat_dumpState"))]
     DumpState(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<bool>>>),
 

@@ -100,7 +100,7 @@ model_checker = { contracts = { 'a.sol' = [
 ], timeout = 10000 }
 verbosity = 0
 eth_rpc_url = "https://example.com/"
-# Setting this option enables decoding of error traces from mainnet deployed / verfied contracts via etherscan
+# Setting this option enables decoding of error traces from mainnet deployed / verified contracts via etherscan
 etherscan_api_key = "YOURETHERSCANAPIKEY"
 # ignore solc warnings for missing license and exceeded contract size
 # known error codes are: ["unreachable", "unused-return", "unused-param", "unused-var", "code-size", "shadowing", "func-mutability", "license", "pragma-solidity", "virtual-interfaces", "same-varname", "too-many-warnings", "constructor-visibility", "init-code-size", "missing-receive-ether", "unnamed-return", "transient-storage"]
