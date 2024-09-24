@@ -569,7 +569,7 @@ impl MinedTransaction {
 pub struct MinedTransactionReceipt {
     /// The actual json rpc receipt object
     pub inner: ReceiptResponse,
-    /// Output data fo the transaction
+    /// Output data for the transaction
     pub out: Option<Bytes>,
 }
 

@@ -1401,7 +1401,7 @@ impl PruneStateHistoryConfig {
         !self.enabled || self.max_memory_history.is_some()
     }
 
-    /// Returns tru if this setting was enabled.
+    /// Returns true if this setting was enabled.
     pub fn is_config_enabled(&self) -> bool {
         self.enabled
     }
