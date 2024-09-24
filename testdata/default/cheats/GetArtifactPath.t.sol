@@ -27,7 +27,7 @@ contract GetArtifactPathTest is DSTest {
         bytes memory dummyRuntimeCode = address(dummy).code;
 
         string memory root = vm.projectRoot();
-        string memory path = vm.testGetArtifactPathByDeployedCode(dummyRuntimeCode);
+        string memory path = vm.getArtifactPathByDeployedCode(dummyRuntimeCode);
 
         string memory expectedPath =
             string.concat(root, "/out/default/GetArtifactPath.t.sol/DummyForGetArtifactPath.json");
