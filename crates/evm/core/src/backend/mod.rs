@@ -3,7 +3,7 @@
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     fork::{CreateFork, ForkId, MultiFork},
-    snapshot::StateSnapshots,
+    state_snapshot::StateSnapshots,
     utils::{configure_tx_env, new_evm_with_inspector},
     InspectorExt,
 };
@@ -71,10 +71,10 @@ pub const GLOBAL_FAIL_SLOT: U256 =
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut)]
 pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
-    /// Creates a new snapshot at the current point of execution.
+    /// Creates a new state snapshot at the current point of execution.
     ///
-    /// A snapshot is associated with a new unique id that's created for the snapshot.
-    /// Snapshots can be reverted: [DatabaseExt::revert], however, depending on the
+    /// A state snapshot is associated with a new unique id that's created for the snapshot.
+    /// State snapshots can be reverted: [DatabaseExt::revert_state], however, depending on the
     /// [RevertStateSnapshotAction], it will keep the snapshot alive or delete it.
     fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &Env) -> U256;
 
@@ -410,7 +410,7 @@ struct _ObjectSafe(dyn DatabaseExt);
 /// afterwards, as well as any snapshots taken after the reverted snapshot, (e.g.: reverting to id
 /// 0x1 will delete snapshots with ids 0x1, 0x2, etc.)
 ///
-/// **Note:** Snapshots work across fork-swaps, e.g. if fork `A` is currently active, then a
+/// **Note:** State snapshots work across fork-swaps, e.g. if fork `A` is currently active, then a
 /// snapshot is created before fork `B` is selected, then fork `A` will be the active fork again
 /// after reverting the snapshot.
 #[derive(Clone, Debug)]
@@ -593,18 +593,18 @@ impl Backend {
         self.inner.caller
     }
 
-    /// Failures occurred in snapshots are tracked when the snapshot is reverted
+    /// Failures occurred in state snapshots are tracked when the state snapshot is reverted.
     ///
-    /// If an error occurs in a restored snapshot, the test is considered failed.
+    /// If an error occurs in a restored state snapshot, the test is considered failed.
     ///
-    /// This returns whether there was a reverted snapshot that recorded an error
-    pub fn has_snapshot_failure(&self) -> bool {
-        self.inner.has_snapshot_failure
+    /// This returns whether there was a reverted state snapshot that recorded an error.
+    pub fn has_state_snapshot_failure(&self) -> bool {
+        self.inner.has_state_snapshot_failure
     }
 
-    /// Sets the snapshot failure flag.
-    pub fn set_snapshot_failure(&mut self, has_snapshot_failure: bool) {
-        self.inner.has_snapshot_failure = has_snapshot_failure
+    /// Sets the state snapshot failure flag.
+    pub fn set_state_snapshot_failure(&mut self, has_state_snapshot_failure: bool) {
+        self.inner.has_state_snapshot_failure = has_state_snapshot_failure
     }
 
     /// When creating or switching forks, we update the AccountInfo of the contract
@@ -938,7 +938,7 @@ impl DatabaseExt for Backend {
             if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS) {
                 if let Some(slot) = account.storage.get(&GLOBAL_FAIL_SLOT) {
                     if !slot.present_value.is_zero() {
-                        self.set_snapshot_failure(true);
+                        self.set_state_snapshot_failure(true);
                     }
                 }
             }
@@ -1612,7 +1612,7 @@ pub struct BackendInner {
     /// reverted we get the _current_ `revm::JournaledState` which contains the state that we can
     /// check if the `_failed` variable is set,
     /// additionally
-    pub has_snapshot_failure: bool,
+    pub has_state_snapshot_failure: bool,
     /// Tracks the caller of the test function
     pub caller: Option<Address>,
     /// Tracks numeric identifiers for forks
@@ -1800,7 +1800,7 @@ impl Default for BackendInner {
             created_forks: Default::default(),
             forks: vec![],
             state_snapshots: Default::default(),
-            has_snapshot_failure: false,
+            has_state_snapshot_failure: false,
             caller: None,
             next_fork_id: Default::default(),
             persistent_accounts: Default::default(),

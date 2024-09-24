@@ -2,7 +2,7 @@
 
 use crate::{
     backend::{RevertStateSnapshotAction, StateSnapshot},
-    snapshot::StateSnapshots,
+    state_snapshot::StateSnapshots,
 };
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;

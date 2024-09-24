@@ -39,26 +39,26 @@ impl<T> StateSnapshots<T> {
         snapshot
     }
 
-    /// Removes all snapshots
+    /// Removes all state snapshots.
     pub fn clear(&mut self) {
         self.snapshots.clear();
     }
 
-    /// Removes the snapshot with the given `id`.
+    /// Removes the state snapshot with the given `id`.
     ///
-    /// Does not remove snapshots after it.
+    /// Does not remove state snapshots after it.
     pub fn remove_at(&mut self, id: U256) -> Option<T> {
         self.snapshots.remove(&id)
     }
 
-    /// Inserts the new snapshot and returns the id
+    /// Inserts the new state snapshot and returns the id.
     pub fn insert(&mut self, snapshot: T) -> U256 {
         let id = self.next_id();
         self.snapshots.insert(id, snapshot);
         id
     }
 
-    /// Inserts the new snapshot at the given `id`.
+    /// Inserts the new state snapshot at the given `id`.
     ///
     ///  Does not auto-increment the next `id`.
     pub fn insert_at(&mut self, snapshot: T, id: U256) -> U256 {

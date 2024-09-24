@@ -1,6 +1,6 @@
 //! In-memory database.
 
-use crate::snapshot::StateSnapshots;
+use crate::state_snapshot::StateSnapshots;
 use alloy_primitives::{Address, B256, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{

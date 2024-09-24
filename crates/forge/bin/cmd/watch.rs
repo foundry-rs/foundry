@@ -1,4 +1,4 @@
-use super::{build::BuildArgs, doc::DocArgs, snapshot::SnapshotArgs, test::TestArgs};
+use super::{build::BuildArgs, doc::DocArgs, snapshot::GasSnapshotArgs, test::TestArgs};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::utils::{self, FoundryPathExt};
@@ -249,7 +249,7 @@ pub async fn watch_build(args: BuildArgs) -> Result<()> {
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// snapshot`
-pub async fn watch_snapshot(args: SnapshotArgs) -> Result<()> {
+pub async fn watch_gas_snapshot(args: GasSnapshotArgs) -> Result<()> {
     let config = args.watchexec_config()?;
     run(config).await
 }
