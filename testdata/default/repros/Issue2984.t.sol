@@ -12,11 +12,11 @@ contract Issue2984Test is DSTest {
 
     function setUp() public {
         fork = vm.createSelectFork("avaxTestnet", 12880747);
-        snapshot = vm.snapshot();
+        snapshot = vm.snapshotState();
     }
 
     function testForkRevertSnapshot() public {
-        vm.revertTo(snapshot);
+        vm.revertToState(snapshot);
     }
 
     function testForkSelectSnapshot() public {

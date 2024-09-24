@@ -11,7 +11,7 @@ contract Issue6355Test is DSTest {
     Target targ;
 
     function setUp() public {
-        snapshot = vm.snapshot();
+        snapshot = vm.snapshotState();
         targ = new Target();
     }
 
@@ -21,9 +21,9 @@ contract Issue6355Test is DSTest {
     }
 
     // always fails
-    function test_shouldFailWithRevertTo() public {
+    function test_shouldFailWithRevertToState() public {
         assertEq(3, targ.num());
-        vm.revertTo(snapshot);
+        vm.revertToState(snapshot);
     }
 
     // always fails

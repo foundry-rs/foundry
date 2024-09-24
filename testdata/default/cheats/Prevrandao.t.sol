@@ -23,12 +23,12 @@ contract PrevrandaoTest is DSTest {
     function testPrevrandaoSnapshotFuzzed(uint256 newPrevrandao) public {
         vm.assume(newPrevrandao != block.prevrandao);
         uint256 oldPrevrandao = block.prevrandao;
-        uint256 snapshot = vm.snapshot();
+        uint256 snapshotId = vm.snapshotState();
 
         vm.prevrandao(newPrevrandao);
         assertEq(block.prevrandao, newPrevrandao);
 
-        assert(vm.revertTo(snapshot));
+        assert(vm.revertToState(snapshotId));
         assertEq(block.prevrandao, oldPrevrandao);
     }
 }
