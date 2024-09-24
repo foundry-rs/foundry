@@ -1003,11 +1003,41 @@ impl TypedTransaction {
     }
 }
 
-impl TryFrom<RpcTransaction> for TypedTransaction {
+impl TryFrom<WithOtherFields<RpcTransaction>> for TypedTransaction {
     type Error = ConversionError;
 
-    fn try_from(tx: RpcTransaction) -> Result<Self, Self::Error> {
-        // TODO(sergerad): Handle Arbitrum system transactions?
+    fn try_from(tx: WithOtherFields<RpcTransaction>) -> Result<Self, Self::Error> {
+        if tx.transaction_type.is_some_and(|t| t == 0x7E) {
+            let mint = tx
+                .other
+                .get_deserialized::<U256>("mint")
+                .ok_or(ConversionError::Custom("MissingMint".to_string()))?
+                .map_err(|_| ConversionError::Custom("Cannot deserialize mint".to_string()))?;
+
+            let source_hash = tx
+                .other
+                .get_deserialized::<B256>("sourceHash")
+                .ok_or(ConversionError::Custom("MissingSourceHash".to_string()))?
+                .map_err(|_| {
+                    ConversionError::Custom("Cannot deserialize source hash".to_string())
+                })?;
+
+            let deposit = DepositTransaction {
+                nonce: tx.nonce,
+                is_system_tx: true,
+                from: tx.from,
+                kind: tx.to.map(TxKind::Call).unwrap_or(TxKind::Create),
+                value: tx.value,
+                gas_limit: tx.gas,
+                input: tx.input.clone(),
+                mint,
+                source_hash,
+            };
+
+            return Ok(Self::Deposit(deposit));
+        }
+
+        let tx = tx.inner;
         match tx.transaction_type.unwrap_or_default().try_into()? {
             TxType::Legacy => {
                 let legacy = TxLegacy {

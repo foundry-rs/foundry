@@ -167,6 +167,26 @@ async fn test_fork_eth_get_nonce() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_optimism_with_transaction_hash() {
+    use std::str::FromStr;
+
+    // Fork to a block with a specific transaction
+    let fork_tx_hash =
+        TxHash::from_str("fcb864b5a50f0f0b111dbbf9e9167b2cb6179dfd6270e1ad53aac6049c0ec038")
+            .unwrap();
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(rpc::next_rpc_endpoint(NamedChain::Optimism)))
+            .with_fork_transaction_hash(Some(fork_tx_hash)),
+    )
+    .await;
+
+    // Make sure the fork starts from previous block
+    let block_number = api.block_number().unwrap().to::<u64>();
+    assert_eq!(block_number, 125777954 - 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_fee_history() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
