@@ -34,8 +34,9 @@ clean: ## Clean the project.
 
 ## Linting
 
-fmt: ## Run the formatter.
+fmt: ## Run all formatters.
 	cargo +nightly fmt
+	./.github/scripts/format.sh --check
 
 lint-foundry:
 	RUSTFLAGS="-Dwarnings" cargo clippy --workspace --all-targets --all-features
