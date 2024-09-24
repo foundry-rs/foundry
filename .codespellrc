@@ -1,0 +1,3 @@
+[codespell]
+skip = .git,target,Cargo.toml,Cargo.lock,*.sol
+ignore-words-list = crate,ser,ratatui,Caf
