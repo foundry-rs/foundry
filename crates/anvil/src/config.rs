@@ -1291,7 +1291,7 @@ latest block number: {latest_block}"
         u64::MAX as u128
     }
 
-    /// Returns the gas limit to use for the fork
+    /// Returns the gas limit for a non forked anvil instance
     ///
     /// Checks the config for the `disable_block_gas_limit` flag
     pub(crate) fn gas_limit(&self) -> u128 {
