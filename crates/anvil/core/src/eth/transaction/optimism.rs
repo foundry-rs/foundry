@@ -6,6 +6,7 @@ use alloy_rlp::{
 use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 use std::mem;
+use op_alloy::consensus::transaction::deposit::TxDeposit;
 
 pub const DEPOSIT_TX_TYPE_ID: u8 = 0x7E;
 
@@ -275,28 +276,16 @@ impl Encodable for DepositTransactionRequest {
 /// See <https://github.com/ethereum-optimism/optimism/blob/develop/specs/deposits.md#the-deposited-transaction-type>
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DepositTransaction {
-/// Hash that uniquely identifies the source of the deposit.
-pub source_hash: B256,
-/// The address of the sender account.
-pub from: Address,
-/// The address of the recipient account, or the null (zero-length) address if the deposited
-/// transaction is a contract creation.
-#[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "TxKind::is_create"))]
-pub to: TxKind,
-/// The ETH value to mint on L2.
-#[cfg_attr(feature = "serde", serde(default, with = "alloy_serde::quantity::opt"))]
-pub mint: Option<u128>,
-///  The ETH value to send to the recipient account.
-pub value: U256,
-/// The gas limit for the L2 transaction.
-#[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity", rename = "gas"))]
-pub gas_limit: u128,
-/// Field indicating if this transaction is exempt from the L2 gas limit.
-#[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity", rename = "isSystemTx"))]
-pub is_system_transaction: bool,
-/// Input has two uses depending if transaction is Create or Call (if `to` field is None or
-/// Some).
-pub input: Bytes,
+    pub nonce: u64,
+    pub source_hash: B256,
+    pub from: Address,
+    pub kind: TxKind,
+    pub mint: U256,
+    pub value: U256,
+    pub gas_limit: u128,
+    pub is_system_tx: bool,
+    pub input: Bytes,
+    deposit: TxDeposit,
 }
 
 impl DepositTransaction {
