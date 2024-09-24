@@ -4,7 +4,7 @@
 .DEFAULT_GOAL := help
 
 # Cargo profile for builds.
-PROFILE ?= release
+PROFILE ?= dev
 
 # List of features to use when building. Can be overridden via the environment.
 # No jemalloc on Windows
