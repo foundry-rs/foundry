@@ -5013,18 +5013,38 @@
     },
     {
       "func": {
-        "id": "getArtifactPath",
-        "description": "Gets the artifact path from the creation code.",
-        "declaration": "function getArtifactPath(bytes calldata creationCode) external view returns (string memory path);",
+        "id": "getArtifactPathByCode",
+        "description": "Gets the artifact path from code (aka. creation code).",
+        "declaration": "function getArtifactPathByCode(bytes calldata code) external view returns (string memory path);",
         "visibility": "external",
         "mutability": "view",
-        "signature": "getArtifactPath(bytes)",
-        "selector": "0xdbd87939",
+        "signature": "getArtifactPathByCode(bytes)",
+        "selector": "0xeb74848c",
         "selectorBytes": [
-          219,
-          216,
-          121,
-          57
+          235,
+          116,
+          132,
+          140
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getArtifactPathByDeployedCode",
+        "description": "Gets the artifact path from deployed code (aka. runtime code).",
+        "declaration": "function getArtifactPathByDeployedCode(bytes calldata deployedCode) external view returns (string memory path);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getArtifactPathByDeployedCode(bytes)",
+        "selector": "0x6d853ba5",
+        "selectorBytes": [
+          109,
+          133,
+          59,
+          165
         ]
       },
       "group": "filesystem",
