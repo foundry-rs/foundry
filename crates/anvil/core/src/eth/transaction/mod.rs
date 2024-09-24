@@ -1015,7 +1015,7 @@ impl TryFrom<WithOtherFields<RpcTransaction>> for TypedTransaction {
                 .cloned()
                 .map(|v| {
                     serde_json::from_value::<U256>(v)
-                        .map_err(|_| ConversionError::Custom(format!("Cannot deserialize mint")))
+                        .map_err(|_| ConversionError::Custom("Cannot deserialize mint".to_string()))
                 })?;
 
             let source_hash = tx
@@ -1025,7 +1025,7 @@ impl TryFrom<WithOtherFields<RpcTransaction>> for TypedTransaction {
                 .cloned()
                 .map(|v| {
                     serde_json::from_value::<B256>(v).map_err(|_| {
-                        ConversionError::Custom(format!("Cannot deserialize source hash"))
+                        ConversionError::Custom("Cannot deserialize source hash".to_string())
                     })
                 })?;
 
