@@ -121,9 +121,7 @@ impl TryFrom<WithOtherFields<RpcTransaction>> for PoolTransaction {
     type Error = eyre::Error;
     fn try_from(transaction: WithOtherFields<RpcTransaction>) -> Result<Self, Self::Error> {
         let typed_transaction = TypedTransaction::try_from(transaction)?;
-        tracing::info!("Converted to typed transaction!");
         let pending_transaction = PendingTransaction::new(typed_transaction)?;
-        tracing::info!("Converted to pending transaction!");
         Ok(Self {
             pending_transaction,
             requires: vec![],

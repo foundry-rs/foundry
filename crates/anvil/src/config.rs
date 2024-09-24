@@ -1281,23 +1281,11 @@ async fn derive_block_and_transactions(
                 .ok_or(eyre::eyre!("Failed to get fork transaction by hash"))?;
             let transaction_block_number = transaction.block_number.unwrap();
 
-            tracing::info!(
-                "Forking from transaction hash: {transaction_hash} in block number: {transaction_block_number}"
-            );
-
             // Get the block pertaining to the fork transaction
             let transaction_block = provider
                 .get_block_by_number(transaction_block_number.into(), true)
                 .await?
                 .ok_or(eyre::eyre!("Failed to get fork block by number"))?;
-
-            tracing::info!(
-                "Forking from block number: {transaction_block_number} with hash: {transaction_block_hash}",
-                transaction_block_number = transaction_block_number,
-                transaction_block_hash = transaction_block.header.hash
-            );
-
-            tracing::info!("Block has {} transactions", transaction_block.transactions.len());
 
             // Filter out transactions that are after the fork transaction
             let filtered_transactions: Vec<&alloy_serde::WithOtherFields<Transaction>> =
@@ -1309,25 +1297,10 @@ async fn derive_block_and_transactions(
                     .take_while_inclusive(|&transaction| transaction.hash != transaction_hash.0)
                     .collect();
 
-            tracing::info!(
-                "Filtered transactions: {filtered_transactions}",
-                filtered_transactions = filtered_transactions.len()
-            );
-
             // Convert the transactions to PoolTransactions
             let force_transactions = filtered_transactions
                 .iter()
-                .map(|&transaction| {
-                    tracing::info!(
-                        "Converting transaction {} to pool transaction",
-                        transaction.hash
-                    );
-                    let pool_tx = PoolTransaction::try_from(transaction.clone());
-
-                    tracing::info!("Conversion result: {pool_tx:?}");
-
-                    pool_tx
-                })
+                .map(|&transaction| PoolTransaction::try_from(transaction.clone()))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| eyre::eyre!("Err converting to pool transactions {e}"))?;
             Ok((transaction_block_number.saturating_sub(1), Some(force_transactions)))
