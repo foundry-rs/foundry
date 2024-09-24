@@ -21,7 +21,7 @@ contract GetArtifactPathTest is DSTest {
         assertEq(path, expectedPath);
     }
 
-    function testGetArtifactPathUsingDeployedBytecode() public {
+    function testGetArtifactPathUsingCreationCode() public {
         DummyForGetArtifactPath dummy = new DummyForGetArtifactPath();
         bytes memory dummyCreationCode = type(DummyForGetArtifactPath)
             .creationCode;
