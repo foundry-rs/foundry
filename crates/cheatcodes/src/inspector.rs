@@ -23,7 +23,7 @@ use crate::{
 use alloy_primitives::{hex, Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
+use foundry_common::{evm::Breakpoints, shell::println, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_config::Config;
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
@@ -1608,21 +1608,39 @@ impl Cheatcodes {
         ecx: &mut EvmContext<DB>,
     ) {
         if matches!(interpreter.instruction_result, InstructionResult::Continue) {
-            match interpreter.current_opcode() {
-                op::CREATE |
-                op::CALL |
-                op::CALLCODE |
-                op::DELEGATECALL |
-                op::CREATE2 |
-                op::STATICCALL |
-                op::EXTSTATICCALL |
-                op::EXTDELEGATECALL => {
-                    // Reset gas used when entering a new frame.
-                    self.gas_metering.last_gas_used = 0;
-                }
-                _ => {
-                    self.gas_metering.gas_records.iter_mut().for_each(|record| {
-                        if ecx.journaled_state.depth() == record.depth + 1 {
+            self.gas_metering.gas_records.iter_mut().for_each(|record| {
+                if ecx.journaled_state.depth() == record.depth + 1 {
+                    match interpreter.current_opcode() {
+                        op::CREATE |
+                        op::CALL |
+                        op::CALLCODE |
+                        op::DELEGATECALL |
+                        op::CREATE2 |
+                        op::STATICCALL |
+                        op::EXTSTATICCALL |
+                        op::EXTDELEGATECALL => {
+                            // Reset gas used when entering a new frame.
+                            self.gas_metering.last_gas_used = 0;
+
+                            match interpreter.current_opcode() {
+                                // CREATE and CREATE2 have a fixed gas cost of 32000.
+                                op::CREATE | op::CREATE2 => {
+                                    record.gas_used = record.gas_used.saturating_add(32000);
+                                }
+                                // CALL, CALLCODE, DELEGATECALL, STATICCALL, EXTSTATICCALL, and
+                                // EXTDELEGATECALL have a fixed gas cost of 700.
+                                op::CALL |
+                                op::CALLCODE |
+                                op::DELEGATECALL |
+                                op::STATICCALL |
+                                op::EXTSTATICCALL |
+                                op::EXTDELEGATECALL => {
+                                    record.gas_used = record.gas_used.saturating_add(700);
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {
                             // Initialize after new frame, use this as the starting point.
                             if self.gas_metering.last_gas_used == 0 {
                                 self.gas_metering.last_gas_used = interpreter.gas.spent();
@@ -1641,16 +1659,16 @@ impl Cheatcodes {
                             // Update for next iteration.
                             self.gas_metering.last_gas_used = interpreter.gas.spent();
                         }
-                    });
+                    }
                 }
-            }
+            });
         }
 
         println!(
             "{:?}: {:?} @ {:?}",
-            self.gas_metering.gas_records,
-            revm::interpreter::OpCode::new(interpreter.current_opcode()).unwrap().as_str(),
             ecx.journaled_state.depth(),
+            revm::interpreter::OpCode::new(interpreter.current_opcode()).unwrap().as_str(),
+            self.gas_metering.gas_records,
         );
     }
 

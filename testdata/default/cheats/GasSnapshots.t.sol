@@ -223,14 +223,14 @@ contract GasComparisonTest is DSTest {
     function testGasComparisonCreateA() public {
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonCreateA");
-        new TargetEmpty();
+        new TargetEmptyA();
         vm.stopSnapshotGas();
     }
 
     function testGasComparisonCreateB() public {
         // Start a comparitive Solidity snapshot.
         _snapStart();
-        new TargetEmpty();
+        new TargetEmptyB();
         vm.snapshotValue("ComparisonGroup", "testGasComparisonCreateB", _snapEnd());
     }
 
@@ -286,4 +286,6 @@ contract TargetB {
     }
 }
 
-contract TargetEmpty {}
+contract TargetEmptyA {}
+
+contract TargetEmptyB {}
