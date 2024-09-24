@@ -1156,7 +1156,7 @@ async fn test_arbitrum_fork_dev_balance() {
     let (api, handle) = spawn(
         fork_config()
             .with_fork_block_number(None::<u64>)
-            .with_eth_rpc_url(Some("https://arb1.arbitrum.io/rpc".to_string())),
+            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
     )
     .await;
 
@@ -1174,7 +1174,7 @@ async fn test_arbitrum_fork_block_number() {
     let (_, handle) = spawn(
         fork_config()
             .with_fork_block_number(None::<u64>)
-            .with_eth_rpc_url(Some("https://arb1.arbitrum.io/rpc".to_string())),
+            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
     )
     .await;
     let provider = handle.http_provider();
@@ -1186,7 +1186,7 @@ async fn test_arbitrum_fork_block_number() {
     let (api, _) = spawn(
         fork_config()
             .with_fork_block_number(Some(initial_block_number))
-            .with_eth_rpc_url(Some("https://arb1.arbitrum.io/rpc".to_string())),
+            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
     )
     .await;
     let block_number = api.block_number().unwrap().to::<u64>();
@@ -1212,7 +1212,7 @@ async fn test_arbitrum_fork_block_number() {
 
     // reset fork to different block number and compare with block returned by `eth_blockNumber`
     api.anvil_reset(Some(Forking {
-        json_rpc_url: Some("https://arb1.arbitrum.io/rpc".to_string()),
+        json_rpc_url: Some(next_rpc_endpoint(NamedChain::Arbitrum)),
         block_number: Some(initial_block_number - 2),
     }))
     .await

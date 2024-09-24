@@ -215,25 +215,20 @@ contract DeployScript is Script {
         "--slow",
         "--broadcast",
         "--unlocked",
+        "--ignored-error-codes=2018", // `wasteGas` can be restricted to view
     ])
     .assert_success()
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to view
- [FILE]:7:5:
-  |
-7 |     function wasteGas(uint256 minGas) public {
-  |     ^ (Relevant source part starts here and spans across multiple lines).
-
+Compiler run successful!
 Traces:
-  [81040] DeployScript::run()
+  [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [45299] → new GasWaster@[..]
+    ├─ [..] → new GasWaster@[..]
     │   └─ ← [Return] 226 bytes of code
-    ├─ [226] GasWaster::wasteGas(200000 [2e5])
+    ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 
@@ -244,7 +239,6 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-Gas limit was set in script to 500000
   [45299] → new GasWaster@[..]
     └─ ← [Return] 226 bytes of code
 
@@ -336,12 +330,12 @@ Warning (2018): Function state mutability can be restricted to view
   |     ^ (Relevant source part starts here and spans across multiple lines).
 
 Traces:
-  [81040] DeployScript::run()
+  [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [45299] → new GasWaster@[..]
+    ├─ [..] → new GasWaster@[..]
     │   └─ ← [Return] 226 bytes of code
-    ├─ [226] GasWaster::wasteGas(200000 [2e5])
+    ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 
@@ -352,7 +346,6 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-Gas limit was set in script to 500000
   [45299] → new GasWaster@[..]
     └─ ← [Return] 226 bytes of code
 
@@ -522,10 +515,10 @@ contract DeployScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [116040] DeployScript::run()
+  [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
-    ├─ [75723] → new HashChecker@[..]
+    ├─ [..] → new HashChecker@[..]
     │   └─ ← [Return] 378 bytes of code
     └─ ← [Stop] 
 
@@ -602,58 +595,58 @@ contract RunScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [51327] RunScript::run()
+  [..] RunScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [22394] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
-    ├─ [494] [..]::update()
-    │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
-    ├─ [494] [..]::update()
-    │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
-    │   └─ ← [Stop] 
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return] 
-    ├─ [494] [..]::update()
-    │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     ├─ [0] VM::roll([..])
     │   └─ ← [Return] 
-    ├─ [494] [..]::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop] 
-    ├─ [239] [..]::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [..] [..]::update()
+    │   └─ ← [Stop] 
+    ├─ [..] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [..] [..]::update()
+    │   └─ ← [Stop] 
+    ├─ [..] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop] 
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return] 
+    ├─ [..] [..]::update()
+    │   └─ ← [Stop] 
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop] 
     └─ ← [Stop] 
 
@@ -1689,6 +1682,7 @@ contract SimpleScript is Script {
         "2000000",
         "--priority-gas-price",
         "100000",
+        "--non-interactive",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -1702,6 +1696,7 @@ Script ran successfully.
 success: bool true
 
 ## Setting up 1 EVM.
+Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 ==========================
 
@@ -1738,6 +1733,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
             format!("{dev:?}").as_str(),
             "--broadcast",
             "--unlocked",
+            "--non-interactive",
         ])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -1749,6 +1745,7 @@ Script ran successfully.
 success: bool true
 
 ## Setting up 1 EVM.
+Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 ==========================
 
@@ -1802,6 +1799,7 @@ contract SimpleScript is Script {
         &handle.http_endpoint(),
         "--broadcast",
         "--unlocked",
+        "--non-interactive",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -1815,6 +1813,7 @@ Script ran successfully.
 success: bool true
 
 ## Setting up 1 EVM.
+Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 ==========================
 

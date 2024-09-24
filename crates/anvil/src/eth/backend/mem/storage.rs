@@ -1,7 +1,10 @@
 //! In-memory blockchain storage
 use crate::eth::{
     backend::{
-        db::{MaybeFullDatabase, SerializableBlock, SerializableTransaction, StateDb},
+        db::{
+            MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
+            SerializableTransaction, StateDb,
+        },
         mem::cache::DiskStateCache,
     },
     error::BlockchainError,
@@ -25,6 +28,7 @@ use anvil_core::eth::{
 };
 use anvil_rpc::error::RpcError;
 use foundry_evm::{
+    backend::MemDb,
     revm::primitives::Env,
     traces::{
         CallKind, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig,
@@ -186,6 +190,34 @@ impl InMemoryBlockStates {
         self.present.clear();
         for on_disk in std::mem::take(&mut self.oldest_on_disk) {
             self.disk_cache.remove(on_disk)
+        }
+    }
+
+    /// Serialize all states to a list of serializable historical states
+    pub fn serialized_states(&mut self) -> SerializableHistoricalStates {
+        // Get in-memory states
+        let mut states = self
+            .states
+            .iter_mut()
+            .map(|(hash, state)| (*hash, state.serialize_state()))
+            .collect::<Vec<_>>();
+
+        // Get on-disk state snapshots
+        self.on_disk_states.iter().for_each(|(hash, _)| {
+            if let Some(snapshot) = self.disk_cache.read(*hash) {
+                states.push((*hash, snapshot));
+            }
+        });
+
+        SerializableHistoricalStates::new(states)
+    }
+
+    /// Load states from serialized data
+    pub fn load_states(&mut self, states: SerializableHistoricalStates) {
+        for (hash, snapshot) in states {
+            let mut state_db = StateDb::new(MemDb::default());
+            state_db.init_from_snapshot(snapshot);
+            self.insert(hash, state_db);
         }
     }
 }
@@ -509,7 +541,8 @@ impl MinedTransaction {
                     }
                     GethDebugBuiltInTracerType::PreStateTracer |
                     GethDebugBuiltInTracerType::NoopTracer |
-                    GethDebugBuiltInTracerType::MuxTracer => {}
+                    GethDebugBuiltInTracerType::MuxTracer |
+                    GethDebugBuiltInTracerType::FlatCallTracer => {}
                 },
                 GethDebugTracerType::JsTracer(_code) => {}
             }

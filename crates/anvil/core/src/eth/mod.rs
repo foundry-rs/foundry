@@ -523,11 +523,8 @@ pub enum EthRequest {
 
     /// Serializes the current state (including contracts code, contract's storage, accounts
     /// properties, etc.) into a savable data blob
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "anvil_dumpState", alias = "hardhat_dumpState", with = "empty_params")
-    )]
-    DumpState(()),
+    #[cfg_attr(feature = "serde", serde(rename = "anvil_dumpState", alias = "hardhat_dumpState"))]
+    DumpState(#[cfg_attr(feature = "serde", serde(default))] Option<Params<Option<bool>>>),
 
     /// Adds state previously dumped with `DumpState` to the current chain
     #[cfg_attr(
@@ -1210,9 +1207,19 @@ mod tests {
 
     #[test]
     fn test_serde_custom_dump_state() {
-        let s = r#"{"method": "anvil_dumpState", "params": [] }"#;
+        let s = r#"{"method": "anvil_dumpState", "params": [true]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "anvil_dumpState"}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::DumpState(param) => {
+                assert!(param.is_none());
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]

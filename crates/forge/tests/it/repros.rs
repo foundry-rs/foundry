@@ -22,32 +22,35 @@ use foundry_test_utils::Filter;
 
 /// Creates a test that runs `testdata/repros/Issue{issue}.t.sol`.
 macro_rules! test_repro {
-    ($issue_number:literal $(,)?) => {
-        test_repro!($issue_number, false, None);
+    ($(#[$attr:meta])* $issue_number:literal $(,)?) => {
+        test_repro!($(#[$attr])* $issue_number, false, None);
     };
-    ($issue_number:literal, $should_fail:expr $(,)?) => {
-        test_repro!($issue_number, $should_fail, None);
+    ($(#[$attr:meta])* $issue_number:literal, $should_fail:expr $(,)?) => {
+        test_repro!($(#[$attr])* $issue_number, $should_fail, None);
     };
-    ($issue_number:literal, $should_fail:expr, $sender:expr $(,)?) => {
+    ($(#[$attr:meta])* $issue_number:literal, $should_fail:expr, $sender:expr $(,)?) => {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
+            $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
                 repro_config($issue_number, $should_fail, $sender.into(), &*TEST_DATA_DEFAULT).await.run().await;
             }
         }
     };
-    ($issue_number:literal, $should_fail:expr, $sender:expr, |$res:ident| $e:expr $(,)?) => {
+    ($(#[$attr:meta])* $issue_number:literal, $should_fail:expr, $sender:expr, |$res:ident| $e:expr $(,)?) => {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
+            $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
                 let mut $res = repro_config($issue_number, $should_fail, $sender.into(), &*TEST_DATA_DEFAULT).await.test();
                 $e
             }
         }
     };
-    ($issue_number:literal; |$config:ident| $e:expr $(,)?) => {
+    ($(#[$attr:meta])* $issue_number:literal; |$config:ident| $e:expr $(,)?) => {
         paste::paste! {
             #[tokio::test(flavor = "multi_thread")]
+            $(#[$attr])*
             async fn [< issue_ $issue_number >]() {
                 let mut $config = repro_config($issue_number, false, None, &*TEST_DATA_DEFAULT).await;
                 $e
@@ -167,7 +170,10 @@ test_repro!(3674, false, address!("F0959944122fb1ed4CfaBA645eA06EED30427BAA"));
 test_repro!(3685);
 
 // https://github.com/foundry-rs/foundry/issues/3703
-test_repro!(3703);
+test_repro!(
+    #[ignore = "flaky polygon RPCs"]
+    3703
+);
 
 // https://github.com/foundry-rs/foundry/issues/3708
 test_repro!(3708);

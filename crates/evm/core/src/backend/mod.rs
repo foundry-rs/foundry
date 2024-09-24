@@ -749,13 +749,17 @@ impl Backend {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<'a, I: InspectorExt<&'a mut Self>>(
+    pub fn inspect<'a, I: InspectorExt<&'a mut dyn DatabaseExt>>(
         &'a mut self,
         env: &mut EnvWithHandlerCfg,
         inspector: I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
+        let mut evm = crate::utils::new_evm_with_inspector(
+            self as &mut dyn DatabaseExt,
+            env.clone(),
+            inspector,
+        );
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
 
@@ -868,7 +872,7 @@ impl Backend {
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block = fork.db.db.get_full_block(env.block.number.to::<u64>())?;
 
-        for tx in full_block.transactions.clone().into_transactions() {
+        for tx in full_block.inner.transactions.into_transactions() {
             // System transactions such as on L2s don't contain any pricing info so we skip them
             // otherwise this would cause reverts
             if is_known_system_sender(tx.from) ||
@@ -885,7 +889,7 @@ impl Backend {
             trace!(tx=?tx.hash, "committing transaction");
 
             commit_transaction(
-                tx,
+                &tx.inner,
                 env.clone(),
                 journaled_state,
                 fork,
@@ -1235,8 +1239,12 @@ impl DatabaseExt for Backend {
             fork.db.db.get_transaction(transaction)?
         };
 
-        // This is a bit ambiguous because the user wants to transact an arbitrary transaction in the current context, but we're assuming the user wants to transact the transaction as it was mined. Usually this is used in a combination of a fork at the transaction's parent transaction in the block and then the transaction is transacted: <https://github.com/foundry-rs/foundry/issues/6538>
-        // So we modify the env to match the transaction's block
+        // This is a bit ambiguous because the user wants to transact an arbitrary transaction in
+        // the current context, but we're assuming the user wants to transact the transaction as it
+        // was mined. Usually this is used in a combination of a fork at the transaction's parent
+        // transaction in the block and then the transaction is transacted:
+        // <https://github.com/foundry-rs/foundry/issues/6538>
+        // So we modify the env to match the transaction's block.
         let (_fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         let mut env = env.clone();
@@ -1245,7 +1253,7 @@ impl DatabaseExt for Backend {
         let env = self.env_with_handler_cfg(env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(
-            tx,
+            &tx,
             env,
             journaled_state,
             fork,
@@ -1903,17 +1911,17 @@ fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
-/// state, with an optional inspector
-fn commit_transaction<I: InspectorExt<Backend>>(
-    tx: WithOtherFields<Transaction>,
+/// state, with an inspector.
+fn commit_transaction(
+    tx: &Transaction,
     mut env: EnvWithHandlerCfg,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
     fork_id: &ForkId,
     persistent_accounts: &HashSet<Address>,
-    inspector: I,
+    inspector: &mut dyn InspectorExt<Backend>,
 ) -> eyre::Result<()> {
-    configure_tx_env(&mut env.env, &tx.inner);
+    configure_tx_env(&mut env.env, tx);
 
     let now = Instant::now();
     let res = {

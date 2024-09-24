@@ -1,7 +1,7 @@
 use crate::utils::http_provider;
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_eips::eip4844::{DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK};
-use alloy_network::TransactionBuilder;
+use alloy_network::{TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};

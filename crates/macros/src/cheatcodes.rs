@@ -1,5 +1,5 @@
 use proc_macro2::{Ident, Span, TokenStream};
-use quote::{quote, quote_spanned};
+use quote::quote;
 use syn::{Attribute, Data, DataStruct, DeriveInput, Error, Result};
 
 pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
@@ -20,7 +20,7 @@ pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
 /// Implements `CheatcodeDef` for a function call struct.
 fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<TokenStream> {
     let mut group = None::<Ident>;
-    let mut status = None::<Ident>;
+    let mut status = None::<TokenStream>;
     let mut safety = None::<Ident>;
     for attr in attrs.iter().filter(|a| a.path().is_ident("cheatcode")) {
         attr.meta.require_list()?.parse_nested_meta(|meta| {
@@ -38,17 +38,14 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
     let group = group.ok_or_else(|| {
         syn::Error::new(name.span(), "missing #[cheatcode(group = ...)] attribute")
     })?;
-    let status = status.unwrap_or_else(|| Ident::new("Stable", Span::call_site()));
+    let status = status.unwrap_or_else(|| quote!(Stable));
     let safety = if let Some(safety) = safety {
         quote!(Safety::#safety)
     } else {
-        let panic = quote_spanned! {name.span()=>
-            panic!("cannot determine safety from the group, add a `#[cheatcode(safety = ...)]` attribute")
-        };
         quote! {
             match Group::#group.safety() {
                 Some(s) => s,
-                None => #panic,
+                None => panic_unknown_safety(),
             }
         }
     };

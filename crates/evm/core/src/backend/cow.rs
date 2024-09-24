@@ -62,7 +62,7 @@ impl<'a> CowBackend<'a> {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<'b, I: InspectorExt<&'b mut Self>>(
+    pub fn inspect<'b, I: InspectorExt<&'b mut dyn DatabaseExt>>(
         &'b mut self,
         env: &mut EnvWithHandlerCfg,
         inspector: I,
@@ -71,7 +71,11 @@ impl<'a> CowBackend<'a> {
         // already, we reset the initialized state
         self.is_initialized = false;
         self.spec_id = env.handler_cfg.spec_id;
-        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
+        let mut evm = crate::utils::new_evm_with_inspector(
+            self as &mut dyn DatabaseExt,
+            env.clone(),
+            inspector,
+        );
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
 

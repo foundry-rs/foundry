@@ -5,7 +5,10 @@ use alloy_primitives::{Address, Bytes, Log, U256};
 use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
-use foundry_evm_core::{constants::MAGIC_ASSUME, decode::RevertDecoder};
+use foundry_evm_core::{
+    constants::MAGIC_ASSUME,
+    decode::{RevertDecoder, SkipReason},
+};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     strategies::{fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState},
@@ -14,7 +17,7 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashMap};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -36,6 +39,8 @@ pub struct FuzzTestData {
     pub coverage: Option<HitMaps>,
     // Stores logs for all fuzz cases
     pub logs: Vec<Log>,
+    // Deprecated cheatcodes mapped to their replacements.
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
@@ -121,6 +126,7 @@ impl FuzzedExecutor {
                         Some(prev) => prev.merge(case.coverage.unwrap()),
                         opt => *opt = case.coverage,
                     }
+                    data.deprecated_cheatcodes = case.deprecated_cheatcodes;
 
                     Ok(())
                 }
@@ -131,9 +137,8 @@ impl FuzzedExecutor {
                 }) => {
                     // We cannot use the calldata returned by the test runner in `TestError::Fail`,
                     // since that input represents the last run case, which may not correspond with
-                    // our failure - when a fuzz case fails, proptest will try
-                    // to run at least one more case to find a minimal failure
-                    // case.
+                    // our failure - when a fuzz case fails, proptest will try to run at least one
+                    // more case to find a minimal failure case.
                     let reason = rd.maybe_decode(&outcome.1.result, Some(status));
                     execution_data.borrow_mut().logs.extend(outcome.1.logs.clone());
                     execution_data.borrow_mut().counterexample = outcome;
@@ -157,6 +162,7 @@ impl FuzzedExecutor {
             first_case: fuzz_result.first_case.unwrap_or_default(),
             gas_by_case: fuzz_result.gas_by_case,
             success: run_result.is_ok(),
+            skipped: false,
             reason: None,
             counterexample: None,
             logs: fuzz_result.logs,
@@ -165,23 +171,26 @@ impl FuzzedExecutor {
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
             coverage: fuzz_result.coverage,
+            deprecated_cheatcodes: fuzz_result.deprecated_cheatcodes,
         };
 
         match run_result {
-            // Currently the only operation that can trigger proptest global rejects is the
-            // `vm.assume` cheatcode, thus we surface this info to the user when the fuzz test
-            // aborts due to too many global rejects, making the error message more actionable.
-            Err(TestError::Abort(reason)) if reason.message() == "Too many global rejects" => {
-                result.reason = Some(
-                    FuzzError::TooManyRejects(self.runner.config().max_global_rejects).to_string(),
-                );
-            }
+            Ok(()) => {}
             Err(TestError::Abort(reason)) => {
-                result.reason = Some(reason.to_string());
+                let msg = reason.message();
+                // Currently the only operation that can trigger proptest global rejects is the
+                // `vm.assume` cheatcode, thus we surface this info to the user when the fuzz test
+                // aborts due to too many global rejects, making the error message more actionable.
+                result.reason = if msg == "Too many global rejects" {
+                    let error = FuzzError::TooManyRejects(self.runner.config().max_global_rejects);
+                    Some(error.to_string())
+                } else {
+                    Some(msg.to_string())
+                };
             }
             Err(TestError::Fail(reason, _)) => {
                 let reason = reason.to_string();
-                result.reason = if reason.is_empty() { None } else { Some(reason) };
+                result.reason = (!reason.is_empty()).then_some(reason);
 
                 let args = if let Some(data) = calldata.get(4..) {
                     func.abi_decode_input(data, false).unwrap_or_default()
@@ -193,7 +202,13 @@ impl FuzzedExecutor {
                     BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
                 ));
             }
-            _ => {}
+        }
+
+        if let Some(reason) = &result.reason {
+            if let Some(reason) = SkipReason::decode_self(reason) {
+                result.skipped = true;
+                result.reason = reason.0;
+            }
         }
 
         state.log_stats();
@@ -212,17 +227,17 @@ impl FuzzedExecutor {
         let mut call = self
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
-            .map_err(|_| TestCaseError::fail(FuzzError::FailedContractCall))?;
+            .map_err(|e| TestCaseError::fail(e.to_string()))?;
 
-        // When the `assume` cheatcode is called it returns a special string
+        // Handle `vm.assume`.
         if call.result.as_ref() == MAGIC_ASSUME {
             return Err(TestCaseError::reject(FuzzError::AssumeReject))
         }
 
-        let breakpoints = call
-            .cheatcodes
-            .as_ref()
-            .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
+        let (breakpoints, deprecated_cheatcodes) =
+            call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {
+                (cheats.breakpoints.clone(), cheats.deprecated.clone())
+            });
 
         let success = self.executor.is_raw_call_mut_success(address, &mut call, should_fail);
         if success {
@@ -232,6 +247,7 @@ impl FuzzedExecutor {
                 coverage: call.coverage,
                 breakpoints,
                 logs: call.logs,
+                deprecated_cheatcodes,
             }))
         } else {
             Ok(FuzzOutcome::CounterExample(CounterExampleOutcome {

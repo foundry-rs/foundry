@@ -479,7 +479,7 @@ async fn test_invariant_assume_respects_restrictions() {
             vec![(
                 "invariant_dummy()",
                 false,
-                Some("The `vm.assume` cheatcode rejected too many inputs (1 allowed)".into()),
+                Some("`vm.assume` rejected too many inputs (1 allowed)".into()),
                 None,
                 None,
             )],

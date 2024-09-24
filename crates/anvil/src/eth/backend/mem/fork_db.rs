@@ -1,28 +1,27 @@
 use crate::{
     eth::backend::db::{
         Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
-        SerializableState, SerializableTransaction, StateDb,
+        SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
     },
     revm::primitives::AccountInfo,
 };
 use alloy_primitives::{Address, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
-    backend::{BlockchainDb, DatabaseResult, RevertSnapshotAction, StateSnapshot},
+    backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertSnapshotAction, StateSnapshot},
     fork::database::ForkDbSnapshot,
-    revm::Database,
+    revm::{primitives::BlockEnv, Database},
 };
+use revm::DatabaseRef;
 
 pub use foundry_evm::fork::database::ForkedDatabase;
-use foundry_evm::revm::primitives::BlockEnv;
 
-/// Implement the helper for the fork database
 impl Db for ForkedDatabase {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.database_mut().insert_account(address, account)
     }
 
-    fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
+    fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()> {
         // this ensures the account is loaded first
         let _ = Database::basic(self, address)?;
         self.database_mut().set_storage_at(address, slot, val)
@@ -38,6 +37,7 @@ impl Db for ForkedDatabase {
         best_number: U64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
+        historical_states: Option<SerializableHistoricalStates>,
     ) -> DatabaseResult<Option<SerializableState>> {
         let mut db = self.database().clone();
         let accounts = self
@@ -57,7 +57,7 @@ impl Db for ForkedDatabase {
                         nonce: v.info.nonce,
                         balance: v.info.balance,
                         code: code.original_bytes(),
-                        storage: v.storage.into_iter().collect(),
+                        storage: v.storage.into_iter().map(|(k, v)| (k.into(), v.into())).collect(),
                     },
                 ))
             })
@@ -68,6 +68,7 @@ impl Db for ForkedDatabase {
             best_block_number: Some(best_number),
             blocks,
             transactions,
+            historical_states,
         }))
     }
 
@@ -85,11 +86,23 @@ impl Db for ForkedDatabase {
 }
 
 impl MaybeFullDatabase for ForkedDatabase {
+    fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        self
+    }
+
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = std::mem::take(&mut *db.accounts.write());
         let storage = std::mem::take(&mut *db.storage.write());
         let block_hashes = std::mem::take(&mut *db.block_hashes.write());
+        StateSnapshot { accounts, storage, block_hashes }
+    }
+
+    fn read_as_snapshot(&self) -> StateSnapshot {
+        let db = self.inner().db();
+        let accounts = db.accounts.read().clone();
+        let storage = db.storage.read().clone();
+        let block_hashes = db.block_hashes.read().clone();
         StateSnapshot { accounts, storage, block_hashes }
     }
 
@@ -108,8 +121,16 @@ impl MaybeFullDatabase for ForkedDatabase {
 }
 
 impl MaybeFullDatabase for ForkDbSnapshot {
+    fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        self
+    }
+
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         std::mem::take(&mut self.snapshot)
+    }
+
+    fn read_as_snapshot(&self) -> StateSnapshot {
+        self.snapshot.clone()
     }
 
     fn clear(&mut self) {

@@ -43,8 +43,8 @@ bytesStringArray = ["0x01", "0x02"]
 number = 9223372036854775807 # TOML is limited to 64-bit integers
 str = "NEST"
 
-[[advancedJsonPath]]
+[[advancedTomlPath]]
 id = 1
 
-[[advancedJsonPath]]
+[[advancedTomlPath]]
 id = 2

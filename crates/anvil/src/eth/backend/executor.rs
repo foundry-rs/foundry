@@ -89,11 +89,11 @@ pub struct ExecutedTransactions {
 }
 
 /// An executor for a series of transactions
-pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> {
+pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     /// where to insert the transactions
     pub db: &'a mut Db,
     /// type used to validate before inclusion
-    pub validator: Validator,
+    pub validator: &'a V,
     /// all pending transactions
     pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
     pub block_env: BlockEnv,
@@ -111,7 +111,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
 }
 
-impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'a, DB, Validator> {
+impl<'a, DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'a, DB, V> {
     /// Executes all transactions and puts them in a new block with the provided `timestamp`
     pub fn execute(mut self) -> ExecutedTransactions {
         let mut transactions = Vec::new();
@@ -262,8 +262,8 @@ pub enum TransactionExecutionOutcome {
     DatabaseError(Arc<PoolTransaction>, DatabaseError),
 }
 
-impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
-    for &'b mut TransactionExecutor<'a, DB, Validator>
+impl<'a, 'b, DB: Db + ?Sized, V: TransactionValidator> Iterator
+    for &'b mut TransactionExecutor<'a, DB, V>
 {
     type Item = TransactionExecutionOutcome;
 

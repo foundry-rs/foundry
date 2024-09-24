@@ -654,7 +654,7 @@ fn serialize_json(
 }
 
 /// Resolves a [DynSolType] from user input.
-fn resolve_type(type_description: &str) -> Result<DynSolType> {
+pub(super) fn resolve_type(type_description: &str) -> Result<DynSolType> {
     if let Ok(ty) = DynSolType::parse(type_description) {
         return Ok(ty);
     };

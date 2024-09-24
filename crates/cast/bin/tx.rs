@@ -1,15 +1,17 @@
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_json_abi::Function;
-use alloy_network::{AnyNetwork, TransactionBuilder};
+use alloy_network::{
+    AnyNetwork, TransactionBuilder, TransactionBuilder4844, TransactionBuilder7702,
+};
 use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{Authorization, TransactionInput, TransactionRequest};
+use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::Transport;
 use cast::revm::primitives::SignedAuthorization;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::TransactionOpts,
     utils::{self, parse_function_args},
@@ -17,6 +19,7 @@ use foundry_cli::{
 use foundry_common::ens::NameOrAddress;
 use foundry_config::{Chain, Config};
 use foundry_wallets::{WalletOpts, WalletSigner};
+use serde_json;
 
 /// Different sender kinds used by [`CastTxBuilder`].
 pub enum SenderKind<'a> {
@@ -134,6 +137,7 @@ pub struct CastTxBuilder<T, P, S> {
     auth: Option<String>,
     chain: Chain,
     etherscan_api_key: Option<String>,
+    access_list: Option<Option<String>>,
     state: S,
     _t: std::marker::PhantomData<T>,
 }
@@ -190,6 +194,7 @@ where
             chain,
             etherscan_api_key,
             auth: tx_opts.auth,
+            access_list: tx_opts.access_list,
             state: InitState,
             _t: std::marker::PhantomData,
         })
@@ -206,6 +211,7 @@ where
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
+            access_list: self.access_list,
             state: ToState { to },
             _t: self._t,
         })
@@ -266,6 +272,7 @@ where
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             auth: self.auth,
+            access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },
             _t: self._t,
         })
@@ -314,6 +321,20 @@ where
 
         if !fill {
             return Ok((self.tx, self.state.func));
+        }
+
+        if let Some(access_list) = match self.access_list {
+            None => None,
+            // --access-list provided with no value, call the provider to create it
+            Some(None) => Some(self.provider.create_access_list(&self.tx).await?.access_list),
+            // Access list provided as a string, attempt to parse it
+            Some(Some(ref s)) => Some(
+                serde_json::from_str::<AccessList>(s)
+                    .map(AccessList::from)
+                    .wrap_err("Failed to parse access list from string")?,
+            ),
+        } {
+            self.tx.set_access_list(access_list);
         }
 
         if self.legacy && self.tx.gas_price.is_none() {

@@ -160,7 +160,7 @@ async fn test_scrape_bytecode() {
     let filter = Filter::new(".*", ".*", ".*fuzz/FuzzScrapeBytecode.t.sol");
     let mut runner = TEST_DATA_DEFAULT.runner();
     runner.test_options.fuzz.runs = 2000;
-    runner.test_options.fuzz.seed = Some(U256::from(6u32));
+    runner.test_options.fuzz.seed = Some(U256::from(100u32));
     let suite_result = runner.test_collect(&filter);
 
     assert!(!suite_result.is_empty());
@@ -198,7 +198,7 @@ contract InlineMaxRejectsTest is Test {
 
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL. Reason: The `vm.assume` cheatcode rejected too many inputs (1 allowed)] test_fuzz_bound(uint256) (runs: 0, [AVG_GAS])
+[FAIL: `vm.assume` rejected too many inputs (1 allowed)] test_fuzz_bound(uint256) (runs: 0, [AVG_GAS])
 ...
 "#]]);
 });
