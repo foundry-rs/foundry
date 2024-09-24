@@ -227,7 +227,7 @@ pub struct GasMetering {
     pub touched: bool,
     /// True if gas metering should be reset to frame limit.
     pub reset: bool,
-    /// Stores frames paused gas.
+    /// Stores paused gas frames.
     pub paused_frames: Vec<Gas>,
 
     /// The group of the last snapshot taken.
@@ -1647,10 +1647,10 @@ impl Cheatcodes {
         }
 
         println!(
-            "RECORD [{:?}]: {:?} @ {:?}",
-            ecx.journaled_state.depth(),
+            "{:?}: {:?} @ {:?}",
+            self.gas_metering.gas_records,
             revm::interpreter::OpCode::new(interpreter.current_opcode()).unwrap().as_str(),
-            self.gas_metering.gas_records
+            ecx.journaled_state.depth(),
         );
     }
 

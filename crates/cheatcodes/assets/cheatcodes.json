@@ -8826,7 +8826,7 @@
     {
       "func": {
         "id": "stopSnapshotGas_0",
-        "description": "",
+        "description": "Stop the snapshot capture of the current gas by latest snapshot name, capturing the gas used since the start.",
         "declaration": "function stopSnapshotGas() external returns (uint256 gasUsed);",
         "visibility": "external",
         "mutability": "",
