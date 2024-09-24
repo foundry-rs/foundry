@@ -667,7 +667,7 @@ async fn can_remove_pool_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reorg() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, mut handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
@@ -792,4 +792,8 @@ async fn test_reorg() {
         })
         .await;
     assert!(res.is_err());
+
+    if let Some(signal) = handle.shutdown_signal_mut().take() {
+        signal.fire().unwrap();
+    }
 }
