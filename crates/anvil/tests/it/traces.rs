@@ -860,7 +860,5 @@ async fn test_trace_filter() {
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 5);
 
-    if let Some(signal) = handle.shutdown_signal_mut().take() {
-        signal.fire().unwrap();
-    }
+    handle.fire_shutdown_signal();
 }

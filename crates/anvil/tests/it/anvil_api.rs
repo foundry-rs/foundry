@@ -793,7 +793,5 @@ async fn test_reorg() {
         .await;
     assert!(res.is_err());
 
-    if let Some(signal) = handle.shutdown_signal_mut().take() {
-        signal.fire().unwrap();
-    }
+    handle.fire_shutdown_signal();
 }

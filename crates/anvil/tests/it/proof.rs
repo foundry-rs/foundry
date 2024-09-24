@@ -131,7 +131,5 @@ async fn can_get_random_account_proofs() {
             .unwrap_or_else(|_| panic!("Failed to get proof for {acc:?}"));
     }
 
-    if let Some(signal) = handle.shutdown_signal_mut().take() {
-        signal.fire().unwrap();
-    }
+    handle.fire_shutdown_signal();
 }

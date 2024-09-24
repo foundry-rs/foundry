@@ -201,7 +201,5 @@ async fn test_can_use_fee_history() {
         assert_eq!(latest_fee_history_fee, next_base_fee);
     }
 
-    if let Some(signal) = handle.shutdown_signal_mut().take() {
-        signal.fire().unwrap();
-    }
+    handle.fire_shutdown_signal();
 }
