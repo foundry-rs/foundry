@@ -441,8 +441,7 @@ impl Backend {
                     *self.fork.write() = Some(fork);
                     *self.env.write() = env;
                 } else {
-                    let gas_limit =
-                        self.node_config.read().await.clone().fork_gas_limit(&fork_block);
+                    let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
                     let mut env = self.env.write();
 
                     env.cfg.chain_id = fork.chain_id();

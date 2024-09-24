@@ -130,14 +130,14 @@ pub fn next_mainnet_etherscan_api_key() -> String {
 fn next_url(is_ws: bool, chain: NamedChain) -> String {
     use NamedChain::*;
 
+    if matches!(chain, NamedChain::Base) {
+        return "https://mainnet.base.org".to_string();
+    }
+
     let idx = next() % num_keys();
     let is_infura = idx < INFURA_KEYS.len();
 
     let key = if is_infura { INFURA_KEYS[idx] } else { ALCHEMY_KEYS[idx - INFURA_KEYS.len()] };
-
-    if matches!(chain, NamedChain::Base) {
-        return "https://mainnet.base.org".to_string();
-    }
 
     // Nowhere near complete.
     let prefix = if is_infura {

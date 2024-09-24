@@ -69,10 +69,26 @@ async fn test_fork_gas_limit_applied_from_config() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_gas_limit_disabled_from_config() {
-    let (api, _handle) = spawn(fork_config().disable_block_gas_limit(true)).await;
+    let (api, handle) = spawn(fork_config().disable_block_gas_limit(true)).await;
 
     // see https://github.com/foundry-rs/foundry/pull/8933
     assert_eq!(api.gas_limit(), U256::from(U64::MAX));
+
+    // try to mine a couple blocks
+    let provider = handle.http_provider();
+    let tx = TransactionRequest::default()
+        .to(Address::random())
+        .value(U256::from(1337u64))
+        .from(handle.dev_wallets().next().unwrap().address());
+    let tx = WithOtherFields::new(tx);
+    let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let tx = TransactionRequest::default()
+        .to(Address::random())
+        .value(U256::from(1337u64))
+        .from(handle.dev_wallets().next().unwrap().address());
+    let tx = WithOtherFields::new(tx);
+    let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

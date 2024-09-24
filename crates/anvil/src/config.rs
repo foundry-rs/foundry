@@ -579,7 +579,6 @@ impl NodeConfig {
     #[must_use]
     pub fn disable_block_gas_limit(mut self, disable_block_gas_limit: bool) -> Self {
         self.disable_block_gas_limit = disable_block_gas_limit;
-
         self
     }
 
