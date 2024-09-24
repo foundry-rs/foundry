@@ -94,33 +94,33 @@ impl ForkedDatabase {
 
     pub fn create_state_snapshot(&self) -> ForkDbStateSnapshot {
         let db = self.db.db();
-        let snapshot = StateSnapshot {
+        let state_snapshot = StateSnapshot {
             accounts: db.accounts.read().clone(),
             storage: db.storage.read().clone(),
             block_hashes: db.block_hashes.read().clone(),
         };
-        ForkDbStateSnapshot { local: self.cache_db.clone(), snapshot }
+        ForkDbStateSnapshot { local: self.cache_db.clone(), state_snapshot }
     }
 
     pub fn insert_state_snapshot(&self) -> U256 {
-        let snapshot = self.create_state_snapshot();
-        let mut snapshots = self.state_snapshots().lock();
-        let id = snapshots.insert(snapshot);
+        let state_snapshot = self.create_state_snapshot();
+        let mut state_snapshots = self.state_snapshots().lock();
+        let id = state_snapshots.insert(state_snapshot);
         trace!(target: "backend::forkdb", "Created new snapshot {}", id);
         id
     }
 
     /// Removes the snapshot from the tracked snapshot and sets it as the current state
     pub fn revert_state_snapshot(&mut self, id: U256, action: RevertStateSnapshotAction) -> bool {
-        let snapshot = { self.state_snapshots().lock().remove_at(id) };
-        if let Some(snapshot) = snapshot {
+        let state_snapshot = { self.state_snapshots().lock().remove_at(id) };
+        if let Some(state_snapshot) = state_snapshot {
             if action.is_keep() {
-                self.state_snapshots().lock().insert_at(snapshot.clone(), id);
+                self.state_snapshots().lock().insert_at(state_snapshot.clone(), id);
             }
             let ForkDbStateSnapshot {
                 local,
-                snapshot: StateSnapshot { accounts, storage, block_hashes },
-            } = snapshot;
+                state_snapshot: StateSnapshot { accounts, storage, block_hashes },
+            } = state_snapshot;
             let db = self.inner().db();
             {
                 let mut accounts_lock = db.accounts.write();
@@ -204,7 +204,7 @@ impl DatabaseCommit for ForkedDatabase {
 #[derive(Clone, Debug)]
 pub struct ForkDbStateSnapshot {
     pub local: CacheDB<SharedBackend>,
-    pub snapshot: StateSnapshot,
+    pub state_snapshot: StateSnapshot,
 }
 
 impl ForkDbStateSnapshot {
@@ -223,7 +223,7 @@ impl DatabaseRef for ForkDbStateSnapshot {
         match self.local.accounts.get(&address) {
             Some(account) => Ok(Some(account.info.clone())),
             None => {
-                let mut acc = self.snapshot.accounts.get(&address).cloned();
+                let mut acc = self.state_snapshot.accounts.get(&address).cloned();
 
                 if acc.is_none() {
                     acc = self.local.basic_ref(address)?;
@@ -254,7 +254,7 @@ impl DatabaseRef for ForkDbStateSnapshot {
     }
 
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
-        match self.snapshot.block_hashes.get(&U256::from(number)).copied() {
+        match self.state_snapshot.block_hashes.get(&U256::from(number)).copied() {
             None => self.local.block_hash_ref(number),
             Some(block_hash) => Ok(block_hash),
         }

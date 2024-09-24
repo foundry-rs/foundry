@@ -76,20 +76,20 @@ impl Db for MemDb {
     /// Creates a new snapshot
     fn snapshot_state(&mut self) -> U256 {
         let id = self.state_snapshots.insert(self.inner.clone());
-        trace!(target: "backend::memdb", "Created new snapshot {}", id);
+        trace!(target: "backend::memdb", "Created new state snapshot {}", id);
         id
     }
 
     fn revert_state(&mut self, id: U256, action: RevertStateSnapshotAction) -> bool {
-        if let Some(snapshot) = self.state_snapshots.remove(id) {
+        if let Some(state_snapshot) = self.state_snapshots.remove(id) {
             if action.is_keep() {
-                self.state_snapshots.insert_at(snapshot.clone(), id);
+                self.state_snapshots.insert_at(state_snapshot.clone(), id);
             }
-            self.inner = snapshot;
-            trace!(target: "backend::memdb", "Reverted snapshot {}", id);
+            self.inner = state_snapshot;
+            trace!(target: "backend::memdb", "Reverted state snapshot {}", id);
             true
         } else {
-            warn!(target: "backend::memdb", "No snapshot to revert for {}", id);
+            warn!(target: "backend::memdb", "No state snapshot to revert for {}", id);
             false
         }
     }

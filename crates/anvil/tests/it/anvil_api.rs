@@ -591,9 +591,9 @@ async fn test_fork_revert_next_block_timestamp() {
     api.mine_one().await;
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    let snapshot_id = api.evm_snapshot().await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
     api.mine_one().await;
-    api.evm_revert(snapshot_id).await.unwrap();
+    api.evm_revert(state_snapshot).await.unwrap();
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block, latest_block);
 
@@ -613,9 +613,9 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     api.mine_one().await;
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    let snapshot_id = api.evm_snapshot().await.unwrap();
+    state_snapshot = api.evm_snapshot().await.unwrap();
     api.mine_one().await;
-    api.evm_revert(snapshot_id).await.unwrap();
+    api.evm_revert(state_snapshot).await.unwrap();
 
     let multicall_contract =
         Multicall::new(address!("eefba1e63905ef1d7acba5a8513c70307c1ce441"), &provider);

@@ -147,8 +147,8 @@ impl InMemoryBlockStates {
             {
                 // only write to disk if supported
                 if !self.is_memory_only() {
-                    let snapshot = state.0.clear_into_state_snapshot();
-                    self.disk_cache.write(hash, snapshot);
+                    let state_snapshot = state.0.clear_into_state_snapshot();
+                    self.disk_cache.write(hash, state_snapshot);
                     self.on_disk_states.insert(hash, state);
                     self.oldest_on_disk.push_back(hash);
                 }
@@ -204,8 +204,8 @@ impl InMemoryBlockStates {
 
         // Get on-disk state snapshots
         self.on_disk_states.iter().for_each(|(hash, _)| {
-            if let Some(snapshot) = self.disk_cache.read(*hash) {
-                states.push((*hash, snapshot));
+            if let Some(state_snapshot) = self.disk_cache.read(*hash) {
+                states.push((*hash, state_snapshot));
             }
         });
 
@@ -214,9 +214,9 @@ impl InMemoryBlockStates {
 
     /// Load states from serialized data
     pub fn load_states(&mut self, states: SerializableHistoricalStates) {
-        for (hash, snapshot) in states {
+        for (hash, state_snapshot) in states {
             let mut state_db = StateDb::new(MemDb::default());
-            state_db.init_from_state_snapshot(snapshot);
+            state_db.init_from_state_snapshot(state_snapshot);
             self.insert(hash, state_db);
         }
     }

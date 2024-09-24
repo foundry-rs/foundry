@@ -47,8 +47,8 @@ pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
     /// Clears the entire database
     fn clear(&mut self);
 
-    /// Reverses `clear_into_snapshot` by initializing the db's state with the snapshot.
-    fn init_from_state_snapshot(&mut self, snapshot: StateSnapshot);
+    /// Reverses `clear_into_snapshot` by initializing the db's state with the state snapshot.
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot);
 }
 
 impl<'a, T: 'a + MaybeFullDatabase + ?Sized> MaybeFullDatabase for &'a T
@@ -73,7 +73,7 @@ where
 
     fn clear(&mut self) {}
 
-    fn init_from_state_snapshot(&mut self, _snapshot: StateSnapshot) {}
+    fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
 }
 
 /// Helper trait to reset the DB if it's forked
@@ -182,8 +182,8 @@ pub trait Db:
 
     /// Reverts a state snapshot.
     ///
-    /// Returns `true` if the snapshot was reverted.
-    fn revert_state(&mut self, snapshot: U256, action: RevertStateSnapshotAction) -> bool;
+    /// Returns `true` if the state snapshot was reverted.
+    fn revert_state(&mut self, state_snapshot: U256, action: RevertStateSnapshotAction) -> bool;
 
     /// Returns the state root if possible to compute
     fn maybe_state_root(&self) -> Option<B256> {
@@ -233,7 +233,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         U256::ZERO
     }
 
-    fn revert_state(&mut self, _snapshot: U256, _action: RevertStateSnapshotAction) -> bool {
+    fn revert_state(&mut self, _state_snapshot: U256, _action: RevertStateSnapshotAction) -> bool {
         false
     }
 
@@ -286,8 +286,8 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
         self.clear_into_state_snapshot();
     }
 
-    fn init_from_state_snapshot(&mut self, snapshot: StateSnapshot) {
-        let StateSnapshot { accounts, mut storage, block_hashes } = snapshot;
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        let StateSnapshot { accounts, mut storage, block_hashes } = state_snapshot;
 
         for (addr, mut acc) in accounts {
             if let Some(code) = acc.code.take() {
@@ -375,8 +375,8 @@ impl MaybeFullDatabase for StateDb {
         self.0.clear()
     }
 
-    fn init_from_state_snapshot(&mut self, snapshot: StateSnapshot) {
-        self.0.init_from_state_snapshot(snapshot)
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        self.0.init_from_state_snapshot(state_snapshot)
     }
 }
 
