@@ -8,8 +8,10 @@ use crate::{
 use alloy_primitives::{Address, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
-    backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertSnapshotAction, StateSnapshot},
-    fork::database::ForkDbSnapshot,
+    backend::{
+        BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction, StateSnapshot,
+    },
+    fork::database::ForkDbStateSnapshot,
     revm::{primitives::BlockEnv, Database},
 };
 use revm::DatabaseRef;
@@ -72,16 +74,16 @@ impl Db for ForkedDatabase {
         }))
     }
 
-    fn snapshot(&mut self) -> U256 {
-        self.insert_snapshot()
+    fn snapshot_state(&mut self) -> U256 {
+        self.insert_state_snapshot()
     }
 
-    fn revert(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
-        self.revert_snapshot(id, action)
+    fn revert_state(&mut self, id: U256, action: RevertStateSnapshotAction) -> bool {
+        self.revert_state_snapshot(id, action)
     }
 
     fn current_state(&self) -> StateDb {
-        StateDb::new(self.create_snapshot())
+        StateDb::new(self.create_state_snapshot())
     }
 }
 
@@ -120,7 +122,7 @@ impl MaybeFullDatabase for ForkedDatabase {
     }
 }
 
-impl MaybeFullDatabase for ForkDbSnapshot {
+impl MaybeFullDatabase for ForkDbStateSnapshot {
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
         self
     }

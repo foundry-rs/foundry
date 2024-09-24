@@ -17,7 +17,7 @@ use foundry_evm::{
 
 // reexport for convenience
 pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
-use foundry_evm::{backend::RevertSnapshotAction, revm::primitives::BlockEnv};
+use foundry_evm::{backend::RevertStateSnapshotAction, revm::primitives::BlockEnv};
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
@@ -74,16 +74,16 @@ impl Db for MemDb {
     }
 
     /// Creates a new snapshot
-    fn snapshot(&mut self) -> U256 {
-        let id = self.snapshots.insert(self.inner.clone());
+    fn snapshot_state(&mut self) -> U256 {
+        let id = self.state_snapshots.insert(self.inner.clone());
         trace!(target: "backend::memdb", "Created new snapshot {}", id);
         id
     }
 
-    fn revert(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
-        if let Some(snapshot) = self.snapshots.remove(id) {
+    fn revert_state(&mut self, id: U256, action: RevertStateSnapshotAction) -> bool {
+        if let Some(snapshot) = self.state_snapshots.remove(id) {
             if action.is_keep() {
-                self.snapshots.insert_at(snapshot.clone(), id);
+                self.state_snapshots.insert_at(snapshot.clone(), id);
             }
             self.inner = snapshot;
             trace!(target: "backend::memdb", "Reverted snapshot {}", id);

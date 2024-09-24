@@ -3,7 +3,7 @@
 use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     fork::{CreateFork, ForkId, MultiFork},
-    snapshot::Snapshots,
+    snapshot::StateSnapshots,
     utils::{configure_tx_env, new_evm_with_inspector},
     InspectorExt,
 };
@@ -42,7 +42,7 @@ mod in_memory_db;
 pub use in_memory_db::{EmptyDBWrapper, FoundryEvmInMemoryDB, MemDb};
 
 mod snapshot;
-pub use snapshot::{BackendSnapshot, RevertSnapshotAction, StateSnapshot};
+pub use snapshot::{BackendStateSnapshot, RevertStateSnapshotAction, StateSnapshot};
 
 // A `revm::Database` that is used in forking mode
 type ForkDB = CacheDB<SharedBackend>;
@@ -75,8 +75,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     ///
     /// A snapshot is associated with a new unique id that's created for the snapshot.
     /// Snapshots can be reverted: [DatabaseExt::revert], however, depending on the
-    /// [RevertSnapshotAction], it will keep the snapshot alive or delete it.
-    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256;
+    /// [RevertStateSnapshotAction], it will keep the snapshot alive or delete it.
+    fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &Env) -> U256;
 
     /// Reverts the snapshot if it exists
     ///
@@ -87,25 +87,25 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     /// since the snapshots was created. This way we can show logs that were emitted between
     /// snapshot and its revert.
     /// This will also revert any changes in the `Env` and replace it with the captured `Env` of
-    /// `Self::snapshot`.
+    /// `Self::snapshot_state`.
     ///
-    /// Depending on [RevertSnapshotAction] it will keep the snapshot alive or delete it.
-    fn revert(
+    /// Depending on [RevertStateSnapshotAction] it will keep the snapshot alive or delete it.
+    fn revert_state(
         &mut self,
         id: U256,
         journaled_state: &JournaledState,
         env: &mut Env,
-        action: RevertSnapshotAction,
+        action: RevertStateSnapshotAction,
     ) -> Option<JournaledState>;
 
-    /// Deletes the snapshot with the given `id`
+    /// Deletes the state snapshot with the given `id`
     ///
     /// Returns `true` if the snapshot was successfully deleted, `false` if no snapshot for that id
     /// exists.
-    fn delete_snapshot(&mut self, id: U256) -> bool;
+    fn delete_state_snapshot(&mut self, id: U256) -> bool;
 
-    /// Deletes all snapshots.
-    fn delete_snapshots(&mut self);
+    /// Deletes all state snapshots.
+    fn delete_state_snapshots(&mut self);
 
     /// Creates and also selects a new fork
     ///
@@ -554,8 +554,10 @@ impl Backend {
     }
 
     /// Returns all snapshots created in this backend
-    pub fn snapshots(&self) -> &Snapshots<BackendSnapshot<BackendDatabaseSnapshot>> {
-        &self.inner.snapshots
+    pub fn state_snapshots(
+        &self,
+    ) -> &StateSnapshots<BackendStateSnapshot<BackendDatabaseSnapshot>> {
+        &self.inner.state_snapshots
     }
 
     /// Sets the address of the `DSTest` contract that is being executed
@@ -904,9 +906,9 @@ impl Backend {
 }
 
 impl DatabaseExt for Backend {
-    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
+    fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
         trace!("create snapshot");
-        let id = self.inner.snapshots.insert(BackendSnapshot::new(
+        let id = self.inner.state_snapshots.insert(BackendStateSnapshot::new(
             self.create_db_snapshot(),
             journaled_state.clone(),
             env.clone(),
@@ -915,18 +917,18 @@ impl DatabaseExt for Backend {
         id
     }
 
-    fn revert(
+    fn revert_state(
         &mut self,
         id: U256,
         current_state: &JournaledState,
         current: &mut Env,
-        action: RevertSnapshotAction,
+        action: RevertStateSnapshotAction,
     ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
-        if let Some(mut snapshot) = self.inner.snapshots.remove_at(id) {
+        if let Some(mut snapshot) = self.inner.state_snapshots.remove_at(id) {
             // Re-insert snapshot to persist it
             if action.is_keep() {
-                self.inner.snapshots.insert_at(snapshot.clone(), id);
+                self.inner.state_snapshots.insert_at(snapshot.clone(), id);
             }
 
             // https://github.com/foundry-rs/foundry/issues/3055
@@ -943,7 +945,7 @@ impl DatabaseExt for Backend {
 
             // merge additional logs
             snapshot.merge(current_state);
-            let BackendSnapshot { db, mut journaled_state, env } = snapshot;
+            let BackendStateSnapshot { db, mut journaled_state, env } = snapshot;
             match db {
                 BackendDatabaseSnapshot::InMemory(mem_db) => {
                     self.mem_db = mem_db;
@@ -966,7 +968,7 @@ impl DatabaseExt for Backend {
                         }
                         caller_account.into()
                     });
-                    self.inner.revert_snapshot(id, fork_id, idx, *fork);
+                    self.inner.revert_state_snapshot(id, fork_id, idx, *fork);
                     self.active_fork_ids = Some((id, idx))
                 }
             }
@@ -981,12 +983,12 @@ impl DatabaseExt for Backend {
         }
     }
 
-    fn delete_snapshot(&mut self, id: U256) -> bool {
-        self.inner.snapshots.remove_at(id).is_some()
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
+        self.inner.state_snapshots.remove_at(id).is_some()
     }
 
-    fn delete_snapshots(&mut self) {
-        self.inner.snapshots.clear()
+    fn delete_state_snapshots(&mut self) {
+        self.inner.state_snapshots.clear()
     }
 
     fn create_fork(&mut self, create_fork: CreateFork) -> eyre::Result<LocalForkId> {
@@ -1599,8 +1601,8 @@ pub struct BackendInner {
     /// Holds all created fork databases
     // Note: data is stored in an `Option` so we can remove it without reshuffling
     pub forks: Vec<Option<Fork>>,
-    /// Contains snapshots made at a certain point
-    pub snapshots: Snapshots<BackendSnapshot<BackendDatabaseSnapshot>>,
+    /// Contains state snapshots made at a certain point
+    pub state_snapshots: StateSnapshots<BackendStateSnapshot<BackendDatabaseSnapshot>>,
     /// Tracks whether there was a failure in a snapshot that was reverted
     ///
     /// The Test contract contains a bool variable that is set to true when an `assert` function
@@ -1694,7 +1696,7 @@ impl BackendInner {
     }
 
     /// Reverts the entire fork database
-    pub fn revert_snapshot(
+    pub fn revert_state_snapshot(
         &mut self,
         id: LocalForkId,
         fork_id: ForkId,
@@ -1797,7 +1799,7 @@ impl Default for BackendInner {
             issued_local_fork_ids: Default::default(),
             created_forks: Default::default(),
             forks: vec![],
-            snapshots: Default::default(),
+            state_snapshots: Default::default(),
             has_snapshot_failure: false,
             caller: None,
             next_fork_id: Default::default(),

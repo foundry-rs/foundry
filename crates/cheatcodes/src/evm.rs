@@ -10,7 +10,7 @@ use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
-    backend::{DatabaseExt, RevertSnapshotAction},
+    backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
 use rand::Rng;
@@ -509,18 +509,18 @@ impl Cheatcode for readCallersCall {
 impl Cheatcode for snapshotCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.db.snapshot(&ccx.ecx.journaled_state, &ccx.ecx.env).abi_encode())
+        Ok(ccx.ecx.db.snapshot_state(&ccx.ecx.journaled_state, &ccx.ecx.env).abi_encode())
     }
 }
 
 impl Cheatcode for revertToCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = if let Some(journaled_state) = ccx.ecx.db.revert(
+        let result = if let Some(journaled_state) = ccx.ecx.db.revert_state(
             *snapshotId,
             &ccx.ecx.journaled_state,
             &mut ccx.ecx.env,
-            RevertSnapshotAction::RevertKeep,
+            RevertStateSnapshotAction::RevertKeep,
         ) {
             // we reset the evm's journaled_state to the state of the snapshot previous state
             ccx.ecx.journaled_state = journaled_state;
@@ -535,11 +535,11 @@ impl Cheatcode for revertToCall {
 impl Cheatcode for revertToAndDeleteCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = if let Some(journaled_state) = ccx.ecx.db.revert(
+        let result = if let Some(journaled_state) = ccx.ecx.db.revert_state(
             *snapshotId,
             &ccx.ecx.journaled_state,
             &mut ccx.ecx.env,
-            RevertSnapshotAction::RevertRemove,
+            RevertStateSnapshotAction::RevertRemove,
         ) {
             // we reset the evm's journaled_state to the state of the snapshot previous state
             ccx.ecx.journaled_state = journaled_state;
@@ -554,14 +554,14 @@ impl Cheatcode for revertToAndDeleteCall {
 impl Cheatcode for deleteSnapshotCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = ccx.ecx.db.delete_snapshot(*snapshotId);
+        let result = ccx.ecx.db.delete_state_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
 }
 impl Cheatcode for deleteSnapshotsCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        ccx.ecx.db.delete_snapshots();
+        ccx.ecx.db.delete_state_snapshots();
         Ok(Default::default())
     }
 }

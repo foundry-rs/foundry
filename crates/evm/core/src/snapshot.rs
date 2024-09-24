@@ -3,14 +3,14 @@
 use alloy_primitives::U256;
 use std::{collections::HashMap, ops::Add};
 
-/// Represents all snapshots
+/// Represents all state snapshots
 #[derive(Clone, Debug)]
-pub struct Snapshots<T> {
+pub struct StateSnapshots<T> {
     id: U256,
     snapshots: HashMap<U256, T>,
 }
 
-impl<T> Snapshots<T> {
+impl<T> StateSnapshots<T> {
     fn next_id(&mut self) -> U256 {
         let id = self.id;
         self.id = id.saturating_add(U256::from(1));
@@ -67,7 +67,7 @@ impl<T> Snapshots<T> {
     }
 }
 
-impl<T> Default for Snapshots<T> {
+impl<T> Default for StateSnapshots<T> {
     fn default() -> Self {
         Self { id: U256::ZERO, snapshots: HashMap::new() }
     }

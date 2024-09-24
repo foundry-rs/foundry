@@ -68,7 +68,7 @@ use anvil_rpc::error::RpcError;
 use alloy_chains::NamedChain;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
-    backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
+    backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
@@ -693,20 +693,20 @@ impl Backend {
         self.blockchain.storage.read().total_difficulty
     }
 
-    /// Creates a new `evm_snapshot` at the current height
+    /// Creates a new `evm_snapshot` at the current height.
     ///
-    /// Returns the id of the snapshot created
-    pub async fn create_snapshot(&self) -> U256 {
+    /// Returns the id of the snapshot created.
+    pub async fn create_state_snapshot(&self) -> U256 {
         let num = self.best_number();
         let hash = self.best_hash();
-        let id = self.db.write().await.snapshot();
+        let id = self.db.write().await.snapshot_state();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
         self.active_snapshots.lock().insert(id, (num, hash));
         id
     }
 
     /// Reverts the state to the snapshot identified by the given `id`.
-    pub async fn revert_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
+    pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
         let block = { self.active_snapshots.lock().remove(&id) };
         if let Some((num, hash)) = block {
             let best_block_hash = {
@@ -750,7 +750,7 @@ impl Backend {
                 ..Default::default()
             };
         }
-        Ok(self.db.write().await.revert(id, RevertSnapshotAction::RevertRemove))
+        Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
     }
 
     pub fn list_snapshots(&self) -> BTreeMap<U256, (u64, B256)> {
