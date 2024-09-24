@@ -613,7 +613,7 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     api.mine_one().await;
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    state_snapshot = api.evm_snapshot().await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
     api.mine_one().await;
     api.evm_revert(state_snapshot).await.unwrap();
 
