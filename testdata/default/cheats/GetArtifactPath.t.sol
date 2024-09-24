@@ -10,21 +10,8 @@ contract GetArtifactPathTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testGetArtifactPath() public {
-        string memory root = vm.projectRoot();
-        string memory path = vm.getArtifactPath("DummyForGetArtifactPath");
-
-        string memory expectedPath = string.concat(
-            root,
-            "/out/GetArtifactPath.t.sol/DummyForGetArtifactPath.json"
-        );
-
-        assertEq(path, expectedPath);
-    }
-
-    function testGetArtifactPathUsingCreationCode() public {
         DummyForGetArtifactPath dummy = new DummyForGetArtifactPath();
-        bytes memory dummyCreationCode = type(DummyForGetArtifactPath)
-            .creationCode;
+        bytes memory dummyCreationCode = type(DummyForGetArtifactPath).creationCode;
 
         string memory root = vm.projectRoot();
         string memory path = vm.getArtifactPath(dummyCreationCode);

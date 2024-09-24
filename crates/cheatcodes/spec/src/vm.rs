@@ -1531,10 +1531,6 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function writeLine(string calldata path, string calldata data) external;
 
-    /// Gets the artifact path for a contract name.
-    #[cheatcode(group = Filesystem)]
-    function getArtifactPath(string calldata contractName) external view returns (string memory path);
-
     /// Gets the artifact path from the creation code.
     #[cheatcode(group = Filesystem)]
     function getArtifactPath(bytes calldata creationCode) external view returns (string memory path);
