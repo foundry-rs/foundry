@@ -375,7 +375,9 @@ impl NodeHandle {
     ///
     /// Called by long-running tests to make sure anvil instance is terminated.
     pub fn fire_shutdown_signal(&mut self) {
-        self._signal.take().map(|signal| signal.fire().unwrap());
+        if let Some(signal) = self._signal.take() {
+            signal.fire().unwrap()
+        }
     }
 
     /// Returns the task manager that can be used to spawn new tasks.
