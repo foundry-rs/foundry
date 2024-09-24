@@ -37,6 +37,7 @@ use itertools::Itertools;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use revm::{
     interpreter::{
+        gas::{CALL_STIPEND, CREATE},
         opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
@@ -1610,6 +1611,16 @@ impl Cheatcodes {
         if matches!(interpreter.instruction_result, InstructionResult::Continue) {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 if ecx.journaled_state.depth() == record.depth + 1 {
+                    println!(
+                        "[{:?}]: {:?} [{:?}] @ {:?}",
+                        revm::interpreter::OpCode::new(interpreter.current_opcode())
+                            .unwrap()
+                            .as_str(),
+                        interpreter.gas.spent(),
+                        record,
+                        ecx.journaled_state.depth(),
+                    );
+
                     match interpreter.current_opcode() {
                         op::CREATE |
                         op::CALL |
@@ -1623,18 +1634,28 @@ impl Cheatcodes {
                             self.gas_metering.last_gas_used = 0;
 
                             match interpreter.current_opcode() {
-                                // CREATE and CREATE2 have a fixed gas cost of 32000.
                                 op::CREATE | op::CREATE2 => {
-                                    record.gas_used = record.gas_used.saturating_add(32000);
+                                    record.gas_used = record.gas_used.saturating_add(CREATE);
                                 }
-                                // CALL, CALLCODE, DELEGATECALL, STATICCALL, EXTSTATICCALL, and
-                                // EXTDELEGATECALL have a fixed gas cost of 700.
-                                op::CALL |
-                                op::CALLCODE |
-                                op::DELEGATECALL |
-                                op::STATICCALL |
-                                op::EXTSTATICCALL |
+                                op::CALL | op::CALLCODE | op::DELEGATECALL => {
+                                    // See: https://github.com/ethereum/EIPs/blob/master/EIPS/eip-150.md
+                                    let opcode_cost = if ecx
+                                        .journaled_state
+                                        .spec
+                                        .is_enabled_in(SpecId::TANGERINE)
+                                    {
+                                        700 + CALL_STIPEND
+                                    } else {
+                                        40 + CALL_STIPEND
+                                    };
+
+                                    record.gas_used = record.gas_used.saturating_add(opcode_cost);
+                                }
                                 op::EXTDELEGATECALL => {
+                                    record.gas_used =
+                                        record.gas_used.saturating_add(700 + CALL_STIPEND);
+                                }
+                                op::STATICCALL | op::EXTSTATICCALL => {
                                     record.gas_used = record.gas_used.saturating_add(700);
                                 }
                                 _ => {}
@@ -1663,13 +1684,6 @@ impl Cheatcodes {
                 }
             });
         }
-
-        println!(
-            "{:?}: {:?} @ {:?}",
-            ecx.journaled_state.depth(),
-            revm::interpreter::OpCode::new(interpreter.current_opcode()).unwrap().as_str(),
-            self.gas_metering.gas_records,
-        );
     }
 
     #[cold]
