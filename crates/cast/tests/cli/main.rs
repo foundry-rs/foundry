@@ -1022,6 +1022,7 @@ casttest!(storage, |_prj, cmd| {
 
 "#]]);
 
+    let rpc = next_http_rpc_endpoint();
     cmd.cast_fuse()
         .args(["storage", usdt, total_supply_slot, "--rpc-url", &rpc, "--block", block_after])
         .assert_success()
