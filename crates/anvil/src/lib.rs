@@ -374,6 +374,7 @@ impl NodeHandle {
     /// Fires shutdown signal.
     ///
     /// Called by long-running tests to make sure anvil instance is terminated.
+    #[track_caller]
     pub fn fire_shutdown_signal(&mut self) {
         if let Some(signal) = self._signal.take() {
             signal.fire().unwrap()
