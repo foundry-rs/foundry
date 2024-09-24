@@ -172,10 +172,9 @@ foundry-fork-db = "0.3"
 solang-parser = "=0.3.3"
 
 ## revm
-# no default features to avoid c-kzg
 revm = { version = "14.0.2", default-features = false }
 revm-primitives = { version = "9.0.2", default-features = false }
-revm-inspectors = { version = "0.7", features = ["serde"] }
+revm-inspectors = { version = "0.7.7", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
