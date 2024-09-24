@@ -8,7 +8,8 @@ use std::mem;
 
 pub const DEPOSIT_TX_TYPE_ID: u8 = 0x7E;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct DepositTransactionRequest {
@@ -18,8 +19,9 @@ pub struct DepositTransactionRequest {
     pub kind: TxKind,
     pub mint: U256,
     pub value: U256,
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity", rename = "gas"))]
     pub gas_limit: u128,
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity", rename = "isSystemTx"))]
     pub is_system_tx: bool,
     pub input: Bytes,
 }
@@ -34,6 +36,7 @@ impl DepositTransactionRequest {
     }
 
     /// Encodes only the transaction's fields into the desired buffer, without a RLP header.
+    /// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/deposits.md#the-deposited-transaction-type>
     pub(crate) fn encode_fields(&self, out: &mut dyn alloy_rlp::BufMut) {
         self.source_hash.encode(out);
         self.from.encode(out);
@@ -47,16 +50,14 @@ impl DepositTransactionRequest {
 
     /// Calculates the length of the RLP-encoded transaction's fields.
     pub(crate) fn fields_len(&self) -> usize {
-        let mut len = 0;
-        len += self.source_hash.length();
-        len += self.from.length();
-        len += self.kind.length();
-        len += self.mint.length();
-        len += self.value.length();
-        len += self.gas_limit.length();
-        len += self.is_system_tx.length();
-        len += self.input.length();
-        len
+        self.source_hash.length() +
+            self.from.length() +
+            self.kind.length() +
+            self.mint.length() +
+            self.value.length() +
+            self.gas_limit.length() +
+            self.is_system_tx.length() +
+            self.input.0.length()
     }
 
     /// Decodes the inner [DepositTransactionRequest] fields from RLP bytes.
@@ -72,7 +73,7 @@ impl DepositTransactionRequest {
     /// - `gas_limit`
     /// - `is_system_tx`
     /// - `input`
-    pub fn decode_inner(buf: &mut &[u8]) -> Result<Self, DecodeError> {
+    pub fn decode_fields(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         Ok(Self {
             source_hash: Decodable::decode(buf)?,
             from: Decodable::decode(buf)?,
@@ -118,6 +119,7 @@ impl DepositTransactionRequest {
     }
 
     /// Calculates a heuristic for the in-memory size of the [DepositTransaction] transaction.
+    #[inline]
     pub fn size(&self) -> usize {
         mem::size_of::<B256>() + // source_hash
         mem::size_of::<Address>() + // from
@@ -288,7 +290,7 @@ impl Decodable for DepositTransactionRequest {
             return Err(alloy_rlp::Error::InputTooShort);
         }
 
-        Self::decode_inner(data)
+        Self::decode_fields(data)
     }
 }
 
