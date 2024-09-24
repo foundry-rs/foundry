@@ -1,7 +1,9 @@
-# Heavily inspired by Lighthouse: https://github.com/sigp/lighthouse/blob/693886b94176faa4cb450f024696cb69cda2fe58/Makefile
+# Heavily inspired by:
+# - Lighthouse: https://github.com/sigp/lighthouse/blob/693886b94176faa4cb450f024696cb69cda2fe58/Makefile
+# - Reth: https://github.com/paradigmxyz/reth/blob/1f642353ca083b374851ab355b5d80207b36445c/Makefile
 .DEFAULT_GOAL := help
 
-# Cargo profile for builds. Default is for local builds, CI uses an override.
+# Cargo profile for builds.
 PROFILE ?= release
 
 # List of features to use when building. Can be overridden via the environment.
@@ -21,20 +23,22 @@ help: ## Display this help.
 ##@ Build
 
 .PHONY: build
-build: ## Perform a `cargo` build
+build: ## Build the project.
 	cargo build --features "$(FEATURES)" --profile "$(PROFILE)"
 
 ##@ Other
 
 .PHONY: clean
-clean:
+clean: ## Clean the project.
 	cargo clean
 
-fmt: ## Run the formatter
+## Linting
+
+fmt: ## Run the formatter.
 	cargo +nightly fmt
 
 lint-foundry:
-	cargo clippy --workspace --all-targets --all-features
+	RUSTFLAGS="-Dwarnings" cargo clippy --workspace --all-targets --all-features
 
 lint-codespell: ensure-codespell
 	codespell --skip "*.json"
@@ -45,18 +49,23 @@ ensure-codespell:
 		exit 1; \
     fi
 
-lint: ## Run all linters
+lint: ## Run all linters.
 	make fmt && \
 	make lint-foundry && \
 	make lint-codespell
 
+## Testing
+
+test-foundry:
+	cargo nextest run -E 'kind(test) & !test(/issue|forge_std|ext_integration/)'
+
 test-doc:
 	cargo test --doc --workspace
 
-test: ## Run all tests
-	make test && \
+test: ## Run all tests.
+	make test-foundry && \
 	make test-doc
 
-pr: ## Run all tests and linters for a PR
+pr: ## Run all tests and linters in preparation for a PR.
 	make lint && \
 	make test
