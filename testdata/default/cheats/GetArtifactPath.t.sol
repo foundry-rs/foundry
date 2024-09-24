@@ -17,7 +17,7 @@ contract GetArtifactPathTest is DSTest {
         string memory path = vm.getArtifactPath(dummyCreationCode);
 
         string memory expectedPath =
-            string.concat(root, "default/out/GetArtifactPath.t.sol/DummyForGetArtifactPath.json");
+            string.concat(root, "out/default/GetArtifactPath.t.sol/DummyForGetArtifactPath.json");
 
         assertEq(path, expectedPath);
     }
