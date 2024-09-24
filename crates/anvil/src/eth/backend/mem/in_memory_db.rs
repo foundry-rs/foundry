@@ -112,20 +112,20 @@ impl MaybeFullDatabase for MemDb {
         Some(&self.inner.accounts)
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
-        self.inner.clear_into_snapshot()
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        self.inner.clear_into_state_snapshot()
     }
 
-    fn read_as_snapshot(&self) -> StateSnapshot {
-        self.inner.read_as_snapshot()
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        self.inner.read_as_state_snapshot()
     }
 
     fn clear(&mut self) {
         self.inner.clear();
     }
 
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
-        self.inner.init_from_snapshot(snapshot)
+    fn init_from_state_snapshot(&mut self, snapshot: StateSnapshot) {
+        self.inner.init_from_state_snapshot(snapshot)
     }
 }
 

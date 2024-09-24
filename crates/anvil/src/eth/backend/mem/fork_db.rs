@@ -92,7 +92,7 @@ impl MaybeFullDatabase for ForkedDatabase {
         self
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = std::mem::take(&mut *db.accounts.write());
         let storage = std::mem::take(&mut *db.storage.write());
@@ -100,7 +100,7 @@ impl MaybeFullDatabase for ForkedDatabase {
         StateSnapshot { accounts, storage, block_hashes }
     }
 
-    fn read_as_snapshot(&self) -> StateSnapshot {
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = db.accounts.read().clone();
         let storage = db.storage.read().clone();
@@ -110,10 +110,10 @@ impl MaybeFullDatabase for ForkedDatabase {
 
     fn clear(&mut self) {
         self.flush_cache();
-        self.clear_into_snapshot();
+        self.clear_into_state_snapshot();
     }
 
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+    fn init_from_state_snapshot(&mut self, snapshot: StateSnapshot) {
         let db = self.inner().db();
         let StateSnapshot { accounts, storage, block_hashes } = snapshot;
         *db.accounts.write() = accounts;
@@ -127,11 +127,11 @@ impl MaybeFullDatabase for ForkDbStateSnapshot {
         self
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         std::mem::take(&mut self.snapshot)
     }
 
-    fn read_as_snapshot(&self) -> StateSnapshot {
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
         self.snapshot.clone()
     }
 
@@ -140,7 +140,7 @@ impl MaybeFullDatabase for ForkDbStateSnapshot {
         self.local.clear()
     }
 
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+    fn init_from_state_snapshot(&mut self, snapshot: StateSnapshot) {
         self.snapshot = snapshot;
     }
 }
