@@ -1010,23 +1010,16 @@ impl TryFrom<WithOtherFields<RpcTransaction>> for TypedTransaction {
         if tx.transaction_type.is_some_and(|t| t == 0x7E) {
             let mint = tx
                 .other
-                .get("mint")
-                .ok_or(ConversionError::Custom("MissingMint".to_string()))
-                .cloned()
-                .map(|v| {
-                    serde_json::from_value::<U256>(v)
-                        .map_err(|_| ConversionError::Custom("Cannot deserialize mint".to_string()))
-                })?;
+                .get_deserialized::<U256>("mint")
+                .ok_or(ConversionError::Custom("MissingMint".to_string()))?
+                .map_err(|_| ConversionError::Custom("Cannot deserialize mint".to_string()))?;
 
             let source_hash = tx
                 .other
-                .get("sourceHash")
-                .ok_or(ConversionError::Custom("MissingSourceHash".to_string()))
-                .cloned()
-                .map(|v| {
-                    serde_json::from_value::<B256>(v).map_err(|_| {
-                        ConversionError::Custom("Cannot deserialize source hash".to_string())
-                    })
+                .get_deserialized::<B256>("sourceHash")
+                .ok_or(ConversionError::Custom("MissingSourceHash".to_string()))?
+                .map_err(|_| {
+                    ConversionError::Custom("Cannot deserialize source hash".to_string())
                 })?;
 
             let deposit = DepositTransaction {
@@ -1037,8 +1030,8 @@ impl TryFrom<WithOtherFields<RpcTransaction>> for TypedTransaction {
                 value: tx.value,
                 gas_limit: tx.gas,
                 input: tx.input.clone(),
-                mint: mint?,
-                source_hash: source_hash?,
+                mint,
+                source_hash,
             };
 
             return Ok(Self::Deposit(deposit));
