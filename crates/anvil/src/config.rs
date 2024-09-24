@@ -570,7 +570,6 @@ impl NodeConfig {
     #[must_use]
     pub fn with_gas_limit(mut self, gas_limit: Option<u128>) -> Self {
         self.gas_limit = gas_limit;
-
         self
     }
 

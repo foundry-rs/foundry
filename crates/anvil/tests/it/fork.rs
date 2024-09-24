@@ -6,12 +6,12 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{address, b256, bytes, Address, Bytes, TxHash, TxKind, U256};
+use alloy_primitives::{address, b256, bytes, uint, Address, Bytes, TxHash, TxKind, U256, U64};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
-    BlockId, BlockNumberOrTag,
+    BlockId, BlockNumberOrTag, BlockTransactionsKind,
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
@@ -58,6 +58,21 @@ pub fn fork_config() -> NodeConfig {
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
         .silent()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_gas_limit_applied_from_config() {
+    let (api, _handle) = spawn(fork_config().with_gas_limit(Some(10_000_000_u128))).await;
+
+    assert_eq!(api.gas_limit(), uint!(10_000_000_U256));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_gas_limit_disabled_from_config() {
+    let (api, _handle) = spawn(fork_config().disable_block_gas_limit(true)).await;
+
+    // see https://github.com/foundry-rs/foundry/pull/8933
+    assert_eq!(api.gas_limit(), U256::from(U64::MAX));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1239,6 +1254,27 @@ async fn test_arbitrum_fork_block_number() {
     .unwrap();
     let block_number = api.block_number().unwrap().to::<u64>();
     assert_eq!(block_number, initial_block_number - 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_base_fork_gas_limit() {
+    // fork to get initial block for test
+    let (api, handle) = spawn(
+        fork_config()
+            .with_fork_block_number(None::<u64>)
+            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Base))),
+    )
+    .await;
+
+    let provider = handle.http_provider();
+    let block = provider
+        .get_block(BlockId::Number(BlockNumberOrTag::Latest), BlockTransactionsKind::Hashes)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(api.gas_limit(), uint!(120_000_000_U256));
+    assert_eq!(block.header.gas_limit, 120_000_000_u128);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/7023>
