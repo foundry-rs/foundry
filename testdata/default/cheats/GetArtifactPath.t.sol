@@ -20,4 +20,20 @@ contract GetArtifactPathTest is DSTest {
 
         assertEq(path, expectedPath);
     }
+
+    function testGetArtifactPathUsingDeployedBytecode() public {
+        DummyForGetArtifactPath dummy = new DummyForGetArtifactPath();
+        bytes memory dummyCreationCode = type(DummyForGetArtifactPath)
+            .creationCode;
+
+        string memory root = vm.projectRoot();
+        string memory path = vm.getArtifactPath(dummyCreationCode);
+
+        string memory expectedPath = string.concat(
+            root,
+            "/out/GetArtifactPath.t.sol/DummyForGetArtifactPath.json"
+        );
+
+        assertEq(path, expectedPath);
+    }
 }

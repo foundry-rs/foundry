@@ -1535,6 +1535,10 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getArtifactPath(string calldata contractName) external view returns (string memory path);
 
+    /// Gets the artifact path from the creation code.
+    #[cheatcode(group = Filesystem)]
+    function getArtifactPath(bytes calldata creationCode) external view returns (string memory path);
+
     /// Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     #[cheatcode(group = Filesystem)]
