@@ -11,16 +11,13 @@ contract GetArtifactPathTest is DSTest {
 
     function testGetArtifactPathByCode() public {
         DummyForGetArtifactPath dummy = new DummyForGetArtifactPath();
-        bytes memory dummyCreationCode = type(DummyForGetArtifactPath)
-            .creationCode;
+        bytes memory dummyCreationCode = type(DummyForGetArtifactPath).creationCode;
 
         string memory root = vm.projectRoot();
         string memory path = vm.getArtifactPathByCode(dummyCreationCode);
 
-        string memory expectedPath = string.concat(
-            root,
-            "/out/default/GetArtifactPath.t.sol/DummyForGetArtifactPath.json"
-        );
+        string memory expectedPath =
+            string.concat(root, "/out/default/GetArtifactPath.t.sol/DummyForGetArtifactPath.json");
 
         assertEq(path, expectedPath);
     }
@@ -30,14 +27,10 @@ contract GetArtifactPathTest is DSTest {
         bytes memory dummyRuntimeCode = address(dummy).code;
 
         string memory root = vm.projectRoot();
-        string memory path = vm.testGetArtifactPathByDeployedCode(
-            dummyRuntimeCode
-        );
+        string memory path = vm.testGetArtifactPathByDeployedCode(dummyRuntimeCode);
 
-        string memory expectedPath = string.concat(
-            root,
-            "/out/default/GetArtifactPath.t.sol/DummyForGetArtifactPath.json"
-        );
+        string memory expectedPath =
+            string.concat(root, "/out/default/GetArtifactPath.t.sol/DummyForGetArtifactPath.json");
 
         assertEq(path, expectedPath);
     }
