@@ -316,6 +316,14 @@ impl TestArgs {
         let toml = config.get_config_path();
         let profiles = get_available_profiles(toml)?;
 
+        // Remove the snapshots directory if it exists.
+        // This is to ensure that we don't have any stale snapshots.
+        // If `FORGE_SNAPSHOT_CHECK` is set, we don't remove the snapshots directory as it is
+        // required for comparison.
+        if std::env::var("FORGE_SNAPSHOT_CHECK").is_err() {
+            fs::remove_dir_all(&config.snapshots)?;
+        }
+
         let test_options: TestOptions = TestOptionsBuilder::default()
             .fuzz(config.fuzz.clone())
             .invariant(config.invariant.clone())
@@ -678,6 +686,11 @@ impl TestArgs {
                     let differences_found = gas_snapshots.clone().into_iter().fold(
                         false,
                         |mut found, (group, snapshots)| {
+                            // If the snapshot file doesn't exist, we can't compare so we skip.
+                            if !&config.snapshots.join(format!("{group}.json")).exists() {
+                                return false;
+                            }
+
                             let previous_snapshots: BTreeMap<String, String> =
                                 read_json_file(&config.snapshots.join(format!("{group}.json")))
                                     .expect("Failed to read snapshots from disk");
