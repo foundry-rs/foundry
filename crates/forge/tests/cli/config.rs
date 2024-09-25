@@ -206,6 +206,7 @@ forgetest_init!(can_override_config, |prj, cmd| {
     );
 
     // env vars work
+    std::env::remove_var("DAPP_REMAPPINGS");
     std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/forge-std/lib/ds-test/from-env/");
     let config = forge_utils::load_config_with_root(Some(prj.root()));
     assert_eq!(
@@ -518,6 +519,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     );
 
     // create a new lib directly in the `lib` folder with a remapping
+    std::env::remove_var("DAPP_REMAPPINGS");
     let mut config = config;
     config.remappings = vec![Remapping::from_str("nested/=lib/nested").unwrap().into()];
     let nested = prj.paths().libraries[0].join("nested-lib");
@@ -525,6 +527,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     let toml_file = nested.join("foundry.toml");
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
+    std::env::remove_var("DAPP_REMAPPINGS");
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     similar_asserts::assert_eq!(

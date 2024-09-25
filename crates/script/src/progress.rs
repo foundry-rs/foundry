@@ -16,7 +16,7 @@ use yansi::Paint;
 /// State of [ProgressBar]s displayed for the given [ScriptSequence].
 #[derive(Debug)]
 pub struct SequenceProgressState {
-    /// The top spinner with containt of the format "Sequence #{id} on {network} | {status}""
+    /// The top spinner with content of the format "Sequence #{id} on {network} | {status}""
     top_spinner: ProgressBar,
     /// Progress bar with the count of transactions.
     txs: ProgressBar,

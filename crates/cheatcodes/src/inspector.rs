@@ -223,7 +223,7 @@ pub struct BroadcastableTransaction {
 pub struct GasMetering {
     /// True if gas metering is paused.
     pub paused: bool,
-    /// True if gas metering was resumed or reseted during the test.
+    /// True if gas metering was resumed or reset during the test.
     /// Used to reconcile gas when frame ends (if spent less than refunded).
     pub touched: bool,
     /// True if gas metering should be reset to frame limit.
@@ -1235,7 +1235,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
-        // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
+        // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
             // Clean up pranks

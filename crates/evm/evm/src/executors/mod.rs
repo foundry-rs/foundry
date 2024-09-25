@@ -576,7 +576,7 @@ impl Executor {
     /// Creates the environment to use when executing a transaction in a test context
     ///
     /// If using a backend with cheatcodes, `tx.gas_price` and `block.number` will be overwritten by
-    /// the cheatcode state inbetween calls.
+    /// the cheatcode state in between calls.
     fn build_test_env(
         &self,
         caller: Address,

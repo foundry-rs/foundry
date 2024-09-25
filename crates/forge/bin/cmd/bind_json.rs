@@ -187,7 +187,7 @@ struct StructToWrite {
 }
 
 impl StructToWrite {
-    /// Returns the name of the imported item. If struct is definied at the file level, returns the
+    /// Returns the name of the imported item. If struct is defined at the file level, returns the
     /// struct name, otherwise returns the parent contract name.
     fn struct_or_contract_name(&self) -> &str {
         self.contract_name.as_deref().unwrap_or(&self.name)
