@@ -416,8 +416,8 @@ interface Vm {
     function skip(bool skipTest, string calldata reason) external;
     function sleep(uint256 duration) external;
     function snapshot() external returns (uint256 snapshotId);
-    function snapshotGasLastCall(string calldata name) external;
-    function snapshotGasLastCall(string calldata group, string calldata name) external;
+    function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
+    function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
     function snapshotState() external returns (uint256 snapshotId);
     function snapshotValue(string calldata name, uint256 value) external;
     function snapshotValue(string calldata group, string calldata name, uint256 value) external;

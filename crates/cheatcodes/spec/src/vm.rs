@@ -523,11 +523,11 @@ interface Vm {
 
     /// Snapshot capture the gas usage of the last call by name from the callee perspective.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function snapshotGasLastCall(string calldata name) external;
+    function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
 
     /// Snapshot capture the gas usage of the last call by name in a group from the callee perspective.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function snapshotGasLastCall(string calldata group, string calldata name) external;
+    function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     /// Start a snapshot capture of the current gas usage by name.
     /// The group name is derived from the contract name.

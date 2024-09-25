@@ -8427,7 +8427,7 @@
       "func": {
         "id": "snapshotGasLastCall_0",
         "description": "Snapshot capture the gas usage of the last call by name from the callee perspective.",
-        "declaration": "function snapshotGasLastCall(string calldata name) external;",
+        "declaration": "function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);",
         "visibility": "external",
         "mutability": "",
         "signature": "snapshotGasLastCall(string)",
@@ -8447,7 +8447,7 @@
       "func": {
         "id": "snapshotGasLastCall_1",
         "description": "Snapshot capture the gas usage of the last call by name in a group from the callee perspective.",
-        "declaration": "function snapshotGasLastCall(string calldata group, string calldata name) external;",
+        "declaration": "function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);",
         "visibility": "external",
         "mutability": "",
         "signature": "snapshotGasLastCall(string,string)",

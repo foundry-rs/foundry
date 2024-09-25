@@ -7,8 +7,8 @@ import "cheats/Vm.sol";
 contract GasSnapshotTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
+    uint256 public slot0;
     Flare public flare;
-    uint256 public slot;
 
     function setUp() public {
         flare = new Flare();
@@ -16,41 +16,31 @@ contract GasSnapshotTest is DSTest {
 
     function testGasExternal() public {
         vm.startSnapshotGas("testAssertGasExternal");
+        flare.run(1);
+        uint256 gasUsed = vm.stopSnapshotGas();
 
-        flare.update(2);
-
-        vm.stopSnapshotGas();
+        assertGt(gasUsed, 0);
     }
 
     function testGasInternal() public {
         vm.startSnapshotGas("testAssertGasInternalA");
-
-        slot = 1;
-
+        slot0 = 1;
         vm.stopSnapshotGas();
 
         vm.startSnapshotGas("testAssertGasInternalB");
-
-        slot = 2;
-
+        slot0 = 2;
         vm.stopSnapshotGas();
 
         vm.startSnapshotGas("testAssertGasInternalC");
-
-        slot = 0;
-
+        slot0 = 0;
         vm.stopSnapshotGas();
 
         vm.startSnapshotGas("testAssertGasInternalD");
-
-        slot = 1;
-
+        slot0 = 1;
         vm.stopSnapshotGas();
 
         vm.startSnapshotGas("testAssertGasInternalE");
-
-        slot = 2;
-
+        slot0 = 2;
         vm.stopSnapshotGas();
     }
 
@@ -146,22 +136,25 @@ contract GasSnapshotTest is DSTest {
     function testSnapshotGasLastCallName() public {
         flare.run(1);
 
-        vm.snapshotGasLastCall("testSnapshotGasName");
+        uint256 gasUsed = vm.snapshotGasLastCall("testSnapshotGasLastCallName");
+        assertGt(gasUsed, 0);
     }
 
     // Writes to `CustomGroup` group with `testSnapshotGas` name.
     function testSnapshotGasLastCallGroupName() public {
         flare.run(1);
 
-        vm.snapshotGasLastCall("CustomGroup", "testSnapshotGasGroupName");
+        uint256 gasUsed = vm.snapshotGasLastCall("CustomGroup", "testSnapshotGasLastCallGroupName");
+        assertGt(gasUsed, 0);
     }
 }
 
 contract GasComparisonTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    uint256 public slotA;
-    uint256 public slotB;
+    uint256 public slot0;
+    uint256 public slot1;
+
     uint256 public cachedGas;
 
     function testGasComparisonEmpty() public {
@@ -180,12 +173,12 @@ contract GasComparisonTest is DSTest {
     function testGasComparisonInternalCold() public {
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonInternalColdA");
-        slotA = 1;
+        slot0 = 1;
         uint256 a = vm.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
-        slotB = 1;
+        slot1 = 1;
         uint256 b = _snapEnd();
         vm.snapshotValue("ComparisonGroup", "testGasComparisonInternalColdB", b);
 
@@ -194,17 +187,16 @@ contract GasComparisonTest is DSTest {
 
     function testGasComparisonInternalWarm() public {
         // Warm up the cache.
-        slotA = 1;
-        slotB = 1;
+        slot0 = 1;
 
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonInternalWarmA");
-        slotA = 2;
+        slot0 = 2;
         uint256 a = vm.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
-        slotB = 2;
+        slot0 = 3;
         uint256 b = _snapEnd();
         vm.snapshotValue("ComparisonGroup", "testGasComparisonInternalWarmB", b);
 
@@ -213,19 +205,17 @@ contract GasComparisonTest is DSTest {
 
     function testGasComparisonExternal() public {
         // Warm up the cache.
-        TargetB targetA = new TargetB();
-        targetA.update(1);
-        TargetB targetB = new TargetB();
-        targetB.update(1);
+        TargetB target = new TargetB();
+        target.update(1);
 
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonExternalA");
-        targetA.update(2);
+        target.update(2);
         uint256 a = vm.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
-        targetB.update(2);
+        target.update(3);
         uint256 b = _snapEnd();
         vm.snapshotValue("ComparisonGroup", "testGasComparisonExternalB", b);
 
@@ -235,14 +225,13 @@ contract GasComparisonTest is DSTest {
     function testGasComparisonCreate() public {
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonCreateA");
-        new TargetEmptyA();
+        new TargetC();
         uint256 a = vm.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
-        new TargetEmptyB();
+        new TargetC();
         uint256 b = _snapEnd();
-
         vm.snapshotValue("ComparisonGroup", "testGasComparisonCreateB", b);
 
         vm.assertApproxEqAbs(a, b, 3);
@@ -250,21 +239,18 @@ contract GasComparisonTest is DSTest {
 
     function testGasComparisonNestedCalls() public {
         // Warm up the cache.
-        TargetA targetA = new TargetA();
-        targetA.update(1);
-        TargetA targetB = new TargetA();
-        targetB.update(1);
+        TargetA target = new TargetA();
+        target.update(1);
 
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonNestedCallsA");
-        targetA.update(2);
+        target.update(2);
         uint256 a = vm.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
-        targetB.update(2);
+        target.update(3);
         uint256 b = _snapEnd();
-
         vm.snapshotValue("ComparisonGroup", "testGasComparisonNestedCallsB", b);
 
         vm.assertApproxEqAbs(a, b, 2);
@@ -284,21 +270,12 @@ contract GasComparisonTest is DSTest {
 }
 
 contract Flare {
-    TargetA public target;
     bytes32[] public data;
-
-    constructor() {
-        target = new TargetA();
-    }
 
     function run(uint256 n_) public {
         for (uint256 i = 0; i < n_; i++) {
             data.push(keccak256(abi.encodePacked(i)));
         }
-    }
-
-    function update(uint256 x_) public {
-        target.update(x_);
     }
 }
 
@@ -322,6 +299,4 @@ contract TargetB {
     }
 }
 
-contract TargetEmptyA {}
-
-contract TargetEmptyB {}
+contract TargetC {}

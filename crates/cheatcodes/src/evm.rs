@@ -522,14 +522,14 @@ impl Cheatcode for readCallersCall {
 impl Cheatcode for snapshotValue_0Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { name, value } = self;
-        inner_create_value_snapshot(ccx, None, Some(name.clone()), value.to_string())
+        inner_value_snapshot(ccx, None, Some(name.clone()), value.to_string())
     }
 }
 
 impl Cheatcode for snapshotValue_1Call {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { group, name, value } = self;
-        inner_create_value_snapshot(ccx, Some(group.clone()), Some(name.clone()), value.to_string())
+        inner_value_snapshot(ccx, Some(group.clone()), Some(name.clone()), value.to_string())
     }
 }
 
@@ -539,12 +539,7 @@ impl Cheatcode for snapshotGasLastCall_0Call {
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
         };
-        inner_create_value_snapshot(
-            ccx,
-            None,
-            Some(name.clone()),
-            last_call_gas.gasTotalUsed.to_string(),
-        )
+        inner_last_gas_snapshot(ccx, None, Some(name.clone()), last_call_gas.gasTotalUsed)
     }
 }
 
@@ -554,11 +549,11 @@ impl Cheatcode for snapshotGasLastCall_1Call {
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
         };
-        inner_create_value_snapshot(
+        inner_last_gas_snapshot(
             ccx,
             Some(group.clone()),
             Some(name.clone()),
-            last_call_gas.gasTotalUsed.to_string(),
+            last_call_gas.gasTotalUsed,
         )
     }
 }
@@ -787,7 +782,7 @@ fn inner_delete_state_snapshots<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Re
     Ok(Default::default())
 }
 
-fn inner_create_value_snapshot<DB: DatabaseExt>(
+fn inner_value_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
     group: Option<String>,
     name: Option<String>,
@@ -803,6 +798,24 @@ fn inner_create_value_snapshot<DB: DatabaseExt>(
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value);
 
     Ok(Default::default())
+}
+
+fn inner_last_gas_snapshot<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    group: Option<String>,
+    name: Option<String>,
+    value: u64,
+) -> Result {
+    let cheatcodes = ccx.state.clone();
+    let group = group
+        .as_deref()
+        .unwrap_or(cheatcodes.config.running_contract.as_ref().expect("expected running contract"))
+        .to_string();
+    let name = name.as_deref().unwrap_or("default").to_string();
+
+    ccx.state.gas_snapshots.entry(group).or_default().insert(name, value.to_string());
+
+    Ok(value.abi_encode())
 }
 
 fn inner_start_gas_snapshot<DB: DatabaseExt>(
