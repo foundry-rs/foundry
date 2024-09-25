@@ -21,13 +21,13 @@ struct Shrink {
 /// If the failure is not reproducible then restore removed call and moves to next one.
 #[derive(Debug)]
 struct CallSequenceShrinker {
-    /// Length of call sequence to be shrinked.
+    /// Length of call sequence to be shrunk.
     call_sequence_len: usize,
-    /// Call ids contained in current shrinked sequence.
+    /// Call ids contained in current shrunk sequence.
     included_calls: VarBitSet,
-    /// Current shrinked call id.
+    /// Current shrunk call id.
     shrink: Shrink,
-    /// Previous shrinked call id.
+    /// Previous shrunk call id.
     prev_shrink: Option<Shrink>,
 }
 
@@ -82,7 +82,7 @@ impl CallSequenceShrinker {
 /// Maximal shrinkage is guaranteed if the shrink_run_limit is not set to a value lower than the
 /// length of failed call sequence.
 ///
-/// The shrinked call sequence always respect the order failure is reproduced as it is tested
+/// The shrunk call sequence always respect the order failure is reproduced as it is tested
 /// top-down.
 pub(crate) fn shrink_sequence(
     failed_case: &FailedInvariantCaseData,

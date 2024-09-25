@@ -1161,7 +1161,7 @@ impl Type {
         Self::ethabi(&return_parameter.ty, Some(intermediate)).map(|p| (contract_expr.unwrap(), p))
     }
 
-    /// Inverts Int to Uint and viceversa.
+    /// Inverts Int to Uint and vice-versa.
     fn invert_int(self) -> Self {
         match self {
             Self::Builtin(DynSolType::Uint(n)) => Self::Builtin(DynSolType::Int(n)),

@@ -1936,7 +1936,7 @@ impl EthApi {
         Ok(())
     }
 
-    /// Reorg the chain to a specific depth and mine new blocks back to the cannonical height.
+    /// Reorg the chain to a specific depth and mine new blocks back to the canonical height.
     ///
     /// e.g depth = 3
     ///     A  -> B  -> C  -> D  -> E
@@ -2566,7 +2566,7 @@ impl EthApi {
                     // current midpoint, as spending any less gas would make no
                     // sense (as the TX would still revert due to lack of gas).
                     //
-                    // We don't care about the reason here, as we known that trasaction is correct
+                    // We don't care about the reason here, as we known that transaction is correct
                     // as it succeeded earlier
                     lowest_gas_limit = mid_gas_limit;
                 }

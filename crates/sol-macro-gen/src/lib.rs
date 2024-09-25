@@ -1,4 +1,4 @@
-//! This crate constains the logic for Rust bindings generating from Solidity contracts
+//! This crate contains the logic for Rust bindings generating from Solidity contracts
 
 pub mod sol_macro_gen;
 
