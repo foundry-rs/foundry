@@ -37,9 +37,9 @@ use itertools::Itertools;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use revm::{
     interpreter::{
-        gas::CREATE, opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs,
-        CreateOutcome, EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter,
-        InterpreterAction, InterpreterResult,
+        opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
+        EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
+        InterpreterResult,
     },
     primitives::{BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SpecId, EOF_MAGIC_BYTES},
     EvmContext, InnerEvmContext, Inspector,
@@ -780,13 +780,6 @@ impl Cheatcodes {
             }
         }
 
-        // Store the total gas used for all active gas records started by `startSnapshotGas`.
-        self.gas_metering.gas_records.iter_mut().for_each(|record| {
-            if ecx.journaled_state.depth() == record.depth + 1 {
-                record.gas_used = record.gas_used.saturating_add(outcome.result.gas.spent());
-            }
-        });
-
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
@@ -1347,13 +1340,6 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             gasRemaining: gas.remaining(),
         });
 
-        // Store the total gas used for all active gas records started by `startSnapshotGas`.
-        self.gas_metering.gas_records.iter_mut().for_each(|record| {
-            if ecx.journaled_state.depth() == record.depth + 1 {
-                record.gas_used = record.gas_used.saturating_add(gas.spent());
-            }
-        });
-
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
@@ -1631,52 +1617,25 @@ impl Cheatcodes {
                         op::EXTDELEGATECALL => {
                             // Reset gas used when entering a new frame.
                             self.gas_metering.last_gas_used = 0;
-
-                            // Does not account for memory expansion and gas stipend.
-                            match interpreter.current_opcode() {
-                                op::CREATE | op::CREATE2 => {
-                                    record.gas_used = record.gas_used.saturating_add(CREATE);
-                                }
-                                op::CALL | op::CALLCODE | op::DELEGATECALL => {
-                                    // See: https://github.com/ethereum/EIPs/blob/master/EIPS/eip-150.md
-                                    let opcode_cost = if ecx
-                                        .journaled_state
-                                        .spec
-                                        .is_enabled_in(SpecId::TANGERINE)
-                                    {
-                                        700
-                                    } else {
-                                        40
-                                    };
-
-                                    record.gas_used = record.gas_used.saturating_add(opcode_cost);
-                                }
-                                op::STATICCALL | op::EXTSTATICCALL | op::EXTDELEGATECALL => {
-                                    record.gas_used = record.gas_used.saturating_add(700);
-                                }
-                                _ => {}
-                            }
                         }
-                        _ => {
-                            // Initialize after new frame, use this as the starting point.
-                            if self.gas_metering.last_gas_used == 0 {
-                                self.gas_metering.last_gas_used = interpreter.gas.spent();
-                                return;
-                            }
-
-                            // Calculate the gas difference between the last and current frame.
-                            let gas_diff = interpreter
-                                .gas
-                                .spent()
-                                .saturating_sub(self.gas_metering.last_gas_used);
-
-                            // Update the gas record.
-                            record.gas_used = record.gas_used.saturating_add(gas_diff);
-
-                            // Update for next iteration.
-                            self.gas_metering.last_gas_used = interpreter.gas.spent();
-                        }
+                        _ => {}
                     }
+
+                    // Initialize after new frame, use this as the starting point.
+                    if self.gas_metering.last_gas_used == 0 {
+                        self.gas_metering.last_gas_used = interpreter.gas.spent();
+                        return;
+                    }
+
+                    // Calculate the gas difference between the last and current frame.
+                    let gas_diff =
+                        interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
+
+                    // Update the gas record.
+                    record.gas_used = record.gas_used.saturating_add(gas_diff);
+
+                    // Update for next iteration.
+                    self.gas_metering.last_gas_used = interpreter.gas.spent();
                 }
             });
         }
