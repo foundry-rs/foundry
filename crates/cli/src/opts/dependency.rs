@@ -2,7 +2,7 @@
 
 use eyre::Result;
 use regex::Regex;
-use std::{str::FromStr, sync::LazyLock};
+use std::{fmt, str::FromStr, sync::LazyLock};
 
 static GH_REPO_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\w-]+/[\w.-]+").unwrap());
 
@@ -44,6 +44,19 @@ pub struct Dependency {
     pub tag: Option<String>,
     /// Optional alias of the dependency
     pub alias: Option<String>,
+}
+
+impl fmt::Display for Dependency {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())?;
+        if let Some(tag) = &self.tag {
+            write!(f, "{VERSION_SEPARATOR}{tag}")?;
+        }
+        if let Some(url) = &self.url {
+            write!(f, " ({url})")?;
+        }
+        Ok(())
+    }
 }
 
 impl FromStr for Dependency {

@@ -13,10 +13,7 @@ use forge::{
     utils::IcPcMap,
     MultiContractRunnerBuilder, TestOptions,
 };
-use foundry_cli::{
-    p_println,
-    utils::{LoadConfig, STATIC_FUZZ_SEED},
-};
+use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode},
@@ -76,9 +73,7 @@ impl CoverageArgs {
         let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         // install missing dependencies
-        if install::install_missing_dependencies(&mut config, self.test.build_args().silent) &&
-            config.auto_detect_remappings
-        {
+        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
         }
@@ -90,10 +85,10 @@ impl CoverageArgs {
         config.ast = true;
 
         let (project, output) = self.build(&config)?;
-        p_println!(!self.test.build_args().silent => "Analysing contracts...");
+        sh_eprintln!("Analysing contracts...")?;
         let report = self.prepare(&project, &output)?;
 
-        p_println!(!self.test.build_args().silent => "Running tests...");
+        sh_eprintln!("Running tests...")?;
         self.collect(project, &output, report, Arc::new(config), evm_opts).await
     }
 
@@ -121,7 +116,7 @@ impl CoverageArgs {
                 "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
                 "See more: https://github.com/foundry-rs/foundry/issues/3357",
             ).yellow();
-            p_println!(!self.test.build_args().silent => "{msg}");
+            sh_eprintln!("{msg}")?;
 
             // Enable viaIR with minimum optimization
             // https://github.com/ethereum/solidity/issues/12533#issuecomment-1013073350

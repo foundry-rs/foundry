@@ -108,8 +108,7 @@ impl CreateArgs {
             project.find_contract_path(&self.contract.name)?
         };
 
-        let mut output =
-            compile::compile_target(&target_path, &project, self.json || self.opts.silent)?;
+        let mut output = compile::compile_target(&target_path, &project, self.json)?;
 
         let (abi, bin, _) = remove_contract(&mut output, &target_path, &self.contract.name)?;
 

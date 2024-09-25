@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate tracing;
-
 use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
@@ -23,6 +20,9 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use std::time::Instant;
+
+#[macro_use]
+extern crate tracing;
 
 #[macro_use]
 extern crate foundry_common;

@@ -1,14 +1,14 @@
-#[macro_use]
-extern crate foundry_common;
-
-#[macro_use]
-extern crate tracing;
-
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
 use foundry_cli::{handler, utils};
 use foundry_evm::inspectors::cheatcodes::{set_execution_context, ForgeContext};
+
+#[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
+extern crate tracing;
 
 mod cmd;
 use cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch};
@@ -20,13 +20,21 @@ use opts::{Forge, ForgeSubcommand};
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(err) = run() {
+        let _ = foundry_common::Shell::get().error(&err);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
 
     let opts = Forge::parse();
+    opts.shell.shell().set();
     init_execution_context(&opts.cmd);
 
     match opts.cmd {
