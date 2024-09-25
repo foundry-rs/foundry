@@ -1411,6 +1411,71 @@ casttest!(block_number_hash, |_prj, cmd| {
     assert_eq!(s.trim().parse::<u64>().unwrap(), 1, "{s}")
 });
 
+// ... existing code ...
+
+casttest!(send_custom_error, async |prj, cmd| {
+    // Start anvil
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    prj.add_source(
+        "SimpleStorage",
+        r#"
+    contract SimpleStorage {
+
+    error ValueTooHigh(uint256 providedValue, uint256 maxValue);
+
+    function setValueTo101() public {
+        revert ValueTooHigh({ providedValue: 101, maxValue: 100 });
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Deploy the contract
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "./src/SimpleStorage.sol:SimpleStorage",
+            "--rpc-url",
+            &endpoint,
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let address = output.split("Deployed to: ").nth(1).unwrap().split('\n').next().unwrap().trim();
+
+    let contract_address = address.trim();
+
+    // Call the function that always reverts
+    cmd.cast_fuse()
+        .args([
+            "send",
+            contract_address,
+            "setValueTo101()",
+            "--rpc-url",
+            &endpoint,
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: 
+Reverted with custom error: 
+ Possible methods:
+ - ValueTooHigh(uint256,uint256)
+ ------------
+ [000]: 0000000000000000000000000000000000000000000000000000000000000065
+ [020]: 0000000000000000000000000000000000000000000000000000000000000064
+...
+"#]]);
+});
+
 casttest!(send_eip7702, async |_prj, cmd| {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into())))
