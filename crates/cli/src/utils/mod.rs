@@ -163,7 +163,7 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
 
 /// Conditionally print a message
 ///
-/// This macro accepts a predicate and the message to print if the predicate is tru
+/// This macro accepts a predicate and the message to print if the predicate is true
 ///
 /// ```ignore
 /// let quiet = true;

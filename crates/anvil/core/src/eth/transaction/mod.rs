@@ -672,7 +672,7 @@ pub enum TypedTransaction {
 /// This is a function that demotes TypedTransaction to TransactionRequest for greater flexibility
 /// over the type.
 ///
-/// This function is purely for convience and specific use cases, e.g. RLP encoded transactions
+/// This function is purely for convenience and specific use cases, e.g. RLP encoded transactions
 /// decode to TypedTransactions where the API over TypedTransctions is quite strict.
 impl TryFrom<TypedTransaction> for TransactionRequest {
     type Error = ConversionError;

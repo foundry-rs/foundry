@@ -24,7 +24,7 @@ impl CheatsManager {
         let mut state = self.state.write();
         // When somebody **explicitly** impersonates an account we need to store it so we are able
         // to return it from `eth_accounts`. That's why we do not simply call `is_impersonated()`
-        // which does not check that list when auto impersonation is enabeld.
+        // which does not check that list when auto impersonation is enabled.
         if state.impersonated_accounts.contains(&addr) {
             // need to check if already impersonated, so we don't overwrite the code
             return true
