@@ -24,7 +24,7 @@ use foundry_common::{
     cli_warn,
     compile::ProjectCompiler,
     evm::EvmArgs,
-    fs::{self, create_dir_all, read_json_file, remove_dir_all, write_pretty_json_file},
+    fs::{self, create_dir_all, read_json_file, write_pretty_json_file},
     shell,
 };
 use foundry_compilers::{
@@ -670,69 +670,72 @@ impl TestArgs {
                 }
             }
 
-            // Check for differences in gas snapshots if `FORGE_SNAPSHOT_CHECK` is set.
-            // Exiting early with code 1 if differences are found.
-            if std::env::var("FORGE_SNAPSHOT_CHECK").is_ok() {
-                let differences_found = gas_snapshots.clone().into_iter().fold(
-                    false,
-                    |mut found, (group, snapshots)| {
-                        let previous_snapshots: BTreeMap<String, String> =
-                            read_json_file(&config.snapshots.join(format!("{group}.json")))
-                                .expect("Failed to read snapshots from disk");
+            // Write gas snapshots to disk if any were collected.
+            if !gas_snapshots.is_empty() {
+                // Check for differences in gas snapshots if `FORGE_SNAPSHOT_CHECK` is set.
+                // Exiting early with code 1 if differences are found.
+                if std::env::var("FORGE_SNAPSHOT_CHECK").is_ok() {
+                    let differences_found = gas_snapshots.clone().into_iter().fold(
+                        false,
+                        |mut found, (group, snapshots)| {
+                            let previous_snapshots: BTreeMap<String, String> =
+                                read_json_file(&config.snapshots.join(format!("{group}.json")))
+                                    .expect("Failed to read snapshots from disk");
 
-                        let diff: BTreeMap<_, _> = snapshots
-                            .iter()
-                            .filter_map(|(k, v)| {
-                                previous_snapshots.get(k).and_then(|previous_snapshot| {
-                                    if previous_snapshot != v {
-                                        Some((k.clone(), (previous_snapshot.clone(), v.clone())))
-                                    } else {
-                                        None
-                                    }
+                            let diff: BTreeMap<_, _> = snapshots
+                                .iter()
+                                .filter_map(|(k, v)| {
+                                    previous_snapshots.get(k).and_then(|previous_snapshot| {
+                                        if previous_snapshot != v {
+                                            Some((
+                                                k.clone(),
+                                                (previous_snapshot.clone(), v.clone()),
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    })
                                 })
-                            })
-                            .collect();
+                                .collect();
 
-                        if !diff.is_empty() {
-                            println!(
-                                "{}",
-                                format!("\n[{group}] Failed to match snapshots:").red().bold()
-                            );
-
-                            for (key, (previous_snapshot, snapshot)) in &diff {
+                            if !diff.is_empty() {
                                 println!(
                                     "{}",
-                                    format!("- [{key}] {previous_snapshot} → {snapshot}").red()
+                                    format!("\n[{group}] Failed to match snapshots:").red().bold()
                                 );
+
+                                for (key, (previous_snapshot, snapshot)) in &diff {
+                                    println!(
+                                        "{}",
+                                        format!("- [{key}] {previous_snapshot} → {snapshot}").red()
+                                    );
+                                }
+
+                                found = true;
                             }
 
-                            found = true;
-                        }
+                            found
+                        },
+                    );
 
-                        found
-                    },
-                );
-
-                if differences_found {
-                    println!();
-                    eyre::bail!("Snapshots differ from previous run");
+                    if differences_found {
+                        println!();
+                        eyre::bail!("Snapshots differ from previous run");
+                    }
                 }
-            }
 
-            // Remove any existing gas snapshots.
-            if config.snapshots.exists() {
-                remove_dir_all(&config.snapshots)
-                    .expect("Failed to remove gas snapshots directory");
-            }
+                // Create `snapshots` directory if it doesn't exist.
+                create_dir_all(&config.snapshots)?;
 
-            // Create `snapshots` directory if it doesn't exist.
-            create_dir_all(&config.snapshots)?;
-
-            // Write gas snapshots to disk per group.
-            gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
-                write_pretty_json_file(&config.snapshots.join(format!("{group}.json")), &snapshots)
+                // Write gas snapshots to disk per group.
+                gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
+                    write_pretty_json_file(
+                        &config.snapshots.join(format!("{group}.json")),
+                        &snapshots,
+                    )
                     .expect("Failed to write gas snapshots to disk");
-            });
+                });
+            }
 
             // Print suite summary.
             shell::println(suite_result.summary())?;
