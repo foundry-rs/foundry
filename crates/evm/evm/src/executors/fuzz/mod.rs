@@ -88,7 +88,7 @@ impl FuzzedExecutor {
         let execution_data = RefCell::new(FuzzTestData::default());
         let state = self.build_fuzz_state();
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-        let strat = proptest::prop_oneof![
+        let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
         ];
@@ -96,7 +96,7 @@ impl FuzzedExecutor {
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
         let show_logs = self.config.show_logs;
 
-        let run_result = self.runner.clone().run(&strat, |calldata| {
+        let run_result = self.runner.clone().run(&strategy, |calldata| {
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
 
             // If running with progress then increment current run.

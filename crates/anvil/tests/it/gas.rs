@@ -2,13 +2,28 @@
 
 use crate::utils::http_provider_with_signer;
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{uint, Address, U256, U64};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{eth::fees::INITIAL_BASE_FEE, spawn, NodeConfig};
 
 const GAS_TRANSFER: u128 = 21_000;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_gas_limit_applied_from_config() {
+    let (api, _handle) = spawn(NodeConfig::test().with_gas_limit(Some(10_000_000))).await;
+
+    assert_eq!(api.gas_limit(), uint!(10_000_000_U256));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_gas_limit_disabled_from_config() {
+    let (api, _handle) = spawn(NodeConfig::test().disable_block_gas_limit(true)).await;
+
+    // see https://github.com/foundry-rs/foundry/pull/8933
+    assert_eq!(api.gas_limit(), U256::from(U64::MAX));
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_basefee_full_block() {

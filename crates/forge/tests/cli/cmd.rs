@@ -984,7 +984,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 "#]]);
 });
 
-// test that `forge build` does not print `(with warnings)` if there arent any
+// test that `forge build` does not print `(with warnings)` if there aren't any
 forgetest!(can_compile_without_warnings, |prj, cmd| {
     let config = Config {
         ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],

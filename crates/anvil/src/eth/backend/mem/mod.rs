@@ -149,7 +149,7 @@ pub struct Backend {
     /// which the write-lock is active depends on whether the `ForkDb` can provide all requested
     /// data from memory or whether it has to retrieve it via RPC calls first. This means that it
     /// potentially blocks for some time, even taking into account the rate limits of RPC
-    /// endpoints. Therefor the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
+    /// endpoints. Therefore the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
     /// need to read from it, while it's currently written to, don't block. E.g. a new block is
     /// currently mined and a new [`Self::set_storage_at()`] request is being executed.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,
@@ -441,12 +441,14 @@ impl Backend {
                     *self.fork.write() = Some(fork);
                     *self.env.write() = env;
                 } else {
+                    let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
                     let mut env = self.env.write();
+
                     env.cfg.chain_id = fork.chain_id();
                     env.block = BlockEnv {
                         number: U256::from(fork_block_number),
                         timestamp: U256::from(fork_block.header.timestamp),
-                        gas_limit: U256::from(fork_block.header.gas_limit),
+                        gas_limit: U256::from(gas_limit),
                         difficulty: fork_block.header.difficulty,
                         prevrandao: Some(fork_block.header.mix_hash.unwrap_or_default()),
                         // Keep previous `coinbase` and `basefee` value
@@ -459,7 +461,7 @@ impl Backend {
                     // the next block
                     let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
                         fork_block.header.gas_used,
-                        fork_block.header.gas_limit,
+                        gas_limit,
                         fork_block.header.base_fee_per_gas.unwrap_or_default(),
                     );
 

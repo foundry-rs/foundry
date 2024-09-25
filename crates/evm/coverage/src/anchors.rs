@@ -71,7 +71,7 @@ pub fn find_anchor_simple(
 
     Ok(ItemAnchor {
         instruction: ic_pc_map.get(instruction).ok_or_else(|| {
-            eyre::eyre!("We found an anchor, but we cant translate it to a program counter")
+            eyre::eyre!("We found an anchor, but we can't translate it to a program counter")
         })?,
         item_id,
     })
