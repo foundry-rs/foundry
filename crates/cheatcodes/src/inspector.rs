@@ -37,10 +37,9 @@ use itertools::Itertools;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use revm::{
     interpreter::{
-        gas::{CALL_STIPEND, CREATE},
-        opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
-        EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
-        InterpreterResult,
+        gas::CREATE, opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs,
+        CreateOutcome, EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter,
+        InterpreterAction, InterpreterResult,
     },
     primitives::{BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SpecId, EOF_MAGIC_BYTES},
     EvmContext, InnerEvmContext, Inspector,
@@ -1633,6 +1632,7 @@ impl Cheatcodes {
                             // Reset gas used when entering a new frame.
                             self.gas_metering.last_gas_used = 0;
 
+                            // Does not account for memory expansion and gas stipend.
                             match interpreter.current_opcode() {
                                 op::CREATE | op::CREATE2 => {
                                     record.gas_used = record.gas_used.saturating_add(CREATE);
@@ -1644,18 +1644,14 @@ impl Cheatcodes {
                                         .spec
                                         .is_enabled_in(SpecId::TANGERINE)
                                     {
-                                        700 + CALL_STIPEND
+                                        700
                                     } else {
-                                        40 + CALL_STIPEND
+                                        40
                                     };
 
                                     record.gas_used = record.gas_used.saturating_add(opcode_cost);
                                 }
-                                op::EXTDELEGATECALL => {
-                                    record.gas_used =
-                                        record.gas_used.saturating_add(700 + CALL_STIPEND);
-                                }
-                                op::STATICCALL | op::EXTSTATICCALL => {
+                                op::STATICCALL | op::EXTSTATICCALL | op::EXTDELEGATECALL => {
                                     record.gas_used = record.gas_used.saturating_add(700);
                                 }
                                 _ => {}

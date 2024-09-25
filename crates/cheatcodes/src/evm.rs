@@ -876,8 +876,9 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
         .find(|record| record.group == group && record.name == name)
     {
         // Calculate the gas used since the snapshot was started.
-        // We subtract 151 from the gas used to account for gas used by the snapshot itself.
-        let value = record.gas_used - 151;
+        // We subtract 866 (incl. 700 gas for default call) from the gas used to account for gas
+        // used by the snapshot itself.
+        let value = record.gas_used.saturating_sub(866);
 
         ccx.state
             .gas_snapshots
