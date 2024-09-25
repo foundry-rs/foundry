@@ -5520,7 +5520,7 @@
     {
       "func": {
         "id": "lastCallGas",
-        "description": "Gets the gas used in the last call.",
+        "description": "Gets the gas used in the last call from the callee perspective.",
         "declaration": "function lastCallGas() external view returns (Gas memory gas);",
         "visibility": "external",
         "mutability": "view",
@@ -8426,7 +8426,7 @@
     {
       "func": {
         "id": "snapshotGasLastCall_0",
-        "description": "Snapshot capture the gas usage of the last call by name.",
+        "description": "Snapshot capture the gas usage of the last call by name from the callee perspective.",
         "declaration": "function snapshotGasLastCall(string calldata name) external;",
         "visibility": "external",
         "mutability": "",
@@ -8446,7 +8446,7 @@
     {
       "func": {
         "id": "snapshotGasLastCall_1",
-        "description": "Snapshot capture the gas usage of the last call by name in a group.",
+        "description": "Snapshot capture the gas usage of the last call by name in a group from the callee perspective.",
         "declaration": "function snapshotGasLastCall(string calldata group, string calldata name) external;",
         "visibility": "external",
         "mutability": "",

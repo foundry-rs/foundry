@@ -521,11 +521,11 @@ interface Vm {
 
     // -------- Gas Snapshots --------
 
-    /// Snapshot capture the gas usage of the last call by name.
+    /// Snapshot capture the gas usage of the last call by name from the callee perspective.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function snapshotGasLastCall(string calldata name) external;
 
-    /// Snapshot capture the gas usage of the last call by name in a group.
+    /// Snapshot capture the gas usage of the last call by name in a group from the callee perspective.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function snapshotGasLastCall(string calldata group, string calldata name) external;
 
@@ -740,7 +740,7 @@ interface Vm {
 
     // -------- Gas Measurement --------
 
-    /// Gets the gas used in the last call.
+    /// Gets the gas used in the last call from the callee perspective.
     #[cheatcode(group = Evm, safety = Safe)]
     function lastCallGas() external view returns (Gas memory gas);
 

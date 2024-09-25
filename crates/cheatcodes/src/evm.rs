@@ -894,7 +894,7 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
             .gas_records
             .retain(|record| record.group != group && record.name != name);
 
-        // Clear last snapshot cache.
+        // Clear last snapshot cache if we have an exact match.
         if ccx.state.gas_metering.last_snapshot_group == Some(group.to_string()) &&
             ccx.state.gas_metering.last_snapshot_name == Some(name)
         {

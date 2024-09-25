@@ -1596,16 +1596,6 @@ impl Cheatcodes {
         if matches!(interpreter.instruction_result, InstructionResult::Continue) {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 if ecx.journaled_state.depth() == record.depth + 1 {
-                    println!(
-                        "[{:?}]: {:?} [{:?}] @ {:?}",
-                        revm::interpreter::OpCode::new(interpreter.current_opcode())
-                            .unwrap()
-                            .as_str(),
-                        interpreter.gas.spent(),
-                        record,
-                        ecx.journaled_state.depth(),
-                    );
-
                     match interpreter.current_opcode() {
                         op::CREATE |
                         op::CALL |
