@@ -17,8 +17,8 @@ use crate::{
         },
     },
     utils::IgnoredTraces,
-    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
-    Vm::{self, AccountAccess},
+    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
+    Vm::AccountAccess,
 };
 use alloy_primitives::{hex, Address, Bytes, Log, TxKind, B256, U256};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};

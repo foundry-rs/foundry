@@ -20,13 +20,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{
-    cli_warn,
-    compile::ProjectCompiler,
-    evm::EvmArgs,
-    fs::{self, create_dir_all, read_json_file, write_pretty_json_file},
-    shell,
-};
+use foundry_common::{cli_warn, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -321,7 +315,10 @@ impl TestArgs {
         // If `FORGE_SNAPSHOT_CHECK` is set, we don't remove the snapshots directory as it is
         // required for comparison.
         if std::env::var("FORGE_SNAPSHOT_CHECK").is_err() {
-            fs::remove_dir_all(&config.snapshots)?;
+            let snapshot_dir = project_root.join(&config.snapshots);
+            if snapshot_dir.exists() {
+                let _ = fs::remove_dir_all(project_root.join(&config.snapshots));
+            }
         }
 
         let test_options: TestOptions = TestOptionsBuilder::default()
@@ -692,7 +689,7 @@ impl TestArgs {
                             }
 
                             let previous_snapshots: BTreeMap<String, String> =
-                                read_json_file(&config.snapshots.join(format!("{group}.json")))
+                                fs::read_json_file(&config.snapshots.join(format!("{group}.json")))
                                     .expect("Failed to read snapshots from disk");
 
                             let diff: BTreeMap<_, _> = snapshots
@@ -738,11 +735,11 @@ impl TestArgs {
                 }
 
                 // Create `snapshots` directory if it doesn't exist.
-                create_dir_all(&config.snapshots)?;
+                fs::create_dir_all(&config.snapshots)?;
 
                 // Write gas snapshots to disk per group.
                 gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
-                    write_pretty_json_file(
+                    fs::write_pretty_json_file(
                         &config.snapshots.join(format!("{group}.json")),
                         &snapshots,
                     )
