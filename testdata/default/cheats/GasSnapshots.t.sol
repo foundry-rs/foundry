@@ -14,7 +14,7 @@ contract GasSnapshotTest is DSTest {
         flare = new Flare();
     }
 
-    function testGasExternal() public {
+    function testSnapshotGasSectionExternal() public {
         vm.startSnapshotGas("testAssertGasExternal");
         flare.run(1);
         uint256 gasUsed = vm.stopSnapshotGas();
@@ -22,7 +22,7 @@ contract GasSnapshotTest is DSTest {
         assertGt(gasUsed, 0);
     }
 
-    function testGasInternal() public {
+    function testSnapshotGasSectionInternal() public {
         vm.startSnapshotGas("testAssertGasInternalA");
         slot0 = 1;
         vm.stopSnapshotGas();
@@ -45,7 +45,7 @@ contract GasSnapshotTest is DSTest {
     }
 
     // Writes to `GasSnapshotTest` group with custom names.
-    function testSnapshotValueDefaultGroup1() public {
+    function testSnapshotValueDefaultGroupA() public {
         uint256 a = 123;
         uint256 b = 456;
         uint256 c = 789;
@@ -56,7 +56,7 @@ contract GasSnapshotTest is DSTest {
     }
 
     // Writes to same `GasSnapshotTest` group with custom names.
-    function testSnapshotValueDefaultGroup2() public {
+    function testSnapshotValueDefaultGroupB() public {
         uint256 d = 123;
         uint256 e = 456;
         uint256 f = 789;
@@ -68,7 +68,7 @@ contract GasSnapshotTest is DSTest {
 
     // Writes to `CustomGroup` group with custom names.
     // Asserts that the order of the values is alphabetical.
-    function testSnapshotValueCustomGroup1() public {
+    function testSnapshotValueCustomGroupA() public {
         uint256 o = 123;
         uint256 i = 456;
         uint256 q = 789;
@@ -80,7 +80,7 @@ contract GasSnapshotTest is DSTest {
 
     // Writes to `CustomGroup` group with custom names.
     // Asserts that the order of the values is alphabetical.
-    function testSnapshotValueCustomGroup2() public {
+    function testSnapshotValueCustomGroupB() public {
         uint256 x = 123;
         uint256 e = 456;
         uint256 z = 789;
