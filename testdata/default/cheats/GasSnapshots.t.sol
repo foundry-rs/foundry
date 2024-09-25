@@ -167,23 +167,29 @@ contract GasComparisonTest is DSTest {
     function testGasComparisonEmpty() public {
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonEmptyA");
-        vm.stopSnapshotGas();
+        uint256 a = vm.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
-        vm.snapshotValue("ComparisonGroup", "testGasComparisonEmptyB", _snapEnd());
+        uint256 b = _snapEnd();
+        vm.snapshotValue("ComparisonGroup", "testGasComparisonEmptyB", b);
+
+        // assertEq(a, b);
     }
 
     function testGasComparisonInternalCold() public {
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonInternalColdA");
         slotA = 1;
-        vm.stopSnapshotGas();
+        uint256 a = vm.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
         slotB = 1;
-        vm.snapshotValue("ComparisonGroup", "testGasComparisonInternalColdB", _snapEnd());
+        uint256 b = _snapEnd();
+        vm.snapshotValue("ComparisonGroup", "testGasComparisonInternalColdB", b);
+
+        // assertEq(a, b);
     }
 
     function testGasComparisonInternalWarm() public {
@@ -194,12 +200,15 @@ contract GasComparisonTest is DSTest {
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonInternalWarmA");
         slotA = 2;
-        vm.stopSnapshotGas();
+        uint256 a = vm.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
         slotB = 2;
-        vm.snapshotValue("ComparisonGroup", "testGasComparisonInternalWarmB", _snapEnd());
+        uint256 b = _snapEnd();
+        vm.snapshotValue("ComparisonGroup", "testGasComparisonInternalWarmB", b);
+
+        // assertEq(a, b);
     }
 
     function testGasComparisonExternal() public {
@@ -212,26 +221,53 @@ contract GasComparisonTest is DSTest {
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonExternalA");
         targetA.update(2);
-        vm.stopSnapshotGas();
+        uint256 a = vm.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
         targetB.update(2);
-        vm.snapshotValue("ComparisonGroup", "testGasComparisonExternalB", _snapEnd());
+        uint256 b = _snapEnd();
+        vm.snapshotValue("ComparisonGroup", "testGasComparisonExternalB", b);
+
+        // assertEq(a, b);
     }
 
     function testGasComparisonCreateA() public {
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonCreateA");
         new TargetEmptyA();
-        vm.stopSnapshotGas();
-    }
+        uint256 a = vm.stopSnapshotGas();
 
-    function testGasComparisonCreateB() public {
         // Start a comparitive Solidity snapshot.
         _snapStart();
         new TargetEmptyB();
-        vm.snapshotValue("ComparisonGroup", "testGasComparisonCreateB", _snapEnd());
+        uint256 b = _snapEnd();
+
+        vm.snapshotValue("ComparisonGroup", "testGasComparisonCreateB", b);
+
+        // assertEq(a, b);
+    }
+
+    function testGasComparisonNestedCalls() public {
+        // Warm up the cache.
+        TargetA targetA = new TargetA();
+        targetA.update(1);
+        TargetA targetB = new TargetA();
+        targetB.update(1);
+
+        // Start a cheatcode snapshot.
+        vm.startSnapshotGas("ComparisonGroup", "testGasComparisonNestedCallsA");
+        targetA.update(2);
+        uint256 a = vm.stopSnapshotGas();
+
+        // Start a comparitive Solidity snapshot.
+        _snapStart();
+        targetB.update(2);
+        uint256 b = _snapEnd();
+
+        vm.snapshotValue("ComparisonGroup", "testGasComparisonNestedCallsB", b);
+
+        // assertEq(a, b);
     }
 
     // Internal function to start a Solidity snapshot.
@@ -242,7 +278,7 @@ contract GasComparisonTest is DSTest {
 
     // Internal function to end a Solidity snapshot.
     function _snapEnd() internal returns (uint256 gasUsed) {
-        gasUsed = cachedGas - gasleft() - 174;
+        gasUsed = cachedGas - gasleft() - 138;
         cachedGas = 2;
     }
 }
