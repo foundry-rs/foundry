@@ -190,7 +190,7 @@ async fn test_tip_above_fee_cap() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_use_fee_history() {
     let base_fee = 50u128;
-    let (_api, mut handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
     let provider = handle.http_provider();
 
     for _ in 0..10 {
@@ -215,6 +215,4 @@ async fn test_can_use_fee_history() {
         assert_eq!(latest_block.header.base_fee_per_gas.unwrap(), *latest_fee_history_fee);
         assert_eq!(latest_fee_history_fee, next_base_fee);
     }
-
-    handle.fire_shutdown_signal();
 }

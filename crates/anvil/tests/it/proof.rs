@@ -122,7 +122,7 @@ async fn test_storage_proof() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_random_account_proofs() {
-    let (api, mut handle) = spawn(NodeConfig::test()).await;
+    let (api, _handle) = spawn(NodeConfig::test()).await;
 
     for acc in std::iter::repeat_with(Address::random).take(10) {
         let _ = api
@@ -130,6 +130,4 @@ async fn can_get_random_account_proofs() {
             .await
             .unwrap_or_else(|_| panic!("Failed to get proof for {acc:?}"));
     }
-
-    handle.fire_shutdown_signal();
 }

@@ -274,6 +274,15 @@ pub struct NodeHandle {
     task_manager: TaskManager,
 }
 
+impl Drop for NodeHandle {
+    fn drop(&mut self) {
+        // Fire shutdown signal to make sure anvil instance is terminated.
+        if let Some(signal) = self._signal.take() {
+            signal.fire().unwrap()
+        }
+    }
+}
+
 impl NodeHandle {
     /// The [NodeConfig] the node was launched with.
     pub fn config(&self) -> &NodeConfig {
@@ -371,16 +380,6 @@ impl NodeHandle {
     /// This can be used to extract the Signal.
     pub fn shutdown_signal_mut(&mut self) -> &mut Option<Signal> {
         &mut self._signal
-    }
-
-    /// Fires shutdown signal.
-    ///
-    /// Called by long-running tests to make sure anvil instance is terminated.
-    #[track_caller]
-    pub fn fire_shutdown_signal(&mut self) {
-        if let Some(signal) = self._signal.take() {
-            signal.fire().unwrap()
-        }
     }
 
     /// Returns the task manager that can be used to spawn new tasks.
