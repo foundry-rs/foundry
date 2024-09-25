@@ -188,13 +188,11 @@ contract FuzzerDictTest is Test {
         fuzzerDict = new FuzzerDict(address(100), address(200));
     }
 
-    // Fuzzer should try `fuzzerDict.immutableOwner()` as input, causing this to fail
     /// forge-config: default.fuzz.runs = 2000
     function testImmutableOwner(address who) public {
         assertTrue(who != fuzzerDict.immutableOwner());
     }
 
-    // Fuzzer should try `fuzzerDict.storageOwner()` as input, causing this to fail
     /// forge-config: default.fuzz.runs = 2000
     function testStorageOwner(address who) public {
         assertTrue(who != fuzzerDict.storageOwner());
