@@ -722,7 +722,7 @@ async fn test_trace_address_fork2() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_filter() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, mut handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
@@ -859,4 +859,8 @@ async fn test_trace_filter() {
 
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 5);
+
+    if let Some(signal) = handle.shutdown_signal_mut().take() {
+        signal.fire().unwrap();
+    }
 }

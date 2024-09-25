@@ -295,7 +295,7 @@ impl BundledState {
 
                                 tx.set_chain_id(sequence.chain);
 
-                                // Set TxKind::Create explicitly to satify `check_reqd_fields` in
+                                // Set TxKind::Create explicitly to satisfy `check_reqd_fields` in
                                 // alloy
                                 if tx.to.is_none() {
                                     tx.set_create();

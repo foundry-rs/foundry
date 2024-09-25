@@ -243,7 +243,7 @@ impl InvariantTestRun {
     }
 }
 
-/// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`].
+/// Wrapper around any [`Executor`] implementer which provides fuzzing support using [`proptest`].
 ///
 /// After instantiation, calling `invariant_fuzz` will proceed to hammer the deployed smart
 /// contracts with inputs, until it finds a counterexample sequence. The provided [`TestRunner`]
@@ -463,7 +463,7 @@ impl<'a> InvariantExecutor<'a> {
             EvmFuzzState::new(self.executor.backend().mem_db(), self.config.dictionary);
 
         // Creates the invariant strategy.
-        let strat = invariant_strat(
+        let strategy = invariant_strat(
             fuzz_state.clone(),
             targeted_senders,
             targeted_contracts.clone(),
@@ -519,7 +519,7 @@ impl<'a> InvariantExecutor<'a> {
                 last_call_results,
                 self.runner.clone(),
             ),
-            strat,
+            strategy,
         ))
     }
 

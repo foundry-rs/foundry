@@ -51,6 +51,15 @@ jobs:
           cache-on-failure: true
       - run: cargo test --workspace --doc
 
+  codespell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: codespell-project/actions-codespell@v2
+        with:
+          skip: "*.json"
+
   clippy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -107,6 +116,7 @@ jobs:
       - nextest
       - docs
       - doctest
+      - codespell
       - clippy
       - rustfmt
       - forge-fmt

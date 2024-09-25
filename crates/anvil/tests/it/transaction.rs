@@ -230,14 +230,14 @@ async fn can_reject_too_high_gas_limits() {
 // <https://github.com/foundry-rs/foundry/issues/8094>
 #[tokio::test(flavor = "multi_thread")]
 async fn can_mine_large_gas_limit() {
-    let (api, handle) = spawn(NodeConfig::test().disable_block_gas_limit(true)).await;
+    let (_, handle) = spawn(NodeConfig::test().disable_block_gas_limit(true)).await;
     let provider = handle.http_provider();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let gas_limit = api.gas_limit().to::<u128>();
+    let gas_limit = anvil::DEFAULT_GAS_LIMIT;
     let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
     let tx =

@@ -594,7 +594,7 @@ fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
     match value {
         DynSolValue::Bool(b) => Ok(Value::Bool(b)),
         DynSolValue::String(s) => {
-            // Strings are allowed to contain strigified JSON objects, so we try to parse it like
+            // Strings are allowed to contain stringified JSON objects, so we try to parse it like
             // one first.
             if let Ok(map) = serde_json::from_str(&s) {
                 Ok(Value::Object(map))
