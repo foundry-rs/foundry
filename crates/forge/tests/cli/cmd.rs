@@ -276,7 +276,7 @@ forgetest!(can_init_no_git, |prj, cmd| {
     cmd.arg("init").arg(prj.root()).arg("--no-git").assert_success().stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std
+    Installed forge-std [..]
     Initialized forge project
 
 "#]]);
