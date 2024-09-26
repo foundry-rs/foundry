@@ -5057,6 +5057,46 @@
     },
     {
       "func": {
+        "id": "getArtifactPathByCode",
+        "description": "Gets the artifact path from code (aka. creation code).",
+        "declaration": "function getArtifactPathByCode(bytes calldata code) external view returns (string memory path);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getArtifactPathByCode(bytes)",
+        "selector": "0xeb74848c",
+        "selectorBytes": [
+          235,
+          116,
+          132,
+          140
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getArtifactPathByDeployedCode",
+        "description": "Gets the artifact path from deployed code (aka. runtime code).",
+        "declaration": "function getArtifactPathByDeployedCode(bytes calldata deployedCode) external view returns (string memory path);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getArtifactPathByDeployedCode(bytes)",
+        "selector": "0x6d853ba5",
+        "selectorBytes": [
+          109,
+          133,
+          59,
+          165
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getBlobBaseFee",
         "description": "Gets the current `block.blobbasefee`.\nYou should use this instead of `block.blobbasefee` if you use `vm.blobBaseFee`, as `block.blobbasefee` is assumed to be constant across a transaction,\nand as a result will get optimized out by the compiler.\nSee https://github.com/foundry-rs/foundry/issues/6180",
         "declaration": "function getBlobBaseFee() external view returns (uint256 blobBaseFee);",
