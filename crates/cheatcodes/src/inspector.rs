@@ -440,7 +440,8 @@ pub struct Cheatcodes {
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
 
-    /// Optional cheatcodes `TestRunner`.
+    /// Optional cheatcodes `TestRunner`. Used for generating random values from uint and int
+    /// strategies.
     test_runner: Option<TestRunner>,
 
     /// Ignored traces.

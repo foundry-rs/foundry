@@ -7,7 +7,7 @@ use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::{backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER};
 use proptest::strategy::{Strategy, ValueTree};
-use rand::Rng;
+use rand::{Rng, RngCore};
 use std::collections::HashMap;
 
 /// Contains locations of traces ignored via cheatcodes.
@@ -116,11 +116,8 @@ impl Cheatcode for randomInt_1Call {
 
 impl Cheatcode for randomBoolCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        Ok(DynSolValue::type_strategy(&DynSolType::Bool)
-            .new_tree(state.test_runner())
-            .unwrap()
-            .current()
-            .abi_encode())
+        let rand_bool: bool = state.rng().gen();
+        Ok(rand_bool.abi_encode())
     }
 }
 
@@ -131,23 +128,9 @@ impl Cheatcode for randomBytesCall {
             len <= U256::from(usize::MAX),
             format!("bytes length cannot exceed {}", usize::MAX)
         );
-        let mut val = DynSolValue::type_strategy(&DynSolType::Bytes)
-            .new_tree(state.test_runner())
-            .unwrap()
-            .current()
-            .as_bytes()
-            .unwrap_or_default()
-            .to_vec();
-        let required_len = len.to::<usize>();
-        let cur_len = val.len();
-        if cur_len > required_len {
-            // Slice to required length if random bytes length is lower than required length.
-            Ok(val[..required_len].abi_encode())
-        } else {
-            // Fill with zeroes if random bytes length is lower than required length.
-            val.extend(vec![0; required_len - cur_len]);
-            Ok(val.abi_encode())
-        }
+        let mut bytes = vec![0u8; len.to::<usize>()];
+        state.rng().fill_bytes(&mut bytes);
+        Ok(bytes.abi_encode())
     }
 }
 
@@ -246,7 +229,7 @@ fn random_uint(state: &mut Cheatcodes, bits: Option<U256>, bounds: Option<(U256,
         ensure!(min <= max, "min must be less than or equal to max");
         // Generate random between range min..=max
         let exclusive_modulo = max - min;
-        let mut random_number: U256 = state.test_runner().rng().gen();
+        let mut random_number: U256 = state.rng().gen();
         if exclusive_modulo != U256::MAX {
             let inclusive_modulo = exclusive_modulo + U256::from(1);
             random_number %= inclusive_modulo;
