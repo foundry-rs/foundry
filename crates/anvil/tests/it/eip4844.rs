@@ -221,7 +221,7 @@ async fn can_correctly_estimate_blob_gas() {
     let gas_price = provider.get_gas_price().await.unwrap();
     let tx = TransactionRequest::default()
         .with_to(bob)
-        .with_max_fee_per_blob_gas(0) // TODO: this should not be required
+        .with_max_fee_per_blob_gas(gas_price) // TODO: this should not be required
         .with_blob_sidecar(sidecar);
     let tx = WithOtherFields::new(tx);
 
