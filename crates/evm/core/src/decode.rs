@@ -117,6 +117,12 @@ impl RevertDecoder {
     }
 
     /// Adds a custom error to use for decoding.
+    pub fn with_error(mut self, error: Error) -> Self {
+        self.push_error(error);
+        self
+    }
+
+    /// Adds a custom error to use for decoding.
     pub fn push_error(&mut self, error: Error) {
         self.errors.entry(error.selector()).or_default().push(error);
     }

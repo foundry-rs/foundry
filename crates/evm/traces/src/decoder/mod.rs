@@ -341,6 +341,39 @@ impl CallTraceDecoder {
 
     /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
+        let mut decoded = self.decode_function_default(trace).await;
+        if !trace.success && self.signature_identifier.is_some() {
+            self.decode_function_custom_revert(trace, &mut decoded).await;
+        }
+        decoded
+    }
+
+    async fn decode_function_custom_revert(
+        &self,
+        trace: &CallTrace,
+        decoded: &mut DecodedCallTrace,
+    ) {
+        let Some(identifier) = &self.signature_identifier else { return };
+
+        let can_decode = decoded.return_data.is_none() ||
+            decoded.return_data.as_deref().is_some_and(|s| {
+                s.contains("custom error") && (s.contains("0x") || s.contains("bytes"))
+            });
+        if !can_decode {
+            return;
+        }
+
+        let return_data = &trace.output[..];
+        let Some(error_as_function) = identifier.write().await.identify_function(return_data).await
+        else {
+            return
+        };
+        let error = Error { name: error_as_function.name, inputs: error_as_function.inputs };
+        decoded.return_data =
+            Some(RevertDecoder::new().with_error(error).decode(return_data, Some(trace.status)));
+    }
+
+    async fn decode_function_default(&self, trace: &CallTrace) -> DecodedCallTrace {
         if let Some(trace) = precompiles::decode(trace, 1) {
             return trace;
         }
