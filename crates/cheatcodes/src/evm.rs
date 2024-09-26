@@ -890,8 +890,10 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
             .retain(|record| record.group != group && record.name != name);
 
         // Clear last snapshot cache if we have an exact match.
-        if ccx.state.gas_metering.active_gas_snapshot == Some((group, name)) {
-            ccx.state.gas_metering.active_gas_snapshot = None;
+        if let Some((snapshot_group, snapshot_name)) = &ccx.state.gas_metering.active_gas_snapshot {
+            if snapshot_group == &group && snapshot_name == &name {
+                ccx.state.gas_metering.active_gas_snapshot = None;
+            }
         }
 
         Ok(value.abi_encode())
