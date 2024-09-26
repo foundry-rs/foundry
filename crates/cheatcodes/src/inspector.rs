@@ -230,10 +230,8 @@ pub struct GasMetering {
     /// Stores paused gas frames.
     pub paused_frames: Vec<Gas>,
 
-    /// The group of the last snapshot taken.
-    pub last_snapshot_group: Option<String>,
-    /// The name of the last snapshot taken.
-    pub last_snapshot_name: Option<String>,
+    /// The group and name of the active snapshot.
+    pub active_gas_snapshot: Option<(String, String)>,
 
     /// Cache of the amount of gas used in previous call.
     /// This is used by the `lastCallGas` cheatcode.
@@ -1596,35 +1594,28 @@ impl Cheatcodes {
         if matches!(interpreter.instruction_result, InstructionResult::Continue) {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 if ecx.journaled_state.depth() == record.depth {
-                    match interpreter.current_opcode() {
+                    // Handle gas metering when entering a new frame.
+                    if matches!(
+                        interpreter.current_opcode(),
                         op::CREATE |
-                        op::CALL |
-                        op::CALLCODE |
-                        op::DELEGATECALL |
-                        op::CREATE2 |
-                        op::STATICCALL |
-                        op::EXTSTATICCALL |
-                        op::EXTDELEGATECALL => {
-                            // Reset gas used when entering a new frame.
-                            self.gas_metering.last_gas_used = 0;
-                        }
-                        _ => {}
+                            op::CALL |
+                            op::CALLCODE |
+                            op::DELEGATECALL |
+                            op::CREATE2 |
+                            op::STATICCALL |
+                            op::EXTSTATICCALL |
+                            op::EXTDELEGATECALL
+                    ) {
+                        // Reset gas used when entering a new frame.
+                        self.gas_metering.last_gas_used = 0;
+                    } else if self.gas_metering.last_gas_used > 0 {
+                        // Calculate gas difference only if previously initialized.
+                        let gas_diff =
+                            interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
+                        record.gas_used = record.gas_used.saturating_add(gas_diff);
                     }
 
-                    // Initialize after new frame, use this as the starting point.
-                    if self.gas_metering.last_gas_used == 0 {
-                        self.gas_metering.last_gas_used = interpreter.gas.spent();
-                        return;
-                    }
-
-                    // Calculate the gas difference between the last and current frame.
-                    let gas_diff =
-                        interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
-
-                    // Update the gas record.
-                    record.gas_used = record.gas_used.saturating_add(gas_diff);
-
-                    // Update for next iteration.
+                    // Update `last_gas_used` to the current spent gas for the next iteration.
                     self.gas_metering.last_gas_used = interpreter.gas.spent();
                 }
             });

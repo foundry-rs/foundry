@@ -824,14 +824,9 @@ fn inner_start_gas_snapshot<DB: DatabaseExt>(
     name: Option<String>,
 ) -> Result {
     // Revert if there is an active gas snapshot as we can only have one active snapshot at a time.
-    if ccx.state.gas_metering.last_snapshot_group.is_some() ||
-        ccx.state.gas_metering.last_snapshot_name.is_some()
-    {
-        bail!(
-            "gas snapshot was already started with group: {:?} and name: {:?}",
-            ccx.state.gas_metering.last_snapshot_group,
-            ccx.state.gas_metering.last_snapshot_name
-        );
+    if ccx.state.gas_metering.active_gas_snapshot.is_some() {
+        let (group, name) = ccx.state.gas_metering.active_gas_snapshot.as_ref().unwrap().clone();
+        bail!("gas snapshot was already started with group: {group} and name: {name}");
     }
 
     let group = group.as_deref().unwrap_or(
@@ -846,8 +841,7 @@ fn inner_start_gas_snapshot<DB: DatabaseExt>(
         depth: ccx.ecx.journaled_state.depth(),
     });
 
-    ccx.state.gas_metering.last_snapshot_group = Some(group.to_string());
-    ccx.state.gas_metering.last_snapshot_name = Some(name);
+    ccx.state.gas_metering.active_gas_snapshot = Some((group.to_string(), name.clone()));
 
     ccx.state.gas_metering.start();
 
@@ -860,26 +854,14 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
     name: Option<String>,
 ) -> Result {
     // If group and name are not provided, use the last snapshot group and name.
-    let group = group
-        .as_deref()
-        .unwrap_or(
-            ccx.state
-                .gas_metering
-                .last_snapshot_group
-                .as_deref()
-                .expect("no gas snapshot was started with this group"),
-        )
-        .to_string();
-    let name = name
-        .as_deref()
-        .unwrap_or(
-            ccx.state
-                .gas_metering
-                .last_snapshot_name
-                .as_deref()
-                .expect("no gas snapshot was started with this name"),
-        )
-        .to_string();
+    let (group, name) = match (group, name) {
+        (Some(group), Some(name)) => (group, name),
+        _ => {
+            let (group, name) =
+                ccx.state.gas_metering.active_gas_snapshot.as_ref().unwrap().clone();
+            (group, name)
+        }
+    };
 
     if let Some(record) = ccx
         .state
@@ -908,11 +890,8 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
             .retain(|record| record.group != group && record.name != name);
 
         // Clear last snapshot cache if we have an exact match.
-        if ccx.state.gas_metering.last_snapshot_group == Some(group.to_string()) &&
-            ccx.state.gas_metering.last_snapshot_name == Some(name)
-        {
-            ccx.state.gas_metering.last_snapshot_group = None;
-            ccx.state.gas_metering.last_snapshot_name = None;
+        if ccx.state.gas_metering.active_gas_snapshot == Some((group, name)) {
+            ccx.state.gas_metering.active_gas_snapshot = None;
         }
 
         Ok(value.abi_encode())
