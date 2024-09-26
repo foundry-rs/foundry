@@ -1594,6 +1594,14 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function writeLine(string calldata path, string calldata data) external;
 
+    /// Gets the artifact path from code (aka. creation code).
+    #[cheatcode(group = Filesystem)]
+    function getArtifactPathByCode(bytes calldata code) external view returns (string memory path);
+
+    /// Gets the artifact path from deployed code (aka. runtime code).
+    #[cheatcode(group = Filesystem)]
+    function getArtifactPathByDeployedCode(bytes calldata deployedCode) external view returns (string memory path);
+
     /// Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     #[cheatcode(group = Filesystem)]

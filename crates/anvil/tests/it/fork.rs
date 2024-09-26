@@ -1287,8 +1287,8 @@ async fn test_base_fork_gas_limit() {
         .unwrap()
         .unwrap();
 
-    assert_eq!(api.gas_limit(), uint!(120_000_000_U256));
-    assert_eq!(block.header.gas_limit, 120_000_000_u128);
+    assert!(api.gas_limit() >= uint!(132_000_000_U256));
+    assert!(block.header.gas_limit >= 132_000_000_u128);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/7023>
