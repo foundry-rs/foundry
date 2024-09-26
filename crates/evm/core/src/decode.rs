@@ -4,7 +4,7 @@ use crate::abi::{Console, Vm};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Error, JsonAbi};
 use alloy_primitives::{hex, Log, Selector};
-use alloy_sol_types::{SolCall, SolError, SolEventInterface, SolInterface, SolValue};
+use alloy_sol_types::{SolError, SolEventInterface, SolInterface, SolValue};
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
 use revm::interpreter::InstructionResult;
@@ -169,36 +169,6 @@ impl RevertDecoder {
             Vm::CheatcodeError::SELECTOR => {
                 let e = Vm::CheatcodeError::abi_decode_raw(data, false).ok()?;
                 return Some(e.message);
-            }
-            // `expectRevert(bytes)`
-            Vm::expectRevert_2Call::SELECTOR => {
-                let e = Vm::expectRevert_2Call::abi_decode_raw(data, false).ok()?;
-                return self.maybe_decode(&e.revertData[..], status);
-            }
-            // `expectRevert(bytes,address)`
-            Vm::expectRevert_5Call::SELECTOR => {
-                let e = Vm::expectRevert_5Call::abi_decode_raw(data, false).ok()?;
-                return self.maybe_decode(&e.revertData[..], status);
-            }
-            // `expectRevert(bytes4)`
-            Vm::expectRevert_1Call::SELECTOR => {
-                let e = Vm::expectRevert_1Call::abi_decode_raw(data, false).ok()?;
-                return self.maybe_decode(&e.revertData[..], status);
-            }
-            // `expectRevert(bytes4,address)`
-            Vm::expectRevert_4Call::SELECTOR => {
-                let e = Vm::expectRevert_4Call::abi_decode_raw(data, false).ok()?;
-                return self.maybe_decode(&e.revertData[..], status);
-            }
-            // `expectPartialRevert(bytes4)`
-            Vm::expectPartialRevert_0Call::SELECTOR => {
-                let e = Vm::expectPartialRevert_0Call::abi_decode_raw(data, false).ok()?;
-                return self.maybe_decode(&e.revertData[..], status);
-            }
-            // `expectPartialRevert(bytes4,address)`
-            Vm::expectPartialRevert_1Call::SELECTOR => {
-                let e = Vm::expectPartialRevert_1Call::abi_decode_raw(data, false).ok()?;
-                return self.maybe_decode(&e.revertData[..], status);
             }
             _ => {}
         }
