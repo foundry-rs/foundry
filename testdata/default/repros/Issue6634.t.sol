@@ -58,7 +58,7 @@ contract Issue6634Test is DSTest {
 
         assertEq(called.length, 2, "incorrect length");
         assertEq(uint256(called[0].kind), uint256(Vm.AccountAccessKind.Call), "first AccountAccess is incorrect kind");
-        assertEq(called[0].account, CREATE2_DEPLOYER, "first AccountAccess accout is incorrect");
+        assertEq(called[0].account, CREATE2_DEPLOYER, "first AccountAccess account is incorrect");
         assertEq(called[0].accessor, accessor, "first AccountAccess accessor is incorrect");
         assertEq(
             uint256(called[1].kind), uint256(Vm.AccountAccessKind.Create), "second AccountAccess is incorrect kind"
@@ -84,7 +84,7 @@ contract Issue6634Test is DSTest {
 
         assertEq(called.length, 2, "incorrect length");
         assertEq(uint256(called[0].kind), uint256(Vm.AccountAccessKind.Call), "first AccountAccess is incorrect kind");
-        assertEq(called[0].account, CREATE2_DEPLOYER, "first AccountAccess accout is incorrect");
+        assertEq(called[0].account, CREATE2_DEPLOYER, "first AccountAccess account is incorrect");
         assertEq(called[0].accessor, accessor, "first AccountAccess accessor is incorrect");
         assertEq(
             uint256(called[1].kind), uint256(Vm.AccountAccessKind.Create), "second AccountAccess is incorrect kind"

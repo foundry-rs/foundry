@@ -1979,6 +1979,8 @@ fn apply_state_changeset(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::needless_return)]
+
     use crate::{backend::Backend, fork::CreateFork, opts::EvmOpts};
     use alloy_primitives::{Address, U256};
     use alloy_provider::Provider;

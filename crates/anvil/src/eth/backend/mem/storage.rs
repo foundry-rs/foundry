@@ -569,12 +569,14 @@ impl MinedTransaction {
 pub struct MinedTransactionReceipt {
     /// The actual json rpc receipt object
     pub inner: ReceiptResponse,
-    /// Output data fo the transaction
+    /// Output data for the transaction
     pub out: Option<Bytes>,
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::needless_return)]
+
     use super::*;
     use crate::eth::backend::db::Db;
     use alloy_primitives::{hex, Address};

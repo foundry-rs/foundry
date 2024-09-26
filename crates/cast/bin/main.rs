@@ -42,6 +42,7 @@ fn main() -> Result<()> {
     main_args(args)
 }
 
+#[allow(clippy::needless_return)]
 #[tokio::main]
 async fn main_args(args: CastArgs) -> Result<()> {
     match args.cmd {

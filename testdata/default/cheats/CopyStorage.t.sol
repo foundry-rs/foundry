@@ -57,8 +57,8 @@ contract CounterWithSeedTest is DSTest {
         counter.setA(1000);
         counter1.setB(address(50));
         assertEq(counter.a(), 1000);
-        assertEq(counter1.a(), 40426841063417815470953489044557166618267862781491517122018165313568904172524);
-        assertEq(counter.b(), 0x485E9Cc0ef187E54A3AB45b50c3DcE43f2C223B1);
+        assertEq(counter1.a(), 67350900536747027229585709178274816969402970928486983076982664581925078789474);
+        assertEq(counter.b(), 0x5A61ACa23C478d83A72425c386Eb5dB083FBd0e4);
         assertEq(counter1.b(), address(50));
     }
 }

@@ -34,7 +34,8 @@ use foundry_evm_core::{
 };
 use foundry_evm_traces::TracingInspector;
 use itertools::Itertools;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
+use rand::Rng;
 use revm::{
     interpreter::{
         opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
@@ -222,7 +223,7 @@ pub struct BroadcastableTransaction {
 pub struct GasMetering {
     /// True if gas metering is paused.
     pub paused: bool,
-    /// True if gas metering was resumed or reseted during the test.
+    /// True if gas metering was resumed or reset during the test.
     /// Used to reconcile gas when frame ends (if spent less than refunded).
     pub touched: bool,
     /// True if gas metering should be reset to frame limit.
@@ -439,8 +440,9 @@ pub struct Cheatcodes {
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
 
-    /// Optional RNG algorithm.
-    rng: Option<StdRng>,
+    /// Optional cheatcodes `TestRunner`. Used for generating random values from uint and int
+    /// strategies.
+    test_runner: Option<TestRunner>,
 
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
@@ -491,7 +493,7 @@ impl Cheatcodes {
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
-            rng: Default::default(),
+            test_runner: Default::default(),
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
@@ -1068,9 +1070,16 @@ impl Cheatcodes {
     }
 
     pub fn rng(&mut self) -> &mut impl Rng {
-        self.rng.get_or_insert_with(|| match self.config.seed {
-            Some(seed) => StdRng::from_seed(seed.to_be_bytes::<32>()),
-            None => StdRng::from_entropy(),
+        self.test_runner().rng()
+    }
+
+    pub fn test_runner(&mut self) -> &mut TestRunner {
+        self.test_runner.get_or_insert_with(|| match self.config.seed {
+            Some(seed) => TestRunner::new_with_rng(
+                proptest::test_runner::Config::default(),
+                TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>()),
+            ),
+            None => TestRunner::new(proptest::test_runner::Config::default()),
         })
     }
 
@@ -1196,7 +1205,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
-        // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
+        // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
             // Clean up pranks
