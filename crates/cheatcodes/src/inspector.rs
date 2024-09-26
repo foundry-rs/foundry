@@ -1595,7 +1595,7 @@ impl Cheatcodes {
     ) {
         if matches!(interpreter.instruction_result, InstructionResult::Continue) {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
-                if ecx.journaled_state.depth() == record.depth + 1 {
+                if ecx.journaled_state.depth() == record.depth {
                     match interpreter.current_opcode() {
                         op::CREATE |
                         op::CALL |
