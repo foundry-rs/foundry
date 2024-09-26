@@ -843,7 +843,7 @@ fn inner_start_gas_snapshot<DB: DatabaseExt>(
         group: group.to_string(),
         name: name.clone(),
         gas_used: 0,
-        depth: ccx.ecx.journaled_state.depth() - 1,
+        depth: ccx.ecx.journaled_state.depth(),
     });
 
     ccx.state.gas_metering.last_snapshot_group = Some(group.to_string());
