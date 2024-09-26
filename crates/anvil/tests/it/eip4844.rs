@@ -206,23 +206,20 @@ async fn can_check_blob_fields_on_genesis() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_correctly_estimate_blob_gas() {
+async fn can_correctly_estimate_blob_gas_with_recommended_fillers() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
     let (_api, handle) = spawn(node_config).await;
 
     let provider = http_provider(&handle.http_endpoint());
 
     let accounts = provider.get_accounts().await.unwrap();
+    let alice = accounts[0];
     let bob = accounts[1];
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Blobs are fun!");
     let sidecar = sidecar.build().unwrap();
 
-    let gas_price = provider.get_gas_price().await.unwrap();
-    let tx = TransactionRequest::default()
-        .with_to(bob)
-        .with_max_fee_per_blob_gas(gas_price) // TODO: this should not be required
-        .with_blob_sidecar(sidecar);
+    let tx = TransactionRequest::default().with_to(bob).with_blob_sidecar(sidecar);
     let tx = WithOtherFields::new(tx);
 
     // Send the transaction and wait for the broadcast.
@@ -238,6 +235,7 @@ async fn can_correctly_estimate_blob_gas() {
         receipt.block_number.expect("Failed to get block number")
     );
 
+    assert_eq!(receipt.from, alice);
     assert_eq!(receipt.to, Some(bob));
     assert_eq!(
         receipt.blob_gas_used.expect("Expected to be EIP-4844 transaction"),
