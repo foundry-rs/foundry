@@ -15,11 +15,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt,
-    sync::Arc,
-};
+use std::{collections::HashMap, fmt, sync::Arc};
 
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 
@@ -187,9 +183,6 @@ pub struct FuzzTestResult {
 
     /// Breakpoints for debugger. Correspond to the same fuzz case as `traces`.
     pub breakpoints: Option<Breakpoints>,
-
-    /// Any captured gas snapshots along the test's execution which should be accumulated.
-    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
 
     // Deprecated cheatcodes mapped to their replacements.
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,

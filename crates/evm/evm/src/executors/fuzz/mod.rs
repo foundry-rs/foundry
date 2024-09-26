@@ -130,14 +130,6 @@ impl FuzzedExecutor {
                         data.logs.extend(case.logs);
                     }
 
-                    // Collect gas snapshots.
-                    for (group, new_snapshots) in case.gas_snapshots.iter() {
-                        data.gas_snapshots
-                            .entry(group.clone())
-                            .or_default()
-                            .extend(new_snapshots.clone());
-                    }
-
                     // Collect and merge coverage if `forge snapshot` context.
                     match &mut data.coverage {
                         Some(prev) => prev.merge(case.coverage.unwrap()),
@@ -189,7 +181,6 @@ impl FuzzedExecutor {
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
             coverage: fuzz_result.coverage,
-            gas_snapshots: fuzz_result.gas_snapshots,
             deprecated_cheatcodes: fuzz_result.deprecated_cheatcodes,
         };
 
@@ -258,11 +249,6 @@ impl FuzzedExecutor {
                 (cheats.breakpoints.clone(), cheats.deprecated.clone())
             });
 
-        let gas_snapshots = call
-            .cheatcodes
-            .as_ref()
-            .map_or_else(Default::default, |cheats| cheats.gas_snapshots.clone());
-
         let success = self.executor.is_raw_call_mut_success(address, &mut call, should_fail);
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
@@ -271,7 +257,6 @@ impl FuzzedExecutor {
                 coverage: call.coverage,
                 breakpoints,
                 logs: call.logs,
-                gas_snapshots,
                 deprecated_cheatcodes,
             }))
         } else {
