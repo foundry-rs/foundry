@@ -841,7 +841,7 @@ fn inner_start_gas_snapshot<DB: DatabaseExt>(
         depth: ccx.ecx.journaled_state.depth(),
     });
 
-    ccx.state.gas_metering.active_gas_snapshot = Some((group.to_string(), name.clone()));
+    ccx.state.gas_metering.active_gas_snapshot = Some((group.to_string(), name));
 
     ccx.state.gas_metering.start();
 
