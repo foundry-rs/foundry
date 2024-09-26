@@ -685,7 +685,6 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
         executor: &mut E,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
-            // No tracer
             return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
         };
 
@@ -700,7 +699,6 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
         let root = tracer.traces();
         let steps = flatten_call_trace(0, root, record_info.start_node_idx);
 
-        // store the recorded debug steps
         let debug_steps: Vec<DebugStep> =
             steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
 

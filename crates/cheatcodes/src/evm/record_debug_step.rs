@@ -109,10 +109,10 @@ fn get_slice_from_memory(memory: &[u8], start_index: usize, size: usize) -> Vec<
 
     let end_index = start_index + size;
 
-    // Return the slice if start_index is within the slice, else return an empty slice
+    // Return the vector if start_index is within the slice, else return an empty vector
     if start_index < memory_len && end_index < memory_len {
         memory[start_index..end_index].to_vec()
     } else {
-        Vec::new() // return an empty Vec<u8> if out of range
+        Vec::new()
     }
 }
