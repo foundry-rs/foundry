@@ -34,7 +34,8 @@ use foundry_evm_core::{
 };
 use foundry_evm_traces::TracingInspector;
 use itertools::Itertools;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
+use rand::Rng;
 use revm::{
     interpreter::{
         opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
@@ -439,8 +440,9 @@ pub struct Cheatcodes {
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
 
-    /// Optional RNG algorithm.
-    rng: Option<StdRng>,
+    /// Optional cheatcodes `TestRunner`. Used for generating random values from uint and int
+    /// strategies.
+    test_runner: Option<TestRunner>,
 
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
@@ -491,7 +493,7 @@ impl Cheatcodes {
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
-            rng: Default::default(),
+            test_runner: Default::default(),
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
@@ -1068,9 +1070,16 @@ impl Cheatcodes {
     }
 
     pub fn rng(&mut self) -> &mut impl Rng {
-        self.rng.get_or_insert_with(|| match self.config.seed {
-            Some(seed) => StdRng::from_seed(seed.to_be_bytes::<32>()),
-            None => StdRng::from_entropy(),
+        self.test_runner().rng()
+    }
+
+    pub fn test_runner(&mut self) -> &mut TestRunner {
+        self.test_runner.get_or_insert_with(|| match self.config.seed {
+            Some(seed) => TestRunner::new_with_rng(
+                proptest::test_runner::Config::default(),
+                TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>()),
+            ),
+            None => TestRunner::new(proptest::test_runner::Config::default()),
         })
     }
 
