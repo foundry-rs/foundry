@@ -162,6 +162,8 @@ impl Drop for SignaturesIdentifier {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::needless_return)]
+
     use super::*;
 
     #[tokio::test(flavor = "multi_thread")]
