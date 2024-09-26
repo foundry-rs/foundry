@@ -149,6 +149,8 @@ impl From<RawWalletOpts> for WalletOpts {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::needless_return)]
+
     use alloy_signer::Signer;
     use std::{path::Path, str::FromStr};
 
