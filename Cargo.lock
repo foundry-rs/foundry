@@ -7194,6 +7194,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f73010c271d53fa7904e9845338e95f3955eb1200a0355e0abfdb89c41aaa9cd"
 dependencies = [
  "aurora-engine-modexp",
+ "blst",
  "c-kzg",
  "cfg-if",
  "k256",
