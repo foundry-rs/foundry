@@ -1594,8 +1594,8 @@ impl Cheatcodes {
         if matches!(interpreter.instruction_result, InstructionResult::Continue) {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 if ecx.journaled_state.depth() == record.depth {
-                    // Handle gas metering when entering a new frame.
-                    if matches!(
+                    // Skip gas metering for opcodes that create new call frames.
+                    if !matches!(
                         interpreter.current_opcode(),
                         op::CREATE |
                             op::CALL |
@@ -1605,10 +1605,8 @@ impl Cheatcodes {
                             op::STATICCALL |
                             op::EXTSTATICCALL |
                             op::EXTDELEGATECALL
-                    ) {
-                        // Reset gas used when entering a new frame.
-                        self.gas_metering.last_gas_used = 0;
-                    } else if self.gas_metering.last_gas_used > 0 {
+                    ) && self.gas_metering.last_gas_used > 0
+                    {
                         // Calculate gas difference only if previously initialized.
                         let gas_diff =
                             interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
