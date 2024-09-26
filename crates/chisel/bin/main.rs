@@ -102,6 +102,7 @@ fn main() -> eyre::Result<()> {
     main_args(args)
 }
 
+#[allow(clippy::needless_return)]
 #[tokio::main]
 async fn main_args(args: Chisel) -> eyre::Result<()> {
     // Keeps track of whether or not an interrupt was the last input

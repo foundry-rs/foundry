@@ -47,7 +47,7 @@ impl Decodable for Item {
 
 impl Item {
     pub(crate) fn value_to_item(value: &Value) -> eyre::Result<Self> {
-        return match value {
+        match value {
             Value::Null => Ok(Self::Data(vec![])),
             Value::Bool(_) => {
                 eyre::bail!("RLP input can not contain booleans")
