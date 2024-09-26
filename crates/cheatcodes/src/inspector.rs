@@ -1594,26 +1594,29 @@ impl Cheatcodes {
         if matches!(interpreter.instruction_result, InstructionResult::Continue) {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 if ecx.journaled_state.depth() == record.depth {
-                    // Skip gas metering for opcodes that create new call frames.
-                    if !matches!(
-                        interpreter.current_opcode(),
-                        op::CREATE |
-                            op::CALL |
-                            op::CALLCODE |
-                            op::DELEGATECALL |
-                            op::CREATE2 |
-                            op::STATICCALL |
-                            op::EXTSTATICCALL |
-                            op::EXTDELEGATECALL
-                    ) && self.gas_metering.last_gas_used > 0
+                    // Skip the first opcode of the first call frame as it includes the gas cost of
+                    // creating the snapshot.
+                    if self.gas_metering.last_gas_used != 0 &&
+                    // Skip updating of gas recording for opcodes that create new call frames.
+                    !matches!(
+                            interpreter.current_opcode(),
+                            op::CREATE |
+                                op::CALL |
+                                op::CALLCODE |
+                                op::DELEGATECALL |
+                                op::CREATE2 |
+                                op::STATICCALL |
+                                op::EXTSTATICCALL |
+                                op::EXTDELEGATECALL
+                        )
                     {
-                        // Calculate gas difference only if previously initialized.
                         let gas_diff =
                             interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
                         record.gas_used = record.gas_used.saturating_add(gas_diff);
                     }
 
-                    // Update `last_gas_used` to the current spent gas for the next iteration.
+                    // Update `last_gas_used` to the current spent gas for the next iteration to
+                    // compare against.
                     self.gas_metering.last_gas_used = interpreter.gas.spent();
                 }
             });
