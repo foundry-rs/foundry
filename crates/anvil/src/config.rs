@@ -493,7 +493,8 @@ impl NodeConfig {
         {
             BlobExcessGasAndPrice::new(excess_blob_gas as u64)
         } else {
-            BlobExcessGasAndPrice { blob_gasprice: 0, excess_blob_gas: 0 }
+            // if no excess blob gas is configured, default to 0
+            BlobExcessGasAndPrice::new(0)
         }
     }
 
