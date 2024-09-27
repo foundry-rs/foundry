@@ -1,7 +1,7 @@
-use crate::utils::http_provider;
+use crate::utils::{http_provider, http_provider_with_signer};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK};
-use alloy_network::{TransactionBuilder, TransactionBuilder4844};
+use alloy_network::{EthereumWallet, TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
@@ -211,6 +211,51 @@ async fn can_correctly_estimate_blob_gas_with_recommended_fillers() {
     let (_api, handle) = spawn(node_config).await;
 
     let provider = http_provider(&handle.http_endpoint());
+
+    let accounts = provider.get_accounts().await.unwrap();
+    let alice = accounts[0];
+    let bob = accounts[1];
+
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Blobs are fun!");
+    let sidecar = sidecar.build().unwrap();
+
+    let tx = TransactionRequest::default().with_to(bob).with_blob_sidecar(sidecar);
+    let tx = WithOtherFields::new(tx);
+
+    // Send the transaction and wait for the broadcast.
+    let pending_tx = provider.send_transaction(tx).await.unwrap();
+
+    println!("Pending transaction... {}", pending_tx.tx_hash());
+
+    // Wait for the transaction to be included and get the receipt.
+    let receipt = pending_tx.get_receipt().await.unwrap();
+
+    // Grab the processed transaction.
+    let tx = provider.get_transaction_by_hash(receipt.transaction_hash).await.unwrap().unwrap();
+
+    println!(
+        "Transaction included in block {}",
+        receipt.block_number.expect("Failed to get block number")
+    );
+
+    assert!(tx.max_fee_per_blob_gas.unwrap() >= BLOB_TX_MIN_BLOB_GASPRICE);
+    assert_eq!(receipt.from, alice);
+    assert_eq!(receipt.to, Some(bob));
+    assert_eq!(
+        receipt.blob_gas_used.expect("Expected to be EIP-4844 transaction"),
+        DATA_GAS_PER_BLOB as u128
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_correctly_estimate_blob_gas_with_recommended_fillers_with_signer() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (_api, handle) = spawn(node_config).await;
+
+    let signer = handle.dev_wallets().next().unwrap();
+    let wallet: EthereumWallet = signer.clone().into();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), wallet);
 
     let accounts = provider.get_accounts().await.unwrap();
     let alice = accounts[0];
