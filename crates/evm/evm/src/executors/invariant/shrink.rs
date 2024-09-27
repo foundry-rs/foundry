@@ -5,6 +5,7 @@ use crate::executors::{
     Executor,
 };
 use alloy_primitives::{Address, Bytes, U256};
+use foundry_evm_core::constants::MAGIC_ASSUME;
 use foundry_evm_fuzz::invariant::BasicTxDetails;
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
@@ -160,7 +161,10 @@ pub fn check_sequence(
             tx.call_details.calldata.clone(),
             U256::ZERO,
         )?;
-        if call_result.reverted && fail_on_revert {
+        // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios that
+        // are replayed with a modified version of test driver (that use new `vm.assume`
+        // cheatcodes).
+        if call_result.reverted && fail_on_revert && call_result.result.as_ref() != MAGIC_ASSUME {
             // Candidate sequence fails test.
             // We don't have to apply remaining calls to check sequence.
             return Ok((false, false));
