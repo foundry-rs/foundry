@@ -4,6 +4,7 @@ use eyre::Result;
 use foundry_cli::{opts::RpcOpts, utils};
 use foundry_config::Config;
 use itertools::Itertools;
+use std::time::Duration;
 
 /// CLI arguments for `cast rpc`.
 #[derive(Clone, Debug, Parser)]
@@ -31,14 +32,21 @@ pub struct RpcArgs {
 
     #[command(flatten)]
     rpc: RpcOpts,
+
+    /// Timeout for the RPC request in seconds
+    #[arg(long, default_value = "45")]
+     timeout: u64,
+
 }
 
 impl RpcArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { raw, method, params, rpc } = self;
+        let Self { raw, method, params, rpc , timeout } = self;
 
         let config = Config::from(&rpc);
-        let provider = utils::get_provider(&config)?;
+        let provider = utils::get_provider(&config)?
+            .with_timeout(Duration::from_secs(timeout));  // Apply the timeout
+ 
 
         let params = if raw {
             if params.is_empty() {
