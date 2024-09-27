@@ -1013,11 +1013,7 @@ impl EthApi {
         let transaction = TypedTransaction::decode_2718(&mut data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
-        debug!(target: "node", "{:?}", transaction);
-
         self.ensure_typed_transaction_supported(&transaction)?;
-
-        debug!(target: "node", "{:?}", transaction);
 
         let pending_transaction = PendingTransaction::new(transaction)?;
 
