@@ -45,6 +45,7 @@ revm = { workspace = true, features = [
     "arbitrary",
     "optimism",
     "c-kzg",
+    "blst",
 ] }
 revm-inspectors.workspace = true
 

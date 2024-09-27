@@ -784,8 +784,8 @@ fn inner_delete_state_snapshots<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Re
 
 fn inner_value_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
-    group: Option<String>,
     name: Option<String>,
+    group: Option<String>,
     value: String,
 ) -> Result {
     let cheatcodes = ccx.state.clone();
@@ -903,8 +903,6 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
-/// `tx.origin`.
-///
 /// Depending on the current caller mode, one of the following results will be returned:
 /// - If there is an active prank:
 ///     - caller_mode will be equal to:
