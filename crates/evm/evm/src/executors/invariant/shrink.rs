@@ -161,6 +161,9 @@ pub fn check_sequence(
             tx.call_details.calldata.clone(),
             U256::ZERO,
         )?;
+        // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios that
+        // are replayed with a modified version of test driver (that use new `vm.assume`
+        // cheatcodes).
         if call_result.reverted && fail_on_revert && call_result.result.as_ref() != MAGIC_ASSUME {
             // Candidate sequence fails test.
             // We don't have to apply remaining calls to check sequence.
