@@ -1,6 +1,6 @@
 use crate::utils::http_provider;
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
-use alloy_eips::eip4844::{DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK};
+use alloy_eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK};
 use alloy_network::{TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
@@ -230,11 +230,15 @@ async fn can_correctly_estimate_blob_gas_with_recommended_fillers() {
     // Wait for the transaction to be included and get the receipt.
     let receipt = pending_tx.get_receipt().await.unwrap();
 
+    // Grab the processed transaction.
+    let tx = provider.get_transaction_by_hash(receipt.transaction_hash).await.unwrap().unwrap();
+
     println!(
         "Transaction included in block {}",
         receipt.block_number.expect("Failed to get block number")
     );
 
+    assert!(tx.max_fee_per_blob_gas.unwrap() >= BLOB_TX_MIN_BLOB_GASPRICE);
     assert_eq!(receipt.from, alice);
     assert_eq!(receipt.to, Some(bob));
     assert_eq!(
