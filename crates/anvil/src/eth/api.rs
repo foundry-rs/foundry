@@ -2485,6 +2485,7 @@ impl EthApi {
             request.max_fee_per_blob_gas,
         )?
         .or_zero_fees();
+
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
         let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit.to());
