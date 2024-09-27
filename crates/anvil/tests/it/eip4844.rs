@@ -264,10 +264,7 @@ async fn can_correctly_estimate_blob_gas_with_recommended_fillers_with_signer() 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Blobs are fun!");
     let sidecar = sidecar.build().unwrap();
 
-    let tx = TransactionRequest::default()
-        .with_to(bob)
-        .with_blob_sidecar(sidecar)
-        .with_gas_limit(500_000);
+    let tx = TransactionRequest::default().with_to(bob).with_blob_sidecar(sidecar);
     let tx = WithOtherFields::new(tx);
 
     // Send the transaction and wait for the broadcast.

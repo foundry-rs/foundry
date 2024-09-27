@@ -1232,7 +1232,9 @@ impl Backend {
             gas_limit: gas_limit as u64,
             gas_price: U256::from(gas_price),
             gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
-            max_fee_per_blob_gas: max_fee_per_blob_gas.map(U256::from),
+            max_fee_per_blob_gas: max_fee_per_blob_gas
+                .or(env.block.get_blob_gasprice())
+                .map(U256::from),
             transact_to: match to {
                 Some(addr) => TxKind::Call(*addr),
                 None => TxKind::Create,
