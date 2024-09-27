@@ -395,7 +395,7 @@ impl Executor {
         let mut inspector = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
         let result = backend.inspect(&mut env, &mut inspector)?;
-        convert_executed_result(env, inspector, result, backend.has_snapshot_failure())
+        convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())
     }
 
     /// Execute the transaction configured in `env.tx`.
@@ -405,7 +405,7 @@ impl Executor {
         let backend = self.backend_mut();
         let result = backend.inspect(&mut env, &mut inspector)?;
         let mut result =
-            convert_executed_result(env, inspector, result, backend.has_snapshot_failure())?;
+            convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())?;
         self.commit(&mut result);
         Ok(result)
     }
@@ -465,7 +465,7 @@ impl Executor {
         call_result: &RawCallResult,
         should_fail: bool,
     ) -> bool {
-        if call_result.has_snapshot_failure {
+        if call_result.has_state_snapshot_failure {
             // a failure occurred in a reverted snapshot, which is considered a failed test
             return should_fail;
         }
@@ -517,7 +517,7 @@ impl Executor {
         }
 
         // A failure occurred in a reverted snapshot, which is considered a failed test.
-        if self.backend().has_snapshot_failure() {
+        if self.backend().has_state_snapshot_failure() {
             return false;
         }
 
@@ -711,7 +711,7 @@ pub struct RawCallResult {
     ///
     /// This is tracked separately from revert because a snapshot failure can occur without a
     /// revert, since assert failures are stored in a global variable (ds-test legacy)
-    pub has_snapshot_failure: bool,
+    pub has_state_snapshot_failure: bool,
     /// The raw result of the call.
     pub result: Bytes,
     /// The gas used for the call
@@ -747,7 +747,7 @@ impl Default for RawCallResult {
         Self {
             exit_reason: InstructionResult::Continue,
             reverted: false,
-            has_snapshot_failure: false,
+            has_state_snapshot_failure: false,
             result: Bytes::new(),
             gas_used: 0,
             gas_refunded: 0,
@@ -842,7 +842,7 @@ fn convert_executed_result(
     env: EnvWithHandlerCfg,
     inspector: InspectorStack,
     ResultAndState { result, state: state_changeset }: ResultAndState,
-    has_snapshot_failure: bool,
+    has_state_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult> {
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
         ExecutionResult::Success { reason, gas_used, gas_refunded, output, logs, .. } => {
@@ -884,7 +884,7 @@ fn convert_executed_result(
     Ok(RawCallResult {
         exit_reason,
         reverted: !matches!(exit_reason, return_ok!()),
-        has_snapshot_failure,
+        has_state_snapshot_failure,
         result,
         gas_used,
         gas_refunded,

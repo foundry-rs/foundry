@@ -17,7 +17,7 @@ use foundry_evm::{
 
 // reexport for convenience
 pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
-use foundry_evm::{backend::RevertSnapshotAction, revm::primitives::BlockEnv};
+use foundry_evm::{backend::RevertStateSnapshotAction, revm::primitives::BlockEnv};
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
@@ -74,22 +74,22 @@ impl Db for MemDb {
     }
 
     /// Creates a new snapshot
-    fn snapshot(&mut self) -> U256 {
-        let id = self.snapshots.insert(self.inner.clone());
-        trace!(target: "backend::memdb", "Created new snapshot {}", id);
+    fn snapshot_state(&mut self) -> U256 {
+        let id = self.state_snapshots.insert(self.inner.clone());
+        trace!(target: "backend::memdb", "Created new state snapshot {}", id);
         id
     }
 
-    fn revert(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
-        if let Some(snapshot) = self.snapshots.remove(id) {
+    fn revert_state(&mut self, id: U256, action: RevertStateSnapshotAction) -> bool {
+        if let Some(state_snapshot) = self.state_snapshots.remove(id) {
             if action.is_keep() {
-                self.snapshots.insert_at(snapshot.clone(), id);
+                self.state_snapshots.insert_at(state_snapshot.clone(), id);
             }
-            self.inner = snapshot;
-            trace!(target: "backend::memdb", "Reverted snapshot {}", id);
+            self.inner = state_snapshot;
+            trace!(target: "backend::memdb", "Reverted state snapshot {}", id);
             true
         } else {
-            warn!(target: "backend::memdb", "No snapshot to revert for {}", id);
+            warn!(target: "backend::memdb", "No state snapshot to revert for {}", id);
             false
         }
     }
@@ -112,20 +112,20 @@ impl MaybeFullDatabase for MemDb {
         Some(&self.inner.accounts)
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
-        self.inner.clear_into_snapshot()
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        self.inner.clear_into_state_snapshot()
     }
 
-    fn read_as_snapshot(&self) -> StateSnapshot {
-        self.inner.read_as_snapshot()
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        self.inner.read_as_state_snapshot()
     }
 
     fn clear(&mut self) {
         self.inner.clear();
     }
 
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
-        self.inner.init_from_snapshot(snapshot)
+    fn init_from_state_snapshot(&mut self, snapshot: StateSnapshot) {
+        self.inner.init_from_state_snapshot(snapshot)
     }
 }
 
