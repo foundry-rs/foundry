@@ -5,6 +5,7 @@ use foundry_cli::{opts::RpcOpts, utils};
 use foundry_config::Config;
 use itertools::Itertools;
 use std::time::Duration;
+use tokio::time;
 
 /// CLI arguments for `cast rpc`.
 #[derive(Clone, Debug, Parser)]
@@ -44,10 +45,8 @@ impl RpcArgs {
         let Self { raw, method, params, rpc , timeout } = self;
 
         let config = Config::from(&rpc);
-        let provider = utils::get_provider(&config)?
-            .with_timeout(Duration::from_secs(timeout));  // Apply the timeout
- 
-
+        let provider = utils::get_provider(&config)?;
+        
         let params = if raw {
             if params.is_empty() {
                 serde_json::Deserializer::from_reader(std::io::stdin())
@@ -61,7 +60,26 @@ impl RpcArgs {
         } else {
             serde_json::Value::Array(params.into_iter().map(value_or_string).collect())
         };
-        println!("{}", Cast::new(provider).rpc(&method, params).await?);
+
+
+        // Wrap the actual RPC call with a timeout
+        let result = time::timeout(Duration::from_secs(timeout), async {
+            Cast::new(provider).rpc(&method, params).await
+        }).await;
+
+        // Handle the result of the RPC call or timeout
+        match result {
+            Ok(Ok(response)) => {
+                println!("{}", response);
+            }
+            Ok(Err(err)) => {
+                return Err(eyre::eyre!("RPC call failed: {}", err)); 
+            }
+            Err(_) => {
+                return Err(eyre::eyre!("Error: RPC request timed out after {} seconds", timeout)); 
+            }
+        }
+
         Ok(())
     }
 }
