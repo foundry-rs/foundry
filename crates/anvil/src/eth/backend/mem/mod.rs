@@ -68,7 +68,7 @@ use anvil_rpc::error::RpcError;
 use alloy_chains::NamedChain;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
-    backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
+    backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
@@ -153,26 +153,26 @@ pub struct Backend {
     /// need to read from it, while it's currently written to, don't block. E.g. a new block is
     /// currently mined and a new [`Self::set_storage_at()`] request is being executed.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,
-    /// stores all block related data in memory
+    /// stores all block related data in memory.
     blockchain: Blockchain,
-    /// Historic states of previous blocks
+    /// Historic states of previous blocks.
     states: Arc<RwLock<InMemoryBlockStates>>,
-    /// env data of the chain
+    /// Env data of the chain
     env: Arc<RwLock<EnvWithHandlerCfg>>,
-    /// this is set if this is currently forked off another client
+    /// This is set if this is currently forked off another client.
     fork: Arc<RwLock<Option<ClientFork>>>,
-    /// provides time related info, like timestamp
+    /// Provides time related info, like timestamp.
     time: TimeManager,
-    /// Contains state of custom overrides
+    /// Contains state of custom overrides.
     cheats: CheatsManager,
-    /// contains fee data
+    /// Contains fee data.
     fees: FeeManager,
-    /// initialised genesis
+    /// Initialised genesis.
     genesis: GenesisConfig,
-    /// listeners for new blocks that get notified when a new block was imported
+    /// Listeners for new blocks that get notified when a new block was imported.
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
-    /// keeps track of active snapshots at a specific block
-    active_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
+    /// Keeps track of active state snapshots at a specific block.
+    active_state_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
     alphanet: bool,
@@ -256,7 +256,7 @@ impl Backend {
             new_block_listeners: Default::default(),
             fees,
             genesis,
-            active_snapshots: Arc::new(Mutex::new(Default::default())),
+            active_state_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
             print_logs,
             alphanet,
@@ -695,21 +695,21 @@ impl Backend {
         self.blockchain.storage.read().total_difficulty
     }
 
-    /// Creates a new `evm_snapshot` at the current height
+    /// Creates a new `evm_snapshot` at the current height.
     ///
-    /// Returns the id of the snapshot created
-    pub async fn create_snapshot(&self) -> U256 {
+    /// Returns the id of the snapshot created.
+    pub async fn create_state_snapshot(&self) -> U256 {
         let num = self.best_number();
         let hash = self.best_hash();
-        let id = self.db.write().await.snapshot();
+        let id = self.db.write().await.snapshot_state();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
-        self.active_snapshots.lock().insert(id, (num, hash));
+        self.active_state_snapshots.lock().insert(id, (num, hash));
         id
     }
 
-    /// Reverts the state to the snapshot identified by the given `id`.
-    pub async fn revert_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let block = { self.active_snapshots.lock().remove(&id) };
+    /// Reverts the state to the state snapshot identified by the given `id`.
+    pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
+        let block = { self.active_state_snapshots.lock().remove(&id) };
         if let Some((num, hash)) = block {
             let best_block_hash = {
                 // revert the storage that's newer than the snapshot
@@ -752,11 +752,11 @@ impl Backend {
                 ..Default::default()
             };
         }
-        Ok(self.db.write().await.revert(id, RevertSnapshotAction::RevertRemove))
+        Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
     }
 
-    pub fn list_snapshots(&self) -> BTreeMap<U256, (u64, B256)> {
-        self.active_snapshots.lock().clone().into_iter().collect()
+    pub fn list_state_snapshots(&self) -> BTreeMap<U256, (u64, B256)> {
+        self.active_state_snapshots.lock().clone().into_iter().collect()
     }
 
     /// Get the current state.
@@ -1227,26 +1227,36 @@ impl Backend {
         });
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
-        env.tx = TxEnv {
-            caller,
-            gas_limit: gas_limit as u64,
-            gas_price: U256::from(gas_price),
-            gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
-            max_fee_per_blob_gas: max_fee_per_blob_gas.map(U256::from),
-            transact_to: match to {
-                Some(addr) => TxKind::Call(*addr),
-                None => TxKind::Create,
-            },
-            value: value.unwrap_or_default(),
-            data: input.into_input().unwrap_or_default(),
-            chain_id: None,
-            // set nonce to None so that the correct nonce is chosen by the EVM
-            nonce: None,
-            access_list: access_list.unwrap_or_default().into(),
-            blob_hashes: blob_versioned_hashes.unwrap_or_default(),
-            optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
-            authorization_list: authorization_list.map(Into::into),
-        };
+        let blob_hashes = blob_versioned_hashes.unwrap_or_default();
+        env.tx =
+            TxEnv {
+                caller,
+                gas_limit: gas_limit as u64,
+                gas_price: U256::from(gas_price),
+                gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
+                max_fee_per_blob_gas: max_fee_per_blob_gas
+                    .or_else(|| {
+                        if !blob_hashes.is_empty() {
+                            env.block.get_blob_gasprice()
+                        } else {
+                            None
+                        }
+                    })
+                    .map(U256::from),
+                transact_to: match to {
+                    Some(addr) => TxKind::Call(*addr),
+                    None => TxKind::Create,
+                },
+                value: value.unwrap_or_default(),
+                data: input.into_input().unwrap_or_default(),
+                chain_id: None,
+                // set nonce to None so that the correct nonce is chosen by the EVM
+                nonce: None,
+                access_list: access_list.unwrap_or_default().into(),
+                blob_hashes,
+                optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
+                authorization_list: authorization_list.map(Into::into),
+            };
 
         if env.block.basefee.is_zero() {
             // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`

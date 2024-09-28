@@ -302,10 +302,10 @@ async fn test_fork_reset_setup() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_snapshotting() {
+async fn test_fork_state_snapshotting() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
-    let snapshot = api.evm_snapshot().await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
@@ -329,7 +329,7 @@ async fn test_fork_snapshotting() {
     let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
-    assert!(api.evm_revert(snapshot).await.unwrap());
+    assert!(api.evm_revert(state_snapshot).await.unwrap());
 
     let nonce = provider.get_transaction_count(from).await.unwrap();
     assert_eq!(nonce, initial_nonce);
@@ -341,11 +341,11 @@ async fn test_fork_snapshotting() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_snapshotting_repeated() {
+async fn test_fork_state_snapshotting_repeated() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
-    let snapshot = api.evm_snapshot().await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
@@ -366,9 +366,9 @@ async fn test_fork_snapshotting_repeated() {
     let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
-    let _second_snapshot = api.evm_snapshot().await.unwrap();
+    let _second_state_snapshot = api.evm_snapshot().await.unwrap();
 
-    assert!(api.evm_revert(snapshot).await.unwrap());
+    assert!(api.evm_revert(state_snapshot).await.unwrap());
 
     let nonce = provider.get_transaction_count(from).await.unwrap();
     assert_eq!(nonce, initial_nonce);
@@ -383,17 +383,16 @@ async fn test_fork_snapshotting_repeated() {
     // assert!(!api.evm_revert(second_snapshot).await.unwrap());
 
     // nothing is reverted, snapshot gone
-    assert!(!api.evm_revert(snapshot).await.unwrap());
+    assert!(!api.evm_revert(state_snapshot).await.unwrap());
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6463>
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_snapshotting_blocks() {
+async fn test_fork_state_snapshotting_blocks() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
-    // create a snapshot
-    let snapshot = api.evm_snapshot().await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
@@ -417,8 +416,7 @@ async fn test_fork_snapshotting_blocks() {
     let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
-    // revert snapshot
-    assert!(api.evm_revert(snapshot).await.unwrap());
+    assert!(api.evm_revert(state_snapshot).await.unwrap());
 
     assert_eq!(initial_nonce, provider.get_transaction_count(from).await.unwrap());
     let block_number_after = provider.get_block_number().await.unwrap();
@@ -429,8 +427,8 @@ async fn test_fork_snapshotting_blocks() {
     let nonce = provider.get_transaction_count(from).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
 
-    // revert again: nothing to revert since snapshot gone
-    assert!(!api.evm_revert(snapshot).await.unwrap());
+    // revert again: nothing to revert since state snapshot gone
+    assert!(!api.evm_revert(state_snapshot).await.unwrap());
     let nonce = provider.get_transaction_count(from).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
     let block_number_after = provider.get_block_number().await.unwrap();
@@ -1244,7 +1242,7 @@ async fn test_arbitrum_fork_block_number() {
     assert_eq!(block_number, initial_block_number);
 
     // take snapshot at initial block number
-    let snapshot = api.evm_snapshot().await.unwrap();
+    let snapshot_state = api.evm_snapshot().await.unwrap();
 
     // mine new block and check block number returned by `eth_blockNumber`
     api.mine_one().await;
@@ -1257,7 +1255,7 @@ async fn test_arbitrum_fork_block_number() {
     assert!(block_by_number.other.get("l1BlockNumber").is_some());
 
     // revert to recorded snapshot and check block number
-    assert!(api.evm_revert(snapshot).await.unwrap());
+    assert!(api.evm_revert(snapshot_state).await.unwrap());
     let block_number = api.block_number().unwrap().to::<u64>();
     assert_eq!(block_number, initial_block_number);
 
