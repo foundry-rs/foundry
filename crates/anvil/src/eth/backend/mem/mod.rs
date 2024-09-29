@@ -2835,10 +2835,8 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
     for proof_key in keys {
         // Iterate over all proof nodes and find the matching ones.
         // The filtered results are guaranteed to be in order.
-        let matching_proof_nodes = all_proof_nodes
-            .matching_nodes_sorted(&proof_key)
-            .into_iter()
-            .map(|(_, node)| node.clone());
+        let matching_proof_nodes =
+            all_proof_nodes.matching_nodes_sorted(&proof_key).into_iter().map(|(_, node)| node);
         proofs.push(matching_proof_nodes.collect());
     }
 
