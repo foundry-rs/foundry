@@ -257,15 +257,8 @@ pub struct InspectorData {
 /// non-isolated mode. For descriptions and workarounds for those changes see: <https://github.com/foundry-rs/foundry/pull/7186#issuecomment-1959102195>
 #[derive(Debug, Clone)]
 pub struct InnerContextData {
-    /// The sender of the inner EVM context.
-    /// It is also an origin of the transaction that created the inner EVM context.
-    sender: Address,
-    /// Nonce of the sender before invocation of the inner EVM context.
-    original_sender_nonce: u64,
     /// Origin of the transaction in the outer EVM context.
     original_origin: Address,
-    /// Whether the inner context was created by a CREATE transaction.
-    is_create: bool,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -490,14 +483,6 @@ impl<'a> InspectorStackRefMut<'a> {
     fn adjust_evm_data_for_inner_context<DB: DatabaseExt>(&mut self, ecx: &mut EvmContext<DB>) {
         let inner_context_data =
             self.inner_context_data.as_ref().expect("should be called in inner context");
-        let sender_acc = ecx
-            .journaled_state
-            .state
-            .get_mut(&inner_context_data.sender)
-            .expect("failed to load sender");
-        if !inner_context_data.is_create {
-            sender_acc.info.nonce = inner_context_data.original_sender_nonce;
-        }
         ecx.env.tx.caller = inner_context_data.original_origin;
     }
 
@@ -541,13 +526,6 @@ impl<'a> InspectorStackRefMut<'a> {
 
         ecx.db.commit(ecx.journaled_state.state.clone());
 
-        let nonce = ecx
-            .journaled_state
-            .load_account(caller, &mut ecx.db)
-            .expect("failed to load caller")
-            .info
-            .nonce;
-
         let cached_env = ecx.env.clone();
 
         ecx.env.block.basefee = U256::ZERO;
@@ -555,7 +533,6 @@ impl<'a> InspectorStackRefMut<'a> {
         ecx.env.tx.transact_to = transact_to;
         ecx.env.tx.data = input;
         ecx.env.tx.value = value;
-        ecx.env.tx.nonce = Some(nonce);
         // Add 21000 to the gas limit to account for the base cost of transaction.
         ecx.env.tx.gas_limit = gas_limit + 21000;
         // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
@@ -566,12 +543,7 @@ impl<'a> InspectorStackRefMut<'a> {
         }
         ecx.env.tx.gas_price = U256::ZERO;
 
-        self.inner_context_data = Some(InnerContextData {
-            sender: ecx.env.tx.caller,
-            original_origin: cached_env.tx.caller,
-            original_sender_nonce: nonce,
-            is_create: matches!(transact_to, TxKind::Create),
-        });
+        self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
         self.in_inner_context = true;
 
         let env = EnvWithHandlerCfg::new_with_spec_id(ecx.env.clone(), ecx.spec_id());
@@ -726,6 +698,18 @@ impl<'a, DB: DatabaseExt> Inspector<DB> for InspectorStackRefMut<'a> {
 
         ecx.journaled_state.depth += self.in_inner_context as usize;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
+            // Handle mocked functions, replace bytecode address with mock if matched.
+            if let Some(mocks) = cheatcodes.mocked_functions.get(&call.target_address) {
+                // Check if any mock function set for call data or if catch-all mock function set
+                // for selector.
+                if let Some(target) = mocks
+                    .get(&call.input)
+                    .or_else(|| call.input.get(..4).and_then(|selector| mocks.get(selector)))
+                {
+                    call.bytecode_address = *target;
+                }
+            }
+
             if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner) {
                 if output.result.result != InstructionResult::Continue {
                     ecx.journaled_state.depth -= self.in_inner_context as usize;

@@ -204,17 +204,6 @@ forgetest_init!(can_override_config, |prj, cmd| {
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
-    // env vars work
-    std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/forge-std/lib/ds-test/from-env/");
-    let config = forge_utils::load_config_with_root(Some(prj.root()));
-    assert_eq!(
-        format!(
-            "ds-test/={}/",
-            prj.root().join("lib/forge-std/lib/ds-test/from-env").to_slash_lossy()
-        ),
-        Remapping::from(config.remappings[0].clone()).to_string()
-    );
-
     let config =
         prj.config_from_output(["--remappings", "ds-test/=lib/forge-std/lib/ds-test/from-cli"]);
     assert_eq!(
@@ -233,7 +222,6 @@ forgetest_init!(can_override_config, |prj, cmd| {
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
-    std::env::remove_var("DAPP_REMAPPINGS");
     pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
 
     let expected = profile.into_basic().to_string_pretty().unwrap().trim().to_string();
@@ -689,7 +677,8 @@ forgetest_init!(can_parse_default_fs_permissions, |_prj, cmd| {
     let config = cmd.config();
 
     assert_eq!(config.fs_permissions.len(), 1);
-    let out_permission = config.fs_permissions.find_permission(Path::new("out")).unwrap();
+    let permissions = config.fs_permissions.joined(Path::new("test"));
+    let out_permission = permissions.find_permission(Path::new("test/out")).unwrap();
     assert_eq!(FsAccessPermission::Read, out_permission);
 });
 

@@ -20,7 +20,6 @@ foundry-config.workspace = true
 
 alloy-primitives.workspace = true
 
-auto_impl.workspace = true
 derive_more.workspace = true
 eyre.workspace = true
 itertools.workspace = true

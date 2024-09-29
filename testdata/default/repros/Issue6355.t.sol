@@ -7,11 +7,11 @@ import "cheats/Vm.sol";
 // https://github.com/foundry-rs/foundry/issues/6355
 contract Issue6355Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
-    uint256 snapshot;
+    uint256 snapshotId;
     Target targ;
 
     function setUp() public {
-        snapshot = vm.snapshot();
+        snapshotId = vm.snapshotState();
         targ = new Target();
     }
 
@@ -21,9 +21,9 @@ contract Issue6355Test is DSTest {
     }
 
     // always fails
-    function test_shouldFailWithRevertTo() public {
+    function test_shouldFailWithRevertToState() public {
         assertEq(3, targ.num());
-        vm.revertTo(snapshot);
+        vm.revertToState(snapshotId);
     }
 
     // always fails

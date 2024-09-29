@@ -5,7 +5,81 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 import "../logs/console.sol";
 
+library TomlStructs {
+    address constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    // forge eip712 testdata/default/cheats/Toml.t.sol -R 'cheats=testdata/cheats' -R 'ds-test=testdata/lib/ds-test/src' | grep ^FlatToml
+    string constant schema_FlatToml =
+        "FlatToml(uint256 a,int24[][] arr,string str,bytes b,address addr,bytes32 fixedBytes)";
+
+    // forge eip712 testdata/default/cheats/Toml.t.sol -R 'cheats=testdata/cheats' -R 'ds-test=testdata/lib/ds-test/src' | grep ^NestedToml
+    string constant schema_NestedToml =
+        "NestedToml(FlatToml[] members,AnotherFlatToml inner,string name)AnotherFlatToml(bytes4 fixedBytes)FlatToml(uint256 a,int24[][] arr,string str,bytes b,address addr,bytes32 fixedBytes)";
+
+    function deserializeFlatToml(string memory toml) internal pure returns (ParseTomlTest.FlatToml memory) {
+        return abi.decode(vm.parseTomlType(toml, schema_FlatToml), (ParseTomlTest.FlatToml));
+    }
+
+    function deserializeFlatToml(string memory toml, string memory path)
+        internal
+        pure
+        returns (ParseTomlTest.FlatToml memory)
+    {
+        return abi.decode(vm.parseTomlType(toml, path, schema_FlatToml), (ParseTomlTest.FlatToml));
+    }
+
+    function deserializeFlatTomlArray(string memory toml, string memory path)
+        internal
+        pure
+        returns (ParseTomlTest.FlatToml[] memory)
+    {
+        return abi.decode(vm.parseTomlTypeArray(toml, path, schema_FlatToml), (ParseTomlTest.FlatToml[]));
+    }
+
+    function deserializeNestedToml(string memory toml) internal pure returns (ParseTomlTest.NestedToml memory) {
+        return abi.decode(vm.parseTomlType(toml, schema_NestedToml), (ParseTomlTest.NestedToml));
+    }
+
+    function deserializeNestedToml(string memory toml, string memory path)
+        internal
+        pure
+        returns (ParseTomlTest.NestedToml memory)
+    {
+        return abi.decode(vm.parseTomlType(toml, path, schema_NestedToml), (ParseTomlTest.NestedToml));
+    }
+
+    function deserializeNestedTomlArray(string memory toml, string memory path)
+        internal
+        pure
+        returns (ParseTomlTest.NestedToml[] memory)
+    {
+        return abi.decode(vm.parseTomlType(toml, path, schema_NestedToml), (ParseTomlTest.NestedToml[]));
+    }
+}
+
 contract ParseTomlTest is DSTest {
+    using TomlStructs for *;
+
+    struct FlatToml {
+        uint256 a;
+        int24[][] arr;
+        string str;
+        bytes b;
+        address addr;
+        bytes32 fixedBytes;
+    }
+
+    struct AnotherFlatToml {
+        bytes4 fixedBytes;
+    }
+
+    struct NestedToml {
+        FlatToml[] members;
+        AnotherFlatToml inner;
+        string name;
+    }
+
     Vm constant vm = Vm(HEVM_ADDRESS);
     string toml;
 
@@ -169,20 +243,20 @@ contract ParseTomlTest is DSTest {
         assertEq(bytesArray[1], hex"02");
     }
 
-    struct Nested {
+    struct NestedStruct {
         uint256 number;
         string str;
     }
 
     function test_nestedObject() public {
         bytes memory data = vm.parseToml(toml, ".nestedObject");
-        Nested memory nested = abi.decode(data, (Nested));
+        NestedStruct memory nested = abi.decode(data, (NestedStruct));
         assertEq(nested.number, 9223372036854775807); // TOML is limited to 64-bit integers
         assertEq(nested.str, "NEST");
     }
 
-    function test_advancedJsonPath() public {
-        bytes memory data = vm.parseToml(toml, ".advancedJsonPath[*].id");
+    function test_advancedTomlPath() public {
+        bytes memory data = vm.parseToml(toml, ".advancedTomlPath[*].id");
         uint256[] memory numbers = abi.decode(data, (uint256[]));
         assertEq(numbers[0], 1);
         assertEq(numbers[1], 2);
@@ -225,6 +299,36 @@ contract ParseTomlTest is DSTest {
         vm._expectCheatcodeRevert("key \".*\" must return exactly one JSON object");
         vm.parseTomlKeys(tomlString, ".*");
     }
+
+    // forge eip712 testdata/default/cheats/Toml.t.sol -R 'cheats=testdata/cheats' -R 'ds-test=testdata/lib/ds-test/src' | grep ^FlatToml
+    string constant schema_FlatToml =
+        "FlatToml(uint256 a,int24[][] arr,string str,bytes b,address addr,bytes32 fixedBytes)";
+
+    // forge eip712 testdata/default/cheats/Toml.t.sol -R 'cheats=testdata/cheats' -R 'ds-test=testdata/lib/ds-test/src' | grep ^NestedToml
+    string constant schema_NestedToml =
+        "NestedToml(FlatToml[] members,AnotherFlatToml inner,string name)AnotherFlatToml(bytes4 fixedBytes)FlatToml(uint256 a,int24[][] arr,string str,bytes b,address addr,bytes32 fixedBytes)";
+
+    function test_parseTomlType() public {
+        string memory readToml = vm.readFile("fixtures/Toml/nested_toml_struct.toml");
+        NestedToml memory data = readToml.deserializeNestedToml();
+        assertEq(data.members.length, 2);
+
+        FlatToml memory expected = FlatToml({
+            a: 200,
+            arr: new int24[][](0),
+            str: "some other string",
+            b: hex"0000000000000000000000000000000000000000",
+            addr: 0x167D91deaEEE3021161502873d3bcc6291081648,
+            fixedBytes: 0xed1c7beb1f00feaaaec5636950d6edb25a8d4fedc8deb2711287b64c4d27719d
+        });
+
+        assertEq(keccak256(abi.encode(data.members[1])), keccak256(abi.encode(expected)));
+        assertEq(bytes32(data.inner.fixedBytes), bytes32(bytes4(0x12345678)));
+
+        FlatToml[] memory members = TomlStructs.deserializeFlatTomlArray(readToml, ".members");
+
+        assertEq(keccak256(abi.encode(members)), keccak256(abi.encode(data.members)));
+    }
 }
 
 contract WriteTomlTest is DSTest {
@@ -238,18 +342,18 @@ contract WriteTomlTest is DSTest {
         json2 = "example2";
     }
 
-    struct simpleJson {
+    struct simpleStruct {
         uint256 a;
         string b;
     }
 
-    struct notSimpleJson {
+    struct nestedStruct {
         uint256 a;
         string b;
-        simpleJson c;
+        simpleStruct c;
     }
 
-    function test_serializeNotSimpleToml() public {
+    function test_serializeNestedStructToml() public {
         string memory json3 = "json3";
         string memory path = "fixtures/Toml/write_complex_test.toml";
         vm.serializeUint(json3, "a", uint256(123));
@@ -259,14 +363,16 @@ contract WriteTomlTest is DSTest {
         vm.writeToml(finalJson, path);
         string memory toml = vm.readFile(path);
         bytes memory data = vm.parseToml(toml);
-        notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
+        nestedStruct memory decodedData = abi.decode(data, (nestedStruct));
+        console.log(decodedData.a);
+        assertEq(decodedData.a, 123);
     }
 
     function test_retrieveEntireToml() public {
         string memory path = "fixtures/Toml/write_complex_test.toml";
         string memory toml = vm.readFile(path);
         bytes memory data = vm.parseToml(toml, ".");
-        notSimpleJson memory decodedData = abi.decode(data, (notSimpleJson));
+        nestedStruct memory decodedData = abi.decode(data, (nestedStruct));
         console.log(decodedData.a);
         assertEq(decodedData.a, 123);
     }
@@ -294,7 +400,7 @@ contract WriteTomlTest is DSTest {
 
         string memory toml = vm.readFile(path);
         bytes memory data = vm.parseToml(toml);
-        simpleJson memory decodedData = abi.decode(data, (simpleJson));
+        simpleStruct memory decodedData = abi.decode(data, (simpleStruct));
         assertEq(decodedData.a, 123);
         assertEq(decodedData.b, "test");
 
@@ -303,7 +409,7 @@ contract WriteTomlTest is DSTest {
         // read again
         toml = vm.readFile(path);
         data = vm.parseToml(toml, ".b");
-        decodedData = abi.decode(data, (simpleJson));
+        decodedData = abi.decode(data, (simpleStruct));
         assertEq(decodedData.a, 123);
         assertEq(decodedData.b, "test");
 

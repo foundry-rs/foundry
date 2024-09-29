@@ -351,7 +351,10 @@ impl EthApi {
             EthRequest::SetNextBlockBaseFeePerGas(gas) => {
                 self.anvil_set_next_block_base_fee_per_gas(gas).await.to_rpc_result()
             }
-            EthRequest::DumpState(_) => self.anvil_dump_state().await.to_rpc_result(),
+            EthRequest::DumpState(preserve_historical_states) => self
+                .anvil_dump_state(preserve_historical_states.and_then(|s| s.params))
+                .await
+                .to_rpc_result(),
             EthRequest::LoadState(buf) => self.anvil_load_state(buf).await.to_rpc_result(),
             EthRequest::NodeInfo(_) => self.anvil_node_info().await.to_rpc_result(),
             EthRequest::AnvilMetadata(_) => self.anvil_metadata().await.to_rpc_result(),
@@ -1839,14 +1842,20 @@ impl EthApi {
     /// process by calling `anvil_loadState`
     ///
     /// Handler for RPC call: `anvil_dumpState`
-    pub async fn anvil_dump_state(&self) -> Result<Bytes> {
+    pub async fn anvil_dump_state(
+        &self,
+        preserve_historical_states: Option<bool>,
+    ) -> Result<Bytes> {
         node_info!("anvil_dumpState");
-        self.backend.dump_state().await
+        self.backend.dump_state(preserve_historical_states.unwrap_or(false)).await
     }
 
     /// Returns the current state
-    pub async fn serialized_state(&self) -> Result<SerializableState> {
-        self.backend.serialized_state().await
+    pub async fn serialized_state(
+        &self,
+        preserve_historical_states: bool,
+    ) -> Result<SerializableState> {
+        self.backend.serialized_state(preserve_historical_states).await
     }
 
     /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or
@@ -1904,7 +1913,6 @@ impl EthApi {
     pub async fn anvil_metadata(&self) -> Result<Metadata> {
         node_info!("anvil_metadata");
         let fork_config = self.backend.get_fork();
-        let snapshots = self.backend.list_snapshots();
 
         Ok(Metadata {
             client_version: CLIENT_VERSION.to_string(),
@@ -1917,7 +1925,7 @@ impl EthApi {
                 fork_block_number: cfg.block_number(),
                 fork_block_hash: cfg.block_hash(),
             }),
-            snapshots,
+            snapshots: self.backend.list_state_snapshots(),
         })
     }
 
@@ -1927,7 +1935,7 @@ impl EthApi {
         Ok(())
     }
 
-    /// Reorg the chain to a specific depth and mine new blocks back to the cannonical height.
+    /// Reorg the chain to a specific depth and mine new blocks back to the canonical height.
     ///
     /// e.g depth = 3
     ///     A  -> B  -> C  -> D  -> E
@@ -2050,7 +2058,7 @@ impl EthApi {
     /// Handler for RPC call: `evm_snapshot`
     pub async fn evm_snapshot(&self) -> Result<U256> {
         node_info!("evm_snapshot");
-        Ok(self.backend.create_snapshot().await)
+        Ok(self.backend.create_state_snapshot().await)
     }
 
     /// Revert the state of the blockchain to a previous snapshot.
@@ -2059,7 +2067,7 @@ impl EthApi {
     /// Handler for RPC call: `evm_revert`
     pub async fn evm_revert(&self, id: U256) -> Result<bool> {
         node_info!("evm_revert");
-        self.backend.revert_snapshot(id).await
+        self.backend.revert_state_snapshot(id).await
     }
 
     /// Jump forward in time by the given amount of time, in seconds.
@@ -2436,7 +2444,7 @@ impl EthApi {
                         state,
                     )?);
                 }
-                self.do_estimate_gas_with_state(request, state, block)
+                self.do_estimate_gas_with_state(request, &state, block)
             })
             .await?
     }
@@ -2444,15 +2452,12 @@ impl EthApi {
     /// Estimates the gas usage of the `request` with the state.
     ///
     /// This will execute the transaction request and find the best gas limit via binary search.
-    fn do_estimate_gas_with_state<D>(
+    fn do_estimate_gas_with_state(
         &self,
         mut request: WithOtherFields<TransactionRequest>,
-        state: D,
+        state: &dyn DatabaseRef<Error = DatabaseError>,
         block_env: BlockEnv,
-    ) -> Result<u128>
-    where
-        D: DatabaseRef<Error = DatabaseError>,
-    {
+    ) -> Result<u128> {
         // If the request is a simple native token transfer we can optimize
         // We assume it's a transfer if we have no input data.
         let to = request.to.as_ref().and_then(TxKind::to);
@@ -2488,7 +2493,7 @@ impl EthApi {
         // If we have non-zero gas price, cap gas limit by sender balance
         if gas_price > 0 {
             if let Some(from) = request.from {
-                let mut available_funds = self.backend.get_balance_with_state(&state, from)?;
+                let mut available_funds = self.backend.get_balance_with_state(state, from)?;
                 if let Some(value) = request.value {
                     if value > available_funds {
                         return Err(InvalidTransactionError::InsufficientFunds.into());
@@ -2560,7 +2565,7 @@ impl EthApi {
                     // current midpoint, as spending any less gas would make no
                     // sense (as the TX would still revert due to lack of gas).
                     //
-                    // We don't care about the reason here, as we known that trasaction is correct
+                    // We don't care about the reason here, as we known that transaction is correct
                     // as it succeeded earlier
                     lowest_gas_limit = mid_gas_limit;
                 }

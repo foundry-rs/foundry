@@ -212,7 +212,16 @@ pub struct Config {
     pub offline: bool,
     /// Whether to activate optimizer
     pub optimizer: bool,
-    /// Sets the optimizer runs
+    /// The number of runs specifies roughly how often each opcode of the deployed code will be
+    /// executed across the life-time of the contract. This means it is a trade-off parameter
+    /// between code size (deploy cost) and code execution cost (cost after deployment).
+    /// An `optimizer_runs` parameter of `1` will produce short but expensive code. In contrast, a
+    /// larger `optimizer_runs` parameter will produce longer but more gas efficient code. The
+    /// maximum value of the parameter is `2**32-1`.
+    ///
+    /// A common misconception is that this parameter specifies the number of iterations of the
+    /// optimizer. This is not true: The optimizer will always run as many times as it can
+    /// still improve the code.
     pub optimizer_runs: usize,
     /// Switch optimizer components on or off in detail.
     /// The "enabled" switch above provides two defaults which can be
@@ -2708,7 +2717,7 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
         figment.data().map_err(|err| {
             // figment does tag metadata and tries to map metadata to an error, since we use a new
             // figment in this provider this new figment does not know about the metadata of the
-            // provider and can't map the metadata to the error. Therefor we return the root error
+            // provider and can't map the metadata to the error. Therefore we return the root error
             // if this error originated in the provider's data.
             if let Err(root_err) = self.provider.data() {
                 return root_err;

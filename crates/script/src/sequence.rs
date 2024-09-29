@@ -374,8 +374,7 @@ impl ScriptSequence {
 
 /// Converts the `sig` argument into the corresponding file path.
 ///
-/// This accepts either the signature of the function or the raw calldata
-
+/// This accepts either the signature of the function or the raw calldata.
 pub fn sig_to_file_name(sig: &str) -> String {
     if let Some((name, _)) = sig.split_once('(') {
         // strip until call argument parenthesis

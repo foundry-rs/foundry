@@ -34,14 +34,15 @@ use foundry_evm_core::{
 };
 use foundry_evm_traces::TracingInspector;
 use itertools::Itertools;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
+use rand::Rng;
 use revm::{
     interpreter::{
         opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
-    primitives::{BlockEnv, CreateScheme, EVMError, SpecId, EOF_MAGIC_BYTES},
+    primitives::{BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SpecId, EOF_MAGIC_BYTES},
     EvmContext, InnerEvmContext, Inspector,
 };
 use rustc_hash::FxHashMap;
@@ -222,7 +223,7 @@ pub struct BroadcastableTransaction {
 pub struct GasMetering {
     /// True if gas metering is paused.
     pub paused: bool,
-    /// True if gas metering was resumed or reseted during the test.
+    /// True if gas metering was resumed or reset during the test.
     /// Used to reconcile gas when frame ends (if spent less than refunded).
     pub touched: bool,
     /// True if gas metering should be reset to frame limit.
@@ -251,6 +252,79 @@ impl GasMetering {
         self.touched = true;
         self.reset = true;
         self.paused_frames.clear();
+    }
+}
+
+/// Holds data about arbitrary storage.
+#[derive(Clone, Debug, Default)]
+pub struct ArbitraryStorage {
+    /// Mapping of arbitrary storage addresses to generated values (slot, arbitrary value).
+    /// (SLOADs return random value if storage slot wasn't accessed).
+    /// Changed values are recorded and used to copy storage to different addresses.
+    pub values: HashMap<Address, HashMap<U256, U256>>,
+    /// Mapping of address with storage copied to arbitrary storage address source.
+    pub copies: HashMap<Address, Address>,
+}
+
+impl ArbitraryStorage {
+    /// Marks an address with arbitrary storage.
+    pub fn mark_arbitrary(&mut self, address: &Address) {
+        self.values.insert(*address, HashMap::default());
+    }
+
+    /// Maps an address that copies storage with the arbitrary storage address.
+    pub fn mark_copy(&mut self, from: &Address, to: &Address) {
+        if self.values.contains_key(from) {
+            self.copies.insert(*to, *from);
+        }
+    }
+
+    /// Saves arbitrary storage value for a given address:
+    /// - store value in changed values cache.
+    /// - update account's storage with given value.
+    pub fn save<DB: DatabaseExt>(
+        &mut self,
+        ecx: &mut InnerEvmContext<DB>,
+        address: Address,
+        slot: U256,
+        data: U256,
+    ) {
+        self.values.get_mut(&address).expect("missing arbitrary address entry").insert(slot, data);
+        if let Ok(mut account) = ecx.load_account(address) {
+            account.storage.insert(slot, EvmStorageSlot::new(data));
+        }
+    }
+
+    /// Copies arbitrary storage value from source address to the given target address:
+    /// - if a value is present in arbitrary values cache, then update target storage and return
+    ///   existing value.
+    /// - if no value was yet generated for given slot, then save new value in cache and update both
+    ///   source and target storages.
+    pub fn copy<DB: DatabaseExt>(
+        &mut self,
+        ecx: &mut InnerEvmContext<DB>,
+        target: Address,
+        slot: U256,
+        new_value: U256,
+    ) -> U256 {
+        let source = self.copies.get(&target).expect("missing arbitrary copy target entry");
+        let storage_cache = self.values.get_mut(source).expect("missing arbitrary source storage");
+        let value = match storage_cache.get(&slot) {
+            Some(value) => *value,
+            None => {
+                storage_cache.insert(slot, new_value);
+                // Update source storage with new value.
+                if let Ok(mut source_account) = ecx.load_account(*source) {
+                    source_account.storage.insert(slot, EvmStorageSlot::new(new_value));
+                }
+                new_value
+            }
+        };
+        // Update target storage with new value.
+        if let Ok(mut target_account) = ecx.load_account(target) {
+            target_account.storage.insert(slot, EvmStorageSlot::new(value));
+        }
+        value
     }
 }
 
@@ -320,6 +394,9 @@ pub struct Cheatcodes {
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
     pub mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
 
+    /// Mocked functions. Maps target address to be mocked to pair of (calldata, mock address).
+    pub mocked_functions: HashMap<Address, HashMap<Bytes, Address>>,
+
     /// Expected calls
     pub expected_calls: ExpectedCallTracker,
     /// Expected emits
@@ -363,11 +440,18 @@ pub struct Cheatcodes {
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
 
-    /// Optional RNG algorithm.
-    rng: Option<StdRng>,
+    /// Optional cheatcodes `TestRunner`. Used for generating random values from uint and int
+    /// strategies.
+    test_runner: Option<TestRunner>,
 
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
+
+    /// Addresses with arbitrary storage.
+    pub arbitrary_storage: Option<ArbitraryStorage>,
+
+    /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
+    pub deprecated: HashMap<&'static str, Option<&'static str>>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -396,6 +480,7 @@ impl Cheatcodes {
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
             mocked_calls: Default::default(),
+            mocked_functions: Default::default(),
             expected_calls: Default::default(),
             expected_emits: Default::default(),
             allowed_mem_writes: Default::default(),
@@ -408,8 +493,10 @@ impl Cheatcodes {
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
-            rng: Default::default(),
+            test_runner: Default::default(),
             ignored_traces: Default::default(),
+            arbitrary_storage: Default::default(),
+            deprecated: Default::default(),
         }
     }
 
@@ -648,8 +735,7 @@ impl Cheatcodes {
                 return match expect::handle_expect_revert(
                     false,
                     true,
-                    expected_revert.reason.as_deref(),
-                    expected_revert.partial_match,
+                    &expected_revert,
                     outcome.result.result,
                     outcome.result.output.clone(),
                     &self.config.available_artifacts,
@@ -912,12 +998,12 @@ impl Cheatcodes {
                     });
                     debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
-                    let prev = account.info.nonce;
-
-                    // Touch account to ensure that incremented nonce is committed
-                    account.mark_touch();
-                    account.info.nonce += 1;
-                    debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
+                    // Explicitly increment nonce if calls are not isolated.
+                    if !self.config.evm_opts.isolate {
+                        let prev = account.info.nonce;
+                        account.info.nonce += 1;
+                        debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
+                    }
                 } else if broadcast.single_call {
                     let msg =
                     "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
@@ -984,10 +1070,39 @@ impl Cheatcodes {
     }
 
     pub fn rng(&mut self) -> &mut impl Rng {
-        self.rng.get_or_insert_with(|| match self.config.seed {
-            Some(seed) => StdRng::from_seed(seed.to_be_bytes::<32>()),
-            None => StdRng::from_entropy(),
+        self.test_runner().rng()
+    }
+
+    pub fn test_runner(&mut self) -> &mut TestRunner {
+        self.test_runner.get_or_insert_with(|| match self.config.seed {
+            Some(seed) => TestRunner::new_with_rng(
+                proptest::test_runner::Config::default(),
+                TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>()),
+            ),
+            None => TestRunner::new(proptest::test_runner::Config::default()),
         })
+    }
+
+    /// Returns existing or set a default `ArbitraryStorage` option.
+    /// Used by `setArbitraryStorage` cheatcode to track addresses with arbitrary storage.
+    pub fn arbitrary_storage(&mut self) -> &mut ArbitraryStorage {
+        self.arbitrary_storage.get_or_insert_with(ArbitraryStorage::default)
+    }
+
+    /// Whether the given address has arbitrary storage.
+    pub fn has_arbitrary_storage(&self, address: &Address) -> bool {
+        match &self.arbitrary_storage {
+            Some(storage) => storage.values.contains_key(address),
+            None => false,
+        }
+    }
+
+    /// Whether the given address is a copy of an address with arbitrary storage.
+    pub fn is_arbitrary_storage_copy(&self, address: &Address) -> bool {
+        match &self.arbitrary_storage {
+            Some(storage) => storage.copies.contains_key(address),
+            None => false,
+        }
     }
 }
 
@@ -1045,13 +1160,18 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     }
 
     #[inline]
-    fn step_end(&mut self, interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
 
         if self.gas_metering.touched {
             self.meter_gas_check(interpreter);
+        }
+
+        // `setArbitraryStorage` and `copyStorage`: add arbitrary values to storage.
+        if self.arbitrary_storage.is_some() {
+            self.arbitrary_storage_end(interpreter, ecx);
         }
     }
 
@@ -1085,7 +1205,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
-        // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
+        // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
             // Clean up pranks
@@ -1126,8 +1246,17 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             }
         }
 
-        // Handle expected reverts
-        if let Some(expected_revert) = &self.expected_revert {
+        // Handle expected reverts.
+        if let Some(expected_revert) = &mut self.expected_revert {
+            // Record current reverter address before processing the expect revert if call reverted,
+            // expect revert is set with expected reverter address and no actual reverter set yet.
+            if outcome.result.is_revert() &&
+                expected_revert.reverter.is_some() &&
+                expected_revert.reverted_by.is_none()
+            {
+                expected_revert.reverted_by = Some(call.target_address);
+            }
+
             if ecx.journaled_state.depth() <= expected_revert.depth {
                 let needs_processing = match expected_revert.kind {
                     ExpectedRevertKind::Default => !cheatcode_call,
@@ -1143,8 +1272,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
                     return match expect::handle_expect_revert(
                         cheatcode_call,
                         false,
-                        expected_revert.reason.as_deref(),
-                        expected_revert.partial_match,
+                        &expected_revert,
                         outcome.result.result,
                         outcome.result.output.clone(),
                         &self.config.available_artifacts,
@@ -1461,6 +1589,50 @@ impl Cheatcodes {
                 u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
             {
                 interpreter.gas = Gas::new(interpreter.gas.limit());
+            }
+        }
+    }
+
+    /// Generates or copies arbitrary values for storage slots.
+    /// Invoked in inspector `step_end` (when the current opcode is not executed), if current opcode
+    /// to execute is `SLOAD` and storage slot is cold.
+    /// Ensures that in next step (when `SLOAD` opcode is executed) an arbitrary value is returned:
+    /// - copies the existing arbitrary storage value (or the new generated one if no value in
+    ///   cache) from mapped source address to the target address.
+    /// - generates arbitrary value and saves it in target address storage.
+    #[cold]
+    fn arbitrary_storage_end<DB: DatabaseExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<DB>,
+    ) {
+        let (key, target_address) = if interpreter.current_opcode() == op::SLOAD {
+            (try_or_return!(interpreter.stack().peek(0)), interpreter.contract().target_address)
+        } else {
+            return
+        };
+
+        let Ok(value) = ecx.sload(target_address, key) else {
+            return;
+        };
+
+        if value.is_cold && value.data.is_zero() {
+            if self.has_arbitrary_storage(&target_address) {
+                let arbitrary_value = self.rng().gen();
+                self.arbitrary_storage.as_mut().unwrap().save(
+                    &mut ecx.inner,
+                    target_address,
+                    key,
+                    arbitrary_value,
+                );
+            } else if self.is_arbitrary_storage_copy(&target_address) {
+                let arbitrary_value = self.rng().gen();
+                self.arbitrary_storage.as_mut().unwrap().copy(
+                    &mut ecx.inner,
+                    target_address,
+                    key,
+                    arbitrary_value,
+                );
             }
         }
     }
@@ -1912,6 +2084,7 @@ fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
     ccx: &mut CheatsCtxt<DB>,
     executor: &mut E,
 ) -> Result {
+    // TODO: Replace with `<dyn Cheatcode>::apply_full` once it's object-safe.
     macro_rules! dispatch {
         ($($variant:ident),*) => {
             match calls {
@@ -1920,10 +2093,13 @@ fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
         };
     }
 
-    let mut dyn_cheat = DynCheatCache::new(calls);
-    let _guard = trace_span_and_call(&mut dyn_cheat);
+    let cheat = calls_as_dyn_cheatcode(calls);
+    if let spec::Status::Deprecated(replacement) = *cheat.status() {
+        ccx.state.deprecated.insert(cheat.signature(), replacement);
+    }
+    let _guard = trace_span_and_call(cheat);
     let mut result = vm_calls!(dispatch);
-    fill_and_trace_return(&mut dyn_cheat, &mut result);
+    fill_and_trace_return(cheat, &mut result);
     result
 }
 
@@ -1932,34 +2108,17 @@ fn will_exit(ir: InstructionResult) -> bool {
     !matches!(ir, InstructionResult::Continue | InstructionResult::CallOrCreate)
 }
 
-// Caches the result of `calls_as_dyn_cheatcode`.
-// TODO: Remove this once Cheatcode is object-safe, as caching would not be necessary anymore.
-struct DynCheatCache<'a> {
-    calls: &'a Vm::VmCalls,
-    slot: Option<&'a dyn DynCheatcode>,
-}
-
-impl<'a> DynCheatCache<'a> {
-    fn new(calls: &'a Vm::VmCalls) -> Self {
-        Self { calls, slot: None }
-    }
-
-    fn get(&mut self) -> &dyn DynCheatcode {
-        *self.slot.get_or_insert_with(|| calls_as_dyn_cheatcode(self.calls))
-    }
-}
-
-fn trace_span_and_call(dyn_cheat: &mut DynCheatCache) -> tracing::span::EnteredSpan {
-    let span = debug_span!(target: "cheatcodes", "apply", id = %dyn_cheat.get().id());
+fn trace_span_and_call(cheat: &dyn DynCheatcode) -> tracing::span::EnteredSpan {
+    let span = debug_span!(target: "cheatcodes", "apply", id = %cheat.id());
     let entered = span.entered();
-    trace!(target: "cheatcodes", cheat = ?dyn_cheat.get().as_debug(), "applying");
+    trace!(target: "cheatcodes", cheat = ?cheat.as_debug(), "applying");
     entered
 }
 
-fn fill_and_trace_return(dyn_cheat: &mut DynCheatCache, result: &mut Result) {
+fn fill_and_trace_return(cheat: &dyn DynCheatcode, result: &mut Result) {
     if let Err(e) = result {
         if e.is_str() {
-            let name = dyn_cheat.get().name();
+            let name = cheat.name();
             // Skip showing the cheatcode name for:
             // - assertions: too verbose, and can already be inferred from the error message
             // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
@@ -1977,7 +2136,6 @@ fn fill_and_trace_return(dyn_cheat: &mut DynCheatCache, result: &mut Result) {
     );
 }
 
-#[cold]
 fn calls_as_dyn_cheatcode(calls: &Vm::VmCalls) -> &dyn DynCheatcode {
     macro_rules! as_dyn {
         ($($variant:ident),*) => {

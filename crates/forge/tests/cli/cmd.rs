@@ -276,7 +276,7 @@ forgetest!(can_init_no_git, |prj, cmd| {
     cmd.arg("init").arg(prj.root()).arg("--no-git").assert_success().stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std
+    Installed forge-std [..]
     Initialized forge project
 
 "#]]);
@@ -984,7 +984,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 "#]]);
 });
 
-// test that `forge build` does not print `(with warnings)` if there arent any
+// test that `forge build` does not print `(with warnings)` if there aren't any
 forgetest!(can_compile_without_warnings, |prj, cmd| {
     let config = Config {
         ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],

@@ -1,7 +1,10 @@
 //! In-memory blockchain storage
 use crate::eth::{
     backend::{
-        db::{MaybeFullDatabase, SerializableBlock, SerializableTransaction, StateDb},
+        db::{
+            MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
+            SerializableTransaction, StateDb,
+        },
         mem::cache::DiskStateCache,
     },
     error::BlockchainError,
@@ -25,6 +28,7 @@ use anvil_core::eth::{
 };
 use anvil_rpc::error::RpcError;
 use foundry_evm::{
+    backend::MemDb,
     revm::primitives::Env,
     traces::{
         CallKind, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig,
@@ -143,8 +147,8 @@ impl InMemoryBlockStates {
             {
                 // only write to disk if supported
                 if !self.is_memory_only() {
-                    let snapshot = state.0.clear_into_snapshot();
-                    self.disk_cache.write(hash, snapshot);
+                    let state_snapshot = state.0.clear_into_state_snapshot();
+                    self.disk_cache.write(hash, state_snapshot);
                     self.on_disk_states.insert(hash, state);
                     self.oldest_on_disk.push_back(hash);
                 }
@@ -166,7 +170,7 @@ impl InMemoryBlockStates {
         self.states.get(hash).or_else(|| {
             if let Some(state) = self.on_disk_states.get_mut(hash) {
                 if let Some(cached) = self.disk_cache.read(*hash) {
-                    state.init_from_snapshot(cached);
+                    state.init_from_state_snapshot(cached);
                     return Some(state);
                 }
             }
@@ -186,6 +190,34 @@ impl InMemoryBlockStates {
         self.present.clear();
         for on_disk in std::mem::take(&mut self.oldest_on_disk) {
             self.disk_cache.remove(on_disk)
+        }
+    }
+
+    /// Serialize all states to a list of serializable historical states
+    pub fn serialized_states(&mut self) -> SerializableHistoricalStates {
+        // Get in-memory states
+        let mut states = self
+            .states
+            .iter_mut()
+            .map(|(hash, state)| (*hash, state.serialize_state()))
+            .collect::<Vec<_>>();
+
+        // Get on-disk state snapshots
+        self.on_disk_states.iter().for_each(|(hash, _)| {
+            if let Some(state_snapshot) = self.disk_cache.read(*hash) {
+                states.push((*hash, state_snapshot));
+            }
+        });
+
+        SerializableHistoricalStates::new(states)
+    }
+
+    /// Load states from serialized data
+    pub fn load_states(&mut self, states: SerializableHistoricalStates) {
+        for (hash, state_snapshot) in states {
+            let mut state_db = StateDb::new(MemDb::default());
+            state_db.init_from_state_snapshot(state_snapshot);
+            self.insert(hash, state_db);
         }
     }
 }
@@ -509,7 +541,8 @@ impl MinedTransaction {
                     }
                     GethDebugBuiltInTracerType::PreStateTracer |
                     GethDebugBuiltInTracerType::NoopTracer |
-                    GethDebugBuiltInTracerType::MuxTracer => {}
+                    GethDebugBuiltInTracerType::MuxTracer |
+                    GethDebugBuiltInTracerType::FlatCallTracer => {}
                 },
                 GethDebugTracerType::JsTracer(_code) => {}
             }
@@ -536,12 +569,14 @@ impl MinedTransaction {
 pub struct MinedTransactionReceipt {
     /// The actual json rpc receipt object
     pub inner: ReceiptResponse,
-    /// Output data fo the transaction
+    /// Output data for the transaction
     pub out: Option<Bytes>,
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::needless_return)]
+
     use super::*;
     use crate::eth::backend::db::Db;
     use alloy_primitives::{hex, Address};

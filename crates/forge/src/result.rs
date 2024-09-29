@@ -9,6 +9,7 @@ use eyre::Report;
 use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
 use foundry_evm::{
     coverage::HitMaps,
+    decode::SkipReason,
     executors::{EvmError, RawCallResult},
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
@@ -53,17 +54,17 @@ impl TestOutcome {
 
     /// Returns an iterator over all individual succeeding tests and their names.
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Success)
+        self.tests().filter(|(_, t)| t.status.is_success())
     }
 
     /// Returns an iterator over all individual skipped tests and their names.
     pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
+        self.tests().filter(|(_, t)| t.status.is_skipped())
     }
 
     /// Returns an iterator over all individual failing tests and their names.
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
+        self.tests().filter(|(_, t)| t.status.is_failure())
     }
 
     /// Returns an iterator over all individual tests and their names.
@@ -184,6 +185,18 @@ impl TestOutcome {
         // TODO: Avoid process::exit
         std::process::exit(1);
     }
+
+    /// Removes first test result, if any.
+    pub fn remove_first(&mut self) -> Option<(String, String, TestResult)> {
+        self.results.iter_mut().find_map(|(suite_name, suite)| {
+            if let Some(test_name) = suite.test_results.keys().next().cloned() {
+                let result = suite.test_results.remove(&test_name).unwrap();
+                Some((suite_name.clone(), test_name, result))
+            } else {
+                None
+            }
+        })
+    }
 }
 
 /// A set of test results for a single test suite, which is all the tests in a single contract.
@@ -202,24 +215,42 @@ impl SuiteResult {
     pub fn new(
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
-        warnings: Vec<String>,
+        mut warnings: Vec<String>,
     ) -> Self {
+        // Add deprecated cheatcodes warning, if any of them used in current test suite.
+        let mut deprecated_cheatcodes = HashMap::new();
+        for test_result in test_results.values() {
+            deprecated_cheatcodes.extend(test_result.deprecated_cheatcodes.clone());
+        }
+        if !deprecated_cheatcodes.is_empty() {
+            let mut warning =
+                "the following cheatcode(s) are deprecated and will be removed in future versions:"
+                    .to_string();
+            for (cheatcode, reason) in deprecated_cheatcodes {
+                write!(warning, "\n  {cheatcode}").unwrap();
+                if let Some(reason) = reason {
+                    write!(warning, ": {reason}").unwrap();
+                }
+            }
+            warnings.push(warning);
+        }
+
         Self { duration, test_results, warnings }
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Success)
+        self.tests().filter(|(_, t)| t.status.is_success())
     }
 
     /// Returns an iterator over all individual skipped tests and their names.
     pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Skipped)
+        self.tests().filter(|(_, t)| t.status.is_skipped())
     }
 
     /// Returns an iterator over all individual failing tests and their names.
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status == TestStatus::Failure)
+        self.tests().filter(|(_, t)| t.status.is_failure())
     }
 
     /// Returns the number of tests that passed.
@@ -377,35 +408,49 @@ pub struct TestResult {
 
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
+
+    /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
+    #[serde(skip)]
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 impl fmt::Display for TestResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.status {
             TestStatus::Success => "[PASS]".green().fmt(f),
-            TestStatus::Skipped => "[SKIP]".yellow().fmt(f),
+            TestStatus::Skipped => {
+                let mut s = String::from("[SKIP");
+                if let Some(reason) = &self.reason {
+                    write!(s, ": {reason}").unwrap();
+                }
+                s.push(']');
+                s.yellow().fmt(f)
+            }
             TestStatus::Failure => {
-                let mut s = String::from("[FAIL. Reason: ");
+                let mut s = String::from("[FAIL");
+                if self.reason.is_some() || self.counterexample.is_some() {
+                    if let Some(reason) = &self.reason {
+                        write!(s, ": {reason}").unwrap();
+                    }
 
-                let reason = self.reason.as_deref().unwrap_or("assertion failed");
-                s.push_str(reason);
-
-                if let Some(counterexample) = &self.counterexample {
-                    match counterexample {
-                        CounterExample::Single(ex) => {
-                            write!(s, "; counterexample: {ex}]").unwrap();
-                        }
-                        CounterExample::Sequence(sequence) => {
-                            s.push_str("]\n\t[Sequence]\n");
-                            for ex in sequence {
-                                writeln!(s, "\t\t{ex}").unwrap();
+                    if let Some(counterexample) = &self.counterexample {
+                        match counterexample {
+                            CounterExample::Single(ex) => {
+                                write!(s, "; counterexample: {ex}]").unwrap();
+                            }
+                            CounterExample::Sequence(sequence) => {
+                                s.push_str("]\n\t[Sequence]\n");
+                                for ex in sequence {
+                                    writeln!(s, "\t\t{ex}").unwrap();
+                                }
                             }
                         }
+                    } else {
+                        s.push(']');
                     }
                 } else {
                     s.push(']');
                 }
-
                 s.red().fmt(f)
             }
         }
@@ -443,8 +488,9 @@ impl TestResult {
     }
 
     /// Returns the skipped result for single test (used in skipped fuzz test too).
-    pub fn single_skip(mut self) -> Self {
+    pub fn single_skip(mut self, reason: SkipReason) -> Self {
         self.status = TestStatus::Skipped;
+        self.reason = reason.0;
         self
     }
 
@@ -477,9 +523,14 @@ impl TestResult {
             false => TestStatus::Failure,
         };
         self.reason = reason;
-        self.breakpoints = raw_call_result.cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
         self.duration = Duration::default();
         self.gas_report_traces = Vec::new();
+
+        if let Some(cheatcodes) = raw_call_result.cheatcodes {
+            self.breakpoints = cheatcodes.breakpoints;
+            self.deprecated_cheatcodes = cheatcodes.deprecated;
+        }
+
         self
     }
 
@@ -499,22 +550,28 @@ impl TestResult {
         self.traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
         self.merge_coverages(result.coverage);
 
-        self.status = match result.success {
-            true => TestStatus::Success,
-            false => TestStatus::Failure,
+        self.status = if result.skipped {
+            TestStatus::Skipped
+        } else if result.success {
+            TestStatus::Success
+        } else {
+            TestStatus::Failure
         };
         self.reason = result.reason;
         self.counterexample = result.counterexample;
         self.duration = Duration::default();
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
         self.breakpoints = result.breakpoints.unwrap_or_default();
+        self.deprecated_cheatcodes = result.deprecated_cheatcodes;
+
         self
     }
 
     /// Returns the skipped result for invariant test.
-    pub fn invariant_skip(mut self) -> Self {
+    pub fn invariant_skip(mut self, reason: SkipReason) -> Self {
         self.kind = TestKind::Invariant { runs: 1, calls: 1, reverts: 1 };
         self.status = TestStatus::Skipped;
+        self.reason = reason.0;
         self
     }
 

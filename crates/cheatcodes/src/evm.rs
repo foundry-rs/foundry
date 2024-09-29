@@ -10,9 +10,10 @@ use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
-    backend::{DatabaseExt, RevertSnapshotAction},
+    backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
+use rand::Rng;
 use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
@@ -89,7 +90,34 @@ impl Cheatcode for loadCall {
         let Self { target, slot } = *self;
         ensure_not_precompile!(&target, ccx);
         ccx.ecx.load_account(target)?;
-        let val = ccx.ecx.sload(target, slot.into())?;
+        let mut val = ccx.ecx.sload(target, slot.into())?;
+
+        if val.is_cold && val.data.is_zero() {
+            if ccx.state.has_arbitrary_storage(&target) {
+                // If storage slot is untouched and load from a target with arbitrary storage,
+                // then set random value for current slot.
+                let rand_value = ccx.state.rng().gen();
+                ccx.state.arbitrary_storage.as_mut().unwrap().save(
+                    ccx.ecx,
+                    target,
+                    slot.into(),
+                    rand_value,
+                );
+                val.data = rand_value;
+            } else if ccx.state.is_arbitrary_storage_copy(&target) {
+                // If storage slot is untouched and load from a target that copies storage from
+                // a source address with arbitrary storage, then copy existing arbitrary value.
+                // If no arbitrary value generated yet, then the random one is saved and set.
+                let rand_value = ccx.state.rng().gen();
+                val.data = ccx.state.arbitrary_storage.as_mut().unwrap().copy(
+                    ccx.ecx,
+                    target,
+                    slot.into(),
+                    rand_value,
+                );
+            }
+        }
+
         Ok(val.abi_encode())
     }
 }
@@ -478,63 +506,78 @@ impl Cheatcode for readCallersCall {
     }
 }
 
+// Deprecated in favor of `snapshotStateCall`
 impl Cheatcode for snapshotCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        Ok(ccx.ecx.db.snapshot(&ccx.ecx.journaled_state, &ccx.ecx.env).abi_encode())
+        inner_snapshot_state(ccx)
     }
 }
 
+impl Cheatcode for snapshotStateCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        inner_snapshot_state(ccx)
+    }
+}
+
+// Deprecated in favor of `revertToStateCall`
 impl Cheatcode for revertToCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = if let Some(journaled_state) = ccx.ecx.db.revert(
-            *snapshotId,
-            &ccx.ecx.journaled_state,
-            &mut ccx.ecx.env,
-            RevertSnapshotAction::RevertKeep,
-        ) {
-            // we reset the evm's journaled_state to the state of the snapshot previous state
-            ccx.ecx.journaled_state = journaled_state;
-            true
-        } else {
-            false
-        };
-        Ok(result.abi_encode())
+        inner_revert_to_state(ccx, *snapshotId)
     }
 }
 
+impl Cheatcode for revertToStateCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { snapshotId } = self;
+        inner_revert_to_state(ccx, *snapshotId)
+    }
+}
+
+// Deprecated in favor of `revertToStateAndDeleteCall`
 impl Cheatcode for revertToAndDeleteCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = if let Some(journaled_state) = ccx.ecx.db.revert(
-            *snapshotId,
-            &ccx.ecx.journaled_state,
-            &mut ccx.ecx.env,
-            RevertSnapshotAction::RevertRemove,
-        ) {
-            // we reset the evm's journaled_state to the state of the snapshot previous state
-            ccx.ecx.journaled_state = journaled_state;
-            true
-        } else {
-            false
-        };
-        Ok(result.abi_encode())
+        inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
 }
 
+impl Cheatcode for revertToStateAndDeleteCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { snapshotId } = self;
+        inner_revert_to_state_and_delete(ccx, *snapshotId)
+    }
+}
+
+// Deprecated in favor of `deleteStateSnapshotCall`
 impl Cheatcode for deleteSnapshotCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self { snapshotId } = self;
-        let result = ccx.ecx.db.delete_snapshot(*snapshotId);
-        Ok(result.abi_encode())
+        inner_delete_state_snapshot(ccx, *snapshotId)
     }
 }
+
+impl Cheatcode for deleteStateSnapshotCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self { snapshotId } = self;
+        inner_delete_state_snapshot(ccx, *snapshotId)
+    }
+}
+
+// Deprecated in favor of `deleteStateSnapshotsCall`
 impl Cheatcode for deleteSnapshotsCall {
     fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
         let Self {} = self;
-        ccx.ecx.db.delete_snapshots();
-        Ok(Default::default())
+        inner_delete_state_snapshots(ccx)
+    }
+}
+
+impl Cheatcode for deleteStateSnapshotsCall {
+    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+        let Self {} = self;
+        inner_delete_state_snapshots(ccx)
     }
 }
 
@@ -598,6 +641,58 @@ impl Cheatcode for setBlockhashCall {
 pub(super) fn get_nonce<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, address: &Address) -> Result {
     let account = ccx.ecx.journaled_state.load_account(*address, &mut ccx.ecx.db)?;
     Ok(account.info.nonce.abi_encode())
+}
+
+fn inner_snapshot_state<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result {
+    Ok(ccx.ecx.db.snapshot_state(&ccx.ecx.journaled_state, &ccx.ecx.env).abi_encode())
+}
+
+fn inner_revert_to_state<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, snapshot_id: U256) -> Result {
+    let result = if let Some(journaled_state) = ccx.ecx.db.revert_state(
+        snapshot_id,
+        &ccx.ecx.journaled_state,
+        &mut ccx.ecx.env,
+        RevertStateSnapshotAction::RevertKeep,
+    ) {
+        // we reset the evm's journaled_state to the state of the snapshot previous state
+        ccx.ecx.journaled_state = journaled_state;
+        true
+    } else {
+        false
+    };
+    Ok(result.abi_encode())
+}
+
+fn inner_revert_to_state_and_delete<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    snapshot_id: U256,
+) -> Result {
+    let result = if let Some(journaled_state) = ccx.ecx.db.revert_state(
+        snapshot_id,
+        &ccx.ecx.journaled_state,
+        &mut ccx.ecx.env,
+        RevertStateSnapshotAction::RevertRemove,
+    ) {
+        // we reset the evm's journaled_state to the state of the snapshot previous state
+        ccx.ecx.journaled_state = journaled_state;
+        true
+    } else {
+        false
+    };
+    Ok(result.abi_encode())
+}
+
+fn inner_delete_state_snapshot<DB: DatabaseExt>(
+    ccx: &mut CheatsCtxt<DB>,
+    snapshot_id: U256,
+) -> Result {
+    let result = ccx.ecx.db.delete_state_snapshot(snapshot_id);
+    Ok(result.abi_encode())
+}
+
+fn inner_delete_state_snapshots<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result {
+    ccx.ecx.db.delete_state_snapshots();
+    Ok(Default::default())
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and

@@ -370,7 +370,16 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         byte_offset: usize,
         next_byte_offset: Option<usize>,
-        fun: impl FnMut(&mut Self) -> Result<()>,
+        mut fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<Chunk> {
+        self.chunked_mono(byte_offset, next_byte_offset, &mut fun)
+    }
+
+    fn chunked_mono(
+        &mut self,
+        byte_offset: usize,
+        next_byte_offset: Option<usize>,
+        fun: &mut dyn FnMut(&mut Self) -> Result<()>,
     ) -> Result<Chunk> {
         let postfixes_before = self.comments.remove_postfixes_before(byte_offset);
         let prefixes = self.comments.remove_prefixes_before(byte_offset);
@@ -3235,7 +3244,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 let is_constructor = self.context.is_constructor_function();
                 // we can't make any decisions here regarding trailing `()` because we'd need to
                 // find out if the `base` is a solidity modifier or an
-                // interface/contract therefor we we its raw content.
+                // interface/contract therefore we we its raw content.
 
                 // we can however check if the contract `is` the `base`, this however also does
                 // not cover all cases

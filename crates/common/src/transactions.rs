@@ -216,6 +216,13 @@ impl TransactionMaybeSigned {
             Self::Unsigned(tx) => tx.gas,
         }
     }
+
+    pub fn nonce(&self) -> Option<u64> {
+        match self {
+            Self::Signed { tx, .. } => Some(tx.nonce()),
+            Self::Unsigned(tx) => tx.nonce,
+        }
+    }
 }
 
 impl From<TransactionRequest> for TransactionMaybeSigned {

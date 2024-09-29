@@ -68,7 +68,7 @@ use anvil_rpc::error::RpcError;
 use alloy_chains::NamedChain;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
-    backend::{DatabaseError, DatabaseResult, RevertSnapshotAction},
+    backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
@@ -149,30 +149,30 @@ pub struct Backend {
     /// which the write-lock is active depends on whether the `ForkDb` can provide all requested
     /// data from memory or whether it has to retrieve it via RPC calls first. This means that it
     /// potentially blocks for some time, even taking into account the rate limits of RPC
-    /// endpoints. Therefor the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
+    /// endpoints. Therefore the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
     /// need to read from it, while it's currently written to, don't block. E.g. a new block is
     /// currently mined and a new [`Self::set_storage_at()`] request is being executed.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,
-    /// stores all block related data in memory
+    /// stores all block related data in memory.
     blockchain: Blockchain,
-    /// Historic states of previous blocks
+    /// Historic states of previous blocks.
     states: Arc<RwLock<InMemoryBlockStates>>,
-    /// env data of the chain
+    /// Env data of the chain
     env: Arc<RwLock<EnvWithHandlerCfg>>,
-    /// this is set if this is currently forked off another client
+    /// This is set if this is currently forked off another client.
     fork: Arc<RwLock<Option<ClientFork>>>,
-    /// provides time related info, like timestamp
+    /// Provides time related info, like timestamp.
     time: TimeManager,
-    /// Contains state of custom overrides
+    /// Contains state of custom overrides.
     cheats: CheatsManager,
-    /// contains fee data
+    /// Contains fee data.
     fees: FeeManager,
-    /// initialised genesis
+    /// Initialised genesis.
     genesis: GenesisConfig,
-    /// listeners for new blocks that get notified when a new block was imported
+    /// Listeners for new blocks that get notified when a new block was imported.
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
-    /// keeps track of active snapshots at a specific block
-    active_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
+    /// Keeps track of active state snapshots at a specific block.
+    active_state_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
     alphanet: bool,
@@ -256,7 +256,7 @@ impl Backend {
             new_block_listeners: Default::default(),
             fees,
             genesis,
-            active_snapshots: Arc::new(Mutex::new(Default::default())),
+            active_state_snapshots: Arc::new(Mutex::new(Default::default())),
             enable_steps_tracing,
             print_logs,
             alphanet,
@@ -441,12 +441,14 @@ impl Backend {
                     *self.fork.write() = Some(fork);
                     *self.env.write() = env;
                 } else {
+                    let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
                     let mut env = self.env.write();
+
                     env.cfg.chain_id = fork.chain_id();
                     env.block = BlockEnv {
                         number: U256::from(fork_block_number),
                         timestamp: U256::from(fork_block.header.timestamp),
-                        gas_limit: U256::from(fork_block.header.gas_limit),
+                        gas_limit: U256::from(gas_limit),
                         difficulty: fork_block.header.difficulty,
                         prevrandao: Some(fork_block.header.mix_hash.unwrap_or_default()),
                         // Keep previous `coinbase` and `basefee` value
@@ -459,7 +461,7 @@ impl Backend {
                     // the next block
                     let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
                         fork_block.header.gas_used,
-                        fork_block.header.gas_limit,
+                        gas_limit,
                         fork_block.header.base_fee_per_gas.unwrap_or_default(),
                     );
 
@@ -576,7 +578,7 @@ impl Backend {
         slot: U256,
         val: B256,
     ) -> DatabaseResult<()> {
-        self.db.write().await.set_storage_at(address, slot, U256::from_be_bytes(val.0))
+        self.db.write().await.set_storage_at(address, slot.into(), val)
     }
 
     /// Returns the configured specid
@@ -693,21 +695,21 @@ impl Backend {
         self.blockchain.storage.read().total_difficulty
     }
 
-    /// Creates a new `evm_snapshot` at the current height
+    /// Creates a new `evm_snapshot` at the current height.
     ///
-    /// Returns the id of the snapshot created
-    pub async fn create_snapshot(&self) -> U256 {
+    /// Returns the id of the snapshot created.
+    pub async fn create_state_snapshot(&self) -> U256 {
         let num = self.best_number();
         let hash = self.best_hash();
-        let id = self.db.write().await.snapshot();
+        let id = self.db.write().await.snapshot_state();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
-        self.active_snapshots.lock().insert(id, (num, hash));
+        self.active_state_snapshots.lock().insert(id, (num, hash));
         id
     }
 
-    /// Reverts the state to the snapshot identified by the given `id`.
-    pub async fn revert_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let block = { self.active_snapshots.lock().remove(&id) };
+    /// Reverts the state to the state snapshot identified by the given `id`.
+    pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
+        let block = { self.active_state_snapshots.lock().remove(&id) };
         if let Some((num, hash)) = block {
             let best_block_hash = {
                 // revert the storage that's newer than the snapshot
@@ -750,20 +752,35 @@ impl Backend {
                 ..Default::default()
             };
         }
-        Ok(self.db.write().await.revert(id, RevertSnapshotAction::RevertRemove))
+        Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
     }
 
-    pub fn list_snapshots(&self) -> BTreeMap<U256, (u64, B256)> {
-        self.active_snapshots.lock().clone().into_iter().collect()
+    pub fn list_state_snapshots(&self) -> BTreeMap<U256, (u64, B256)> {
+        self.active_state_snapshots.lock().clone().into_iter().collect()
     }
 
     /// Get the current state.
-    pub async fn serialized_state(&self) -> Result<SerializableState, BlockchainError> {
+    pub async fn serialized_state(
+        &self,
+        preserve_historical_states: bool,
+    ) -> Result<SerializableState, BlockchainError> {
         let at = self.env.read().block.clone();
         let best_number = self.blockchain.storage.read().best_number;
         let blocks = self.blockchain.storage.read().serialized_blocks();
         let transactions = self.blockchain.storage.read().serialized_transactions();
-        let state = self.db.read().await.dump_state(at, best_number, blocks, transactions)?;
+        let historical_states = if preserve_historical_states {
+            Some(self.states.write().serialized_states())
+        } else {
+            None
+        };
+
+        let state = self.db.read().await.dump_state(
+            at,
+            best_number,
+            blocks,
+            transactions,
+            historical_states,
+        )?;
         state.ok_or_else(|| {
             RpcError::invalid_params("Dumping state not supported with the current configuration")
                 .into()
@@ -771,8 +788,11 @@ impl Backend {
     }
 
     /// Write all chain data to serialized bytes buffer
-    pub async fn dump_state(&self) -> Result<Bytes, BlockchainError> {
-        let state = self.serialized_state().await?;
+    pub async fn dump_state(
+        &self,
+        preserve_historical_states: bool,
+    ) -> Result<Bytes, BlockchainError> {
+        let state = self.serialized_state(preserve_historical_states).await?;
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder
             .write_all(&serde_json::to_vec(&state).unwrap_or_default())
@@ -801,6 +821,10 @@ impl Backend {
 
         self.blockchain.storage.write().load_blocks(state.blocks.clone());
         self.blockchain.storage.write().load_transactions(state.transactions.clone());
+
+        if let Some(historical_states) = state.historical_states {
+            self.states.write().load_states(historical_states);
+        }
 
         Ok(true)
     }
@@ -835,16 +859,19 @@ impl Backend {
     }
 
     /// Creates an EVM instance with optionally injected precompiles.
-    fn new_evm_with_inspector_ref<DB, I>(
+    #[allow(clippy::type_complexity)]
+    fn new_evm_with_inspector_ref<'i, 'db>(
         &self,
-        db: DB,
+        db: &'db dyn DatabaseRef<Error = DatabaseError>,
         env: EnvWithHandlerCfg,
-        inspector: I,
-    ) -> revm::Evm<'_, I, WrapDatabaseRef<DB>>
-    where
-        DB: revm::DatabaseRef,
-        I: InspectorExt<WrapDatabaseRef<DB>>,
-    {
+        inspector: &'i mut dyn InspectorExt<
+            WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
+        >,
+    ) -> revm::Evm<
+        '_,
+        &'i mut dyn InspectorExt<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>,
+        WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
+    > {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
         if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
@@ -870,7 +897,7 @@ impl Backend {
 
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
-        let mut evm = self.new_evm_with_inspector_ref(&**db, env, &mut inspector);
+        let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), env, &mut inspector);
         let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
@@ -989,7 +1016,7 @@ impl Backend {
                 env.block.timestamp = U256::from(self.time.next_timestamp());
 
                 let executor = TransactionExecutor {
-                    db: &mut *db,
+                    db: &mut **db,
                     validator: self,
                     pending: pool_transactions.into_iter(),
                     block_env: env.block.clone(),
@@ -1046,7 +1073,7 @@ impl Backend {
                 // log some tx info
                 node_info!("    Transaction: {:?}", info.transaction_hash);
                 if let Some(contract) = &info.contract_address {
-                    node_info!("    Contract created: {contract:?}");
+                    node_info!("    Contract created: {contract}");
                 }
                 node_info!("    Gas used: {}", receipt.cumulative_gas_used());
                 if !info.exit.is_ok() {
@@ -1129,10 +1156,10 @@ impl Backend {
         self.with_database_at(block_request, |state, block| {
             let block_number = block.number.to::<u64>();
             let (exit, out, gas, state) = match overrides {
-                None => self.call_with_state(state, request, fee_details, block),
+                None => self.call_with_state(state.as_dyn(), request, fee_details, block),
                 Some(overrides) => {
                     let state = state::apply_state_override(overrides.into_iter().collect(), state)?;
-                    self.call_with_state(state, request, fee_details, block)
+                    self.call_with_state(state.as_dyn(), request, fee_details, block)
                 },
             }?;
             trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
@@ -1200,26 +1227,36 @@ impl Backend {
         });
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
-        env.tx = TxEnv {
-            caller,
-            gas_limit: gas_limit as u64,
-            gas_price: U256::from(gas_price),
-            gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
-            max_fee_per_blob_gas: max_fee_per_blob_gas.map(U256::from),
-            transact_to: match to {
-                Some(addr) => TxKind::Call(*addr),
-                None => TxKind::Create,
-            },
-            value: value.unwrap_or_default(),
-            data: input.into_input().unwrap_or_default(),
-            chain_id: None,
-            // set nonce to None so that the correct nonce is chosen by the EVM
-            nonce: None,
-            access_list: access_list.unwrap_or_default().into(),
-            blob_hashes: blob_versioned_hashes.unwrap_or_default(),
-            optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
-            authorization_list: authorization_list.map(Into::into),
-        };
+        let blob_hashes = blob_versioned_hashes.unwrap_or_default();
+        env.tx =
+            TxEnv {
+                caller,
+                gas_limit: gas_limit as u64,
+                gas_price: U256::from(gas_price),
+                gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
+                max_fee_per_blob_gas: max_fee_per_blob_gas
+                    .or_else(|| {
+                        if !blob_hashes.is_empty() {
+                            env.block.get_blob_gasprice()
+                        } else {
+                            None
+                        }
+                    })
+                    .map(U256::from),
+                transact_to: match to {
+                    Some(addr) => TxKind::Call(*addr),
+                    None => TxKind::Create,
+                },
+                value: value.unwrap_or_default(),
+                data: input.into_input().unwrap_or_default(),
+                chain_id: None,
+                // set nonce to None so that the correct nonce is chosen by the EVM
+                nonce: None,
+                access_list: access_list.unwrap_or_default().into(),
+                blob_hashes,
+                optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
+                authorization_list: authorization_list.map(Into::into),
+            };
 
         if env.block.basefee.is_zero() {
             // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
@@ -1241,16 +1278,13 @@ impl Backend {
         inspector
     }
 
-    pub fn call_with_state<D>(
+    pub fn call_with_state(
         &self,
-        state: D,
+        state: &dyn DatabaseRef<Error = DatabaseError>,
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError>
-    where
-        D: DatabaseRef<Error = DatabaseError>,
-    {
+    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         let mut inspector = self.build_inspector();
 
         let env = self.build_call_env(request, fee_details, block_env);
@@ -1297,8 +1331,11 @@ impl Backend {
                             );
 
                             let env = self.build_call_env(request, fee_details, block);
-                            let mut evm =
-                                self.new_evm_with_inspector_ref(state, env, &mut inspector);
+                            let mut evm = self.new_evm_with_inspector_ref(
+                                state.as_dyn(),
+                                env,
+                                &mut inspector,
+                            );
                             let ResultAndState { result, state: _ } = evm.transact()?;
 
                             drop(evm);
@@ -1312,7 +1349,8 @@ impl Backend {
                         GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
                         GethDebugBuiltInTracerType::FourByteTracer |
                         GethDebugBuiltInTracerType::PreStateTracer |
-                        GethDebugBuiltInTracerType::MuxTracer => {
+                        GethDebugBuiltInTracerType::MuxTracer |
+                        GethDebugBuiltInTracerType::FlatCallTracer => {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
                         }
                     },
@@ -1329,7 +1367,7 @@ impl Backend {
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
-            let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
+            let mut evm = self.new_evm_with_inspector_ref(state.as_dyn(), env, &mut inspector);
             let ResultAndState { result, state: _ } = evm.transact()?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -1358,16 +1396,13 @@ impl Backend {
         .await?
     }
 
-    pub fn build_access_list_with_state<D>(
+    pub fn build_access_list_with_state(
         &self,
-        state: D,
+        state: &dyn DatabaseRef<Error = DatabaseError>,
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError>
-    where
-        D: DatabaseRef<Error = DatabaseError>,
-    {
+    ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError> {
         let from = request.from.unwrap_or_default();
         let to = if let Some(TxKind::Call(to)) = request.to {
             to
@@ -1888,7 +1923,7 @@ impl Backend {
 
         let db = self.db.read().await;
         let block = self.env.read().block.clone();
-        Ok(f(Box::new(&*db), block))
+        Ok(f(Box::new(&**db), block))
     }
 
     pub async fn storage_at(
@@ -1914,17 +1949,14 @@ impl Backend {
         address: Address,
         block_request: Option<BlockRequest>,
     ) -> Result<Bytes, BlockchainError> {
-        self.with_database_at(block_request, |db, _| self.get_code_with_state(db, address)).await?
+        self.with_database_at(block_request, |db, _| self.get_code_with_state(&db, address)).await?
     }
 
-    pub fn get_code_with_state<D>(
+    pub fn get_code_with_state(
         &self,
-        state: D,
+        state: &dyn DatabaseRef<Error = DatabaseError>,
         address: Address,
-    ) -> Result<Bytes, BlockchainError>
-    where
-        D: DatabaseRef<Error = DatabaseError>,
-    {
+    ) -> Result<Bytes, BlockchainError> {
         trace!(target: "backend", "get code for {:?}", address);
         let account = state.basic_ref(address)?.unwrap_or_default();
         if account.code_hash == KECCAK_EMPTY {
@@ -2498,7 +2530,7 @@ impl Backend {
             self.db.write().await.clear();
             for (address, acc) in common_state {
                 for (key, value) in acc.storage {
-                    self.db.write().await.set_storage_at(address, key, value)?;
+                    self.db.write().await.set_storage_at(address, key.into(), value.into())?;
                 }
                 self.db.write().await.insert_account(address, acc.info);
             }

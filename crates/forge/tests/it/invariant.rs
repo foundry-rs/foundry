@@ -3,7 +3,8 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
-use foundry_test_utils::Filter;
+use foundry_config::{Config, InvariantConfig};
+use foundry_test_utils::{forgetest_init, str, Filter};
 use std::collections::BTreeMap;
 
 macro_rules! get_counterexample {
@@ -479,7 +480,7 @@ async fn test_invariant_assume_respects_restrictions() {
             vec![(
                 "invariant_dummy()",
                 false,
-                Some("The `vm.assume` cheatcode rejected too many inputs (1 allowed)".into()),
+                Some("`vm.assume` rejected too many inputs (1 allowed)".into()),
                 None,
                 None,
             )],
@@ -700,3 +701,71 @@ async fn test_no_reverts_in_counterexample() {
         }
     };
 }
+
+// Tests that a persisted failure doesn't fail due to assume revert if test driver is changed.
+forgetest_init!(should_not_fail_replay_assume, |prj, cmd| {
+    let config = Config {
+        invariant: {
+            InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() }
+        },
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    // Add initial test that breaks invariant.
+    prj.add_test(
+        "AssumeTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract AssumeHandler is Test {
+    function fuzzMe(uint256 a) public {
+        require(false, "Invariant failure");
+    }
+}
+
+contract AssumeTest is Test {
+    function setUp() public {
+        AssumeHandler handler = new AssumeHandler();
+    }
+    function invariant_assume() public {}
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_assume"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: revert: Invariant failure]
+...
+"#]]);
+
+    // Change test to use assume instead require. Same test should fail with too many inputs
+    // rejected message instead persisted failure revert.
+    prj.add_test(
+        "AssumeTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract AssumeHandler is Test {
+    function fuzzMe(uint256 a) public {
+        vm.assume(false);
+    }
+}
+
+contract AssumeTest is Test {
+    function setUp() public {
+        AssumeHandler handler = new AssumeHandler();
+    }
+    function invariant_assume() public {}
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_assume() (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+});

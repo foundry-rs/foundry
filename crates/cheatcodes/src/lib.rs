@@ -14,6 +14,7 @@ extern crate tracing;
 use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
 use revm::{ContextPrecompiles, InnerEvmContext};
+use spec::Status;
 
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
@@ -80,8 +81,9 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
         &self,
         ccx: &mut CheatsCtxt<DB>,
-        _executor: &mut E,
+        executor: &mut E,
     ) -> Result {
+        let _ = executor;
         self.apply_stateful(ccx)
     }
 }
@@ -89,6 +91,8 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
 pub(crate) trait DynCheatcode {
     fn name(&self) -> &'static str;
     fn id(&self) -> &'static str;
+    fn signature(&self) -> &'static str;
+    fn status(&self) -> &Status<'static>;
     fn as_debug(&self) -> &dyn std::fmt::Debug;
 }
 
@@ -98,6 +102,12 @@ impl<T: Cheatcode> DynCheatcode for T {
     }
     fn id(&self) -> &'static str {
         T::CHEATCODE.func.id
+    }
+    fn signature(&self) -> &'static str {
+        T::CHEATCODE.func.signature
+    }
+    fn status(&self) -> &Status<'static> {
+        &T::CHEATCODE.status
     }
     fn as_debug(&self) -> &dyn std::fmt::Debug {
         self

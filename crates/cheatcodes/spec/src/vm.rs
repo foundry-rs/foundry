@@ -6,6 +6,7 @@ use super::*;
 use crate::Vm::ForgeContext;
 use alloy_sol_types::sol;
 use foundry_macros::Cheatcode;
+use std::fmt;
 
 sol! {
 // Cheatcodes are marked as view/pure/none using the following rules:
@@ -473,6 +474,15 @@ interface Vm {
     function mockCallRevert(address callee, uint256 msgValue, bytes calldata data, bytes calldata revertData)
         external;
 
+    /// Whenever a call is made to `callee` with calldata `data`, this cheatcode instead calls
+    /// `target` with the same calldata. This functionality is similar to a delegate call made to
+    /// `target` contract from `callee`.
+    /// Can be used to substitute a call to a function with another implementation that captures
+    /// the primary logic of the original function but is easier to reason about.
+    /// If calldata is not a strict match then partial match by selector is attempted.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockFunction(address callee, address target, bytes calldata data) external;
+
     // --- Impersonation (pranks) ---
 
     /// Sets the *next* call's `msg.sender` to be the input address.
@@ -501,11 +511,19 @@ interface Vm {
 
     // -------- State Snapshots --------
 
+    /// `snapshot` is being deprecated in favor of `snapshotState`. It will be removed in future versions.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotState`")))]
+    function snapshot() external returns (uint256 snapshotId);
+
     /// Snapshot the current state of the evm.
     /// Returns the ID of the snapshot that was created.
-    /// To revert a snapshot use `revertTo`.
+    /// To revert a snapshot use `revertToState`.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function snapshot() external returns (uint256 snapshotId);
+    function snapshotState() external returns (uint256 snapshotId);
+
+    /// `revertTo` is being deprecated in favor of `revertToState`. It will be removed in future versions.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `revertToState`")))]
+    function revertTo(uint256 snapshotId) external returns (bool success);
 
     /// Revert the state of the EVM to a previous snapshot
     /// Takes the snapshot ID to revert to.
@@ -513,9 +531,13 @@ interface Vm {
     /// Returns `true` if the snapshot was successfully reverted.
     /// Returns `false` if the snapshot does not exist.
     ///
-    /// **Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteSnapshot`.
+    /// **Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteStateSnapshot`.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function revertTo(uint256 snapshotId) external returns (bool success);
+    function revertToState(uint256 snapshotId) external returns (bool success);
+
+    /// `revertToAndDelete` is being deprecated in favor of `revertToStateAndDelete`. It will be removed in future versions.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `revertToStateAndDelete`")))]
+    function revertToAndDelete(uint256 snapshotId) external returns (bool success);
 
     /// Revert the state of the EVM to a previous snapshot and automatically deletes the snapshots
     /// Takes the snapshot ID to revert to.
@@ -523,7 +545,11 @@ interface Vm {
     /// Returns `true` if the snapshot was successfully reverted and deleted.
     /// Returns `false` if the snapshot does not exist.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function revertToAndDelete(uint256 snapshotId) external returns (bool success);
+    function revertToStateAndDelete(uint256 snapshotId) external returns (bool success);
+
+    /// `deleteSnapshot` is being deprecated in favor of `deleteStateSnapshot`. It will be removed in future versions.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `deleteStateSnapshot`")))]
+    function deleteSnapshot(uint256 snapshotId) external returns (bool success);
 
     /// Removes the snapshot with the given ID created by `snapshot`.
     /// Takes the snapshot ID to delete.
@@ -531,11 +557,15 @@ interface Vm {
     /// Returns `true` if the snapshot was successfully deleted.
     /// Returns `false` if the snapshot does not exist.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function deleteSnapshot(uint256 snapshotId) external returns (bool success);
+    function deleteStateSnapshot(uint256 snapshotId) external returns (bool success);
+
+    /// `deleteSnapshots` is being deprecated in favor of `deleteStateSnapshots`. It will be removed in future versions.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `deleteStateSnapshots`")))]
+    function deleteSnapshots() external;
 
     /// Removes _all_ snapshots previously created by `snapshot`.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function deleteSnapshots() external;
+    function deleteStateSnapshots() external;
 
     // -------- Forking --------
     // --- Creation and Selection ---
@@ -803,9 +833,25 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes calldata revertData) external;
 
+    /// Expects an error with any revert data on next call to reverter address.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(address reverter) external;
+
+    /// Expects an error from reverter address on next call, with any revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes4 revertData, address reverter) external;
+
+    /// Expects an error from reverter address on next call, that exactly matches the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectRevert(bytes calldata revertData, address reverter) external;
+
     /// Expects an error on next call that starts with the revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectPartialRevert(bytes4 revertData) external;
+
+    /// Expects an error on next call to reverter address, that starts with the revert data.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectPartialRevert(bytes4 revertData, address reverter) external;
 
     /// Expects an error on next cheatcode call with any revert data.
     #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
@@ -834,9 +880,13 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectSafeMemoryCall(uint64 min, uint64 max) external;
 
-    /// Marks a test as skipped. Must be called at the top of the test.
+    /// Marks a test as skipped. Must be called at the top level of a test.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function skip(bool skipTest) external;
+
+    /// Marks a test as skipped with a reason. Must be called at the top level of a test.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function skip(bool skipTest, string calldata reason) external;
 
     /// Asserts that the given condition is true.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1502,6 +1552,14 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function writeLine(string calldata path, string calldata data) external;
 
+    /// Gets the artifact path from code (aka. creation code).
+    #[cheatcode(group = Filesystem)]
+    function getArtifactPathByCode(bytes calldata code) external view returns (string memory path);
+
+    /// Gets the artifact path from deployed code (aka. runtime code).
+    #[cheatcode(group = Filesystem)]
+    function getArtifactPathByDeployedCode(bytes calldata deployedCode) external view returns (string memory path);
+
     /// Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     #[cheatcode(group = Filesystem)]
@@ -1515,7 +1573,7 @@ interface Vm {
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
     ///
-    /// Additionaly accepts abi-encoded constructor arguments.
+    /// Additionally accepts abi-encoded constructor arguments.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);
 
@@ -1836,7 +1894,7 @@ interface Vm {
 
     /// Checks if `key` exists in a JSON object
     /// `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
-    #[cheatcode(group = Json, status = Deprecated)]
+    #[cheatcode(group = Json, status = Deprecated(Some("replaced by `keyExistsJson`")))]
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     /// Checks if `key` exists in a JSON object.
     #[cheatcode(group = Json)]
@@ -2105,6 +2163,19 @@ interface Vm {
         pure
         returns (bytes32[] memory);
 
+    /// Parses a string of TOML data and coerces it to type corresponding to `typeDescription`.
+    #[cheatcode(group = Toml)]
+    function parseTomlType(string calldata toml, string calldata typeDescription) external pure returns (bytes memory);
+    /// Parses a string of TOML data at `key` and coerces it to type corresponding to `typeDescription`.
+    #[cheatcode(group = Toml)]
+    function parseTomlType(string calldata toml, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
+    /// Parses a string of TOML data at `key` and coerces it to type array corresponding to `typeDescription`.
+    #[cheatcode(group = Toml)]
+    function parseTomlTypeArray(string calldata toml, string calldata key, string calldata typeDescription)
+        external
+        pure
+        returns (bytes memory);
+
     /// Returns an array of all the keys in a TOML table.
     #[cheatcode(group = Toml)]
     function parseTomlKeys(string calldata toml, string calldata key) external pure returns (string[] memory keys);
@@ -2287,13 +2358,33 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function randomUint() external returns (uint256);
 
-    /// Returns random uin256 value between the provided range (=min..=max).
+    /// Returns random uint256 value between the provided range (=min..=max).
     #[cheatcode(group = Utilities)]
     function randomUint(uint256 min, uint256 max) external returns (uint256);
+
+    /// Returns an random `uint256` value of given bits.
+    #[cheatcode(group = Utilities)]
+    function randomUint(uint256 bits) external view returns (uint256);
 
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
     function randomAddress() external returns (address);
+
+    /// Returns an random `int256` value.
+    #[cheatcode(group = Utilities)]
+    function randomInt() external view returns (int256);
+
+    /// Returns an random `int256` value of given bits.
+    #[cheatcode(group = Utilities)]
+    function randomInt(uint256 bits) external view returns (int256);
+
+    /// Returns an random `bool`.
+    #[cheatcode(group = Utilities)]
+    function randomBool() external view returns (bool);
+
+    /// Returns an random byte array value of the given length.
+    #[cheatcode(group = Utilities)]
+    function randomBytes(uint256 len) external view returns (bytes memory);
 
     /// Pauses collection of call traces. Useful in cases when you want to skip tracing of
     /// complex calls which are not useful for debugging.
@@ -2303,6 +2394,14 @@ interface Vm {
     /// Unpauses collection of call traces.
     #[cheatcode(group = Utilities)]
     function resumeTracing() external view;
+
+    /// Utility cheatcode to copy storage of `from` contract to another `to` contract.
+    #[cheatcode(group = Utilities)]
+    function copyStorage(address from, address to) external;
+
+    /// Utility cheatcode to set arbitrary storage for given target address.
+    #[cheatcode(group = Utilities)]
+    function setArbitraryStorage(address target) external;
 }
 }
 
@@ -2327,4 +2426,23 @@ impl PartialEq for ForgeContext {
             _ => false,
         }
     }
+}
+
+impl fmt::Display for Vm::CheatcodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.message.fmt(f)
+    }
+}
+
+impl fmt::Display for Vm::VmErrors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CheatcodeError(err) => err.fmt(f),
+        }
+    }
+}
+
+#[track_caller]
+const fn panic_unknown_safety() -> ! {
+    panic!("cannot determine safety from the group, add a `#[cheatcode(safety = ...)]` attribute")
 }

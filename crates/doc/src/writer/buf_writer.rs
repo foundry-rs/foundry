@@ -43,7 +43,7 @@ impl BufWriter {
     }
 
     /// Write [AsDoc] implementation to the buffer with newline.
-    pub fn writeln_doc<T: AsDoc>(&mut self, doc: T) -> fmt::Result {
+    pub fn writeln_doc<T: AsDoc>(&mut self, doc: &T) -> fmt::Result {
         writeln!(self.buf, "{}", doc.as_doc()?)
     }
 

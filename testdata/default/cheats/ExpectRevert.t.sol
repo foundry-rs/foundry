@@ -203,3 +203,151 @@ contract ExpectRevertTest is DSTest {
         new ConstructorReverter("some message");
     }
 }
+
+contract AContract {
+    BContract bContract;
+    CContract cContract;
+
+    constructor(BContract _bContract, CContract _cContract) {
+        bContract = _bContract;
+        cContract = _cContract;
+    }
+
+    function callAndRevert() public pure {
+        require(1 > 2, "Reverted by AContract");
+    }
+
+    function callAndRevertInBContract() public {
+        bContract.callAndRevert();
+    }
+
+    function callAndRevertInCContract() public {
+        cContract.callAndRevert();
+    }
+
+    function callAndRevertInCContractThroughBContract() public {
+        bContract.callAndRevertInCContract();
+    }
+
+    function createDContract() public {
+        new DContract();
+    }
+
+    function createDContractThroughBContract() public {
+        bContract.createDContract();
+    }
+
+    function createDContractThroughCContract() public {
+        cContract.createDContract();
+    }
+
+    function doNotRevert() public {}
+}
+
+contract BContract {
+    CContract cContract;
+
+    constructor(CContract _cContract) {
+        cContract = _cContract;
+    }
+
+    function callAndRevert() public pure {
+        require(1 > 2, "Reverted by BContract");
+    }
+
+    function callAndRevertInCContract() public {
+        this.doNotRevert();
+        cContract.doNotRevert();
+        cContract.callAndRevert();
+    }
+
+    function createDContract() public {
+        this.doNotRevert();
+        cContract.doNotRevert();
+        new DContract();
+    }
+
+    function createDContractThroughCContract() public {
+        this.doNotRevert();
+        cContract.doNotRevert();
+        cContract.createDContract();
+    }
+
+    function doNotRevert() public {}
+}
+
+contract CContract {
+    error CContractError(string reason);
+
+    function callAndRevert() public pure {
+        revert CContractError("Reverted by CContract");
+    }
+
+    function createDContract() public {
+        new DContract();
+    }
+
+    function doNotRevert() public {}
+}
+
+contract DContract {
+    constructor() {
+        require(1 > 2, "Reverted by DContract");
+    }
+}
+
+contract ExpectRevertWithReverterTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    error CContractError(string reason);
+
+    AContract aContract;
+    BContract bContract;
+    CContract cContract;
+
+    function setUp() public {
+        cContract = new CContract();
+        bContract = new BContract(cContract);
+        aContract = new AContract(bContract, cContract);
+    }
+
+    function testExpectRevertsWithReverter() public {
+        // Test expect revert with reverter at first call.
+        vm.expectRevert(address(aContract));
+        aContract.callAndRevert();
+        // Test expect revert with reverter at second subcall.
+        vm.expectRevert(address(bContract));
+        aContract.callAndRevertInBContract();
+        // Test expect revert with partial data match and reverter at third subcall.
+        vm.expectPartialRevert(CContractError.selector, address(cContract));
+        aContract.callAndRevertInCContractThroughBContract();
+        // Test expect revert with exact data match and reverter at second subcall.
+        vm.expectRevert(abi.encodeWithSelector(CContractError.selector, "Reverted by CContract"), address(cContract));
+        aContract.callAndRevertInCContract();
+    }
+
+    function testExpectRevertsWithReverterInConstructor() public {
+        // Test expect revert with reverter when constructor reverts.
+        vm.expectRevert(abi.encodePacked("Reverted by DContract"), address(cContract));
+        cContract.createDContract();
+
+        vm.expectRevert(address(bContract));
+        bContract.createDContract();
+        vm.expectRevert(address(cContract));
+        bContract.createDContractThroughCContract();
+
+        vm.expectRevert(address(aContract));
+        aContract.createDContract();
+        vm.expectRevert(address(bContract));
+        aContract.createDContractThroughBContract();
+        vm.expectRevert(address(cContract));
+        aContract.createDContractThroughCContract();
+    }
+
+    function testFailExpectRevertsNotOnImmediateNextCall() public {
+        // Test expect revert with reverter fails if next call doesn't revert.
+        vm.expectRevert(address(aContract));
+        aContract.doNotRevert();
+        aContract.callAndRevert();
+    }
+}

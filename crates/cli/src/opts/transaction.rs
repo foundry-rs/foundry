@@ -62,6 +62,14 @@ pub struct TransactionOpts {
     /// Can be either a hex-encoded signed authorization or an address.
     #[arg(long, conflicts_with_all = &["legacy", "blob"])]
     pub auth: Option<String>,
+
+    /// EIP-2930 access list.
+    ///
+    /// Accepts either a JSON-encoded access list or an empty value to create the access list
+    /// via an RPC call to `eth_createAccessList`. To retrieve only the access list portion, use
+    /// the `cast access-list` command.
+    #[arg(long)]
+    pub access_list: Option<Option<String>>,
 }
 
 #[cfg(test)]
