@@ -2456,7 +2456,12 @@ impl Backend {
 
             let _ = builder.root();
 
-            let proof = builder.take_proofs().values().cloned().collect::<Vec<_>>();
+            let proof = builder
+                .take_proof_nodes()
+                .into_nodes_sorted()
+                .into_iter()
+                .map(|(_, v)| v)
+                .collect();
             let storage_proofs = prove_storage(&account.storage, &keys);
 
             let account_proof = AccountProof {
@@ -2825,14 +2830,14 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
     let _ = builder.root();
 
     let mut proofs = Vec::new();
-    let all_proof_nodes = builder.take_proofs();
+    let all_proof_nodes = builder.take_proof_nodes();
 
     for proof_key in keys {
         // Iterate over all proof nodes and find the matching ones.
         // The filtered results are guaranteed to be in order.
         let matching_proof_nodes = all_proof_nodes
-            .iter()
-            .filter(|(path, _)| proof_key.starts_with(path))
+            .matching_nodes_sorted(&proof_key)
+            .into_iter()
             .map(|(_, node)| node.clone());
         proofs.push(matching_proof_nodes.collect());
     }

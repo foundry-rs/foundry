@@ -253,8 +253,8 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db_accounts = std::mem::take(&mut self.accounts);
-        let mut accounts = HashMap::new();
-        let mut account_storage = HashMap::new();
+        let mut accounts = HashMap::default();
+        let mut account_storage = HashMap::default();
 
         for (addr, mut acc) in db_accounts {
             account_storage.insert(addr, std::mem::take(&mut acc.storage));
@@ -268,8 +268,8 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
         let db_accounts = self.accounts.clone();
-        let mut accounts = HashMap::new();
-        let mut account_storage = HashMap::new();
+        let mut accounts = HashMap::default();
+        let mut account_storage = HashMap::default();
 
         for (addr, acc) in db_accounts {
             account_storage.insert(addr, acc.storage.clone());

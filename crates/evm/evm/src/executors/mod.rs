@@ -753,7 +753,7 @@ impl Default for RawCallResult {
             gas_refunded: 0,
             stipend: 0,
             logs: Vec::new(),
-            labels: HashMap::new(),
+            labels: HashMap::default(),
             traces: None,
             coverage: None,
             transactions: None,

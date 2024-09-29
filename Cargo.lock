@@ -748,14 +748,13 @@ dependencies = [
 
 [[package]]
 name = "alloy-trie"
-version = "0.5.3"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a46c9c4fdccda7982e7928904bd85fe235a0404ee3d7e197fff13d61eac8b4f"
+checksum = "e9703ce68b97f8faae6f7739d1e003fc97621b856953cbcdbb2b515743f23288"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "derive_more 1.0.0",
- "hashbrown 0.14.5",
  "nybbles",
  "serde",
  "smallvec",
@@ -1773,7 +1772,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40723b8fb387abc38f4f4a37c09073622e41dd12327033091ef8950659e6dc0c"
 dependencies = [
  "memchr",
- "regex-automata 0.4.7",
+ "regex-automata 0.4.8",
  "serde",
 ]
 
@@ -2281,9 +2280,9 @@ dependencies = [
 
 [[package]]
 name = "const-hex"
-version = "1.12.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94fb8a24a26d37e1ffd45343323dc9fe6654ceea44c12f2fcb3d7ac29e610bc6"
+checksum = "0121754e84117e65f9d90648ee6aa4882a6e63110307ab73967a4c5e7e69e586"
 dependencies = [
  "cfg-if",
  "cpufeatures",
@@ -3457,7 +3456,7 @@ dependencies = [
  "itertools 0.13.0",
  "regex",
  "reqwest",
- "revm-primitives 9.0.2",
+ "revm-primitives",
  "semver 1.0.23",
  "serde",
  "serde_json",
@@ -3703,7 +3702,7 @@ dependencies = [
  "chrono",
  "comfy-table",
  "foundry-macros",
- "revm-primitives 9.0.2",
+ "revm-primitives",
  "serde",
  "serde_json",
  "similar-asserts",
@@ -3841,7 +3840,7 @@ dependencies = [
  "path-slash",
  "regex",
  "reqwest",
- "revm-primitives 9.0.2",
+ "revm-primitives",
  "semver 1.0.23",
  "serde",
  "serde_json",
@@ -4019,9 +4018,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-fork-db"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3ab0b0379d1838fa1f0da521ffbbac168aaf113498ea8d6c9650195cadfa736"
+checksum = "2fb76083f203e341deeb4a03f9cc86df096f09c723c42e44c25052c233ed87b4"
 dependencies = [
  "alloy-primitives",
  "alloy-provider",
@@ -4032,7 +4031,6 @@ dependencies = [
  "futures",
  "parking_lot",
  "revm",
- "rustc-hash",
  "serde",
  "serde_json",
  "thiserror",
@@ -4565,8 +4563,8 @@ dependencies = [
  "aho-corasick",
  "bstr",
  "log",
- "regex-automata 0.4.7",
- "regex-syntax 0.8.4",
+ "regex-automata 0.4.8",
+ "regex-syntax 0.8.5",
 ]
 
 [[package]]
@@ -5003,7 +5001,7 @@ dependencies = [
  "globset",
  "log",
  "memchr",
- "regex-automata 0.4.7",
+ "regex-automata 0.4.8",
  "same-file",
  "walkdir",
  "winapi-util",
@@ -5350,7 +5348,7 @@ dependencies = [
  "lalrpop-util",
  "petgraph",
  "regex",
- "regex-syntax 0.8.4",
+ "regex-syntax 0.8.5",
  "string_cache",
  "term",
  "tiny-keccak",
@@ -5364,7 +5362,7 @@ version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "507460a910eb7b32ee961886ff48539633b788a36b65692b95f225b844c82553"
 dependencies = [
- "regex-automata 0.4.7",
+ "regex-automata 0.4.8",
 ]
 
 [[package]]
@@ -5997,9 +5995,12 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.19.0"
+version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
+checksum = "82881c4be219ab5faaf2ad5e5e5ecdff8c66bd7402ca3160975c93b24961afd1"
+dependencies = [
+ "portable-atomic",
+]
 
 [[package]]
 name = "oorandom"
@@ -6732,7 +6733,7 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rand_xorshift",
- "regex-syntax 0.8.4",
+ "regex-syntax 0.8.5",
  "rusty-fork",
  "tempfile",
  "unarray",
@@ -7049,14 +7050,14 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.10.6"
+version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4219d74c6b67a3654a9fbebc4b419e22126d13d2f3c4a07ee0cb61ff79a79619"
+checksum = "38200e5ee88914975b69f657f0801b6f6dccafd44fd9326302a4aaeecfacb1d8"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-automata 0.4.7",
- "regex-syntax 0.8.4",
+ "regex-automata 0.4.8",
+ "regex-syntax 0.8.5",
 ]
 
 [[package]]
@@ -7070,13 +7071,13 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.7"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38caf58cc5ef2fed281f89292ef23f6365465ed9a41b7a7754eb4e26496c92df"
+checksum = "368758f23274712b504848e9d5a6f010445cc8b87a7cdb4d7cbee666c1288da3"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-syntax 0.8.4",
+ "regex-syntax 0.8.5",
 ]
 
 [[package]]
@@ -7093,9 +7094,9 @@ checksum = "f162c6dd7b008981e4d40210aca20b4bd0f9b60ca9271061b07f78537722f2e1"
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.4"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a66a03ae7c801facd77a29370b4faec201768915ac14a721ba36f20bc9c209b"
+checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
 name = "reqwest"
@@ -7188,7 +7189,7 @@ version = "10.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e5e14002afae20b5bf1566f22316122f42f57517000e559c55b25bf7a49cba2"
 dependencies = [
- "revm-primitives 10.0.0",
+ "revm-primitives",
  "serde",
 ]
 
@@ -7205,29 +7206,11 @@ dependencies = [
  "k256",
  "once_cell",
  "p256",
- "revm-primitives 10.0.0",
+ "revm-primitives",
  "ripemd",
  "secp256k1",
  "sha2",
  "substrate-bn",
-]
-
-[[package]]
-name = "revm-primitives"
-version = "9.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7a6bff9dbde3370a5ac9555104117f7e6039b3cc76e8d5d9d01899088beca2a"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "auto_impl",
- "bitflags 2.6.0",
- "bitvec",
- "cfg-if",
- "dyn-clone",
- "enumn",
- "hashbrown 0.14.5",
- "hex",
 ]
 
 [[package]]
@@ -9044,9 +9027,9 @@ checksum = "42ff0bf0c66b8238c6f3b578df37d0b7848e55df8577b3f74f92a69acceeb825"
 
 [[package]]
 name = "ucd-trie"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed646292ffc8188ef8ea4d1e0e0150fb15a5c2e12ad9b8fc191ae7a8a7f3c4b9"
+checksum = "2896d95c02a80c6d6a5d6e953d479f5ddf2dfdb6a244441010e373ac0fb88971"
 
 [[package]]
 name = "uint"
