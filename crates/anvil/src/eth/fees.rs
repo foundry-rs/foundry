@@ -179,7 +179,7 @@ impl FeeManager {
 }
 
 /// Calculate base fee for next block. [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) spec
-pub fn calculate_next_block_base_fee(gas_used: u128, gas_limit: u128, base_fee: u128) -> u128 {
+pub fn calculate_next_block_base_fee(gas_used: u64, gas_limit: u64, base_fee: u64) -> u128 {
     calc_next_block_base_fee(gas_used, gas_limit, base_fee, BaseFeeParams::ethereum())
 }
 
@@ -235,9 +235,9 @@ impl FeeHistoryService {
         };
 
         let mut block_number: Option<u64> = None;
-        let base_fee = header.base_fee_per_gas.unwrap_or_default();
-        let excess_blob_gas = header.excess_blob_gas;
-        let blob_gas_used = header.blob_gas_used;
+        let base_fee = header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default();
+        let excess_blob_gas = header.excess_blob_gas.map(|g| g as u128);
+        let blob_gas_used = header.blob_gas_used.map(|g| g as u128);
         let base_fee_per_blob_gas = header.blob_fee();
         let mut item = FeeHistoryCacheItem {
             base_fee,

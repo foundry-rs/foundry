@@ -460,9 +460,9 @@ impl Backend {
                     // this is the base fee of the current block, but we need the base fee of
                     // the next block
                     let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                        fork_block.header.gas_used,
+                        fork_block.header.gas_used as u128,
                         gas_limit,
-                        fork_block.header.base_fee_per_gas.unwrap_or_default(),
+                        fork_block.header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default(),
                     );
 
                     self.fees.set_base_fee(next_block_base_fee);
@@ -1121,13 +1121,13 @@ impl Backend {
             (outcome, header, block_hash)
         };
         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-            header.gas_used,
-            header.gas_limit,
-            header.base_fee_per_gas.unwrap_or_default(),
+            header.gas_used as u128,
+            header.gas_limit as u128,
+            header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default(),
         );
         let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
-            header.excess_blob_gas.unwrap_or_default(),
-            header.blob_gas_used.unwrap_or_default(),
+            header.excess_blob_gas.map(|g| g as u128).unwrap_or_default(),
+            header.blob_gas_used.map(|g| g as u128).unwrap_or_default(),
         );
 
         // update next base fee

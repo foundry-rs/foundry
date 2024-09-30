@@ -2516,7 +2516,7 @@ impl EthApi {
         let gas_used = match ethres.try_into()? {
             GasEstimationCallResult::Success(gas) => Ok(gas),
             GasEstimationCallResult::OutOfGas => {
-                Err(InvalidTransactionError::BasicOutOfGas(highest_gas_limit).into())
+                Err(InvalidTransactionError::BasicOutOfGas(highest_gas_limit as u128).into())
             }
             GasEstimationCallResult::Revert(output) => {
                 Err(InvalidTransactionError::Revert(output).into())

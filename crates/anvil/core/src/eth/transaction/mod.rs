@@ -65,7 +65,7 @@ pub fn transaction_request_to_typed(
             kind: to.unwrap_or_default(),
             mint: other.get_deserialized::<U256>("mint")?.ok()?,
             value: value.unwrap_or_default(),
-            gas_limit: gas.unwrap_or_default(),
+            gas_limit: gas.map(|g| g as u128).unwrap_or_default(),
             is_system_tx: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
             input: input.into_input().unwrap_or_default(),
         }));
@@ -421,7 +421,7 @@ pub fn to_alloy_transaction_with_hash_and_sender(
             gas_price: None,
             max_fee_per_gas: None,
             max_priority_fee_per_gas: None,
-            gas: t.gas_limit,
+            gas: t.gas_limit as u64,
             input: t.input.clone().0.into(),
             chain_id: t.chain_id().map(u64::from),
             signature: None,
@@ -688,7 +688,7 @@ impl TryFrom<TypedTransaction> for TransactionRequest {
             max_fee_per_gas: essentials.max_fee_per_gas,
             max_priority_fee_per_gas: essentials.max_priority_fee_per_gas,
             max_fee_per_blob_gas: essentials.max_fee_per_blob_gas,
-            gas: Some(essentials.gas_limit),
+            gas: Some(essentials.gas_limit as u64),
             value: Some(essentials.value),
             input: essentials.input.into(),
             nonce: Some(essentials.nonce),
@@ -718,11 +718,11 @@ impl TypedTransaction {
 
     pub fn gas_limit(&self) -> u128 {
         match self {
-            Self::Legacy(tx) => tx.tx().gas_limit,
-            Self::EIP2930(tx) => tx.tx().gas_limit,
-            Self::EIP1559(tx) => tx.tx().gas_limit,
-            Self::EIP4844(tx) => tx.tx().tx().gas_limit,
-            Self::EIP7702(tx) => tx.tx().gas_limit,
+            Self::Legacy(tx) => tx.tx().gas_limit as u128,
+            Self::EIP2930(tx) => tx.tx().gas_limit as u128,
+            Self::EIP1559(tx) => tx.tx().gas_limit as u128,
+            Self::EIP4844(tx) => tx.tx().tx().gas_limit as u128,
+            Self::EIP7702(tx) => tx.tx().gas_limit as u128,
             Self::Deposit(tx) => tx.gas_limit,
         }
     }
@@ -798,7 +798,7 @@ impl TypedTransaction {
                 kind: t.tx().to,
                 input: t.tx().input.clone(),
                 nonce: t.tx().nonce,
-                gas_limit: t.tx().gas_limit,
+                gas_limit: t.tx().gas_limit as u128,
                 gas_price: Some(t.tx().gas_price),
                 max_fee_per_gas: None,
                 max_priority_fee_per_gas: None,
@@ -812,7 +812,7 @@ impl TypedTransaction {
                 kind: t.tx().to,
                 input: t.tx().input.clone(),
                 nonce: t.tx().nonce,
-                gas_limit: t.tx().gas_limit,
+                gas_limit: t.tx().gas_limit as u128,
                 gas_price: Some(t.tx().gas_price),
                 max_fee_per_gas: None,
                 max_priority_fee_per_gas: None,
@@ -826,7 +826,7 @@ impl TypedTransaction {
                 kind: t.tx().to,
                 input: t.tx().input.clone(),
                 nonce: t.tx().nonce,
-                gas_limit: t.tx().gas_limit,
+                gas_limit: t.tx().gas_limit as u128,
                 gas_price: None,
                 max_fee_per_gas: Some(t.tx().max_fee_per_gas),
                 max_priority_fee_per_gas: Some(t.tx().max_priority_fee_per_gas),
@@ -840,7 +840,7 @@ impl TypedTransaction {
                 kind: TxKind::Call(t.tx().tx().to),
                 input: t.tx().tx().input.clone(),
                 nonce: t.tx().tx().nonce,
-                gas_limit: t.tx().tx().gas_limit,
+                gas_limit: t.tx().tx().gas_limit as u128,
                 gas_price: Some(t.tx().tx().max_fee_per_blob_gas),
                 max_fee_per_gas: Some(t.tx().tx().max_fee_per_gas),
                 max_priority_fee_per_gas: Some(t.tx().tx().max_priority_fee_per_gas),
@@ -854,7 +854,7 @@ impl TypedTransaction {
                 kind: TxKind::Call(t.tx().to),
                 input: t.tx().input.clone(),
                 nonce: t.tx().nonce,
-                gas_limit: t.tx().gas_limit,
+                gas_limit: t.tx().gas_limit as u128,
                 gas_price: Some(t.tx().max_fee_per_gas),
                 max_fee_per_gas: Some(t.tx().max_fee_per_gas),
                 max_priority_fee_per_gas: Some(t.tx().max_priority_fee_per_gas),
@@ -1028,7 +1028,7 @@ impl TryFrom<WithOtherFields<RpcTransaction>> for TypedTransaction {
                 from: tx.from,
                 kind: tx.to.map(TxKind::Call).unwrap_or(TxKind::Create),
                 value: tx.value,
-                gas_limit: tx.gas,
+                gas_limit: tx.gas as u128,
                 input: tx.input.clone(),
                 mint,
                 source_hash,
@@ -1287,9 +1287,9 @@ pub struct TransactionInfo {
 pub struct DepositReceipt<T = alloy_primitives::Log> {
     #[serde(flatten)]
     pub inner: ReceiptWithBloom<T>,
-    #[serde(default, with = "alloy_serde::num::u64_opt_via_ruint")]
+    #[serde(default, with = "alloy_serde::quantity::opt")]
     pub deposit_nonce: Option<u64>,
-    #[serde(default, with = "alloy_serde::num::u64_opt_via_ruint")]
+    #[serde(default, with = "alloy_serde::quantity::opt")]
     pub deposit_receipt_version: Option<u64>,
 }
 
@@ -1690,7 +1690,7 @@ mod tests {
         let tx = TxLegacy {
             nonce: 2u64,
             gas_price: 1000000000u128,
-            gas_limit: 100000u128,
+            gas_limit: 100000,
             to: TxKind::Call(Address::from_slice(
                 &hex::decode("d3e8763675e4c425df46cc3b5c0f6cbdac396046").unwrap()[..],
             )),
