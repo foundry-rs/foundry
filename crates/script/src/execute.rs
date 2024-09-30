@@ -350,7 +350,7 @@ impl ExecutedState {
 
     /// Collects the return values from the execution result.
     fn get_returns(&self) -> Result<HashMap<String, NestedValue>> {
-        let mut returns = HashMap::new();
+        let mut returns = HashMap::default();
         let returned = &self.execution_result.returned;
         let func = &self.execution_data.func;
 

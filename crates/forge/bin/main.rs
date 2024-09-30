@@ -92,7 +92,7 @@ fn run() -> Result<()> {
         }
         ForgeSubcommand::Snapshot(cmd) => {
             if cmd.is_watch() {
-                utils::block_on(watch::watch_snapshot(cmd))
+                utils::block_on(watch::watch_gas_snapshot(cmd))
             } else {
                 utils::block_on(cmd.run())
             }

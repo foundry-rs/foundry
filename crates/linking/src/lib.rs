@@ -317,7 +317,7 @@ mod tests {
                 output = output.with_stripped_file_prefixes(project.root());
             }
 
-            Self { project, output, dependency_assertions: HashMap::new() }
+            Self { project, output, dependency_assertions: HashMap::default() }
         }
 
         fn assert_dependencies(

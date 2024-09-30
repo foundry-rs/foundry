@@ -349,7 +349,7 @@ impl SessionSource {
     ///
     /// Optionally, a map of contract names to a vec of [IntermediateContract]s.
     pub fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
-        let mut res_map = HashMap::new();
+        let mut res_map = HashMap::default();
         let parsed_map = self.compiler_input().sources;
         for source in parsed_map.values() {
             Self::get_intermediate_contract(&source.content, &mut res_map);

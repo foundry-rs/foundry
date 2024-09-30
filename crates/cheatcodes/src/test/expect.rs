@@ -597,7 +597,7 @@ pub(crate) fn handle_expect_emit(
     let Some(expected) = &event_to_fill_or_check.log else {
         // Unless the caller is trying to match an anonymous event, the first topic must be
         // filled.
-        if event_to_fill_or_check.anonymous || log.topics().first().is_some() {
+        if event_to_fill_or_check.anonymous || !log.topics().is_empty() {
             event_to_fill_or_check.log = Some(log.data.clone());
             // If we only filled the expected log then we put it back at the same position.
             state.expected_emits.insert(index_to_fill_or_check, event_to_fill_or_check);
