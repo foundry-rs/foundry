@@ -18,9 +18,15 @@ use forge::{
 };
 use foundry_cli::{
     opts::CoreBuildArgs,
+    p_println,
     utils::{self, LoadConfig},
 };
-use foundry_common::{cli_warn, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
+use foundry_common::{
+    cli_warn,
+    compile::{supports_via_ir, ProjectCompiler},
+    evm::EvmArgs,
+    fs, shell,
+};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -311,10 +317,33 @@ impl TestArgs {
 
         // Disable optimizer when decoding internal functions.
         if self.decode_internal.is_some() {
-            project.settings.solc.optimizer.disable();
-            project.settings.solc.optimizer.runs = None;
-            project.settings.solc.optimizer.details = None;
-            project.settings.solc.via_ir = None;
+            if self.opts.via_ir {
+                if !supports_via_ir(&config.solc) {
+                    return Err(eyre::eyre!(
+                        "viaIR with minimum optimization is only available in Solidity 0.8.13 and above."
+                    ));
+                }
+
+                let msg = concat!(
+                    "Warning! Using \"--ir-minimum\" flag to enable viaIR with minimum optimization, \
+                    which can result in inaccurate source mappings.\n",
+                )
+                .yellow();
+                p_println!(!self.opts.silent => "{msg}");
+
+                project.settings.solc.settings =
+                    project.settings.solc.settings.with_via_ir_minimum_optimization()
+            } else {
+                let msg =
+                    "Warning! Disabling optimizer as it is required for accurate source mappings."
+                        .yellow();
+                p_println!(!self.opts.silent => "{msg}");
+
+                project.settings.solc.optimizer.disable();
+                project.settings.solc.optimizer.runs = None;
+                project.settings.solc.optimizer.details = None;
+                project.settings.solc.via_ir = None;
+            }
         }
 
         let output = compiler.compile(&project)?;

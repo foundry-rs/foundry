@@ -17,12 +17,15 @@ use foundry_cli::{
     p_println,
     utils::{LoadConfig, STATIC_FUZZ_SEED},
 };
-use foundry_common::{compile::ProjectCompiler, fs};
+use foundry_common::{
+    compile::{supports_via_ir, ProjectCompiler},
+    fs,
+};
 use foundry_compilers::{
     artifacts::{sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode},
     Artifact, ArtifactId, Project, ProjectCompileOutput,
 };
-use foundry_config::{Config, SolcReq};
+use foundry_config::Config;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use semver::Version;
@@ -105,12 +108,10 @@ impl CoverageArgs {
             // TODO: How to detect solc version if the user does not specify a solc version in
             // config  case1: specify local installed solc ?
             //  case2: multiple solc versions used and  auto_detect_solc == true
-            if let Some(SolcReq::Version(version)) = &config.solc {
-                if *version < Version::new(0, 8, 13) {
-                    return Err(eyre::eyre!(
-                            "viaIR with minimum optimization is only available in Solidity 0.8.13 and above."
-                        ));
-                }
+            if !supports_via_ir(&config.solc) {
+                return Err(eyre::eyre!(
+                    "viaIR with minimum optimization is only available in Solidity 0.8.13 and above."
+                ));
             }
 
             // print warning message
@@ -130,6 +131,11 @@ impl CoverageArgs {
             project.settings.solc.settings =
                 project.settings.solc.settings.with_via_ir_minimum_optimization()
         } else {
+            let msg =
+                "Warning! Disabling optimizer as it is required for accurate source mappings."
+                    .yellow();
+            p_println!(!self.test.build_args().silent => "{msg}");
+
             project.settings.solc.optimizer.disable();
             project.settings.solc.optimizer.runs = None;
             project.settings.solc.optimizer.details = None;

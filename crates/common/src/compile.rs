@@ -14,6 +14,7 @@ use foundry_compilers::{
     solc::SolcSettings,
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
+use foundry_config::SolcReq;
 use num_format::{Locale, ToFormattedString};
 use std::{
     collections::BTreeMap,
@@ -430,4 +431,15 @@ pub fn with_compilation_reporter<O>(quiet: bool, f: impl FnOnce() -> O) -> O {
     };
 
     foundry_compilers::report::with_scoped(&reporter, f)
+}
+
+/// Returns whether the compiler version supports `via-ir` compilation.
+pub fn supports_via_ir(solc: &Option<SolcReq>) -> bool {
+    if let Some(SolcReq::Version(version)) = &solc {
+        if *version < semver::Version::new(0, 8, 13) {
+            return false;
+        }
+    }
+
+    true
 }
