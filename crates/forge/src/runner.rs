@@ -328,6 +328,8 @@ impl<'a> ContractRunner<'a> {
                 match_sig
             });
 
+        tracing::info!(call_after_unit_test);
+
         let call_after_invariant = after_invariant_fns.first().map_or(false, |after_invariant_fn| {
             let match_sig = after_invariant_fn.name == "afterInvariant";
             if !match_sig {
@@ -385,6 +387,8 @@ impl<'a> ContractRunner<'a> {
         let test_results = functions
             .par_iter()
             .map(|&func| {
+                tracing::info!("function: {}", func.name);
+
                 let start = Instant::now();
 
                 let _guard = self.tokio_handle.enter();
@@ -406,9 +410,19 @@ impl<'a> ContractRunner<'a> {
                 .entered();
 
                 let setup = setup.clone();
+                tracing::info!(?kind);
                 let mut res = match kind {
                     TestFunctionKind::UnitTest { should_fail } => {
-                        self.run_unit_test(func, should_fail, setup)
+                        let address = setup.address;
+                        let mut test_result = self.run_unit_test(func, should_fail, setup);
+
+                        if test_result.status.is_success() && call_after_unit_test {
+                            let after_unit_test_result =
+                                self.executor.call_after_unit_test(self.sender, address).unwrap();
+                            test_result.merge_call_result(&after_unit_test_result);
+                        }
+
+                        test_result
                     }
                     TestFunctionKind::FuzzTest { should_fail } => {
                         let runner = test_options.fuzz_runner(self.name, &func.name);
@@ -479,6 +493,7 @@ impl<'a> ContractRunner<'a> {
         };
 
         let success = executor.is_raw_call_mut_success(address, &mut raw_call_result, should_fail);
+
         test_result.single_result(success, reason, raw_call_result)
     }
 

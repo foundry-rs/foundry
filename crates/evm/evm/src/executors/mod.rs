@@ -373,6 +373,7 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
+        tracing::debug!(?from, ?to, "calling contract");
         let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
         self.call_with_env(env)
     }
@@ -389,9 +390,11 @@ impl Executor {
         self.transact_with_env(env)
     }
 
-    fn call_after_unit_test(&self, to: Address) -> eyre::Result<RawCallResult> {
+    #[instrument(name = "call", level = "debug", skip_all)]
+    pub fn call_after_unit_test(&self, from: Address, to: Address) -> eyre::Result<RawCallResult> {
         let calldata = Bytes::from_static(&ITest::afterUnitTestCall::SELECTOR);
-        let mut result = self.call_raw(CALLER, to, calldata, U256::ZERO)?;
+        let mut result = self.call_raw(from, to, calldata, U256::ZERO)?;
+
         let success = self.is_raw_call_mut_success(to, &mut result, false);
 
         if success {
