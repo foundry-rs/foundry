@@ -174,7 +174,7 @@ solang-parser = "=0.3.3"
 ## revm
 revm = { version = "14.0.3", default-features = false }
 revm-primitives = { version = "10.0.0", default-features = false }
-revm-inspectors = { version = "0.8.0", features = ["serde"] }
+revm-inspectors = { version = "0.7.7", features = ["serde"] }
 
 ## ethers
 ethers-contract-abigen = { version = "2.0.14", default-features = false }
@@ -279,9 +279,7 @@ soldeer = "=0.3.4"
 proptest = "1"
 comfy-table = "7"
 
-[patch.crates-io]
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "98975ef" }
-
+# [patch.crates-io]
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }

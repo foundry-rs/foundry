@@ -178,8 +178,8 @@ impl Transaction for DepositTransactionRequest {
     }
 
     /// Get `gas_limit`.
-    fn gas_limit(&self) -> u64 {
-        self.gas_limit as u64
+    fn gas_limit(&self) -> u128 {
+        self.gas_limit
     }
 
     /// Get `gas_price`.

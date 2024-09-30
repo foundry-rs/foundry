@@ -1179,14 +1179,14 @@ latest block number: {latest_block}"
         // if not set explicitly we use the base fee of the latest block
         if self.base_fee.is_none() {
             if let Some(base_fee) = block.header.base_fee_per_gas {
-                self.base_fee = Some(base_fee as u128);
+                self.base_fee = Some(base_fee);
                 env.block.basefee = U256::from(base_fee);
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
-                    block.header.gas_used as u128,
+                    block.header.gas_used,
                     gas_limit,
-                    block.header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default(),
+                    block.header.base_fee_per_gas.unwrap_or_default(),
                 );
 
                 // update next base fee
@@ -1196,9 +1196,9 @@ latest block number: {latest_block}"
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
                 env.block.blob_excess_gas_and_price =
-                    Some(BlobExcessGasAndPrice::new(blob_excess_gas));
-                let next_block_blob_excess_gas = fees
-                    .get_next_block_blob_excess_gas(blob_excess_gas as u128, blob_gas_used as u128);
+                    Some(BlobExcessGasAndPrice::new(blob_excess_gas as u64));
+                let next_block_blob_excess_gas =
+                    fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
                 fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                     next_block_blob_excess_gas,
                 ));
@@ -1258,13 +1258,13 @@ latest block number: {latest_block}"
             chain_id,
             override_chain_id,
             timestamp: block.header.timestamp,
-            base_fee: block.header.base_fee_per_gas.map(|g| g as u128),
+            base_fee: block.header.base_fee_per_gas,
             timeout: self.fork_request_timeout,
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
-            blob_gas_used: block.header.blob_gas_used.map(|g| g as u128),
+            blob_gas_used: block.header.blob_gas_used,
             blob_excess_gas_and_price: env.block.blob_excess_gas_and_price.clone(),
             force_transactions,
         };
@@ -1285,7 +1285,7 @@ latest block number: {latest_block}"
             if let Some(gas_limit) = self.gas_limit {
                 return gas_limit;
             } else if block.header.gas_limit > 0 {
-                return block.header.gas_limit as u128;
+                return block.header.gas_limit;
             }
         }
 

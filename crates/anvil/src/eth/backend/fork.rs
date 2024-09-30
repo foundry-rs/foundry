@@ -89,13 +89,7 @@ impl ClientFork {
         let total_difficulty = block.header.total_difficulty.unwrap_or_default();
 
         let number = block.header.number;
-        self.config.write().update_block(
-            number,
-            block_hash,
-            timestamp,
-            base_fee.map(|g| g as u128),
-            total_difficulty,
-        );
+        self.config.write().update_block(number, block_hash, timestamp, base_fee, total_difficulty);
 
         self.clear_cached_storage();
 
@@ -205,7 +199,7 @@ impl ClientFork {
         let block = block.unwrap_or_default();
         let res = self.provider().estimate_gas(request).block(block.into()).await?;
 
-        Ok(res as u128)
+        Ok(res)
     }
 
     /// Sends `eth_createAccessList`
