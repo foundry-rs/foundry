@@ -3711,9 +3711,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a8b6b55ad815420a141dc699a4655df7684abd0650bb08c371f8b79835c3c96"
+checksum = "588bc1dd21020966a255a578433016d4637c810ed76127997a469bc4a3311e7f"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3749,9 +3749,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11e678e647318830588a600fe13897b0b92eeb0299e760f90f24464590cb4e85"
+checksum = "3b12c7a7ab554fde7521428b040205569c187995b817481720e99adf524bf7f8"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3759,9 +3759,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49e0e2c63807b73bd3d0cb30e19fa4f015c1722be551bdf20511a45251651fbb"
+checksum = "4654933ab983928d8e33e7fdf425bb60553e8a4ac415a6014f1f2e56a5b3741d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3783,9 +3783,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e09212f84d04d1e62461bc09784b609bb9fe48b6fb973f69eca4edf1f4668cee"
+checksum = "2271a6689d27f42ffe1259f587196f56251508c6c9e362c585ccf234f5919f96"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3798,9 +3798,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "567581086a924e411374d505558f021f9d2060519dc4a21c93eae061f6079947"
+checksum = "eb71494112126e7ecb92748913403c35ef949f18734e3ff4566a782ce2c8b986"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
