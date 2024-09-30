@@ -704,7 +704,7 @@ mod tests {
         load_storage.load_transactions(serialized_transactions);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
-        assert_eq!(loaded_block.header.gas_limit, partial_header.gas_limit as u64);
+        assert_eq!(loaded_block.header.gas_limit, partial_header.gas_limit);
         let loaded_tx = loaded_block.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
     }
