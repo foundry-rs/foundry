@@ -42,7 +42,7 @@ use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
     interpreter::{
-        opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
+        opcode as op, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
@@ -923,6 +923,19 @@ impl Cheatcodes {
 
         // Apply our prank
         if let Some(prank) = &self.prank {
+            // Apply delegate call. call.caller will not equal prank.prank_caller
+            if let CallScheme::DelegateCall = call.scheme {
+                if prank.delegate_call {
+                    call.target_address = prank.new_caller;
+                    call.caller = prank.new_caller;
+                    let acc = ecx.journaled_state.account(prank.new_caller);
+                    call.value = CallValue::Apparent(acc.info.balance);
+                    if let Some(new_origin) = prank.new_origin {
+                        ecx.env.tx.caller = new_origin;
+                    }
+                }
+            }
+
             if ecx.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
                 let mut prank_applied = false;
 
@@ -1036,7 +1049,7 @@ impl Cheatcodes {
                 initialized = false;
                 old_balance = U256::ZERO;
             }
-            let kind = match call.scheme {
+            let kind: Vm::AccountAccessKind = match call.scheme {
                 CallScheme::Call => crate::Vm::AccountAccessKind::Call,
                 CallScheme::CallCode => crate::Vm::AccountAccessKind::CallCode,
                 CallScheme::DelegateCall => crate::Vm::AccountAccessKind::DelegateCall,
