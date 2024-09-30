@@ -6,7 +6,10 @@ use crate::{
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_primitives::{map::{HashMap, HashSet}, Address, Bytes};
+use alloy_primitives::{
+    map::{HashMap, HashSet},
+    Address, Bytes,
+};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionInput;
 use async_recursion::async_recursion;
