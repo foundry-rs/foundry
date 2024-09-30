@@ -303,6 +303,20 @@ impl TestArgs {
             .quiet_if(self.json || self.junit || self.opts.silent)
             .files(sources_to_compile);
 
+        // Enable internal tracing for more informative flamegraph.
+        let should_draw = self.flamegraph || self.flamechart;
+        if should_draw && self.decode_internal.is_none() {
+            self.decode_internal = Some(None);
+        }
+
+        // Disable optimizer when decoding internal functions.
+        if self.decode_internal.is_some() {
+            project.settings.solc.optimizer.disable();
+            project.settings.solc.optimizer.runs = None;
+            project.settings.solc.optimizer.details = None;
+            project.settings.solc.via_ir = None;
+        }
+
         let output = compiler.compile(&project)?;
 
         // Create test options from general project settings and compiler output.
@@ -317,7 +331,6 @@ impl TestArgs {
             .build(&output, project_root)?;
 
         let should_debug = self.debug.is_some();
-        let should_draw = self.flamegraph || self.flamechart;
 
         // Determine print verbosity and executor verbosity.
         let verbosity = evm_opts.verbosity;
@@ -326,11 +339,6 @@ impl TestArgs {
         }
 
         let env = evm_opts.evm_env().await?;
-
-        // Enable internal tracing for more informative flamegraph.
-        if should_draw && self.decode_internal.is_none() {
-            self.decode_internal = Some(None);
-        }
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
         let decode_internal = if self.decode_internal.is_some() {
