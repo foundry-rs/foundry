@@ -740,9 +740,17 @@ Compiler run successful!
 
 // checks that extra output works
 forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
-    cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args([
+        "build",
+        "--extra-output",
+        "metadata",
+        "legacyAssembly",
+        "ir-optimized",
+        "--extra-output",
+        "ir",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -753,6 +761,7 @@ Compiler run successful!
     let artifact: ConfigurableContractArtifact =
         foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
+    assert!(artifact.legacy_assembly.is_some());
     assert!(artifact.ir.is_some());
     assert!(artifact.ir_optimized.is_some());
 
@@ -763,6 +772,7 @@ Compiler run successful!
             "metadata",
             "ir-optimized",
             "evm.bytecode.sourceMap",
+            "evm.legacyAssembly",
             "--force",
         ])
         .root_arg()
@@ -784,6 +794,12 @@ Compiler run successful!
     let sourcemap =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.sourcemap"));
     std::fs::read_to_string(sourcemap).unwrap();
+
+    let legacy_assembly = prj
+        .paths()
+        .artifacts
+        .join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.legacyAssembly.json"));
+    std::fs::read_to_string(legacy_assembly).unwrap();
 });
 
 forgetest!(can_print_warnings, |prj, cmd| {
