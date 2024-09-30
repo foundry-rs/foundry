@@ -1,6 +1,6 @@
 use crate::Config;
-use std::{collections::HashMap, sync::LazyLock};
-
+use alloy_primitives::map::HashMap;
+use std::sync::LazyLock;
 mod conf_parser;
 pub use conf_parser::*;
 

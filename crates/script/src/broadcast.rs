@@ -6,7 +6,7 @@ use alloy_chains::Chain;
 use alloy_consensus::TxEnvelope;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{utils::format_units, Address, TxHash};
+use alloy_primitives::{map::AddressHashMap, utils::format_units, Address, TxHash};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
@@ -22,10 +22,7 @@ use foundry_common::{
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashSet, sync::Arc};
 
 pub async fn estimate_gas<P, T>(
     tx: &mut WithOtherFields<TransactionRequest>,
@@ -117,7 +114,7 @@ pub enum SendTransactionsKind {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(HashSet<Address>),
     /// Send a signed transaction via `eth_sendRawTransaction`
-    Raw(HashMap<Address, EthereumWallet>),
+    Raw(AddressHashMap<EthereumWallet>),
 }
 
 impl SendTransactionsKind {
