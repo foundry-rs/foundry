@@ -4,13 +4,12 @@ use crate::{
     pubsub::filter_logs,
     StorageInfo,
 };
-use alloy_primitives::TxHash;
+use alloy_primitives::{map::HashMap, TxHash};
 use alloy_rpc_types::{Filter, FilteredParams, Log};
 use anvil_core::eth::subscription::SubscriptionId;
 use anvil_rpc::response::ResponseResult;
 use futures::{channel::mpsc::Receiver, Stream, StreamExt};
 use std::{
-    collections::HashMap,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
