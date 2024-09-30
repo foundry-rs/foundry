@@ -903,6 +903,8 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
+/// `tx.origin`.
+///
 /// Depending on the current caller mode, one of the following results will be returned:
 /// - If there is an active prank:
 ///     - caller_mode will be equal to:
