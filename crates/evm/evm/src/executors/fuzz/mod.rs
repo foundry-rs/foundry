@@ -17,10 +17,7 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use std::{
-    cell::RefCell,
-    collections::{BTreeMap, HashMap},
-};
+use std::{cell::RefCell, collections::BTreeMap};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
