@@ -335,7 +335,7 @@ impl TestArgs {
                     project.settings.solc.settings.with_via_ir_minimum_optimization()
             } else {
                 let msg =
-                    "Warning! Disabling optimizer as it is required for accurate source mappings."
+                    "Warning! Disabling optimizer as it is required for accurate source mappings.\n"
                         .yellow();
                 p_println!(!self.opts.silent => "{msg}");
 
