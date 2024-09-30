@@ -4,7 +4,10 @@ use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::Po
 use alloy_consensus::Account;
 use alloy_eips::eip2930::AccessListResult;
 use alloy_network::BlockResponse;
-use alloy_primitives::{Address, Bytes, StorageValue, B256, U256};
+use alloy_primitives::{
+    map::{FbHashMap, HashMap},
+    Address, Bytes, StorageValue, B256, U256,
+};
 use alloy_provider::{
     ext::{DebugApi, TraceApi},
     Provider,
@@ -27,7 +30,7 @@ use parking_lot::{
     RawRwLock, RwLock,
 };
 use revm::primitives::BlobExcessGasAndPrice;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
 /// Represents a fork of a remote client
@@ -675,14 +678,14 @@ impl ClientForkConfig {
 /// This is used as a cache so repeated requests to the same data are not sent to the remote client
 #[derive(Clone, Debug, Default)]
 pub struct ForkedStorage {
-    pub uncles: HashMap<B256, Vec<AnyNetworkBlock>>,
-    pub blocks: HashMap<B256, AnyNetworkBlock>,
+    pub uncles: FbHashMap<32, Vec<AnyNetworkBlock>>,
+    pub blocks: FbHashMap<32, AnyNetworkBlock>,
     pub hashes: HashMap<u64, B256>,
-    pub transactions: HashMap<B256, WithOtherFields<Transaction>>,
-    pub transaction_receipts: HashMap<B256, ReceiptResponse>,
-    pub transaction_traces: HashMap<B256, Vec<Trace>>,
+    pub transactions: FbHashMap<32, WithOtherFields<Transaction>>,
+    pub transaction_receipts: FbHashMap<32, ReceiptResponse>,
+    pub transaction_traces: FbHashMap<32, Vec<Trace>>,
     pub logs: HashMap<Filter, Vec<Log>>,
-    pub geth_transaction_traces: HashMap<B256, GethTrace>,
+    pub geth_transaction_traces: FbHashMap<32, GethTrace>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub block_receipts: HashMap<u64, Vec<ReceiptResponse>>,
     pub code_at: HashMap<(Address, u64), Bytes>,

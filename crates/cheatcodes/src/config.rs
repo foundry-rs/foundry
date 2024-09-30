@@ -1,6 +1,6 @@
 use super::Result;
 use crate::{script::ScriptWallets, Vm::Rpc};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{map::AddressHashMap, U256};
 use foundry_common::{fs::normalize_path, ContractsByArtifact};
 use foundry_compilers::{utils::canonicalize, ProjectPathsConfig};
 use foundry_config::{
@@ -10,7 +10,6 @@ use foundry_config::{
 use foundry_evm_core::opts::EvmOpts;
 use semver::Version;
 use std::{
-    collections::HashMap,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -43,7 +42,7 @@ pub struct CheatsConfig {
     /// How the evm was configured by the user
     pub evm_opts: EvmOpts,
     /// Address labels from config
-    pub labels: HashMap<Address, String>,
+    pub labels: AddressHashMap<String>,
     /// Script wallets
     pub script_wallets: Option<ScriptWallets>,
     /// Artifacts which are guaranteed to be fresh (either recompiled or cached).

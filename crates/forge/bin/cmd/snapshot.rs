@@ -1,5 +1,5 @@
 use super::test;
-use alloy_primitives::U256;
+use alloy_primitives::{map::HashMap, U256};
 use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
 use eyre::{Context, Result};
 use forge::result::{SuiteTestResult, TestKindReport, TestOutcome};
@@ -7,7 +7,6 @@ use foundry_cli::utils::STATIC_FUZZ_SEED;
 use regex::Regex;
 use std::{
     cmp::Ordering,
-    collections::HashMap,
     fs,
     io::{self, BufRead},
     path::{Path, PathBuf},

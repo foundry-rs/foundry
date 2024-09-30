@@ -7029,9 +7029,9 @@ checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.6"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "355ae415ccd3a04315d3f8246e86d67689ea74d88d915576e1589a351062a13b"
+checksum = "9b6dfecf2c74bce2466cabf93f6664d6998a69eb21e39f4207930065b27b771f"
 dependencies = [
  "bitflags 2.6.0",
 ]
@@ -7622,9 +7622,9 @@ dependencies = [
 
 [[package]]
 name = "scc"
-version = "2.1.17"
+version = "2.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c947adb109a8afce5fc9c7bf951f87f146e9147b3a6a58413105628fb1d1e66"
+checksum = "215b1103f73e23e9cb6883072c1fb26ae55c09d42054654955c739e5418a7c96"
 dependencies = [
  "sdd",
 ]

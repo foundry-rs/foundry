@@ -17,9 +17,11 @@ use revm_inspectors::tracing::{
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     ops::{Deref, DerefMut},
 };
+
+use alloy_primitives::map::HashMap;
 
 pub use revm_inspectors::tracing::{
     types::{
