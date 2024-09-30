@@ -1169,6 +1169,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+#[cfg(not(feature = "isolate-by-default"))]
 const SIMPLE_CONTRACT: &str = r#"
 import {Test, console} from "forge-std/Test.sol";
 
