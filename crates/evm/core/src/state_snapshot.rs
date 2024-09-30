@@ -69,6 +69,6 @@ impl<T> StateSnapshots<T> {
 
 impl<T> Default for StateSnapshots<T> {
     fn default() -> Self {
-        Self { id: U256::ZERO, state_snapshots: HashMap::new() }
+        Self { id: U256::ZERO, state_snapshots: HashMap::default() }
     }
 }

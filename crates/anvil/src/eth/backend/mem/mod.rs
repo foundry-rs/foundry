@@ -1227,26 +1227,36 @@ impl Backend {
         });
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
-        env.tx = TxEnv {
-            caller,
-            gas_limit: gas_limit as u64,
-            gas_price: U256::from(gas_price),
-            gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
-            max_fee_per_blob_gas: max_fee_per_blob_gas.map(U256::from),
-            transact_to: match to {
-                Some(addr) => TxKind::Call(*addr),
-                None => TxKind::Create,
-            },
-            value: value.unwrap_or_default(),
-            data: input.into_input().unwrap_or_default(),
-            chain_id: None,
-            // set nonce to None so that the correct nonce is chosen by the EVM
-            nonce: None,
-            access_list: access_list.unwrap_or_default().into(),
-            blob_hashes: blob_versioned_hashes.unwrap_or_default(),
-            optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
-            authorization_list: authorization_list.map(Into::into),
-        };
+        let blob_hashes = blob_versioned_hashes.unwrap_or_default();
+        env.tx =
+            TxEnv {
+                caller,
+                gas_limit: gas_limit as u64,
+                gas_price: U256::from(gas_price),
+                gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
+                max_fee_per_blob_gas: max_fee_per_blob_gas
+                    .or_else(|| {
+                        if !blob_hashes.is_empty() {
+                            env.block.get_blob_gasprice()
+                        } else {
+                            None
+                        }
+                    })
+                    .map(U256::from),
+                transact_to: match to {
+                    Some(addr) => TxKind::Call(*addr),
+                    None => TxKind::Create,
+                },
+                value: value.unwrap_or_default(),
+                data: input.into_input().unwrap_or_default(),
+                chain_id: None,
+                // set nonce to None so that the correct nonce is chosen by the EVM
+                nonce: None,
+                access_list: access_list.unwrap_or_default().into(),
+                blob_hashes,
+                optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default() },
+                authorization_list: authorization_list.map(Into::into),
+            };
 
         if env.block.basefee.is_zero() {
             // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
@@ -2446,7 +2456,12 @@ impl Backend {
 
             let _ = builder.root();
 
-            let proof = builder.take_proofs().values().cloned().collect::<Vec<_>>();
+            let proof = builder
+                .take_proof_nodes()
+                .into_nodes_sorted()
+                .into_iter()
+                .map(|(_, v)| v)
+                .collect();
             let storage_proofs = prove_storage(&account.storage, &keys);
 
             let account_proof = AccountProof {
@@ -2815,15 +2830,13 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
     let _ = builder.root();
 
     let mut proofs = Vec::new();
-    let all_proof_nodes = builder.take_proofs();
+    let all_proof_nodes = builder.take_proof_nodes();
 
     for proof_key in keys {
         // Iterate over all proof nodes and find the matching ones.
         // The filtered results are guaranteed to be in order.
-        let matching_proof_nodes = all_proof_nodes
-            .iter()
-            .filter(|(path, _)| proof_key.starts_with(path))
-            .map(|(_, node)| node.clone());
+        let matching_proof_nodes =
+            all_proof_nodes.matching_nodes_sorted(&proof_key).into_iter().map(|(_, node)| node);
         proofs.push(matching_proof_nodes.collect());
     }
 

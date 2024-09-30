@@ -74,7 +74,7 @@ mod tests {
         let function = Function::parse("test_fuzzed_address(address addressFixture)").unwrap();
 
         let address_fixture = DynSolValue::Address(Address::random());
-        let mut fixtures = HashMap::new();
+        let mut fixtures = HashMap::default();
         fixtures.insert(
             "addressFixture".to_string(),
             DynSolValue::Array(vec![address_fixture.clone()]),

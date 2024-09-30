@@ -253,7 +253,7 @@ impl FilledTransactionsState {
             eyre::bail!("Multi-chain deployment is not supported with libraries.");
         }
 
-        let mut total_gas_per_rpc: HashMap<String, u128> = HashMap::new();
+        let mut total_gas_per_rpc: HashMap<String, u128> = HashMap::default();
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();
