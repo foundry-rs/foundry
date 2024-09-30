@@ -168,12 +168,12 @@ foundry-linking = { path = "crates/linking" }
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.7.3", default-features = false }
 foundry-compilers = { version = "0.11.1", default-features = false }
-foundry-fork-db = "0.3"
+foundry-fork-db = "0.3.2"
 solang-parser = "=0.3.3"
 
 ## revm
 revm = { version = "14.0.2", default-features = false }
-revm-primitives = { version = "9.0.2", default-features = false }
+revm-primitives = { version = "10.0.0", default-features = false }
 revm-inspectors = { version = "0.7.7", features = ["serde"] }
 
 ## ethers
@@ -205,7 +205,11 @@ alloy-transport-ws = { version = "0.3.6", default-features = false }
 ## alloy-core
 alloy-dyn-abi = "0.8.1"
 alloy-json-abi = "0.8.1"
-alloy-primitives = { version = "0.8.1", features = ["getrandom", "rand"] }
+alloy-primitives = { version = "0.8.1", features = [
+    "getrandom",
+    "rand",
+    "map-fxhash",
+] }
 alloy-sol-macro-expander = "0.8.1"
 alloy-sol-macro-input = "0.8.1"
 alloy-sol-types = "0.8.1"
@@ -213,7 +217,7 @@ syn-solidity = "0.8.1"
 
 alloy-chains = "0.1"
 alloy-rlp = "0.3"
-alloy-trie = "0.5.0"
+alloy-trie = "0.6.0"
 
 ## op-alloy for tests in anvil
 op-alloy-rpc-types = "0.2.9"

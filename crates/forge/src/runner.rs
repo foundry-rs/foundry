@@ -164,9 +164,13 @@ impl<'a> ContractRunner<'a> {
                     } = *err;
                     (logs, traces, labels, Some(format!("setup failed: {reason}")), coverage)
                 }
-                Err(err) => {
-                    (Vec::new(), None, HashMap::new(), Some(format!("setup failed: {err}")), None)
-                }
+                Err(err) => (
+                    Vec::new(),
+                    None,
+                    HashMap::default(),
+                    Some(format!("setup failed: {err}")),
+                    None,
+                ),
             };
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
             logs.extend(setup_logs);
@@ -210,7 +214,7 @@ impl<'a> ContractRunner<'a> {
     /// returns an array of addresses to be used for fuzzing `owner` named parameter in scope of the
     /// current test.
     fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
-        let mut fixtures = HashMap::new();
+        let mut fixtures = HashMap::default();
         let fixture_functions = self.contract.abi.functions().filter(|func| func.is_fixture());
         for func in fixture_functions {
             if func.inputs.is_empty() {
