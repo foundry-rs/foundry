@@ -784,8 +784,8 @@ fn inner_delete_state_snapshots<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Re
 
 fn inner_value_snapshot<DB: DatabaseExt>(
     ccx: &mut CheatsCtxt<DB>,
-    name: Option<String>,
     group: Option<String>,
+    name: Option<String>,
     value: String,
 ) -> Result {
     let cheatcodes = ccx.state.clone();
