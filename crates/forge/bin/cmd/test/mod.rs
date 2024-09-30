@@ -325,17 +325,19 @@ impl TestArgs {
                 }
 
                 let msg = concat!(
-                    "Warning! Using \"--ir-minimum\" flag to enable viaIR with minimum optimization, \
-                    which can result in inaccurate source mappings.\n",
-                )
-                .yellow();
+                    "Warning! Uses \"--ir-minimum\" flag to use viaIR with minimum optimization \
+                     which can result in inaccurate source mappings.\n",
+                    "Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n",
+                    "Note that \"viaIR\" is only available in Solidity 0.8.13 and above.\n",
+                    "See more: https://github.com/foundry-rs/foundry/issues/3357\n",
+                ).yellow();
                 p_println!(!self.opts.silent => "{msg}");
 
                 project.settings.solc.settings =
                     project.settings.solc.settings.with_via_ir_minimum_optimization()
             } else {
                 let msg =
-                    "Warning! Disabling optimizer as it is required for accurate source mappings.\n"
+                    "Warning! Disabling optimizer as it is a requirement for accurate source mappings.\n"
                         .yellow();
                 p_println!(!self.opts.silent => "{msg}");
 

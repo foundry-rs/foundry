@@ -1214,7 +1214,7 @@ forgetest_init!(internal_functions_trace, |prj, cmd| {
     // The optimizer is disabled internally.
     prj.add_test("Simple", SIMPLE_CONTRACT).unwrap();
     cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
-Warning! Disabling optimizer as it is required for accurate source mappings.
+Warning! Disabling optimizer as it is a requirement for accurate source mappings.
 
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1256,7 +1256,10 @@ forgetest_init!(internal_functions_trace_via_ir_minimum, |prj, cmd| {
     cmd.args(["test", "-vvvv", "--decode-internal", "--via-ir"])
         .assert_success()
         .stdout_eq(str![[r#"
-Warning! Using "--ir-minimum" flag to enable viaIR with minimum optimization, which can result in inaccurate source mappings.
+Warning! Uses "--ir-minimum" flag to use viaIR with minimum optimization which can result in inaccurate source mappings.
+Only use this flag as a workaround if you are experiencing "stack too deep" errors.
+Note that "viaIR" is only available in Solidity 0.8.13 and above.
+See more: https://github.com/foundry-rs/foundry/issues/3357
 
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -1269,20 +1272,20 @@ Traces:
     ├─ [288869] SimpleContractTest::test()
     │   ├─ [256331] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   │   └─ ← [Return] 1280 bytes of code
-    │   └─ ←
+    │   └─ ← 
     ├─ [23484] SimpleContract::increment()
     │   ├─ [2189] SimpleContract::increment()
-    │   │   └─ ←
+    │   │   └─ ← 
     │   ├─ [20654] SimpleContract::_setNum(1)
     │   │   └─ ← 0
-    │   └─ ← [Return]
+    │   └─ ← [Return] 
     ├─ [24177] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
     │   ├─ [245] SimpleContract::setValues(291, 0x0000000000000000000000000000000000000064)
-    │   │   └─ ←
+    │   │   └─ ← 
     │   ├─ [22786] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
-    │   └─ ← [Return]
-    └─ ← [Return]
+    │   └─ ← [Return] 
+    └─ ← [Return] 
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
