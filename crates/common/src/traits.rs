@@ -64,6 +64,11 @@ pub trait TestFunctionExt {
         self.test_function_kind().is_after_invariant()
     }
 
+    /// Returns `true` if this function is a `afterUnitTest` function.
+    fn is_after_unit_test(&self) -> bool {
+        self.test_function_kind().is_after_unit_test()
+    }
+
     /// Returns `true` if this function is a `fixture` function.
     fn is_fixture(&self) -> bool {
         self.test_function_kind().is_fixture()
@@ -118,6 +123,8 @@ pub enum TestFunctionKind {
     InvariantTest,
     /// `afterInvariant`.
     AfterInvariant,
+    /// `afterUnitTest`.
+    AfterUnitTest,
     /// `fixture*`.
     Fixture,
     /// Unknown kind.
@@ -142,6 +149,7 @@ impl TestFunctionKind {
             }
             _ if name.eq_ignore_ascii_case("setup") => Self::Setup,
             _ if name.eq_ignore_ascii_case("afterinvariant") => Self::AfterInvariant,
+            _ if name.eq_ignore_ascii_case("afterunittest") => Self::AfterUnitTest,
             _ if name.starts_with("fixture") => Self::Fixture,
             _ => Self::Unknown,
         }
@@ -157,6 +165,7 @@ impl TestFunctionKind {
             Self::FuzzTest { should_fail: true } => "fuzz fail",
             Self::InvariantTest => "invariant",
             Self::AfterInvariant => "afterInvariant",
+            Self::AfterUnitTest => "afterUnitTest",
             Self::Fixture => "fixture",
             Self::Unknown => "unknown",
         }
@@ -202,6 +211,12 @@ impl TestFunctionKind {
     #[inline]
     pub const fn is_after_invariant(&self) -> bool {
         matches!(self, Self::AfterInvariant)
+    }
+
+    /// Returns `true` if this function is an `afterUnitTest` function.
+    #[inline]
+    pub const fn is_after_unit_test(&self) -> bool {
+        matches!(self, Self::AfterUnitTest)
     }
 
     /// Returns `true` if this function is a `fixture` function.

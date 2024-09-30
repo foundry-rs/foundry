@@ -53,6 +53,8 @@ sol! {
 
         #[derive(Default)]
         function beforeTestSetup(bytes4 testSelector) public view returns (bytes[] memory beforeTestCalldata);
+
+        function afterUnitTest() external;
     }
 }
 
@@ -385,6 +387,18 @@ impl Executor {
     ) -> eyre::Result<RawCallResult> {
         let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
         self.transact_with_env(env)
+    }
+
+    fn call_after_unit_test(&self, to: Address) -> eyre::Result<RawCallResult> {
+        let calldata = Bytes::from_static(&ITest::afterUnitTestCall::SELECTOR);
+        let mut result = self.call_raw(CALLER, to, calldata, U256::ZERO)?;
+        let success = self.is_raw_call_mut_success(to, &mut result, false);
+
+        if success {
+            Ok(result)
+        } else {
+            Err(result.into_execution_error("afterUnitTest execution error".to_string()).into())
+        }
     }
 
     /// Execute the transaction configured in `env.tx`.

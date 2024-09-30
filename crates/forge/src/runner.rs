@@ -286,6 +286,20 @@ impl<'a> ContractRunner<'a> {
             )
         }
 
+        let after_unit_test_fns: Vec<_> =
+            self.contract.abi.functions().filter(|func| func.name.is_after_unit_test()).collect();
+        if after_unit_test_fns.len() > 1 {
+            return SuiteResult::new(
+                start.elapsed(),
+                [(
+                    "afterUnitTest()".to_string(),
+                    TestResult::fail("multiple afterUnitTest functions".to_string()),
+                )]
+                .into(),
+                warnings,
+            )
+        }
+
         // Check if `afterInvariant` function with valid signature declared.
         let after_invariant_fns: Vec<_> =
             self.contract.abi.functions().filter(|func| func.name.is_after_invariant()).collect();
@@ -301,6 +315,19 @@ impl<'a> ContractRunner<'a> {
                 warnings,
             )
         }
+
+        let call_after_unit_test =
+            after_unit_test_fns.first().map_or(false, |after_unit_test_fn| {
+                let match_sig = after_unit_test_fn.name == "afterUnitTest";
+                if !match_sig {
+                    warnings.push(format!(
+                    "Found invalid afterUnitTest function \"{}\" did you mean \"afterUnitTest()\"?",
+                    after_unit_test_fn.signature()
+                ));
+                }
+                match_sig
+            });
+
         let call_after_invariant = after_invariant_fns.first().map_or(false, |after_invariant_fn| {
             let match_sig = after_invariant_fn.name == "afterInvariant";
             if !match_sig {
