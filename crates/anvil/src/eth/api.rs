@@ -1177,7 +1177,7 @@ impl EthApi {
                 pending.transaction,
                 None,
                 None,
-                Some(self.backend.base_fee()),
+                Some(self.backend.base_fee() as u64),
             );
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
@@ -2485,7 +2485,8 @@ impl EthApi {
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit.to());
+        let mut highest_gas_limit =
+            request.gas.map_or(block_env.gas_limit.to::<u128>(), |g| g as u128);
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // If we have non-zero gas price, cap gas limit by sender balance
@@ -2507,7 +2508,7 @@ impl EthApi {
         }
 
         let mut call_to_estimate = request.clone();
-        call_to_estimate.gas = Some(highest_gas_limit);
+        call_to_estimate.gas = Some(highest_gas_limit as u64);
 
         // execute the call without writing to db
         let ethres =
@@ -2541,7 +2542,7 @@ impl EthApi {
 
         // Binary search for the ideal gas limit
         while (highest_gas_limit - lowest_gas_limit) > 1 {
-            request.gas = Some(mid_gas_limit);
+            request.gas = Some(mid_gas_limit as u64);
             let ethres = self.backend.call_with_state(
                 &state,
                 request.clone(),
@@ -2658,7 +2659,7 @@ impl EthApi {
         let mut partial_block = self.backend.convert_block(block.clone());
 
         let mut block_transactions = Vec::with_capacity(block.transactions.len());
-        let base_fee = self.backend.base_fee();
+        let base_fee = self.backend.base_fee() as u64;
 
         for info in transactions {
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
@@ -2688,7 +2689,7 @@ impl EthApi {
         let max_fee_per_blob_gas = request.max_fee_per_blob_gas;
         let gas_price = request.gas_price;
 
-        let gas_limit = request.gas.unwrap_or(self.backend.gas_limit());
+        let gas_limit = request.gas.unwrap_or(self.backend.gas_limit() as u64);
 
         let request = match transaction_request_to_typed(request) {
             Some(TypedTransactionRequest::Legacy(mut m)) => {
@@ -2744,7 +2745,7 @@ impl EthApi {
                 })
             }
             Some(TypedTransactionRequest::Deposit(mut m)) => {
-                m.gas_limit = gas_limit;
+                m.gas_limit = gas_limit as u128;
                 TypedTransactionRequest::Deposit(m)
             }
             None => return Err(BlockchainError::FailedToDecodeTransaction),

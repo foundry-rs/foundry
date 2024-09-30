@@ -2239,17 +2239,17 @@ impl Backend {
             TypedTransaction::EIP1559(t) => block
                 .header
                 .base_fee_per_gas
-                .unwrap_or_else(|| self.base_fee())
+                .map_or(self.base_fee(), |g| g as u128)
                 .saturating_add(t.tx().max_priority_fee_per_gas),
             TypedTransaction::EIP4844(t) => block
                 .header
                 .base_fee_per_gas
-                .unwrap_or_else(|| self.base_fee())
+                .map_or(self.base_fee(), |g| g as u128)
                 .saturating_add(t.tx().tx().max_priority_fee_per_gas),
             TypedTransaction::EIP7702(t) => block
                 .header
                 .base_fee_per_gas
-                .unwrap_or_else(|| self.base_fee())
+                .map_or(self.base_fee(), |g| g as u128)
                 .saturating_add(t.tx().max_priority_fee_per_gas),
             TypedTransaction::Deposit(_) => 0_u128,
         };
@@ -2760,7 +2760,7 @@ pub fn transaction_build(
     eth_transaction: MaybeImpersonatedTransaction,
     block: Option<&Block>,
     info: Option<TransactionInfo>,
-    base_fee: Option<u128>,
+    base_fee: Option<u64>,
 ) -> WithOtherFields<Transaction> {
     let mut transaction: Transaction = eth_transaction.clone().into();
     if info.is_some() && transaction.transaction_type == Some(0x7E) {
@@ -2774,7 +2774,7 @@ pub fn transaction_build(
         } else {
             // if transaction is already mined, gas price is considered base fee + priority fee: the
             // effective gas price.
-            let base_fee = base_fee.unwrap_or(0u128);
+            let base_fee = base_fee.map_or(0u128, |g| g as u128);
             let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas.unwrap_or(0);
             transaction.gas_price = Some(base_fee.saturating_add(max_priority_fee_per_gas));
         }
