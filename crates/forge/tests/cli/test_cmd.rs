@@ -1169,18 +1169,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
-// tests internal functions trace
-#[cfg(not(feature = "isolate-by-default"))]
-forgetest_init!(internal_functions_trace, |prj, cmd| {
-    prj.wipe_contracts();
-    prj.clear();
-
-    // Disable optimizer because for simple contract most functions will get inlined.
-    prj.write_config(Config { optimizer: false, ..Default::default() });
-
-    prj.add_test(
-        "Simple",
-        r#"
+const SIMPLE_CONTRACT: &str = r#"
 import {Test, console} from "forge-std/Test.sol";
 
 contract SimpleContract {
@@ -1214,10 +1203,19 @@ contract SimpleContractTest is Test {
         c.setValues(100, address(0x123));
     }
 }
-     "#,
-    )
-    .unwrap();
+"#;
+
+// tests internal functions trace
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(internal_functions_trace, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.clear();
+
+    // The optimizer is disabled internally.
+    prj.add_test("Simple", SIMPLE_CONTRACT).unwrap();
     cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
+Warning! Disabling optimizer as it is required for accurate source mappings.
+
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -1231,14 +1229,60 @@ Traces:
     ├─ [22638] SimpleContract::increment()
     │   ├─ [20150] SimpleContract::_setNum(1)
     │   │   └─ ← 0
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [23219] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
     │   ├─ [250] SimpleContract::_setNum(100)
     │   │   └─ ← 1
     │   ├─ [22339] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     └─ ← [Stop] 
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// tests internal functions trace with --via-ir enabled
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(internal_functions_trace_via_ir_minimum, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.clear();
+
+    // The optimizer is disabled internally.
+    prj.add_test("Simple", SIMPLE_CONTRACT).unwrap();
+    cmd.args(["test", "-vvvv", "--decode-internal", "--via-ir"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Warning! Using "--ir-minimum" flag to enable viaIR with minimum optimization, which can result in inaccurate source mappings.
+
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Simple.sol:SimpleContractTest
+[PASS] test() ([GAS])
+Traces:
+  [338906] SimpleContractTest::test()
+    ├─ [288869] SimpleContractTest::test()
+    │   ├─ [256331] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   │   └─ ← [Return] 1280 bytes of code
+    │   └─ ←
+    ├─ [23484] SimpleContract::increment()
+    │   ├─ [2189] SimpleContract::increment()
+    │   │   └─ ←
+    │   ├─ [20654] SimpleContract::_setNum(1)
+    │   │   └─ ← 0
+    │   └─ ← [Return]
+    ├─ [24177] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
+    │   ├─ [245] SimpleContract::setValues(291, 0x0000000000000000000000000000000000000064)
+    │   │   └─ ←
+    │   ├─ [22786] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
+    │   │   └─ ← 0x0000000000000000000000000000000000000000
+    │   └─ ← [Return]
+    └─ ← [Return]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
