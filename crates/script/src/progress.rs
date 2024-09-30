@@ -3,7 +3,10 @@ use crate::{
     sequence::ScriptSequence,
 };
 use alloy_chains::Chain;
-use alloy_primitives::{map::{B256HashMap, HashMap}, B256};
+use alloy_primitives::{
+    map::{B256HashMap, HashMap},
+    B256,
+};
 use eyre::Result;
 use foundry_cli::utils::init_progress;
 use foundry_common::provider::RetryProvider;

@@ -11,7 +11,10 @@ use crate::inspectors::{
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{map::{AddressHashMap, HashMap}, Address, Bytes, Log, U256};
+use alloy_primitives::{
+    map::{AddressHashMap, HashMap},
+    Address, Bytes, Log, U256,
+};
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
     backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
