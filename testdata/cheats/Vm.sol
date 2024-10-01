@@ -1574,14 +1574,13 @@ interface Vm {
 
     function randomAddress() external returns (address);
 
-    function randomBytes4() external returns (bytes4);
-
-    function randomBytes8() external returns (bytes8);
-
-    //function randomBytes() external returns(uint8[] memory);
     function randomBool() external view returns (bool);
 
     function randomBytes(uint256 len) external view returns (bytes memory);
+
+    function randomBytes4() external view returns (bytes4);
+
+    function randomBytes8() external view returns (bytes8);
 
     function randomInt() external view returns (int256);
 

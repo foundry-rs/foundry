@@ -1,12 +1,13 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, U256};
+use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_primitives::{map::HashMap, B32, B64, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::{backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER};
-use rand::Rng;
-use std::collections::HashMap;
+use proptest::strategy::{Strategy, ValueTree};
+use rand::{Rng, RngCore};
 
 /// Contains locations of traces ignored via cheatcodes.
 ///
@@ -132,6 +133,22 @@ impl Cheatcode for randomBytesCall {
     }
 }
 
+// Random 4 bytes
+impl Cheatcode for randomBytes4Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let rand_u32 = state.rng().next_u32();
+        Ok(B32::from(rand_u32).abi_encode())
+    }
+}
+
+// Random 8 bytes
+impl Cheatcode for randomBytes8Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let rand_u64 = state.rng().next_u64();
+        Ok(B64::from(rand_u64).abi_encode())
+    }
+}
+
 impl Cheatcode for pauseTracingCall {
     fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
         &self,
@@ -208,4 +225,49 @@ impl Cheatcode for copyStorageCall {
 
         Ok(Default::default())
     }
+}
+
+/// Helper to generate a random `uint` value (with given bits or bounded if specified)
+/// from type strategy.
+fn random_uint(state: &mut Cheatcodes, bits: Option<U256>, bounds: Option<(U256, U256)>) -> Result {
+    if let Some(bits) = bits {
+        // Generate random with specified bits.
+        ensure!(bits <= U256::from(256), "number of bits cannot exceed 256");
+        return Ok(DynSolValue::type_strategy(&DynSolType::Uint(bits.to::<usize>()))
+            .new_tree(state.test_runner())
+            .unwrap()
+            .current()
+            .abi_encode())
+    }
+
+    if let Some((min, max)) = bounds {
+        ensure!(min <= max, "min must be less than or equal to max");
+        // Generate random between range min..=max
+        let exclusive_modulo = max - min;
+        let mut random_number: U256 = state.rng().gen();
+        if exclusive_modulo != U256::MAX {
+            let inclusive_modulo = exclusive_modulo + U256::from(1);
+            random_number %= inclusive_modulo;
+        }
+        random_number += min;
+        return Ok(random_number.abi_encode())
+    }
+
+    // Generate random `uint256` value.
+    Ok(DynSolValue::type_strategy(&DynSolType::Uint(256))
+        .new_tree(state.test_runner())
+        .unwrap()
+        .current()
+        .abi_encode())
+}
+
+/// Helper to generate a random `int` value (with given bits if specified) from type strategy.
+fn random_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
+    let no_bits = bits.unwrap_or(U256::from(256));
+    ensure!(no_bits <= U256::from(256), "number of bits cannot exceed 256");
+    Ok(DynSolValue::type_strategy(&DynSolType::Int(no_bits.to::<usize>()))
+        .new_tree(state.test_runner())
+        .unwrap()
+        .current()
+        .abi_encode())
 }

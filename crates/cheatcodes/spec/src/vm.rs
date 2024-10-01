@@ -2405,14 +2405,11 @@ interface Vm {
 
     /// Return random 4bytes
     #[cheatcode(group = Utilities)]
-    function randomBytes4() external pure returns (bytes4);
+    function randomBytes4() external view returns (bytes4);
     /// Return random 8bytes
     #[cheatcode(group = Utilities)]
-    function randomBytes8() external pure returns (bytes8);
-    /// Return vector of length `size`
-    #[cheatcode(group = Utilities)]
-    function randomBytes(uint256 size) external pure returns (uint8[] memory randomVector);
-}
+    function randomBytes8() external view returns (bytes8);
+ }
 }
 
 impl PartialEq for ForgeContext {

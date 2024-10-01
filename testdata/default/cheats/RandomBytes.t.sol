@@ -15,5 +15,8 @@ contract RandomBytes is DSTest {
         vm.randomBytes8();
     }
 
-    function testFillrandomBytes() public {}
+    function testFillrandomBytes() public view {
+        uint256 len = 16;
+        vm.randomBytes(len);
+    }
 }
