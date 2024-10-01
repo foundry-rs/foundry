@@ -20,7 +20,11 @@ use crate::{
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
     Vm::AccountAccess,
 };
-use alloy_primitives::{hex, Address, Bytes, Log, TxKind, B256, U256};
+use alloy_primitives::{
+    hex,
+    map::{AddressHashMap, HashMap},
+    Address, Bytes, Log, TxKind, B256, U256,
+};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
@@ -34,7 +38,8 @@ use foundry_evm_core::{
 };
 use foundry_evm_traces::TracingInspector;
 use itertools::Itertools;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
+use rand::Rng;
 use revm::{
     interpreter::{
         opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
@@ -47,7 +52,7 @@ use revm::{
 use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fs::File,
     io::BufReader,
     ops::Range,
@@ -222,7 +227,7 @@ pub struct BroadcastableTransaction {
 pub struct GasMetering {
     /// True if gas metering is paused.
     pub paused: bool,
-    /// True if gas metering was resumed or reseted during the test.
+    /// True if gas metering was resumed or reset during the test.
     /// Used to reconcile gas when frame ends (if spent less than refunded).
     pub touched: bool,
     /// True if gas metering should be reset to frame limit.
@@ -362,7 +367,7 @@ pub struct Cheatcodes {
     pub gas_price: Option<U256>,
 
     /// Address labels
-    pub labels: HashMap<Address, String>,
+    pub labels: AddressHashMap<String>,
 
     /// Prank information
     pub prank: Option<Prank>,
@@ -431,7 +436,7 @@ pub struct Cheatcodes {
     pub gas_metering: GasMetering,
 
     /// Mapping slots.
-    pub mapping_slots: Option<HashMap<Address, MappingSlots>>,
+    pub mapping_slots: Option<AddressHashMap<MappingSlots>>,
 
     /// The current program counter.
     pub pc: usize,
@@ -439,14 +444,18 @@ pub struct Cheatcodes {
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
 
-    /// Optional RNG algorithm.
-    rng: Option<StdRng>,
+    /// Optional cheatcodes `TestRunner`. Used for generating random values from uint and int
+    /// strategies.
+    test_runner: Option<TestRunner>,
 
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
 
     /// Addresses with arbitrary storage.
     pub arbitrary_storage: Option<ArbitraryStorage>,
+
+    /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
+    pub deprecated: HashMap<&'static str, Option<&'static str>>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -488,9 +497,10 @@ impl Cheatcodes {
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
-            rng: Default::default(),
+            test_runner: Default::default(),
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
+            deprecated: Default::default(),
         }
     }
 
@@ -1064,9 +1074,16 @@ impl Cheatcodes {
     }
 
     pub fn rng(&mut self) -> &mut impl Rng {
-        self.rng.get_or_insert_with(|| match self.config.seed {
-            Some(seed) => StdRng::from_seed(seed.to_be_bytes::<32>()),
-            None => StdRng::from_entropy(),
+        self.test_runner().rng()
+    }
+
+    pub fn test_runner(&mut self) -> &mut TestRunner {
+        self.test_runner.get_or_insert_with(|| match self.config.seed {
+            Some(seed) => TestRunner::new_with_rng(
+                proptest::test_runner::Config::default(),
+                TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>()),
+            ),
+            None => TestRunner::new(proptest::test_runner::Config::default()),
         })
     }
 
@@ -1192,7 +1209,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
             call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
-        // it for cheatcode calls because they are not appplied for cheatcodes in the `call` hook.
+        // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
             // Clean up pranks
@@ -2071,6 +2088,7 @@ fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
     ccx: &mut CheatsCtxt<DB>,
     executor: &mut E,
 ) -> Result {
+    // TODO: Replace with `<dyn Cheatcode>::apply_full` once it's object-safe.
     macro_rules! dispatch {
         ($($variant:ident),*) => {
             match calls {
@@ -2079,10 +2097,13 @@ fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
         };
     }
 
-    let mut dyn_cheat = DynCheatCache::new(calls);
-    let _guard = trace_span_and_call(&mut dyn_cheat);
+    let cheat = calls_as_dyn_cheatcode(calls);
+    if let spec::Status::Deprecated(replacement) = *cheat.status() {
+        ccx.state.deprecated.insert(cheat.signature(), replacement);
+    }
+    let _guard = trace_span_and_call(cheat);
     let mut result = vm_calls!(dispatch);
-    fill_and_trace_return(&mut dyn_cheat, &mut result);
+    fill_and_trace_return(cheat, &mut result);
     result
 }
 
@@ -2091,34 +2112,17 @@ fn will_exit(ir: InstructionResult) -> bool {
     !matches!(ir, InstructionResult::Continue | InstructionResult::CallOrCreate)
 }
 
-// Caches the result of `calls_as_dyn_cheatcode`.
-// TODO: Remove this once Cheatcode is object-safe, as caching would not be necessary anymore.
-struct DynCheatCache<'a> {
-    calls: &'a Vm::VmCalls,
-    slot: Option<&'a dyn DynCheatcode>,
-}
-
-impl<'a> DynCheatCache<'a> {
-    fn new(calls: &'a Vm::VmCalls) -> Self {
-        Self { calls, slot: None }
-    }
-
-    fn get(&mut self) -> &dyn DynCheatcode {
-        *self.slot.get_or_insert_with(|| calls_as_dyn_cheatcode(self.calls))
-    }
-}
-
-fn trace_span_and_call(dyn_cheat: &mut DynCheatCache) -> tracing::span::EnteredSpan {
-    let span = debug_span!(target: "cheatcodes", "apply", id = %dyn_cheat.get().id());
+fn trace_span_and_call(cheat: &dyn DynCheatcode) -> tracing::span::EnteredSpan {
+    let span = debug_span!(target: "cheatcodes", "apply", id = %cheat.id());
     let entered = span.entered();
-    trace!(target: "cheatcodes", cheat = ?dyn_cheat.get().as_debug(), "applying");
+    trace!(target: "cheatcodes", cheat = ?cheat.as_debug(), "applying");
     entered
 }
 
-fn fill_and_trace_return(dyn_cheat: &mut DynCheatCache, result: &mut Result) {
+fn fill_and_trace_return(cheat: &dyn DynCheatcode, result: &mut Result) {
     if let Err(e) = result {
         if e.is_str() {
-            let name = dyn_cheat.get().name();
+            let name = cheat.name();
             // Skip showing the cheatcode name for:
             // - assertions: too verbose, and can already be inferred from the error message
             // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
@@ -2136,7 +2140,6 @@ fn fill_and_trace_return(dyn_cheat: &mut DynCheatCache, result: &mut Result) {
     );
 }
 
-#[cold]
 fn calls_as_dyn_cheatcode(calls: &Vm::VmCalls) -> &dyn DynCheatcode {
     macro_rules! as_dyn {
         ($($variant:ident),*) => {

@@ -110,7 +110,7 @@ impl<'a> DebugStepsWalker<'a> {
             loc.index() == other_loc.index()
     }
 
-    /// Invoked when current step is a JUMPDEST preceeded by a JUMP marked as [Jump::In].
+    /// Invoked when current step is a JUMPDEST preceded by a JUMP marked as [Jump::In].
     fn jump_in(&mut self) {
         // This usually means that this is a jump into the external function which is an
         // entrypoint for the current frame. We don't want to include this to avoid
@@ -128,7 +128,7 @@ impl<'a> DebugStepsWalker<'a> {
         }
     }
 
-    /// Invoked when current step is a JUMPDEST preceeded by a JUMP marked as [Jump::Out].
+    /// Invoked when current step is a JUMPDEST preceded by a JUMP marked as [Jump::Out].
     fn jump_out(&mut self) {
         let Some((i, _)) = self.stack.iter().enumerate().rfind(|(_, (_, step_idx))| {
             self.is_same_loc(*step_idx, self.current_step) ||

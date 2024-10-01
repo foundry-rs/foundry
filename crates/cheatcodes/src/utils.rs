@@ -1,12 +1,12 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{aliases::B32, Address, B64, B8, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::{backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER};
-use rand::{thread_rng, Rng, RngCore};
-use std::{collections::HashMap, usize};
+use rand::Rng;
+use std::collections::HashMap;
 
 /// Contains locations of traces ignored via cheatcodes.
 ///
@@ -71,36 +71,64 @@ impl Cheatcode for ensNamehashCall {
 
 impl Cheatcode for randomUint_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        let rng = state.rng();
-        let random_number: U256 = rng.gen();
-        Ok(random_number.abi_encode())
+        random_uint(state, None, None)
     }
 }
 
 impl Cheatcode for randomUint_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { min, max } = *self;
-        ensure!(min <= max, "min must be less than or equal to max");
-        // Generate random between range min..=max
-        let exclusive_modulo = max - min;
-        let rng = state.rng();
-        let mut random_number = rng.gen::<U256>();
-        if exclusive_modulo != U256::MAX {
-            let inclusive_modulo = exclusive_modulo + U256::from(1);
-            random_number %= inclusive_modulo;
-        }
-        random_number += min;
-        Ok(random_number.abi_encode())
+        random_uint(state, None, Some((min, max)))
+    }
+}
+
+impl Cheatcode for randomUint_2Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bits } = *self;
+        random_uint(state, Some(bits), None)
     }
 }
 
 impl Cheatcode for randomAddressCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        let rng = state.rng();
-        let addr = Address::random_with(rng);
-        Ok(addr.abi_encode())
+        Ok(DynSolValue::type_strategy(&DynSolType::Address)
+            .new_tree(state.test_runner())
+            .unwrap()
+            .current()
+            .abi_encode())
+    }
+}
+
+impl Cheatcode for randomInt_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        random_int(state, None)
+    }
+}
+
+impl Cheatcode for randomInt_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bits } = *self;
+        random_int(state, Some(bits))
+    }
+}
+
+impl Cheatcode for randomBoolCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let rand_bool: bool = state.rng().gen();
+        Ok(rand_bool.abi_encode())
+    }
+}
+
+impl Cheatcode for randomBytesCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { len } = *self;
+        ensure!(
+            len <= U256::from(usize::MAX),
+            format!("bytes length cannot exceed {}", usize::MAX)
+        );
+        let mut bytes = vec![0u8; len.to::<usize>()];
+        state.rng().fill_bytes(&mut bytes);
+        Ok(bytes.abi_encode())
     }
 }
 
@@ -181,30 +209,3 @@ impl Cheatcode for copyStorageCall {
         Ok(Default::default())
     }
 }
-
-// Random 4 bytes
-impl Cheatcode for randomBytes4Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let rand_u32 = thread_rng().next_u32();
-        Ok(B32::from(rand_u32).abi_encode())
-    }
-}
-
-// Random 8 bytes
-impl Cheatcode for randomBytes8Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let rand_u64 = thread_rng().next_u64();
-        Ok(B64::from(rand_u64).abi_encode())
-    }
-}
-
-// Random bytes
-// impl Cheatcode for randomBytesCall {
-//     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-//         let Self { size } = self;
-//         ensure!(*size <= U256::from(usize::MAX), "size must be equal or less than usize max
-// value");         let mut data: Vec<u8> = vec![0u8; size.to::<usize>()];
-//         thread_rng().fill_bytes(&mut data);
-//         data.map();
-//     }
-// }

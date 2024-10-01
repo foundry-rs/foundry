@@ -3,12 +3,13 @@
 use crate::{
     json::{
         canonicalize_json_path, check_json_key_exists, parse_json, parse_json_coerce,
-        parse_json_keys,
+        parse_json_keys, resolve_type,
     },
     Cheatcode, Cheatcodes, Result,
     Vm::*,
 };
 use alloy_dyn_abi::DynSolType;
+use alloy_sol_types::SolValue;
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use serde_json::Value as JsonValue;
@@ -130,6 +131,28 @@ impl Cheatcode for parseTomlBytes32ArrayCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
+    }
+}
+
+impl Cheatcode for parseTomlType_0Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { toml, typeDescription } = self;
+        parse_toml_coerce(toml, "$", &resolve_type(typeDescription)?).map(|v| v.abi_encode())
+    }
+}
+
+impl Cheatcode for parseTomlType_1Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { toml, key, typeDescription } = self;
+        parse_toml_coerce(toml, key, &resolve_type(typeDescription)?).map(|v| v.abi_encode())
+    }
+}
+
+impl Cheatcode for parseTomlTypeArrayCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { toml, key, typeDescription } = self;
+        let ty = resolve_type(typeDescription)?;
+        parse_toml_coerce(toml, key, &DynSolType::Array(Box::new(ty))).map(|v| v.abi_encode())
     }
 }
 

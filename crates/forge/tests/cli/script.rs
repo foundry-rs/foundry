@@ -930,7 +930,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
 
     // Check broadcast logs
     // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
-    // transactionIndex and logIndex values since they can change inbetween runs
+    // transactionIndex and logIndex values since they can change in between runs
     let re = Regex::new(r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#).unwrap();
 
     let fixtures_log = std::fs::read_to_string(
@@ -954,7 +954,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     // );
 
     // Check sensitive logs
-    // Ignore port number since it can change inbetween runs
+    // Ignore port number since it can change in between runs
     let re = Regex::new(r":[0-9]+").unwrap();
 
     let fixtures_log = std::fs::read_to_string(

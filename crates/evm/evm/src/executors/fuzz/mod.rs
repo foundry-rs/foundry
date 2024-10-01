@@ -1,7 +1,7 @@
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_primitives::{map::HashMap, Address, Bytes, Log, U256};
 use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
@@ -39,6 +39,8 @@ pub struct FuzzTestData {
     pub coverage: Option<HitMaps>,
     // Stores logs for all fuzz cases
     pub logs: Vec<Log>,
+    // Deprecated cheatcodes mapped to their replacements.
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
@@ -86,7 +88,7 @@ impl FuzzedExecutor {
         let execution_data = RefCell::new(FuzzTestData::default());
         let state = self.build_fuzz_state();
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-        let strat = proptest::prop_oneof![
+        let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
         ];
@@ -94,7 +96,7 @@ impl FuzzedExecutor {
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
         let show_logs = self.config.show_logs;
 
-        let run_result = self.runner.clone().run(&strat, |calldata| {
+        let run_result = self.runner.clone().run(&strategy, |calldata| {
             let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
 
             // If running with progress then increment current run.
@@ -124,6 +126,7 @@ impl FuzzedExecutor {
                         Some(prev) => prev.merge(case.coverage.unwrap()),
                         opt => *opt = case.coverage,
                     }
+                    data.deprecated_cheatcodes = case.deprecated_cheatcodes;
 
                     Ok(())
                 }
@@ -168,6 +171,7 @@ impl FuzzedExecutor {
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
             coverage: fuzz_result.coverage,
+            deprecated_cheatcodes: fuzz_result.deprecated_cheatcodes,
         };
 
         match run_result {
@@ -230,10 +234,10 @@ impl FuzzedExecutor {
             return Err(TestCaseError::reject(FuzzError::AssumeReject))
         }
 
-        let breakpoints = call
-            .cheatcodes
-            .as_ref()
-            .map_or_else(Default::default, |cheats| cheats.breakpoints.clone());
+        let (breakpoints, deprecated_cheatcodes) =
+            call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {
+                (cheats.breakpoints.clone(), cheats.deprecated.clone())
+            });
 
         let success = self.executor.is_raw_call_mut_success(address, &mut call, should_fail);
         if success {
@@ -243,6 +247,7 @@ impl FuzzedExecutor {
                 coverage: call.coverage,
                 breakpoints,
                 logs: call.logs,
+                deprecated_cheatcodes,
             }))
         } else {
             Ok(FuzzOutcome::CounterExample(CounterExampleOutcome {

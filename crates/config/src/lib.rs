@@ -38,12 +38,11 @@ use foundry_compilers::{
 };
 use inflector::Inflector;
 use regex::Regex;
-use revm_primitives::{FixedBytes, SpecId};
+use revm_primitives::{map::AddressHashMap, FixedBytes, SpecId};
 use semver::Version;
 use serde::{Deserialize, Serialize, Serializer};
 use std::{
     borrow::Cow,
-    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -418,7 +417,7 @@ pub struct Config {
     pub disable_block_gas_limit: bool,
 
     /// Address labels
-    pub labels: HashMap<Address, String>,
+    pub labels: AddressHashMap<String>,
 
     /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
     /// If disabled, it is possible to access artifacts which were not recompiled or cached.
@@ -2717,7 +2716,7 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
         figment.data().map_err(|err| {
             // figment does tag metadata and tries to map metadata to an error, since we use a new
             // figment in this provider this new figment does not know about the metadata of the
-            // provider and can't map the metadata to the error. Therefor we return the root error
+            // provider and can't map the metadata to the error. Therefore we return the root error
             // if this error originated in the provider's data.
             if let Err(root_err) = self.provider.data() {
                 return root_err;
@@ -5034,7 +5033,7 @@ mod tests {
             let config = Config::load();
             assert_eq!(
                 config.labels,
-                HashMap::from_iter(vec![
+                AddressHashMap::from_iter(vec![
                     (
                         Address::from_str("0x1F98431c8aD98523631AE4a59f267346ea31F984").unwrap(),
                         "Uniswap V3: Factory".to_string()

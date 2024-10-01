@@ -468,7 +468,7 @@ impl VerifyBytecodeArgs {
                 &transaction,
             )?;
 
-            // State commited using deploy_with_env, now get the runtime bytecode from the db.
+            // State committed using deploy_with_env, now get the runtime bytecode from the db.
             let (fork_runtime_code, onchain_runtime_code) = crate::utils::get_runtime_codes(
                 &mut executor,
                 &provider,

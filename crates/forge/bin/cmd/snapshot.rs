@@ -1,5 +1,5 @@
 use super::test;
-use alloy_primitives::U256;
+use alloy_primitives::{map::HashMap, U256};
 use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
 use eyre::{Context, Result};
 use forge::result::{SuiteTestResult, TestKindReport, TestOutcome};
@@ -7,7 +7,6 @@ use foundry_cli::utils::STATIC_FUZZ_SEED;
 use regex::Regex;
 use std::{
     cmp::Ordering,
-    collections::HashMap,
     fs,
     io::{self, BufRead},
     path::{Path, PathBuf},
@@ -24,8 +23,8 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: LazyLock<Regex> = LazyLock::new(|| {
 
 /// CLI arguments for `forge snapshot`.
 #[derive(Clone, Debug, Parser)]
-pub struct SnapshotArgs {
-    /// Output a diff against a pre-existing snapshot.
+pub struct GasSnapshotArgs {
+    /// Output a diff against a pre-existing gas snapshot.
     ///
     /// By default, the comparison is done with .gas-snapshot.
     #[arg(
@@ -36,9 +35,9 @@ pub struct SnapshotArgs {
     )]
     diff: Option<Option<PathBuf>>,
 
-    /// Compare against a pre-existing snapshot, exiting with code 1 if they do not match.
+    /// Compare against a pre-existing gas snapshot, exiting with code 1 if they do not match.
     ///
-    /// Outputs a diff if the snapshots do not match.
+    /// Outputs a diff if the gas snapshots do not match.
     ///
     /// By default, the comparison is done with .gas-snapshot.
     #[arg(
@@ -54,7 +53,7 @@ pub struct SnapshotArgs {
     #[arg(long, hide(true))]
     format: Option<Format>,
 
-    /// Output file for the snapshot.
+    /// Output file for the gas snapshot.
     #[arg(
         long,
         default_value = ".gas-snapshot",
@@ -77,11 +76,11 @@ pub struct SnapshotArgs {
 
     /// Additional configs for test results
     #[command(flatten)]
-    config: SnapshotConfig,
+    config: GasSnapshotConfig,
 }
 
-impl SnapshotArgs {
-    /// Returns whether `SnapshotArgs` was configured with `--watch`
+impl GasSnapshotArgs {
+    /// Returns whether `GasSnapshotArgs` was configured with `--watch`
     pub fn is_watch(&self) -> bool {
         self.test.is_watch()
     }
@@ -102,18 +101,18 @@ impl SnapshotArgs {
 
         if let Some(path) = self.diff {
             let snap = path.as_ref().unwrap_or(&self.snap);
-            let snaps = read_snapshot(snap)?;
+            let snaps = read_gas_snapshot(snap)?;
             diff(tests, snaps)?;
         } else if let Some(path) = self.check {
             let snap = path.as_ref().unwrap_or(&self.snap);
-            let snaps = read_snapshot(snap)?;
+            let snaps = read_gas_snapshot(snap)?;
             if check(tests, snaps, self.tolerance) {
                 std::process::exit(0)
             } else {
                 std::process::exit(1)
             }
         } else {
-            write_to_snapshot_file(&tests, self.snap, self.format)?;
+            write_to_gas_snapshot_file(&tests, self.snap, self.format)?;
         }
         Ok(())
     }
@@ -138,7 +137,7 @@ impl FromStr for Format {
 
 /// Additional filters that can be applied on the test results
 #[derive(Clone, Debug, Default, Parser)]
-struct SnapshotConfig {
+struct GasSnapshotConfig {
     /// Sort results by gas used (ascending).
     #[arg(long)]
     asc: bool,
@@ -156,7 +155,7 @@ struct SnapshotConfig {
     max: Option<u64>,
 }
 
-impl SnapshotConfig {
+impl GasSnapshotConfig {
     fn is_in_gas_range(&self, gas_used: u64) -> bool {
         if let Some(min) = self.min {
             if gas_used < min {
@@ -187,20 +186,20 @@ impl SnapshotConfig {
     }
 }
 
-/// A general entry in a snapshot file
+/// A general entry in a gas snapshot file
 ///
 /// Has the form:
 ///   `<signature>(gas:? 40181)` for normal tests
 ///   `<signature>(runs: 256, μ: 40181, ~: 40181)` for fuzz tests
 ///   `<signature>(runs: 256, calls: 40181, reverts: 40181)` for invariant tests
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SnapshotEntry {
+pub struct GasSnapshotEntry {
     pub contract_name: String,
     pub signature: String,
     pub gas_used: TestKindReport,
 }
 
-impl FromStr for SnapshotEntry {
+impl FromStr for GasSnapshotEntry {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -253,8 +252,8 @@ impl FromStr for SnapshotEntry {
     }
 }
 
-/// Reads a list of snapshot entries from a snapshot file
-fn read_snapshot(path: impl AsRef<Path>) -> Result<Vec<SnapshotEntry>> {
+/// Reads a list of gas snapshot entries from a gas snapshot file.
+fn read_gas_snapshot(path: impl AsRef<Path>) -> Result<Vec<GasSnapshotEntry>> {
     let path = path.as_ref();
     let mut entries = Vec::new();
     for line in io::BufReader::new(
@@ -263,13 +262,14 @@ fn read_snapshot(path: impl AsRef<Path>) -> Result<Vec<SnapshotEntry>> {
     )
     .lines()
     {
-        entries.push(SnapshotEntry::from_str(line?.as_str()).map_err(|err| eyre::eyre!("{err}"))?);
+        entries
+            .push(GasSnapshotEntry::from_str(line?.as_str()).map_err(|err| eyre::eyre!("{err}"))?);
     }
     Ok(entries)
 }
 
-/// Writes a series of tests to a snapshot file after sorting them
-fn write_to_snapshot_file(
+/// Writes a series of tests to a gas snapshot file after sorting them.
+fn write_to_gas_snapshot_file(
     tests: &[SuiteTestResult],
     path: impl AsRef<Path>,
     _format: Option<Format>,
@@ -288,15 +288,15 @@ fn write_to_snapshot_file(
     Ok(fs::write(path, content)?)
 }
 
-/// A Snapshot entry diff
+/// A Gas snapshot entry diff.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SnapshotDiff {
+pub struct GasSnapshotDiff {
     pub signature: String,
     pub source_gas_used: TestKindReport,
     pub target_gas_used: TestKindReport,
 }
 
-impl SnapshotDiff {
+impl GasSnapshotDiff {
     /// Returns the gas diff
     ///
     /// `> 0` if the source used more gas
@@ -311,10 +311,14 @@ impl SnapshotDiff {
     }
 }
 
-/// Compares the set of tests with an existing snapshot
+/// Compares the set of tests with an existing gas snapshot.
 ///
 /// Returns true all tests match
-fn check(tests: Vec<SuiteTestResult>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) -> bool {
+fn check(
+    tests: Vec<SuiteTestResult>,
+    snaps: Vec<GasSnapshotEntry>,
+    tolerance: Option<u32>,
+) -> bool {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
@@ -347,8 +351,8 @@ fn check(tests: Vec<SuiteTestResult>, snaps: Vec<SnapshotEntry>, tolerance: Opti
     !has_diff
 }
 
-/// Compare the set of tests with an existing snapshot
-fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<SnapshotEntry>) -> Result<()> {
+/// Compare the set of tests with an existing gas snapshot.
+fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<GasSnapshotEntry>) -> Result<()> {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
@@ -358,7 +362,7 @@ fn diff(tests: Vec<SuiteTestResult>, snaps: Vec<SnapshotEntry>) -> Result<()> {
         if let Some(target_gas_used) =
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
-            diffs.push(SnapshotDiff {
+            diffs.push(GasSnapshotDiff {
                 source_gas_used: test.result.kind.report(),
                 signature: test.signature,
                 target_gas_used,
@@ -446,12 +450,12 @@ mod tests {
     }
 
     #[test]
-    fn can_parse_basic_snapshot_entry() {
+    fn can_parse_basic_gas_snapshot_entry() {
         let s = "Test:deposit() (gas: 7222)";
-        let entry = SnapshotEntry::from_str(s).unwrap();
+        let entry = GasSnapshotEntry::from_str(s).unwrap();
         assert_eq!(
             entry,
-            SnapshotEntry {
+            GasSnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
                 gas_used: TestKindReport::Unit { gas: 7222 }
@@ -460,12 +464,12 @@ mod tests {
     }
 
     #[test]
-    fn can_parse_fuzz_snapshot_entry() {
+    fn can_parse_fuzz_gas_snapshot_entry() {
         let s = "Test:deposit() (runs: 256, μ: 100, ~:200)";
-        let entry = SnapshotEntry::from_str(s).unwrap();
+        let entry = GasSnapshotEntry::from_str(s).unwrap();
         assert_eq!(
             entry,
-            SnapshotEntry {
+            GasSnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
                 gas_used: TestKindReport::Fuzz { runs: 256, median_gas: 200, mean_gas: 100 }
@@ -474,12 +478,12 @@ mod tests {
     }
 
     #[test]
-    fn can_parse_invariant_snapshot_entry() {
+    fn can_parse_invariant_gas_snapshot_entry() {
         let s = "Test:deposit() (runs: 256, calls: 100, reverts: 200)";
-        let entry = SnapshotEntry::from_str(s).unwrap();
+        let entry = GasSnapshotEntry::from_str(s).unwrap();
         assert_eq!(
             entry,
-            SnapshotEntry {
+            GasSnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
                 gas_used: TestKindReport::Invariant { runs: 256, calls: 100, reverts: 200 }
@@ -488,12 +492,12 @@ mod tests {
     }
 
     #[test]
-    fn can_parse_invariant_snapshot_entry2() {
+    fn can_parse_invariant_gas_snapshot_entry2() {
         let s = "ERC20Invariants:invariantBalanceSum() (runs: 256, calls: 3840, reverts: 2388)";
-        let entry = SnapshotEntry::from_str(s).unwrap();
+        let entry = GasSnapshotEntry::from_str(s).unwrap();
         assert_eq!(
             entry,
-            SnapshotEntry {
+            GasSnapshotEntry {
                 contract_name: "ERC20Invariants".to_string(),
                 signature: "invariantBalanceSum()".to_string(),
                 gas_used: TestKindReport::Invariant { runs: 256, calls: 3840, reverts: 2388 }

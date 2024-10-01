@@ -56,12 +56,12 @@ impl SignaturesIdentifier {
                 }
                 CachedSignatures::default()
             };
-            Self { cached, cached_path: Some(path), unavailable: HashSet::new(), client }
+            Self { cached, cached_path: Some(path), unavailable: HashSet::default(), client }
         } else {
             Self {
                 cached: Default::default(),
                 cached_path: None,
-                unavailable: HashSet::new(),
+                unavailable: HashSet::default(),
                 client,
             }
         };
@@ -162,6 +162,8 @@ impl Drop for SignaturesIdentifier {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::needless_return)]
+
     use super::*;
 
     #[tokio::test(flavor = "multi_thread")]

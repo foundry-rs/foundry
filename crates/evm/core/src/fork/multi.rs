@@ -4,7 +4,7 @@
 //! concurrently active pairs at once.
 
 use super::CreateFork;
-use alloy_primitives::U256;
+use alloy_primitives::{map::HashMap, U256};
 use alloy_provider::network::{BlockResponse, HeaderResponse};
 use alloy_transport::layers::RetryBackoffService;
 use foundry_common::provider::{
@@ -20,7 +20,6 @@ use futures::{
 };
 use revm::primitives::Env;
 use std::{
-    collections::HashMap,
     fmt::{self, Write},
     pin::Pin,
     sync::{
