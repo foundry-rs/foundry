@@ -2,6 +2,7 @@ use crate::{
     document::DocumentContent, helpers::merge_toml_table, AsDoc, BufWriter, Document, ParseItem,
     ParseSource, Parser, Preprocessor,
 };
+use alloy_primitives::map::HashMap;
 use forge_fmt::{FormatterConfig, Visitable};
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
 use foundry_config::{filter::expand_globs, DocConfig};
@@ -10,7 +11,6 @@ use mdbook::MDBook;
 use rayon::prelude::*;
 use std::{
     cmp::Ordering,
-    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };

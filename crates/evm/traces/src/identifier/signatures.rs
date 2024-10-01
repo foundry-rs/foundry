@@ -65,12 +65,12 @@ impl SignaturesIdentifier {
             let path = cache_path.join("signatures");
             trace!(target: "evm::traces", ?path, "reading signature cache");
             let cached = CachedSignatures::load(cache_path);
-            Self { cached, cached_path: Some(path), unavailable: HashSet::new(), client }
+            Self { cached, cached_path: Some(path), unavailable: HashSet::default(), client }
         } else {
             Self {
                 cached: Default::default(),
                 cached_path: None,
-                unavailable: HashSet::new(),
+                unavailable: HashSet::default(),
                 client,
             }
         };

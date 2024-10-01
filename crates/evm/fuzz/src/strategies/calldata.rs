@@ -65,16 +65,15 @@ mod tests {
     use crate::{strategies::fuzz_calldata, FuzzFixtures};
     use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
     use alloy_json_abi::Function;
-    use alloy_primitives::Address;
+    use alloy_primitives::{map::HashMap, Address};
     use proptest::prelude::Strategy;
-    use std::collections::HashMap;
 
     #[test]
     fn can_fuzz_with_fixtures() {
         let function = Function::parse("test_fuzzed_address(address addressFixture)").unwrap();
 
         let address_fixture = DynSolValue::Address(Address::random());
-        let mut fixtures = HashMap::new();
+        let mut fixtures = HashMap::default();
         fixtures.insert(
             "addressFixture".to_string(),
             DynSolValue::Array(vec![address_fixture.clone()]),

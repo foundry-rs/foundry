@@ -4,13 +4,13 @@ use crate::{
     backend::{RevertStateSnapshotAction, StateSnapshot},
     state_snapshot::StateSnapshots,
 };
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{map::HashMap, Address, B256, U256};
 use alloy_rpc_types::BlockId;
 use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
 use parking_lot::Mutex;
 use revm::{
     db::{CacheDB, DatabaseRef},
-    primitives::{Account, AccountInfo, Bytecode, HashMap as Map},
+    primitives::{Account, AccountInfo, Bytecode},
     Database, DatabaseCommit,
 };
 use std::sync::Arc;
@@ -193,7 +193,7 @@ impl DatabaseRef for ForkedDatabase {
 }
 
 impl DatabaseCommit for ForkedDatabase {
-    fn commit(&mut self, changes: Map<Address, Account>) {
+    fn commit(&mut self, changes: HashMap<Address, Account>) {
         self.database_mut().commit(changes)
     }
 }

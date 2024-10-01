@@ -268,7 +268,7 @@ struct LineNumberCache {
 
 impl LineNumberCache {
     pub fn new(root: PathBuf) -> Self {
-        Self { root, line_offsets: HashMap::new() }
+        Self { root, line_offsets: HashMap::default() }
     }
 
     pub fn get_position(&mut self, path: &Path, offset: usize) -> eyre::Result<(usize, usize)> {

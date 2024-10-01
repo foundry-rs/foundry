@@ -1,6 +1,6 @@
 use crate::{DocBuilder, ParseItem, PreprocessorId, PreprocessorOutput};
+use alloy_primitives::map::HashMap;
 use std::{
-    collections::HashMap,
     path::{Path, PathBuf},
     slice::IterMut,
     sync::Mutex,

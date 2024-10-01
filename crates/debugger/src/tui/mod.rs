@@ -1,6 +1,6 @@
 //! The TUI implementation.
 
-use alloy_primitives::Address;
+use alloy_primitives::map::AddressHashMap;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
@@ -14,7 +14,6 @@ use ratatui::{
     Terminal,
 };
 use std::{
-    collections::HashMap,
     io,
     ops::ControlFlow,
     sync::{mpsc, Arc},
@@ -44,7 +43,7 @@ pub enum ExitReason {
 /// The TUI debugger.
 pub struct Debugger {
     debug_arena: Vec<DebugNode>,
-    identified_contracts: HashMap<Address, String>,
+    identified_contracts: AddressHashMap<String>,
     /// Source map of contract sources
     contracts_sources: ContractSources,
     breakpoints: Breakpoints,
@@ -60,7 +59,7 @@ impl Debugger {
     /// Creates a new debugger.
     pub fn new(
         debug_arena: Vec<DebugNode>,
-        identified_contracts: HashMap<Address, String>,
+        identified_contracts: AddressHashMap<String>,
         contracts_sources: ContractSources,
         breakpoints: Breakpoints,
     ) -> Self {
