@@ -1231,7 +1231,7 @@ impl Backend {
         env.tx =
             TxEnv {
                 caller,
-                gas_limit: gas_limit as u64,
+                gas_limit,
                 gas_price: U256::from(gas_price),
                 gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
                 max_fee_per_blob_gas: max_fee_per_blob_gas
@@ -2230,7 +2230,7 @@ impl Backend {
 
         // Cancun specific
         let excess_blob_gas = block.header.excess_blob_gas;
-        let blob_gas_price = calc_blob_gasprice(excess_blob_gas.map_or(0, |g| g as u64));
+        let blob_gas_price = calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
         let blob_gas_used = transaction.blob_gas();
 
         let effective_gas_price = match transaction.transaction {

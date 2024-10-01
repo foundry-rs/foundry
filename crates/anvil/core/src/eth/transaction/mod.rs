@@ -498,7 +498,7 @@ impl PendingTransaction {
                     value: (*value),
                     gas_price: U256::from(*gas_price),
                     gas_priority_fee: None,
-                    gas_limit: *gas_limit as u64,
+                    gas_limit: *gas_limit,
                     access_list: vec![],
                     ..Default::default()
                 }
@@ -524,7 +524,7 @@ impl PendingTransaction {
                     value: *value,
                     gas_price: U256::from(*gas_price),
                     gas_priority_fee: None,
-                    gas_limit: *gas_limit as u64,
+                    gas_limit: *gas_limit,
                     access_list: access_list.clone().into(),
                     ..Default::default()
                 }
@@ -551,7 +551,7 @@ impl PendingTransaction {
                     value: *value,
                     gas_price: U256::from(*max_fee_per_gas),
                     gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
-                    gas_limit: *gas_limit as u64,
+                    gas_limit: *gas_limit,
                     access_list: access_list.clone().into(),
                     ..Default::default()
                 }
@@ -582,7 +582,7 @@ impl PendingTransaction {
                     gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
                     max_fee_per_blob_gas: Some(U256::from(*max_fee_per_blob_gas)),
                     blob_hashes: blob_versioned_hashes.clone(),
-                    gas_limit: *gas_limit as u64,
+                    gas_limit: *gas_limit,
                     access_list: access_list.clone().into(),
                     ..Default::default()
                 }
@@ -609,7 +609,7 @@ impl PendingTransaction {
                     value: *value,
                     gas_price: U256::from(*max_fee_per_gas),
                     gas_priority_fee: Some(U256::from(*max_priority_fee_per_gas)),
-                    gas_limit: *gas_limit as u64,
+                    gas_limit: *gas_limit,
                     access_list: access_list.clone().into(),
                     authorization_list: Some(authorization_list.clone().into()),
                     ..Default::default()
