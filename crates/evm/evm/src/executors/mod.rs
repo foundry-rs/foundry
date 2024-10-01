@@ -57,7 +57,7 @@ sol! {
         #[derive(Default)]
         function beforeTestSetup(bytes4 testSelector) public view returns (bytes[] memory beforeTestCalldata);
 
-        function afterUnitTest() external;
+        function afterTest() external;
     }
 }
 
@@ -393,9 +393,8 @@ impl Executor {
         self.transact_with_env(env)
     }
 
-    #[instrument(name = "call", level = "debug", skip_all)]
-    pub fn call_after_unit_test(&self, from: Address, to: Address) -> eyre::Result<RawCallResult> {
-        let calldata = Bytes::from_static(&ITest::afterUnitTestCall::SELECTOR);
+    pub fn call_after_test(&self, from: Address, to: Address) -> eyre::Result<RawCallResult> {
+        let calldata = Bytes::from_static(&ITest::afterTestCall::SELECTOR);
         let mut result = self.call_raw(from, to, calldata, U256::ZERO)?;
 
         let success = self.is_raw_call_mut_success(to, &mut result, false);

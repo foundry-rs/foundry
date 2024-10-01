@@ -417,9 +417,7 @@ impl<'a> ContractRunner<'a> {
                         let mut test_result = self.run_unit_test(func, should_fail, setup);
 
                         if test_result.status.is_success() && call_after_unit_test {
-                            let after_unit_test_result =
-                                self.executor.call_after_unit_test(self.sender, address).unwrap();
-                            test_result.merge_call_result(&after_unit_test_result);
+                            self.run_after_test(&mut test_result, address, address);
                         }
 
                         test_result
@@ -495,6 +493,18 @@ impl<'a> ContractRunner<'a> {
         let success = executor.is_raw_call_mut_success(address, &mut raw_call_result, should_fail);
 
         test_result.single_result(success, reason, raw_call_result)
+    }
+
+    /// Runs the `afterTest` function. If successful then merges the results with the previous test
+    fn run_after_test(&self, prev_test_result: &mut TestResult, from: Address, to: Address) {
+        let after_test_result = self.executor.call_unit_test(from, to);
+
+        match after_test_result {
+            Ok(res) => prev_test_result.merge_call_result(&res),
+            Err(_err) => {
+                todo!()
+            }
+        };
     }
 
     #[allow(clippy::too_many_arguments)]
