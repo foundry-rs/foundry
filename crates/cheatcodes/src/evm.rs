@@ -788,12 +788,7 @@ fn inner_value_snapshot<DB: DatabaseExt>(
     name: Option<String>,
     value: String,
 ) -> Result {
-    let cheatcodes = ccx.state.clone();
-    let group = group
-        .as_deref()
-        .unwrap_or(cheatcodes.config.running_contract.as_ref().expect("expected running contract"))
-        .to_string();
-    let name = name.as_deref().unwrap_or("default").to_string();
+    let (group, name) = derive_snapshot_name(ccx, group, name);
 
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value);
 
@@ -806,12 +801,7 @@ fn inner_last_gas_snapshot<DB: DatabaseExt>(
     name: Option<String>,
     value: u64,
 ) -> Result {
-    let cheatcodes = ccx.state.clone();
-    let group = group
-        .as_deref()
-        .unwrap_or(cheatcodes.config.running_contract.as_ref().expect("expected running contract"))
-        .to_string();
-    let name = name.as_deref().unwrap_or("default").to_string();
+    let (group, name) = derive_snapshot_name(ccx, group, name);
 
     ccx.state.gas_snapshots.entry(group).or_default().insert(name, value.to_string());
 
@@ -900,6 +890,19 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
     } else {
         bail!("no gas snapshot was started with the name: {name} in group: {group}");
     }
+}
+
+// Derives the snapshot group and name from the provided group and name or the running contract.
+fn derive_snapshot_name<DB: DatabaseExt>(
+    ccx: &CheatsCtxt<DB>,
+    group: Option<String>,
+    name: Option<String>,
+) -> (String, String) {
+    let group = group
+        .as_deref()
+        .unwrap_or(ccx.state.config.running_contract.as_ref().expect("expected running contract"));
+    let name = name.as_deref().unwrap_or("default");
+    (group.to_string(), name.to_string())
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
