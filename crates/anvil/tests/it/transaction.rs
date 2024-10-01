@@ -3,7 +3,7 @@ use crate::{
     utils::{connect_pubsub, http_provider_with_signer},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, FixedBytes, U256};
+use alloy_primitives::{map::B256HashSet, Address, Bytes, FixedBytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     state::{AccountOverride, StateOverride},
@@ -13,7 +13,7 @@ use alloy_serde::WithOtherFields;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
 use eyre::Ok;
 use futures::{future::join_all, FutureExt, StreamExt};
-use std::{collections::HashSet, str::FromStr, time::Duration};
+use std::{str::FromStr, time::Duration};
 use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -230,14 +230,14 @@ async fn can_reject_too_high_gas_limits() {
 // <https://github.com/foundry-rs/foundry/issues/8094>
 #[tokio::test(flavor = "multi_thread")]
 async fn can_mine_large_gas_limit() {
-    let (api, handle) = spawn(NodeConfig::test().disable_block_gas_limit(true)).await;
+    let (_, handle) = spawn(NodeConfig::test().disable_block_gas_limit(true)).await;
     let provider = handle.http_provider();
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let gas_limit = api.gas_limit().to::<u128>();
+    let gas_limit = anvil::DEFAULT_GAS_LIMIT;
     let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
     let tx =
@@ -950,7 +950,7 @@ async fn can_stream_pending_transactions() {
         if watch_received.len() == num_txs && sub_received.len() == num_txs {
             if let Some(sent) = &sent {
                 assert_eq!(sent.len(), watch_received.len());
-                let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<HashSet<_>>();
+                let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<B256HashSet>();
                 assert_eq!(sent_txs, watch_received.iter().copied().collect());
                 assert_eq!(sent_txs, sub_received.iter().copied().collect());
                 break

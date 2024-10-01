@@ -1,6 +1,7 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
 use alloy_primitives::{Address, TxHash};
 use alloy_rpc_types::Transaction as RpcTransaction;
+use alloy_serde::WithOtherFields;
 use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use parking_lot::RwLock;
 use std::{
@@ -116,9 +117,9 @@ impl fmt::Debug for PoolTransaction {
     }
 }
 
-impl TryFrom<RpcTransaction> for PoolTransaction {
+impl TryFrom<WithOtherFields<RpcTransaction>> for PoolTransaction {
     type Error = eyre::Error;
-    fn try_from(transaction: RpcTransaction) -> Result<Self, Self::Error> {
+    fn try_from(transaction: WithOtherFields<RpcTransaction>) -> Result<Self, Self::Error> {
         let typed_transaction = TypedTransaction::try_from(transaction)?;
         let pending_transaction = PendingTransaction::new(typed_transaction)?;
         Ok(Self {

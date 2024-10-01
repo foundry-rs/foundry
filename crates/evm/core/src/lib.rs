@@ -26,7 +26,7 @@ pub mod fork;
 pub mod opcodes;
 pub mod opts;
 pub mod precompiles;
-pub mod snapshot;
+pub mod state_snapshot;
 pub mod utils;
 
 /// An extension trait that allows us to add additional hooks to Inspector for later use in
@@ -45,9 +45,10 @@ pub trait InspectorExt<DB: Database>: Inspector<DB> {
         false
     }
 
-    // Simulates `console.log` invocation.
+    /// Simulates `console.log` invocation.
     fn console_log(&mut self, _input: String) {}
 
+    /// Returns `true` if the current network is Alphanet.
     fn is_alphanet(&self) -> bool {
         false
     }

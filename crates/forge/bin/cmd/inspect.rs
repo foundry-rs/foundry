@@ -101,6 +101,9 @@ impl InspectArgs {
             ContractArtifactField::Assembly | ContractArtifactField::AssemblyOptimized => {
                 print_json_str(&artifact.assembly, None)?;
             }
+            ContractArtifactField::LegacyAssembly => {
+                print_json_str(&artifact.legacy_assembly, None)?;
+            }
             ContractArtifactField::MethodIdentifiers => {
                 print_json(&artifact.method_identifiers)?;
             }
@@ -210,6 +213,7 @@ pub enum ContractArtifactField {
     DeployedBytecode,
     Assembly,
     AssemblyOptimized,
+    LegacyAssembly,
     MethodIdentifiers,
     GasEstimates,
     StorageLayout,
@@ -292,6 +296,7 @@ impl_value_enum! {
         DeployedBytecode  => "deployedBytecode" | "deployed_bytecode" | "deployed-bytecode"
                              | "deployed" | "deployedbytecode",
         Assembly          => "assembly" | "asm",
+        LegacyAssembly    => "legacyAssembly" | "legacyassembly" | "legacy_assembly",
         AssemblyOptimized => "assemblyOptimized" | "asmOptimized" | "assemblyoptimized"
                              | "assembly_optimized" | "asmopt" | "assembly-optimized"
                              | "asmo" | "asm-optimized" | "asmoptimized" | "asm_optimized",
@@ -324,6 +329,7 @@ impl From<ContractArtifactField> for ContractOutputSelection {
                 DeployedBytecodeOutputSelection::All,
             )),
             Caf::Assembly | Caf::AssemblyOptimized => Self::Evm(EvmOutputSelection::Assembly),
+            Caf::LegacyAssembly => Self::Evm(EvmOutputSelection::LegacyAssembly),
             Caf::MethodIdentifiers => Self::Evm(EvmOutputSelection::MethodIdentifiers),
             Caf::GasEstimates => Self::Evm(EvmOutputSelection::GasEstimates),
             Caf::StorageLayout => Self::StorageLayout,
@@ -354,6 +360,7 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
                 (Self::Bytecode, Cos::Evm(Eos::ByteCode(_))) |
                 (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_))) |
                 (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly)) |
+                (Self::LegacyAssembly, Cos::Evm(Eos::LegacyAssembly)) |
                 (Self::MethodIdentifiers, Cos::Evm(Eos::MethodIdentifiers)) |
                 (Self::GasEstimates, Cos::Evm(Eos::GasEstimates)) |
                 (Self::StorageLayout, Cos::StorageLayout) |

@@ -9,15 +9,15 @@ contract Issue3055Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function test_snapshot() external {
-        uint256 snapId = vm.snapshot();
+        uint256 snapshotId = vm.snapshotState();
         assertEq(uint256(0), uint256(1));
-        vm.revertTo(snapId);
+        vm.revertToState(snapshotId);
     }
 
     function test_snapshot2() public {
-        uint256 snapshot = vm.snapshot();
+        uint256 snapshotId = vm.snapshotState();
         assertTrue(false);
-        vm.revertTo(snapshot);
+        vm.revertToState(snapshotId);
         assertTrue(true);
     }
 
@@ -29,8 +29,8 @@ contract Issue3055Test is DSTest {
     }
 
     function exposed_snapshot3() public {
-        uint256 snapshot = vm.snapshot();
+        uint256 snapshotId = vm.snapshotState();
         assertTrue(false);
-        vm.revertTo(snapshot);
+        vm.revertToState(snapshotId);
     }
 }

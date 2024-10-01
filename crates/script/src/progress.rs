@@ -3,27 +3,30 @@ use crate::{
     sequence::ScriptSequence,
 };
 use alloy_chains::Chain;
-use alloy_primitives::B256;
+use alloy_primitives::{
+    map::{B256HashMap, HashMap},
+    B256,
+};
 use eyre::Result;
 use foundry_cli::utils::init_progress;
 use foundry_common::provider::RetryProvider;
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
-use std::{collections::HashMap, fmt::Write, sync::Arc, time::Duration};
+use std::{fmt::Write, sync::Arc, time::Duration};
 use yansi::Paint;
 
 /// State of [ProgressBar]s displayed for the given [ScriptSequence].
 #[derive(Debug)]
 pub struct SequenceProgressState {
-    /// The top spinner with containt of the format "Sequence #{id} on {network} | {status}""
+    /// The top spinner with content of the format "Sequence #{id} on {network} | {status}""
     top_spinner: ProgressBar,
     /// Progress bar with the count of transactions.
     txs: ProgressBar,
     /// Progress var with the count of confirmed transactions.
     receipts: ProgressBar,
     /// Standalone spinners for pending transactions.
-    tx_spinners: HashMap<B256, ProgressBar>,
+    tx_spinners: B256HashMap<ProgressBar>,
     /// Copy of the main [MultiProgress] instance.
     multi: MultiProgress,
 }

@@ -176,6 +176,8 @@ interface Vm {
     function deal(address account, uint256 newBalance) external;
     function deleteSnapshot(uint256 snapshotId) external returns (bool success);
     function deleteSnapshots() external;
+    function deleteStateSnapshot(uint256 snapshotId) external returns (bool success);
+    function deleteStateSnapshots() external;
     function deployCode(string calldata artifactPath) external returns (address deployedAddress);
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);
     function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);
@@ -246,6 +248,8 @@ interface Vm {
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
+    function getArtifactPathByCode(bytes calldata code) external view returns (string memory path);
+    function getArtifactPathByDeployedCode(bytes calldata deployedCode) external view returns (string memory path);
     function getBlobBaseFee() external view returns (uint256 blobBaseFee);
     function getBlobhashes() external view returns (bytes32[] memory hashes);
     function getBlockNumber() external view returns (uint256 height);
@@ -319,6 +323,9 @@ interface Vm {
     function parseTomlKeys(string calldata toml, string calldata key) external pure returns (string[] memory keys);
     function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);
     function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);
+    function parseTomlTypeArray(string calldata toml, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
+    function parseTomlType(string calldata toml, string calldata typeDescription) external pure returns (bytes memory);
+    function parseTomlType(string calldata toml, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
     function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);
     function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);
     function parseToml(string calldata toml) external pure returns (bytes memory abiEncodedData);
@@ -338,8 +345,13 @@ interface Vm {
     function promptUint(string calldata promptText) external returns (uint256);
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
     function randomAddress() external returns (address);
+    function randomBool() external view returns (bool);
+    function randomBytes(uint256 len) external view returns (bytes memory);
+    function randomInt() external view returns (int256);
+    function randomInt(uint256 bits) external view returns (int256);
     function randomUint() external returns (uint256);
     function randomUint(uint256 min, uint256 max) external returns (uint256);
+    function randomUint(uint256 bits) external view returns (uint256);
     function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
     function readDir(string calldata path) external view returns (DirEntry[] memory entries);
     function readDir(string calldata path, uint64 maxDepth) external view returns (DirEntry[] memory entries);
@@ -360,6 +372,8 @@ interface Vm {
     function resumeTracing() external view;
     function revertTo(uint256 snapshotId) external returns (bool success);
     function revertToAndDelete(uint256 snapshotId) external returns (bool success);
+    function revertToState(uint256 snapshotId) external returns (bool success);
+    function revertToStateAndDelete(uint256 snapshotId) external returns (bool success);
     function revokePersistent(address account) external;
     function revokePersistent(address[] calldata accounts) external;
     function roll(uint256 newHeight) external;
@@ -409,6 +423,7 @@ interface Vm {
     function skip(bool skipTest, string calldata reason) external;
     function sleep(uint256 duration) external;
     function snapshot() external returns (uint256 snapshotId);
+    function snapshotState() external returns (uint256 snapshotId);
     function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);
     function startBroadcast() external;
     function startBroadcast(address signer) external;

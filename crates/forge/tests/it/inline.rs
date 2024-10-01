@@ -1,6 +1,6 @@
 //! Inline configuration tests.
 
-use crate::test_helpers::TEST_DATA_DEFAULT;
+use crate::test_helpers::{ForgeTestData, ForgeTestProfile, TEST_DATA_DEFAULT};
 use forge::{result::TestKind, TestOptionsBuilder};
 use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_test_utils::Filter;
@@ -8,7 +8,8 @@ use foundry_test_utils::Filter;
 #[tokio::test(flavor = "multi_thread")]
 async fn inline_config_run_fuzz() {
     let filter = Filter::new(".*", ".*", ".*inline/FuzzInlineConf.t.sol");
-    let mut runner = TEST_DATA_DEFAULT.runner();
+    // Fresh runner to make sure there's no persisted failure from previous tests.
+    let mut runner = ForgeTestData::new(ForgeTestProfile::Default).runner();
     let result = runner.test_collect(&filter);
     let results = result
         .into_iter()
