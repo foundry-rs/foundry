@@ -168,7 +168,7 @@ foundry-linking = { path = "crates/linking" }
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.7.3", default-features = false }
 foundry-compilers = { version = "0.11.3", default-features = false }
-foundry-fork-db = "0.3.2"
+foundry-fork-db = "0.4.0"
 solang-parser = "=0.3.3"
 
 ## revm
@@ -279,9 +279,7 @@ soldeer = "=0.3.4"
 proptest = "1"
 comfy-table = "7"
 
-[patch.crates-io]
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "98975ef" }
-
+# [patch.crates-io]
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
