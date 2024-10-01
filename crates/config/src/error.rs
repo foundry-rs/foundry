@@ -1,8 +1,8 @@
 //! error handling and solc error codes
+use alloy_primitives::map::HashSet;
 use figment::providers::{Format, Toml};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::HashSet, error::Error, fmt, str::FromStr};
-
+use std::{error::Error, fmt, str::FromStr};
 /// The message shown upon panic if the config could not be extracted from the figment
 pub const FAILED_TO_EXTRACT_CONFIG_PANIC_MSG: &str = "failed to extract foundry config:";
 

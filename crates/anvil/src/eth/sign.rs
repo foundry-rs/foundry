@@ -2,14 +2,13 @@ use crate::eth::error::BlockchainError;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSignerSync;
-use alloy_primitives::{Address, Signature, B256};
+use alloy_primitives::{map::AddressHashMap, Address, Signature, B256};
 use alloy_signer::Signer as AlloySigner;
 use alloy_signer_local::PrivateKeySigner;
 use anvil_core::eth::transaction::{
     optimism::{DepositTransaction, DepositTransactionRequest},
     TypedTransaction, TypedTransactionRequest,
 };
-use std::collections::HashMap;
 
 /// A transaction signer
 #[async_trait::async_trait]
@@ -47,7 +46,7 @@ pub trait Signer: Send + Sync {
 /// Maintains developer keys
 pub struct DevSigner {
     addresses: Vec<Address>,
-    accounts: HashMap<Address, PrivateKeySigner>,
+    accounts: AddressHashMap<PrivateKeySigner>,
 }
 
 impl DevSigner {

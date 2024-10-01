@@ -1,3 +1,4 @@
+use alloy_primitives::map::HashSet;
 use clap::{Parser, ValueHint};
 use ethers_contract_abigen::{
     Abigen, ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts,
@@ -244,7 +245,7 @@ impl BindArgs {
     }
 
     fn get_solmacrogen(&self, artifacts: &Path) -> Result<MultiSolMacroGen> {
-        let mut dup = std::collections::HashSet::<String>::new();
+        let mut dup = HashSet::<String>::default();
         let instances = self
             .get_json_files(artifacts)?
             .filter_map(|(name, path)| {

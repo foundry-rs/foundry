@@ -20,7 +20,11 @@ use crate::{
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
     Vm::AccountAccess,
 };
-use alloy_primitives::{hex, Address, Bytes, Log, TxKind, B256, U256};
+use alloy_primitives::{
+    hex,
+    map::{AddressHashMap, HashMap},
+    Address, Bytes, Log, TxKind, B256, U256,
+};
 use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
@@ -48,7 +52,7 @@ use revm::{
 use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fs::File,
     io::BufReader,
     ops::Range,
@@ -363,7 +367,7 @@ pub struct Cheatcodes {
     pub gas_price: Option<U256>,
 
     /// Address labels
-    pub labels: HashMap<Address, String>,
+    pub labels: AddressHashMap<String>,
 
     /// Prank information
     pub prank: Option<Prank>,
@@ -432,7 +436,7 @@ pub struct Cheatcodes {
     pub gas_metering: GasMetering,
 
     /// Mapping slots.
-    pub mapping_slots: Option<HashMap<Address, MappingSlots>>,
+    pub mapping_slots: Option<AddressHashMap<MappingSlots>>,
 
     /// The current program counter.
     pub pc: usize,

@@ -4,6 +4,7 @@
 //! the REPL contract's source code. It provides simple compilation, parsing, and
 //! execution helpers.
 
+use alloy_primitives::map::HashMap;
 use eyre::Result;
 use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_compilers::{
@@ -15,7 +16,7 @@ use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::{diagnostics::Diagnostic, pt};
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{fs, path::PathBuf};
 use yansi::Paint;
 
 /// The minimum Solidity version of the `Vm` interface.

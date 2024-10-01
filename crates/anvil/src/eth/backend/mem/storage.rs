@@ -10,7 +10,10 @@ use crate::eth::{
     error::BlockchainError,
     pool::transactions::PoolTransaction,
 };
-use alloy_primitives::{Bytes, TxHash, B256, U256, U64};
+use alloy_primitives::{
+    map::{B256HashMap, HashMap},
+    Bytes, B256, U256, U64,
+};
 use alloy_rpc_types::{
     trace::{
         geth::{
@@ -35,12 +38,8 @@ use foundry_evm::{
     },
 };
 use parking_lot::RwLock;
-use std::{
-    collections::{HashMap, VecDeque},
-    fmt,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::VecDeque, fmt, sync::Arc, time::Duration};
+// use yansi::Paint;
 
 // === various limits in number of blocks ===
 
@@ -52,9 +51,9 @@ const MAX_ON_DISK_HISTORY_LIMIT: usize = 3_600;
 /// Represents the complete state of single block
 pub struct InMemoryBlockStates {
     /// The states at a certain block
-    states: HashMap<B256, StateDb>,
+    states: B256HashMap<StateDb>,
     /// states which data is moved to disk
-    on_disk_states: HashMap<B256, StateDb>,
+    on_disk_states: B256HashMap<StateDb>,
     /// How many states to store at most
     in_memory_limit: usize,
     /// minimum amount of states we keep in memory
@@ -245,7 +244,7 @@ impl Default for InMemoryBlockStates {
 #[derive(Clone)]
 pub struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
-    pub blocks: HashMap<B256, Block>,
+    pub blocks: B256HashMap<Block>,
     /// mapping from block number -> block hash
     pub hashes: HashMap<U64, B256>,
     /// The current best hash
@@ -256,7 +255,7 @@ pub struct BlockchainStorage {
     pub genesis_hash: B256,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
-    pub transactions: HashMap<TxHash, MinedTransaction>,
+    pub transactions: B256HashMap<MinedTransaction>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
 }
@@ -280,9 +279,14 @@ impl BlockchainStorage {
         let best_hash = genesis_hash;
         let best_number: U64 = U64::from(0u64);
 
+        let mut blocks = B256HashMap::default();
+        blocks.insert(genesis_hash, block);
+
+        let mut hashes = HashMap::default();
+        hashes.insert(best_number, genesis_hash);
         Self {
-            blocks: HashMap::from([(genesis_hash, block)]),
-            hashes: HashMap::from([(best_number, genesis_hash)]),
+            blocks,
+            hashes,
             best_hash,
             best_number,
             genesis_hash,
@@ -292,9 +296,12 @@ impl BlockchainStorage {
     }
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
+        let mut hashes = HashMap::default();
+        hashes.insert(U64::from(block_number), block_hash);
+
         Self {
-            blocks: Default::default(),
-            hashes: HashMap::from([(U64::from(block_number), block_hash)]),
+            blocks: B256HashMap::default(),
+            hashes,
             best_hash: block_hash,
             best_number: U64::from(block_number),
             genesis_hash: Default::default(),
