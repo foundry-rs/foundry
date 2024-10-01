@@ -167,7 +167,12 @@ impl TransactionWithMetadata {
         if !contains_constructor_args {
             return Ok(());
         }
-        let constructor_args = &creation_code[bytecode.len()..];
+        let constructor_and_args = &creation_code[bytecode.len()..];
+        let padded_len = 32 * (constructor_and_args.len() / 32 + 1);
+        let mut constructor_args_padded = vec![0u8; padded_len];
+        constructor_args_padded[padded_len - constructor_and_args.len()..]
+            .copy_from_slice(constructor_and_args);
+        let constructor_args = &constructor_args_padded[32..];
 
         let Some(constructor) = info.abi.constructor() else { return Ok(()) };
         let values = constructor.abi_decode_input(constructor_args, false).inspect_err(|_| {
