@@ -2386,6 +2386,14 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function randomBytes(uint256 len) external view returns (bytes memory);
 
+    /// Returns random 4bytes
+    #[cheatcode(group = Utilities)]
+    function randomBytes4() external view returns (bytes4);
+
+    /// Returns random 8bytes
+    #[cheatcode(group = Utilities)]
+    function randomBytes8() external view returns (bytes8);
+
     /// Pauses collection of call traces. Useful in cases when you want to skip tracing of
     /// complex calls which are not useful for debugging.
     #[cheatcode(group = Utilities)]
@@ -2402,14 +2410,7 @@ interface Vm {
     /// Utility cheatcode to set arbitrary storage for given target address.
     #[cheatcode(group = Utilities)]
     function setArbitraryStorage(address target) external;
-
-    /// Return random 4bytes
-    #[cheatcode(group = Utilities)]
-    function randomBytes4() external view returns (bytes4);
-    /// Return random 8bytes
-    #[cheatcode(group = Utilities)]
-    function randomBytes8() external view returns (bytes8);
- }
+}
 }
 
 impl PartialEq for ForgeContext {

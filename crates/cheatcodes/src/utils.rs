@@ -133,7 +133,6 @@ impl Cheatcode for randomBytesCall {
     }
 }
 
-// Random 4 bytes
 impl Cheatcode for randomBytes4Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let rand_u32 = state.rng().next_u32();
@@ -141,7 +140,6 @@ impl Cheatcode for randomBytes4Call {
     }
 }
 
-// Random 8 bytes
 impl Cheatcode for randomBytes8Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let rand_u64 = state.rng().next_u64();
