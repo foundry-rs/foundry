@@ -1,7 +1,7 @@
 //! Support for snapshotting different states
 
-use alloy_primitives::U256;
-use std::{collections::HashMap, ops::Add};
+use alloy_primitives::{map::HashMap, U256};
+use std::ops::Add;
 
 /// Represents all state snapshots
 #[derive(Clone, Debug)]

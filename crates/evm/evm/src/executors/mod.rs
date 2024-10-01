@@ -11,7 +11,10 @@ use crate::inspectors::{
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_primitives::{
+    map::{AddressHashMap, HashMap},
+    Address, Bytes, Log, U256,
+};
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
     backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
@@ -32,7 +35,7 @@ use revm::{
         SpecId, TxEnv, TxKind,
     },
 };
-use std::{borrow::Cow, collections::HashMap};
+use std::borrow::Cow;
 
 mod builder;
 pub use builder::ExecutorBuilder;
@@ -740,7 +743,7 @@ pub struct RawCallResult {
     /// The logs emitted during the call
     pub logs: Vec<Log>,
     /// The labels assigned to addresses during the call
-    pub labels: HashMap<Address, String>,
+    pub labels: AddressHashMap<String>,
     /// The traces of the call
     pub traces: Option<SparsedTraceArena>,
     /// The coverage info collected during the call
