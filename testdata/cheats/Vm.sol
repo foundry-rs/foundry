@@ -338,6 +338,9 @@ interface Vm {
     function promptUint(string calldata promptText) external returns (uint256);
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
     function randomAddress() external returns (address);
+    function randomBytes4() external returns(bytes4);
+    function randomBytes8() external returns(bytes8);
+    //function randomBytes() external returns(uint8[] memory);
     function randomUint() external returns (uint256);
     function randomUint(uint256 min, uint256 max) external returns (uint256);
     function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
@@ -435,6 +438,7 @@ interface Vm {
     function toString(uint256 value) external pure returns (string memory stringifiedValue);
     function toString(int256 value) external pure returns (string memory stringifiedValue);
     function toUppercase(string calldata input) external pure returns (string memory output);
+
     function transact(bytes32 txHash) external;
     function transact(uint256 forkId, bytes32 txHash) external;
     function trim(string calldata input) external pure returns (string memory output);

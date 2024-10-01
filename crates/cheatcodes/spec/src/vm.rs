@@ -1855,15 +1855,6 @@ interface Vm {
     /// Returns 0 in case of an empty `key`.
     #[cheatcode(group = String)]
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
-    /// Return random 4bytes
-    #[cheatcode(group = String)]
-    function randomBytes4() external pure returns (bytes4);
-    /// Return random 8bytes
-    #[cheatcode(group = String)]
-    function randomBytes8() external pure returns (bytes8);
-    /// Return vector of length `size`
-    #[cheatcode(group = String)]
-    function randomBytes(uint256 size) external pure returns (uint256[] memory randomVector);
 
     // ======== JSON Parsing and Manipulation ========
 
@@ -2349,6 +2340,16 @@ interface Vm {
     /// Utility cheatcode to set arbitrary storage for given target address.
     #[cheatcode(group = Utilities)]
     function setArbitraryStorage(address target) external;
+
+    /// Return random 4bytes
+    #[cheatcode(group = Utilities)]
+    function randomBytes4() external pure returns (bytes4);
+    /// Return random 8bytes
+    #[cheatcode(group = Utilities)]
+    function randomBytes8() external pure returns (bytes8);
+    /// Return vector of length `size`
+    #[cheatcode(group = Utilities)]
+    function randomBytes(uint256 size) external pure returns (uint8[] memory randomVector);
 }
 }
 

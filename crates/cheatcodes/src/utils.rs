@@ -1,12 +1,12 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{aliases::B32, Address, B64, B8, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::{backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER};
-use rand::Rng;
-use std::collections::HashMap;
+use rand::{thread_rng, Rng, RngCore};
+use std::{collections::HashMap, usize};
 
 /// Contains locations of traces ignored via cheatcodes.
 ///
@@ -181,3 +181,30 @@ impl Cheatcode for copyStorageCall {
         Ok(Default::default())
     }
 }
+
+// Random 4 bytes
+impl Cheatcode for randomBytes4Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let rand_u32 = thread_rng().next_u32();
+        Ok(B32::from(rand_u32).abi_encode())
+    }
+}
+
+// Random 8 bytes
+impl Cheatcode for randomBytes8Call {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let rand_u64 = thread_rng().next_u64();
+        Ok(B64::from(rand_u64).abi_encode())
+    }
+}
+
+// Random bytes
+// impl Cheatcode for randomBytesCall {
+//     fn apply(&self, _state: &mut Cheatcodes) -> Result {
+//         let Self { size } = self;
+//         ensure!(*size <= U256::from(usize::MAX), "size must be equal or less than usize max
+// value");         let mut data: Vec<u8> = vec![0u8; size.to::<usize>()];
+//         thread_rng().fill_bytes(&mut data);
+//         data.map();
+//     }
+// }
