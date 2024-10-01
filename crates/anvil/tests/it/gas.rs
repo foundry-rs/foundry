@@ -65,7 +65,7 @@ async fn test_basefee_full_block() {
     assert!(next_base_fee > base_fee);
 
     // max increase, full block
-    assert_eq!(next_base_fee, INITIAL_BASE_FEE + 125_000_000);
+    assert_eq!(next_base_fee, INITIAL_BASE_FEE as u64 + 125_000_000);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -102,7 +102,7 @@ async fn test_basefee_half_block() {
         .unwrap();
 
     // unchanged, half block
-    assert_eq!(next_base_fee, INITIAL_BASE_FEE);
+    assert_eq!(next_base_fee, INITIAL_BASE_FEE as u64);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -195,12 +195,12 @@ async fn test_can_use_fee_history() {
 
     for _ in 0..10 {
         let fee_history = provider.get_fee_history(1, Default::default(), &[]).await.unwrap();
-        let next_base_fee = fee_history.base_fee_per_gas.last().unwrap();
+        let next_base_fee = *fee_history.base_fee_per_gas.last().unwrap();
 
         let tx = TransactionRequest::default()
             .with_to(Address::random())
             .with_value(U256::from(100))
-            .with_gas_price(*next_base_fee);
+            .with_gas_price(next_base_fee);
         let tx = WithOtherFields::new(tx);
 
         let receipt =
@@ -208,11 +208,11 @@ async fn test_can_use_fee_history() {
         assert!(receipt.inner.inner.is_success());
 
         let fee_history_after = provider.get_fee_history(1, Default::default(), &[]).await.unwrap();
-        let latest_fee_history_fee = fee_history_after.base_fee_per_gas.first().unwrap();
+        let latest_fee_history_fee = *fee_history_after.base_fee_per_gas.first().unwrap() as u64;
         let latest_block =
             provider.get_block(BlockId::latest(), false.into()).await.unwrap().unwrap();
 
-        assert_eq!(latest_block.header.base_fee_per_gas.unwrap(), *latest_fee_history_fee);
-        assert_eq!(latest_fee_history_fee, next_base_fee);
+        assert_eq!(latest_block.header.base_fee_per_gas.unwrap(), latest_fee_history_fee);
+        assert_eq!(latest_fee_history_fee, next_base_fee as u64);
     }
 }
