@@ -256,6 +256,25 @@ contract GasComparisonTest is DSTest {
         assertEq(a, b);
     }
 
+    function testGasComparisonFlare() public {
+        // Warm up the cache.
+        Flare flare = new Flare();
+        flare.run(1);
+
+        // Start a cheatcode snapshot.
+        vm.startSnapshotGas("ComparisonGroup", "testGasComparisonFlareA");
+        flare.run(256);
+        uint256 a = vm.stopSnapshotGas();
+
+        // Start a comparitive Solidity snapshot.
+        _snapStart();
+        flare.run(256);
+        uint256 b = _snapEnd();
+        vm.snapshotValue("ComparisonGroup", "testGasComparisonFlareB", b);
+
+        assertEq(a, b);
+    }
+
     // Internal function to start a Solidity snapshot.
     function _snapStart() internal {
         cachedGas = 1;
