@@ -1186,14 +1186,15 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(mapping_slots) = &mut self.mapping_slots {
             mapping::step(mapping_slots, interpreter);
         }
+
+        // `snapshotGas*`: take a snapshot of the current gas.
+        if self.gas_metering.recording {
+            self.meter_gas_record(interpreter, ecx);
+        }
     }
 
     #[inline]
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
-        if self.gas_metering.recording {
-            self.meter_gas_record(interpreter, ecx);
-        }
-
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1609,20 +1610,7 @@ impl Cheatcodes {
                 if ecx.journaled_state.depth() == record.depth {
                     // Skip the first opcode of the first call frame as it includes the gas cost of
                     // creating the snapshot.
-                    if self.gas_metering.last_gas_used != 0 &&
-                    // Skip updating of gas recording for opcodes that create new call frames.
-                    !matches!(
-                            interpreter.current_opcode(),
-                            op::CREATE |
-                                op::CALL |
-                                op::CALLCODE |
-                                op::DELEGATECALL |
-                                op::CREATE2 |
-                                op::STATICCALL |
-                                op::EXTSTATICCALL |
-                                op::EXTDELEGATECALL
-                        )
-                    {
+                    if self.gas_metering.last_gas_used != 0 {
                         let gas_diff =
                             interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
                         record.gas_used = record.gas_used.saturating_add(gas_diff);

@@ -219,7 +219,7 @@ contract GasComparisonTest is DSTest {
         uint256 b = _snapEnd();
         vm.snapshotValue("ComparisonGroup", "testGasComparisonExternalB", b);
 
-        vm.assertApproxEqAbs(a, b, 2);
+        assertEq(a, b);
     }
 
     function testGasComparisonCreate() public {
@@ -234,7 +234,7 @@ contract GasComparisonTest is DSTest {
         uint256 b = _snapEnd();
         vm.snapshotValue("ComparisonGroup", "testGasComparisonCreateB", b);
 
-        vm.assertApproxEqAbs(a, b, 3);
+        assertEq(a, b);
     }
 
     function testGasComparisonNestedCalls() public {
@@ -253,7 +253,7 @@ contract GasComparisonTest is DSTest {
         uint256 b = _snapEnd();
         vm.snapshotValue("ComparisonGroup", "testGasComparisonNestedCallsB", b);
 
-        vm.assertApproxEqAbs(a, b, 2);
+        assertEq(a, b);
     }
 
     // Internal function to start a Solidity snapshot.
