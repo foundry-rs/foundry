@@ -8,9 +8,7 @@ contract MultipleAfterUnitTest is DSTest {
 
     function aftertest() public {}
 
-    function testFailShouldBeMarkedAsFailedBecauseOfMultiAfterUnitTest()
-        public
-    {
+    function testFailShouldBeMarkedAsFailedBecauseOfMultiAfterUnitTest() public {
         assert(true);
     }
 }
