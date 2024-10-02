@@ -5,7 +5,7 @@ use crate::{
         mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
-        DealRecord, RecordAccess,
+        DealRecord, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
     script::{Broadcast, ScriptWallets},
@@ -232,15 +232,35 @@ pub struct GasMetering {
     pub touched: bool,
     /// True if gas metering should be reset to frame limit.
     pub reset: bool,
-    /// Stores frames paused gas.
+    /// Stores paused gas frames.
     pub paused_frames: Vec<Gas>,
+
+    /// The group and name of the active snapshot.
+    pub active_gas_snapshot: Option<(String, String)>,
 
     /// Cache of the amount of gas used in previous call.
     /// This is used by the `lastCallGas` cheatcode.
     pub last_call_gas: Option<crate::Vm::Gas>,
+
+    /// True if gas recording is enabled.
+    pub recording: bool,
+    /// The gas used in the last frame.
+    pub last_gas_used: u64,
+    /// Gas records for the active snapshots.
+    pub gas_records: Vec<GasRecord>,
 }
 
 impl GasMetering {
+    /// Start the gas recording.
+    pub fn start(&mut self) {
+        self.recording = true;
+    }
+
+    /// Stop the gas recording.
+    pub fn stop(&mut self) {
+        self.recording = false;
+    }
+
     /// Resume paused gas metering.
     pub fn resume(&mut self) {
         if self.paused {
@@ -435,6 +455,10 @@ pub struct Cheatcodes {
     /// Gas metering state.
     pub gas_metering: GasMetering,
 
+    /// Contains gas snapshots made over the course of a test suite.
+    // **Note**: both must a BTreeMap to ensure the order of the keys is deterministic.
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
+
     /// Mapping slots.
     pub mapping_slots: Option<AddressHashMap<MappingSlots>>,
 
@@ -494,6 +518,7 @@ impl Cheatcodes {
             serialized_jsons: Default::default(),
             eth_deals: Default::default(),
             gas_metering: Default::default(),
+            gas_snapshots: Default::default(),
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
@@ -1161,6 +1186,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(mapping_slots) = &mut self.mapping_slots {
             mapping::step(mapping_slots, interpreter);
         }
+
+        // `snapshotGas*`: take a snapshot of the current gas.
+        if self.gas_metering.recording {
+            self.meter_gas_record(interpreter, ecx);
+        }
     }
 
     #[inline]
@@ -1566,6 +1596,31 @@ impl Cheatcodes {
         } else {
             // Record frame paused gas.
             self.gas_metering.paused_frames.push(interpreter.gas);
+        }
+    }
+
+    #[cold]
+    fn meter_gas_record<DB: DatabaseExt>(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<DB>,
+    ) {
+        if matches!(interpreter.instruction_result, InstructionResult::Continue) {
+            self.gas_metering.gas_records.iter_mut().for_each(|record| {
+                if ecx.journaled_state.depth() == record.depth {
+                    // Skip the first opcode of the first call frame as it includes the gas cost of
+                    // creating the snapshot.
+                    if self.gas_metering.last_gas_used != 0 {
+                        let gas_diff =
+                            interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
+                        record.gas_used = record.gas_used.saturating_add(gas_diff);
+                    }
+
+                    // Update `last_gas_used` to the current spent gas for the next iteration to
+                    // compare against.
+                    self.gas_metering.last_gas_used = interpreter.gas.spent();
+                }
+            });
         }
     }
 
