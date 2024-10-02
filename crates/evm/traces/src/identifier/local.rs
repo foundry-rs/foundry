@@ -33,16 +33,20 @@ impl<'a> LocalTraceIdentifier<'a> {
     }
 
     /// Tries to the bytecode most similar to the given one.
-    pub fn identify_code(&self, code: &[u8]) -> Option<(&'a ArtifactId, &'a JsonAbi)> {
-        let len = code.len();
+    pub fn identify_code(
+        &self,
+        runtime_code: &[u8],
+        creation_code: &[u8],
+    ) -> Option<(&'a ArtifactId, &'a JsonAbi)> {
+        let len = runtime_code.len();
 
         let mut min_score = f64::MAX;
         let mut min_score_id = None;
 
         let mut check = |id| {
             let contract = self.known_contracts.get(id)?;
-            if let Some(deployed_bytecode) = contract.deployed_bytecode() {
-                let score = bytecode_diff_score(deployed_bytecode, code);
+            if let Some(bytecode) = contract.bytecode() {
+                let score = bytecode_diff_score(bytecode, creation_code);
                 if score == 0.0 {
                     trace!(target: "evm::traces", "found exact match");
                     return Some((id, &contract.abi));
@@ -109,16 +113,16 @@ impl<'a> LocalTraceIdentifier<'a> {
 impl TraceIdentifier for LocalTraceIdentifier<'_> {
     fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity<'_>>
     where
-        A: Iterator<Item = (&'a Address, Option<&'a [u8]>)>,
+        A: Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)>,
     {
         trace!(target: "evm::traces", "identify {:?} addresses", addresses.size_hint().1);
 
         addresses
-            .filter_map(|(address, code)| {
+            .filter_map(|(address, runtime_code, creation_code)| {
                 let _span = trace_span!(target: "evm::traces", "identify", %address).entered();
 
                 trace!(target: "evm::traces", "identifying");
-                let (id, abi) = self.identify_code(code?)?;
+                let (id, abi) = self.identify_code(runtime_code?, creation_code?)?;
                 trace!(target: "evm::traces", id=%id.identifier(), "identified");
 
                 Some(AddressIdentity {
