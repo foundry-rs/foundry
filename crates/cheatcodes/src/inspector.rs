@@ -73,10 +73,7 @@ pub type InnerEcx<'a, 'b, 'c> = &'a mut InnerEvmContext<&'b mut (dyn DatabaseExt
 pub trait CheatcodesExecutor {
     /// Core trait method accepting mutable reference to [Cheatcodes] and returning
     /// [revm::Inspector].
-    fn get_inspector<'a, 'db>(
-        &'a mut self,
-        cheats: &'a mut Cheatcodes,
-    ) -> Box<dyn InspectorExt + 'a>;
+    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a>;
 
     /// Obtains [revm::Evm] instance and executes the given CREATE frame.
     fn exec_create(
@@ -178,10 +175,7 @@ where
 struct TransparentCheatcodesExecutor;
 
 impl CheatcodesExecutor for TransparentCheatcodesExecutor {
-    fn get_inspector<'a, 'db>(
-        &'a mut self,
-        cheats: &'a mut Cheatcodes,
-    ) -> Box<dyn InspectorExt + 'a> {
+    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a> {
         Box::new(cheats)
     }
 }

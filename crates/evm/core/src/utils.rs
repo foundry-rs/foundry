@@ -126,8 +126,8 @@ fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInpu
 /// hook by inserting decoded address directly into interpreter.
 ///
 /// Should be installed after [revm::inspector_handle_register] and before any other registers.
-pub fn create2_handler_register<'a, I: InspectorExt>(
-    handler: &mut EvmHandler<'_, I, &'a mut dyn DatabaseExt>,
+pub fn create2_handler_register<I: InspectorExt>(
+    handler: &mut EvmHandler<'_, I, &mut dyn DatabaseExt>,
 ) {
     let create2_overrides = Rc::<RefCell<Vec<_>>>::new(RefCell::new(Vec::new()));
 
