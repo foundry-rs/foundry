@@ -751,17 +751,13 @@ impl Backend {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<'a>(
-        &'a mut self,
+    pub fn inspect(
+        &mut self,
         env: &mut EnvWithHandlerCfg,
-        inspector: &'a mut dyn InspectorExt,
+        inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::utils::new_evm_with_inspector(
-            self as &mut dyn DatabaseExt,
-            env.clone(),
-            inspector,
-        );
+        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
 
@@ -1296,7 +1292,7 @@ impl DatabaseExt for Backend {
         let res = {
             let mut db = self.clone();
             let env = self.env_with_handler_cfg(env);
-            let mut evm = new_evm_with_inspector(&mut db as _, env, inspector);
+            let mut evm = new_evm_with_inspector(&mut db, env, inspector);
             evm.context.evm.journaled_state.depth = journaled_state.depth + 1;
             evm.transact()?
         };

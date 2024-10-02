@@ -547,11 +547,7 @@ impl<'a> InspectorStackRefMut<'a> {
 
         let env = EnvWithHandlerCfg::new_with_spec_id(ecx.env.clone(), ecx.spec_id());
         let res = {
-            let mut evm = crate::utils::new_evm_with_inspector(
-                &mut ecx.db as &mut dyn DatabaseExt,
-                env,
-                &mut *self,
-            );
+            let mut evm = crate::utils::new_evm_with_inspector(&mut ecx.db, env, self);
             let res = evm.transact();
 
             // need to reset the env in case it was modified via cheatcodes during execution
