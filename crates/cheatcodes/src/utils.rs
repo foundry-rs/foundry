@@ -1,12 +1,13 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, U256};
+use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_primitives::{map::HashMap, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
-use rand::Rng;
-use std::collections::HashMap;
+use proptest::prelude::Strategy;
+use rand::{Rng, RngCore};
 
 /// Contains locations of traces ignored via cheatcodes.
 ///

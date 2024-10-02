@@ -518,21 +518,21 @@ impl Cheatcode for readCallersCall {
 }
 
 impl Cheatcode for snapshotValue_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { name, value } = self;
         inner_value_snapshot(ccx, None, Some(name.clone()), value.to_string())
     }
 }
 
 impl Cheatcode for snapshotValue_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { group, name, value } = self;
         inner_value_snapshot(ccx, Some(group.clone()), Some(name.clone()), value.to_string())
     }
 }
 
 impl Cheatcode for snapshotGasLastCall_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { name } = self;
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
@@ -542,7 +542,7 @@ impl Cheatcode for snapshotGasLastCall_0Call {
 }
 
 impl Cheatcode for snapshotGasLastCall_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { name, group } = self;
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
@@ -557,35 +557,35 @@ impl Cheatcode for snapshotGasLastCall_1Call {
 }
 
 impl Cheatcode for startSnapshotGas_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { name } = self;
         inner_start_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
 impl Cheatcode for startSnapshotGas_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { group, name } = self;
         inner_start_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
 }
 
 impl Cheatcode for stopSnapshotGas_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         inner_stop_gas_snapshot(ccx, None, None)
     }
 }
 
 impl Cheatcode for stopSnapshotGas_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { name } = self;
         inner_stop_gas_snapshot(ccx, None, Some(name.clone()))
     }
 }
 
 impl Cheatcode for stopSnapshotGas_2Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { group, name } = self;
         inner_stop_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()))
     }
@@ -600,7 +600,7 @@ impl Cheatcode for snapshotCall {
 }
 
 impl Cheatcode for snapshotStateCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         inner_snapshot_state(ccx)
     }
@@ -615,7 +615,7 @@ impl Cheatcode for revertToCall {
 }
 
 impl Cheatcode for revertToStateCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state(ccx, *snapshotId)
     }
@@ -630,7 +630,7 @@ impl Cheatcode for revertToAndDeleteCall {
 }
 
 impl Cheatcode for revertToStateAndDeleteCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
@@ -645,7 +645,7 @@ impl Cheatcode for deleteSnapshotCall {
 }
 
 impl Cheatcode for deleteStateSnapshotCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { snapshotId } = self;
         inner_delete_state_snapshot(ccx, *snapshotId)
     }
@@ -660,7 +660,7 @@ impl Cheatcode for deleteSnapshotsCall {
 }
 
 impl Cheatcode for deleteStateSnapshotsCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
         inner_delete_state_snapshots(ccx)
     }
@@ -724,11 +724,11 @@ pub(super) fn get_nonce(ccx: &mut CheatsCtxt, address: &Address) -> Result {
     Ok(account.info.nonce.abi_encode())
 }
 
-fn inner_snapshot_state<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result {
+fn inner_snapshot_state(ccx: &mut CheatsCtxt) -> Result {
     Ok(ccx.ecx.db.snapshot_state(&ccx.ecx.journaled_state, &ccx.ecx.env).abi_encode())
 }
 
-fn inner_revert_to_state<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, snapshot_id: U256) -> Result {
+fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
     let result = if let Some(journaled_state) = ccx.ecx.db.revert_state(
         snapshot_id,
         &ccx.ecx.journaled_state,
@@ -744,10 +744,7 @@ fn inner_revert_to_state<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>, snapshot_id:
     Ok(result.abi_encode())
 }
 
-fn inner_revert_to_state_and_delete<DB: DatabaseExt>(
-    ccx: &mut CheatsCtxt<DB>,
-    snapshot_id: U256,
-) -> Result {
+fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
     let result = if let Some(journaled_state) = ccx.ecx.db.revert_state(
         snapshot_id,
         &ccx.ecx.journaled_state,
@@ -763,21 +760,18 @@ fn inner_revert_to_state_and_delete<DB: DatabaseExt>(
     Ok(result.abi_encode())
 }
 
-fn inner_delete_state_snapshot<DB: DatabaseExt>(
-    ccx: &mut CheatsCtxt<DB>,
-    snapshot_id: U256,
-) -> Result {
+fn inner_delete_state_snapshot(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
     let result = ccx.ecx.db.delete_state_snapshot(snapshot_id);
     Ok(result.abi_encode())
 }
 
-fn inner_delete_state_snapshots<DB: DatabaseExt>(ccx: &mut CheatsCtxt<DB>) -> Result {
+fn inner_delete_state_snapshots(ccx: &mut CheatsCtxt) -> Result {
     ccx.ecx.db.delete_state_snapshots();
     Ok(Default::default())
 }
 
-fn inner_value_snapshot<DB: DatabaseExt>(
-    ccx: &mut CheatsCtxt<DB>,
+fn inner_value_snapshot(
+    ccx: &mut CheatsCtxt,
     group: Option<String>,
     name: Option<String>,
     value: String,
@@ -789,8 +783,8 @@ fn inner_value_snapshot<DB: DatabaseExt>(
     Ok(Default::default())
 }
 
-fn inner_last_gas_snapshot<DB: DatabaseExt>(
-    ccx: &mut CheatsCtxt<DB>,
+fn inner_last_gas_snapshot(
+    ccx: &mut CheatsCtxt,
     group: Option<String>,
     name: Option<String>,
     value: u64,
@@ -802,8 +796,8 @@ fn inner_last_gas_snapshot<DB: DatabaseExt>(
     Ok(value.abi_encode())
 }
 
-fn inner_start_gas_snapshot<DB: DatabaseExt>(
-    ccx: &mut CheatsCtxt<DB>,
+fn inner_start_gas_snapshot(
+    ccx: &mut CheatsCtxt,
     group: Option<String>,
     name: Option<String>,
 ) -> Result {
@@ -829,8 +823,8 @@ fn inner_start_gas_snapshot<DB: DatabaseExt>(
     Ok(Default::default())
 }
 
-fn inner_stop_gas_snapshot<DB: DatabaseExt>(
-    ccx: &mut CheatsCtxt<DB>,
+fn inner_stop_gas_snapshot(
+    ccx: &mut CheatsCtxt,
     group: Option<String>,
     name: Option<String>,
 ) -> Result {
@@ -880,8 +874,8 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
 }
 
 // Derives the snapshot group and name from the provided group and name or the running contract.
-fn derive_snapshot_name<DB: DatabaseExt>(
-    ccx: &CheatsCtxt<DB>,
+fn derive_snapshot_name(
+    ccx: &CheatsCtxt,
     group: Option<String>,
     name: Option<String>,
 ) -> (String, String) {
