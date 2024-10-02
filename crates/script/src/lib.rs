@@ -23,7 +23,7 @@ use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_verify::RetryArgs;
-use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
+use foundry_cli::{opts::CoreBuildArgs, p_println, utils::LoadConfig};
 use foundry_common::{
     abi::{encode_function_args, get_func},
     evm::{Breakpoints, EvmArgs},
@@ -210,6 +210,14 @@ impl ScriptArgs {
             ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
 
         let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+
+        // print warning message if `cbor_metadata` is disabled
+        let msg = concat!(
+            "Warning! Running \"forge script\" with \"--no-metadata\" flag \
+             or with \"cbor_metadata\" set to false can result in deployment failures.",
+        )
+        .yellow();
+        p_println!(!config.cbor_metadata => "{msg}");
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;

@@ -1986,3 +1986,28 @@ forgetest_async!(can_deploy_library_create2_different_sender, |prj, cmd| {
         .assert_nonce_increment(&[(2, 2)])
         .await;
 });
+
+// Tests that the `run` command works correctly
+forgetest!(should_warn_if_no_metadata, |prj, cmd| {
+    let script = prj
+        .add_source(
+            "Foo",
+            r#"
+contract Demo {
+    function run() external {
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(script).args(["--no-metadata"]).assert_success().stdout_eq(str![[r#"
+Warning! Running "forge script" with "--no-metadata" flag or with "cbor_metadata" set to false can result in deployment failures.
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+"#]]);
+});
