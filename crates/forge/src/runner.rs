@@ -292,8 +292,8 @@ impl<'a> ContractRunner<'a> {
             return SuiteResult::new(
                 start.elapsed(),
                 [(
-                    "afterUnitTest()".to_string(),
-                    TestResult::fail("multiple afterUnitTest functions".to_string()),
+                    "afterTest()".to_string(),
+                    TestResult::fail("multiple afterTest functions".to_string()),
                 )]
                 .into(),
                 warnings,
