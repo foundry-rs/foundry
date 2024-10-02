@@ -228,7 +228,7 @@ forgetest!(can_init_repo_with_config, |prj, cmd| {
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -276,7 +276,7 @@ forgetest!(can_init_no_git, |prj, cmd| {
     cmd.arg("init").arg(prj.root()).arg("--no-git").assert_success().stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -361,7 +361,7 @@ Run with the `--force` flag to initialize regardless.
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -396,7 +396,7 @@ Run with the `--force` flag to initialize regardless.
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -432,7 +432,7 @@ Run with the `--force` flag to initialize regardless.
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -451,7 +451,7 @@ forgetest!(can_init_vscode, |prj, cmd| {
     cmd.arg("init").arg(prj.root()).arg("--vscode").assert_success().stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -547,7 +547,7 @@ forgetest!(can_clone, |prj, cmd| {
 Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -595,7 +595,7 @@ forgetest!(can_clone_no_remappings_txt, |prj, cmd| {
 Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -1244,7 +1244,7 @@ forgetest!(can_install_and_remove, |prj, cmd| {
             .assert_success()
             .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
 
 "#]]);
 
@@ -1312,7 +1312,7 @@ forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
             .assert_success()
             .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
 
 "#]]);
 

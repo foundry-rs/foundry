@@ -1012,7 +1012,7 @@ forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -1134,7 +1134,7 @@ forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -1301,7 +1301,7 @@ forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -1382,7 +1382,7 @@ forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, 
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -1607,7 +1607,7 @@ forgetest_async!(can_decode_custom_errors, |prj, cmd| {
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
