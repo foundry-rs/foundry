@@ -819,19 +819,16 @@ fn inner_start_gas_snapshot<DB: DatabaseExt>(
         bail!("gas snapshot was already started with group: {group} and name: {name}");
     }
 
-    let group = group.as_deref().unwrap_or(
-        ccx.state.config.running_contract.as_deref().expect("expected running contract"),
-    );
-    let name = name.as_deref().unwrap_or("default").to_string();
+    let (group, name) = derive_snapshot_name(ccx, group, name);
 
     ccx.state.gas_metering.gas_records.push(GasRecord {
-        group: group.to_string(),
+        group: group.clone(),
         name: name.clone(),
         gas_used: 0,
         depth: ccx.ecx.journaled_state.depth(),
     });
 
-    ccx.state.gas_metering.active_gas_snapshot = Some((group.to_string(), name));
+    ccx.state.gas_metering.active_gas_snapshot = Some((group, name));
 
     ccx.state.gas_metering.start();
 
@@ -844,14 +841,10 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
     name: Option<String>,
 ) -> Result {
     // If group and name are not provided, use the last snapshot group and name.
-    let (group, name) = match (group, name) {
-        (Some(group), Some(name)) => (group, name),
-        _ => {
-            let (group, name) =
-                ccx.state.gas_metering.active_gas_snapshot.as_ref().unwrap().clone();
-            (group, name)
-        }
-    };
+    let (group, name) = group.zip(name).unwrap_or_else(|| {
+        let (group, name) = ccx.state.gas_metering.active_gas_snapshot.as_ref().unwrap().clone();
+        (group, name)
+    });
 
     if let Some(record) = ccx
         .state
@@ -866,7 +859,7 @@ fn inner_stop_gas_snapshot<DB: DatabaseExt>(
 
         ccx.state
             .gas_snapshots
-            .entry(group.to_string())
+            .entry(group.clone())
             .or_default()
             .insert(name.clone(), value.to_string());
 
@@ -898,11 +891,11 @@ fn derive_snapshot_name<DB: DatabaseExt>(
     group: Option<String>,
     name: Option<String>,
 ) -> (String, String) {
-    let group = group
-        .as_deref()
-        .unwrap_or(ccx.state.config.running_contract.as_ref().expect("expected running contract"));
-    let name = name.as_deref().unwrap_or("default");
-    (group.to_string(), name.to_string())
+    let group = group.unwrap_or_else(|| {
+        ccx.state.config.running_contract.clone().expect("expected running contract")
+    });
+    let name = name.unwrap_or_else(|| "default".to_string());
+    (group, name)
 }
 
 /// Reads the current caller information and returns the current [CallerMode], `msg.sender` and
