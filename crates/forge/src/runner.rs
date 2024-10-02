@@ -286,9 +286,9 @@ impl<'a> ContractRunner<'a> {
             )
         }
 
-        let after_unit_test_fns: Vec<_> =
-            self.contract.abi.functions().filter(|func| func.name.is_after_unit_test()).collect();
-        if after_unit_test_fns.len() > 1 {
+        let after_test_fns: Vec<_> =
+            self.contract.abi.functions().filter(|func| func.name.is_after_test()).collect();
+        if after_test_fns.len() > 1 {
             return SuiteResult::new(
                 start.elapsed(),
                 [(
@@ -316,19 +316,16 @@ impl<'a> ContractRunner<'a> {
             )
         }
 
-        let call_after_unit_test =
-            after_unit_test_fns.first().map_or(false, |after_unit_test_fn| {
-                let match_sig = after_unit_test_fn.name == "afterUnitTest";
-                if !match_sig {
-                    warnings.push(format!(
-                    "Found invalid afterUnitTest function \"{}\" did you mean \"afterUnitTest()\"?",
-                    after_unit_test_fn.signature()
+        let call_after_test = after_test_fns.first().map_or(false, |after_test_fn| {
+            let match_sig = after_test_fn.name == "afterTest";
+            if !match_sig {
+                warnings.push(format!(
+                    "Found invalid afterTest function \"{}\" did you mean \"afterTest()\"?",
+                    after_test_fn.signature()
                 ));
-                }
-                match_sig
-            });
-
-        tracing::info!(call_after_unit_test);
+            }
+            match_sig
+        });
 
         let call_after_invariant = after_invariant_fns.first().map_or(false, |after_invariant_fn| {
             let match_sig = after_invariant_fn.name == "afterInvariant";
@@ -416,8 +413,8 @@ impl<'a> ContractRunner<'a> {
                         let address = setup.address;
                         let mut test_result = self.run_unit_test(func, should_fail, setup);
 
-                        if test_result.status.is_success() && call_after_unit_test {
-                            self.run_after_test(&mut test_result, address, address);
+                        if test_result.status.is_success() && call_after_test {
+                            test_result = self.run_after_test(test_result, address, address);
                         }
 
                         test_result
@@ -496,15 +493,22 @@ impl<'a> ContractRunner<'a> {
     }
 
     /// Runs the `afterTest` function. If successful then merges the results with the previous test
-    fn run_after_test(&self, prev_test_result: &mut TestResult, from: Address, to: Address) {
-        let after_test_result = self.executor.call_unit_test(from, to);
+    fn run_after_test(
+        &self,
+        mut prev_test_result: TestResult,
+        from: Address,
+        to: Address,
+    ) -> TestResult {
+        let res = self.executor.call_after_test(from, to, Some(self.revert_decoder));
 
-        match after_test_result {
-            Ok(res) => prev_test_result.merge_call_result(&res),
-            Err(_err) => {
-                todo!()
-            }
-        };
+        match res {
+            Ok(call_result) => prev_test_result.merge_call_result(&call_result),
+            Err(EvmError::Execution(err)) => prev_test_result.merge_call_result(&err.raw),
+            Err(EvmError::Skip(reason)) => return prev_test_result.single_skip(reason),
+            Err(err) => return prev_test_result.single_fail(Some(err.to_string())),
+        }
+
+        prev_test_result
     }
 
     #[allow(clippy::too_many_arguments)]

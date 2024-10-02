@@ -376,7 +376,6 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        tracing::debug!(?from, ?to, "calling contract");
         let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
         self.call_with_env(env)
     }
@@ -393,17 +392,18 @@ impl Executor {
         self.transact_with_env(env)
     }
 
-    pub fn call_after_test(&self, from: Address, to: Address) -> eyre::Result<RawCallResult> {
+    pub fn call_after_test(
+        &self,
+        from: Address,
+        to: Address,
+        rd: Option<&RevertDecoder>,
+    ) -> eyre::Result<RawCallResult, EvmError> {
         let calldata = Bytes::from_static(&ITest::afterTestCall::SELECTOR);
-        let mut result = self.call_raw(from, to, calldata, U256::ZERO)?;
+        let result = self.call_raw(from, to, calldata, U256::ZERO)?;
 
-        let success = self.is_raw_call_mut_success(to, &mut result, false);
+        let res = result.into_result(rd)?;
 
-        if success {
-            Ok(result)
-        } else {
-            Err(result.into_execution_error("afterUnitTest execution error".to_string()).into())
-        }
+        Ok(res)
     }
 
     /// Execute the transaction configured in `env.tx`.
