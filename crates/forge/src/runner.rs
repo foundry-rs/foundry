@@ -384,8 +384,6 @@ impl<'a> ContractRunner<'a> {
         let test_results = functions
             .par_iter()
             .map(|&func| {
-                tracing::info!("function: {}", func.name);
-
                 let start = Instant::now();
 
                 let _guard = self.tokio_handle.enter();
@@ -410,11 +408,12 @@ impl<'a> ContractRunner<'a> {
                 tracing::info!(?kind);
                 let mut res = match kind {
                     TestFunctionKind::UnitTest { should_fail } => {
-                        let address = setup.address;
+                        let setup_address = setup.address;
                         let mut test_result = self.run_unit_test(func, should_fail, setup);
 
                         if test_result.status.is_success() && call_after_test {
-                            test_result = self.run_after_test(test_result, address, address);
+                            test_result =
+                                self.run_after_test(test_result, self.sender, setup_address);
                         }
 
                         test_result
@@ -423,7 +422,21 @@ impl<'a> ContractRunner<'a> {
                         let runner = test_options.fuzz_runner(self.name, &func.name);
                         let fuzz_config = test_options.fuzz_config(self.name, &func.name);
 
-                        self.run_fuzz_test(func, should_fail, runner, setup, fuzz_config.clone())
+                        let setup_address = setup.address;
+                        let mut test_result = self.run_fuzz_test(
+                            func,
+                            should_fail,
+                            runner,
+                            setup,
+                            fuzz_config.clone(),
+                        );
+
+                        if test_result.status.is_success() && call_after_test {
+                            test_result =
+                                self.run_after_test(test_result, self.sender, setup_address);
+                        }
+
+                        test_result
                     }
                     TestFunctionKind::InvariantTest => {
                         let runner = test_options.invariant_runner(self.name, &func.name);
@@ -724,6 +737,7 @@ impl<'a> ContractRunner<'a> {
             self.revert_decoder,
             progress.as_ref(),
         );
+
         test_result.fuzz_result(result)
     }
 
