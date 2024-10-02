@@ -68,17 +68,13 @@ impl<DB: Database> Inspector<DB> for LogCollector {
     }
 }
 
-impl InspectorExt<'_> for LogCollector {
+impl InspectorExt for LogCollector {
     fn console_log(&mut self, input: String) {
         self.logs.push(Log::new_unchecked(
             HARDHAT_CONSOLE_ADDRESS,
             vec![Console::log::SIGNATURE_HASH],
             input.abi_encode().into(),
         ));
-    }
-
-    fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b> {
-        self
     }
 }
 

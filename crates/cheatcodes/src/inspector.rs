@@ -76,7 +76,7 @@ pub trait CheatcodesExecutor {
     fn get_inspector<'a, 'db>(
         &'a mut self,
         cheats: &'a mut Cheatcodes,
-    ) -> Box<dyn InspectorExt<'db> + 'a>;
+    ) -> Box<dyn InspectorExt + 'a>;
 
     /// Obtains [revm::Evm] instance and executes the given CREATE frame.
     fn exec_create(
@@ -142,7 +142,7 @@ fn with_evm<E, F, O>(
 where
     E: CheatcodesExecutor + ?Sized,
     F: for<'a, 'b> FnOnce(
-        &mut revm::Evm<'_, &'b mut dyn InspectorExt<'a>, &'a mut dyn DatabaseExt>,
+        &mut revm::Evm<'_, &'b mut dyn InspectorExt, &'a mut dyn DatabaseExt>,
     ) -> Result<O, EVMError<DatabaseError>>,
 {
     let mut inspector = executor.get_inspector(ccx.state);
@@ -160,7 +160,7 @@ where
         l1_block_info,
     };
 
-    let mut evm = new_evm_with_existing_context(inner, inspector.get_inspector());
+    let mut evm = new_evm_with_existing_context(inner, &mut *inspector);
 
     let res = f(&mut evm)?;
 
@@ -181,7 +181,7 @@ impl CheatcodesExecutor for TransparentCheatcodesExecutor {
     fn get_inspector<'a, 'db>(
         &'a mut self,
         cheats: &'a mut Cheatcodes,
-    ) -> Box<dyn InspectorExt<'db> + 'a> {
+    ) -> Box<dyn InspectorExt + 'a> {
         Box::new(cheats)
     }
 }
@@ -1519,7 +1519,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
     }
 }
 
-impl InspectorExt<'_> for Cheatcodes {
+impl InspectorExt for Cheatcodes {
     fn should_use_create2_factory(&mut self, ecx: Ecx, inputs: &mut CreateInputs) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme {
             let target_depth = if let Some(prank) = &self.prank {
@@ -1535,10 +1535,6 @@ impl InspectorExt<'_> for Cheatcodes {
         } else {
             false
         }
-    }
-
-    fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b> {
-        self
     }
 }
 

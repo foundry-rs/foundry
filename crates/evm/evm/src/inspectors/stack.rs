@@ -307,7 +307,7 @@ impl CheatcodesExecutor for InspectorStackInner {
     fn get_inspector<'a, 'db>(
         &'a mut self,
         cheats: &'a mut Cheatcodes,
-    ) -> Box<dyn InspectorExt<'db> + 'a> {
+    ) -> Box<dyn InspectorExt + 'a> {
         Box::new(InspectorStackRefMut { cheatcodes: Some(cheats), inner: self })
     }
 
@@ -933,10 +933,10 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
     }
 }
 
-impl<'a, 'db> InspectorExt<'db> for InspectorStackRefMut<'a> {
+impl InspectorExt for InspectorStackRefMut<'_> {
     fn should_use_create2_factory(
         &mut self,
-        ecx: &mut EvmContext<&'db mut dyn DatabaseExt>,
+        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
         inputs: &mut CreateInputs,
     ) -> bool {
         call_inspectors_adjust_depth!(
@@ -958,10 +958,6 @@ impl<'a, 'db> InspectorExt<'db> for InspectorStackRefMut<'a> {
 
     fn is_alphanet(&self) -> bool {
         self.inner.alphanet
-    }
-
-    fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b> {
-        self
     }
 }
 
@@ -1053,7 +1049,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
     }
 }
 
-impl InspectorExt<'_> for InspectorStack {
+impl InspectorExt for InspectorStack {
     fn should_use_create2_factory(
         &mut self,
         ecx: &mut EvmContext<&mut dyn DatabaseExt>,
@@ -1064,10 +1060,6 @@ impl InspectorExt<'_> for InspectorStack {
 
     fn is_alphanet(&self) -> bool {
         self.alphanet
-    }
-
-    fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b> {
-        self
     }
 }
 

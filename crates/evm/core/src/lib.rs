@@ -33,14 +33,14 @@ pub mod utils;
 /// An extension trait that allows us to add additional hooks to Inspector for later use in
 /// handlers.
 #[auto_impl(&mut, Box)]
-pub trait InspectorExt<'a>: Inspector<&'a mut dyn DatabaseExt> {
+pub trait InspectorExt: for<'a> Inspector<&'a mut dyn DatabaseExt> {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE2 frame.
     ///
     /// If this function returns true, we'll replace CREATE2 frame with a CALL frame to CREATE2
     /// factory.
     fn should_use_create2_factory(
         &mut self,
-        _context: &mut EvmContext<&'a mut dyn DatabaseExt>,
+        _context: &mut EvmContext<&mut dyn DatabaseExt>,
         _inputs: &mut CreateInputs,
     ) -> bool {
         false
@@ -53,19 +53,8 @@ pub trait InspectorExt<'a>: Inspector<&'a mut dyn DatabaseExt> {
     fn is_alphanet(&self) -> bool {
         false
     }
-
-    /// Casts this [`InspectorExt`] to a an instance with a different lifetime.
-    fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b>;
 }
 
-impl InspectorExt<'_> for NoOpInspector {
-    fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b> {
-        self
-    }
-}
+impl InspectorExt for NoOpInspector {}
 
-impl InspectorExt<'_> for AccessListInspector {
-    fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b> {
-        self
-    }
-}
+impl InspectorExt for AccessListInspector {}

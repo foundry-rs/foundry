@@ -65,7 +65,7 @@ impl<'a> CowBackend<'a> {
     pub fn inspect<'b>(
         &'b mut self,
         env: &mut EnvWithHandlerCfg,
-        inspector: &'b mut dyn InspectorExt<'b>,
+        inspector: &'b mut dyn InspectorExt,
     ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
@@ -190,7 +190,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<'_>,
+        inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
         self.backend_mut(env).transact(id, transaction, env, journaled_state, inspector)
     }
@@ -200,7 +200,7 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         transaction: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<'_>,
+        inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
         self.backend_mut(env).transact_from_tx(transaction, env, journaled_state, inspector)
     }

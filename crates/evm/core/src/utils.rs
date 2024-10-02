@@ -126,7 +126,7 @@ fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInpu
 /// hook by inserting decoded address directly into interpreter.
 ///
 /// Should be installed after [revm::inspector_handle_register] and before any other registers.
-pub fn create2_handler_register<'a, I: InspectorExt<'a>>(
+pub fn create2_handler_register<'a, I: InspectorExt>(
     handler: &mut EvmHandler<'_, I, &'a mut dyn DatabaseExt>,
 ) {
     let create2_overrides = Rc::<RefCell<Vec<_>>>::new(RefCell::new(Vec::new()));
@@ -237,8 +237,8 @@ pub fn alphanet_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandl
 pub fn new_evm_with_inspector<'a>(
     db: &'a mut dyn DatabaseExt,
     env: revm::primitives::EnvWithHandlerCfg,
-    inspector: &'a mut dyn InspectorExt<'a>,
-) -> revm::Evm<'a, &'a mut dyn InspectorExt<'a>, &'a mut dyn DatabaseExt> {
+    inspector: &'a mut dyn InspectorExt,
+) -> revm::Evm<'a, &'a mut dyn InspectorExt, &'a mut dyn DatabaseExt> {
     let revm::primitives::EnvWithHandlerCfg { env, handler_cfg } = env;
 
     // NOTE: We could use `revm::Evm::builder()` here, but on the current patch it has some
@@ -268,8 +268,8 @@ pub fn new_evm_with_inspector<'a>(
 
 pub fn new_evm_with_existing_context<'a>(
     inner: revm::InnerEvmContext<&'a mut dyn DatabaseExt>,
-    inspector: &'a mut dyn InspectorExt<'a>,
-) -> revm::Evm<'a, &'a mut dyn InspectorExt<'a>, &'a mut dyn DatabaseExt> {
+    inspector: &'a mut dyn InspectorExt,
+) -> revm::Evm<'a, &'a mut dyn InspectorExt, &'a mut dyn DatabaseExt> {
     let handler_cfg = HandlerCfg::new(inner.spec_id());
 
     let mut handler = revm::Handler::new(handler_cfg);
