@@ -71,6 +71,7 @@ contract RecordDebugTraceTest is DSTest {
      * and memory input used. The test checke MSTORE and MLOAD and ensure it records the expected
      * stack and memory inputs.
      */
+
     function testDebugTraceCanRecordOpcodeWithStackAndMemoryData() public {
         MStoreAndMLoadCaller testContract = new MStoreAndMLoadCaller();
 
@@ -95,8 +96,8 @@ contract RecordDebugTraceTest is DSTest {
 
             if (
                 step.opcode == 0x51 /*MLOAD*/ && step.stack[0] == testContract.memPtr() // MLOAD offset
-                  && step.memoryInput.length == 32  // MLOAD should always load 32 bytes
-                  && uint256(bytes32(step.memoryInput)) == testContract.expectedValueInMemory()  // MLOAD value
+                    && step.memoryInput.length == 32 // MLOAD should always load 32 bytes
+                    && uint256(bytes32(step.memoryInput)) == testContract.expectedValueInMemory() // MLOAD value
             ) {
                 mloadCalled = true;
             }
