@@ -462,7 +462,7 @@ impl Backend {
                     let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
                         fork_block.header.gas_used as u128,
                         gas_limit,
-                        fork_block.header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default(),
+                        fork_block.header.base_fee_per_gas.unwrap_or_default(),
                     );
 
                     self.fees.set_base_fee(next_block_base_fee);
@@ -665,7 +665,7 @@ impl Backend {
     }
 
     /// Returns the current base fee
-    pub fn base_fee(&self) -> u128 {
+    pub fn base_fee(&self) -> u64 {
         self.fees.base_fee()
     }
 
@@ -674,7 +674,7 @@ impl Backend {
     }
 
     /// Sets the current basefee
-    pub fn set_base_fee(&self, basefee: u128) {
+    pub fn set_base_fee(&self, basefee: u64) {
         self.fees.set_base_fee(basefee)
     }
 
@@ -1123,7 +1123,7 @@ impl Backend {
         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
             header.gas_used as u128,
             header.gas_limit as u128,
-            header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default(),
+            header.base_fee_per_gas.unwrap_or_default(),
         );
         let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
             header.excess_blob_gas.map(|g| g as u128).unwrap_or_default(),
@@ -2239,17 +2239,17 @@ impl Backend {
             TypedTransaction::EIP1559(t) => block
                 .header
                 .base_fee_per_gas
-                .map_or(self.base_fee(), |g| g as u128)
+                .map_or(self.base_fee() as u128, |g| g as u128)
                 .saturating_add(t.tx().max_priority_fee_per_gas),
             TypedTransaction::EIP4844(t) => block
                 .header
                 .base_fee_per_gas
-                .map_or(self.base_fee(), |g| g as u128)
+                .map_or(self.base_fee() as u128, |g| g as u128)
                 .saturating_add(t.tx().tx().max_priority_fee_per_gas),
             TypedTransaction::EIP7702(t) => block
                 .header
                 .base_fee_per_gas
-                .map_or(self.base_fee(), |g| g as u128)
+                .map_or(self.base_fee() as u128, |g| g as u128)
                 .saturating_add(t.tx().max_priority_fee_per_gas),
             TypedTransaction::Deposit(_) => 0_u128,
         };
@@ -2298,7 +2298,7 @@ impl Backend {
             transaction_hash: info.transaction_hash,
             transaction_index: Some(info.transaction_index),
             block_number: Some(block.header.number),
-            gas_used: info.gas_used,
+            gas_used: info.gas_used as u128,
             contract_address: info.contract_address,
             effective_gas_price,
             block_hash: Some(block_hash),
@@ -2306,7 +2306,7 @@ impl Backend {
             to: info.to,
             state_root: Some(block.header.state_root),
             blob_gas_price: Some(blob_gas_price),
-            blob_gas_used,
+            blob_gas_used: blob_gas_used.map(|g| g as u128),
             authorization_list: None,
         };
 

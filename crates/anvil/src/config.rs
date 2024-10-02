@@ -98,7 +98,7 @@ pub struct NodeConfig {
     /// Default gas price for all txs
     pub gas_price: Option<u128>,
     /// Default base fee
-    pub base_fee: Option<u128>,
+    pub base_fee: Option<u64>,
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// The hardfork to use
@@ -474,9 +474,9 @@ impl NodeConfig {
         self
     }
     /// Returns the base fee to use
-    pub fn get_base_fee(&self) -> u128 {
+    pub fn get_base_fee(&self) -> u64 {
         self.base_fee
-            .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas))
+            .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas.map(|g| g as u64)))
             .unwrap_or(INITIAL_BASE_FEE)
     }
 
@@ -618,7 +618,7 @@ impl NodeConfig {
 
     /// Sets the base fee
     #[must_use]
-    pub fn with_base_fee(mut self, base_fee: Option<u128>) -> Self {
+    pub fn with_base_fee(mut self, base_fee: Option<u64>) -> Self {
         self.base_fee = base_fee;
         self
     }
@@ -1178,14 +1178,14 @@ latest block number: {latest_block}"
         // if not set explicitly we use the base fee of the latest block
         if self.base_fee.is_none() {
             if let Some(base_fee) = block.header.base_fee_per_gas {
-                self.base_fee = Some(base_fee as u128);
+                self.base_fee = Some(base_fee);
                 env.block.basefee = U256::from(base_fee);
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
                     block.header.gas_used as u128,
                     gas_limit,
-                    block.header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default(),
+                    block.header.base_fee_per_gas.unwrap_or_default(),
                 );
 
                 // update next base fee

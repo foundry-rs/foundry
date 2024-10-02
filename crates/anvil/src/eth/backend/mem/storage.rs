@@ -262,16 +262,16 @@ pub struct BlockchainStorage {
 
 impl BlockchainStorage {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<u128>, timestamp: u64) -> Self {
+    pub fn new(env: &Env, base_fee: Option<u64>, timestamp: u64) -> Self {
         // create a dummy genesis block
         let partial_header = PartialHeader {
             timestamp,
             base_fee,
-            gas_limit: env.block.gas_limit.to::<u128>(),
+            gas_limit: env.block.gas_limit.to::<u64>(),
             beneficiary: env.block.coinbase,
             difficulty: env.block.difficulty,
             blob_gas_used: env.block.blob_excess_gas_and_price.as_ref().map(|_| 0),
-            excess_blob_gas: env.block.get_blob_excess_gas().map(|v| v as u128),
+            excess_blob_gas: env.block.get_blob_excess_gas(),
             ..Default::default()
         };
         let block = Block::new::<MaybeImpersonatedTransaction>(partial_header, vec![], vec![]);
@@ -423,7 +423,7 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<u128>, timestamp: u64) -> Self {
+    pub fn new(env: &Env, base_fee: Option<u64>, timestamp: u64) -> Self {
         Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee, timestamp))) }
     }
 
@@ -711,7 +711,7 @@ mod tests {
         load_storage.load_transactions(serialized_transactions);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
-        assert_eq!(loaded_block.header.gas_limit, partial_header.gas_limit as u64);
+        assert_eq!(loaded_block.header.gas_limit, { partial_header.gas_limit });
         let loaded_tx = loaded_block.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
     }

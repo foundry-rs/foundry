@@ -65,7 +65,7 @@ async fn test_basefee_full_block() {
     assert!(next_base_fee > base_fee);
 
     // max increase, full block
-    assert_eq!(next_base_fee, INITIAL_BASE_FEE as u64 + 125_000_000);
+    assert_eq!(next_base_fee, INITIAL_BASE_FEE + 125_000_000);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -102,7 +102,7 @@ async fn test_basefee_half_block() {
         .unwrap();
 
     // unchanged, half block
-    assert_eq!(next_base_fee, INITIAL_BASE_FEE as u64);
+    assert_eq!(next_base_fee, { INITIAL_BASE_FEE });
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -147,7 +147,7 @@ async fn test_basefee_empty_block() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_respect_base_fee() {
     let base_fee = 50u128;
-    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee as u64))).await;
 
     let provider = handle.http_provider();
 
@@ -168,7 +168,7 @@ async fn test_respect_base_fee() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tip_above_fee_cap() {
     let base_fee = 50u128;
-    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee as u64))).await;
 
     let provider = handle.http_provider();
 
@@ -190,7 +190,7 @@ async fn test_tip_above_fee_cap() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_use_fee_history() {
     let base_fee = 50u128;
-    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee as u64))).await;
     let provider = handle.http_provider();
 
     for _ in 0..10 {

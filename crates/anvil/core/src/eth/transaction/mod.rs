@@ -770,16 +770,19 @@ impl TypedTransaction {
 
         if self.is_eip4844() {
             max_cost = max_cost.saturating_add(
-                self.blob_gas().unwrap_or(0).mul(self.max_fee_per_blob_gas().unwrap_or(0)),
+                self.blob_gas()
+                    .map(|g| g as u128)
+                    .unwrap_or(0)
+                    .mul(self.max_fee_per_blob_gas().unwrap_or(0)),
             )
         }
 
         max_cost
     }
 
-    pub fn blob_gas(&self) -> Option<u128> {
+    pub fn blob_gas(&self) -> Option<u64> {
         match self {
-            Self::EIP4844(tx) => Some(tx.tx().tx().blob_gas() as u128),
+            Self::EIP4844(tx) => Some(tx.tx().tx().blob_gas()),
             _ => None,
         }
     }
@@ -1279,7 +1282,7 @@ pub struct TransactionInfo {
     pub exit: InstructionResult,
     pub out: Option<Bytes>,
     pub nonce: u64,
-    pub gas_used: u128,
+    pub gas_used: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

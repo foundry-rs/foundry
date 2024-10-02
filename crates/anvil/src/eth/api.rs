@@ -592,7 +592,7 @@ impl EthApi {
     /// Returns the current gas price
     pub fn gas_price(&self) -> u128 {
         if self.backend.is_eip1559() {
-            self.backend.base_fee().saturating_add(self.lowest_suggestion_tip())
+            (self.backend.base_fee() as u128).saturating_add(self.lowest_suggestion_tip())
         } else {
             self.backend.fees().raw_gas_price()
         }
@@ -1177,7 +1177,7 @@ impl EthApi {
                 pending.transaction,
                 None,
                 None,
-                Some(self.backend.base_fee() as u64),
+                Some(self.backend.base_fee()),
             );
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
@@ -1405,7 +1405,7 @@ impl EthApi {
         // The spec states that `base_fee_per_gas` "[..] includes the next block after the
         // newest of the returned range, because this value can be derived from the
         // newest block"
-        response.base_fee_per_gas.push(self.backend.fees().base_fee());
+        response.base_fee_per_gas.push(self.backend.fees().base_fee() as u128);
 
         // Same goes for the `base_fee_per_blob_gas`:
         // > [..] includes the next block after the newest of the returned range, because this
@@ -2659,7 +2659,7 @@ impl EthApi {
         let mut partial_block = self.backend.convert_block(block.clone());
 
         let mut block_transactions = Vec::with_capacity(block.transactions.len());
-        let base_fee = self.backend.base_fee() as u64;
+        let base_fee = self.backend.base_fee();
 
         for info in transactions {
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
