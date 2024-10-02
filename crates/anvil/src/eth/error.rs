@@ -388,7 +388,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     match err {
                         TransportError::ErrorResp(err) => RpcError {
                             code: ErrorCode::from(err.code),
-                            message: err.message.into(),
+                            message: err.message,
                             data: err.data.and_then(|data| serde_json::to_value(data).ok()),
                         },
                         err => RpcError::internal_error_with(format!("Fork Error: {err:?}")),

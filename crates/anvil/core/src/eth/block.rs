@@ -90,16 +90,16 @@ pub struct PartialHeader {
     pub logs_bloom: Bloom,
     pub difficulty: U256,
     pub number: u64,
-    pub gas_limit: u128,
-    pub gas_used: u128,
+    pub gas_limit: u64,
+    pub gas_used: u64,
     pub timestamp: u64,
     pub extra_data: Bytes,
     pub mix_hash: B256,
-    pub blob_gas_used: Option<u128>,
-    pub excess_blob_gas: Option<u128>,
+    pub blob_gas_used: Option<u64>,
+    pub excess_blob_gas: Option<u64>,
     pub parent_beacon_block_root: Option<B256>,
     pub nonce: B64,
-    pub base_fee: Option<u128>,
+    pub base_fee: Option<u64>,
 }
 
 impl From<Header> for PartialHeader {
@@ -150,7 +150,7 @@ mod tests {
             difficulty: Default::default(),
             number: 124u64,
             gas_limit: Default::default(),
-            gas_used: 1337u128,
+            gas_used: 1337u64,
             timestamp: 0,
             extra_data: Default::default(),
             mix_hash: Default::default(),
@@ -167,7 +167,7 @@ mod tests {
         let decoded: Header = Header::decode(&mut encoded.as_ref()).unwrap();
         assert_eq!(header, decoded);
 
-        header.base_fee_per_gas = Some(12345u128);
+        header.base_fee_per_gas = Some(12345u64);
 
         let encoded = alloy_rlp::encode(&header);
         let decoded: Header = Header::decode(&mut encoded.as_ref()).unwrap();
@@ -190,8 +190,8 @@ mod tests {
             logs_bloom: Bloom::from_hex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap(),
             difficulty: U256::from(2222),
             number: 0xd05u64,
-            gas_limit: 0x115cu128,
-            gas_used: 0x15b3u128,
+            gas_limit: 0x115cu64,
+            gas_used: 0x15b3u64,
             timestamp: 0x1a0au64,
             extra_data: hex::decode("7788").unwrap().into(),
             mix_hash: B256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
@@ -223,8 +223,8 @@ mod tests {
             logs_bloom: <[u8; 256]>::from_hex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into(),
             difficulty: U256::from(2222),
             number: 0xd05u64,
-            gas_limit: 0x115cu128,
-            gas_used: 0x15b3u128,
+            gas_limit: 0x115cu64,
+            gas_used: 0x15b3u64,
             timestamp: 0x1a0au64,
             extra_data: hex::decode("7788").unwrap().into(),
             mix_hash: B256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
@@ -255,8 +255,8 @@ mod tests {
             logs_bloom: Bloom::from_hex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap(),
             difficulty: U256::from(0x020000),
             number: 1u64,
-            gas_limit: U256::from(0x016345785d8a0000u128).to::<u128>(),
-            gas_used: U256::from(0x015534).to::<u128>(),
+            gas_limit: U256::from(0x016345785d8a0000u128).to::<u64>(),
+            gas_used: U256::from(0x015534).to::<u64>(),
             timestamp: 0x079e,
             extra_data: hex::decode("42").unwrap().into(),
             mix_hash: B256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),

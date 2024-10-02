@@ -677,11 +677,7 @@ impl Cheatcodes {
                             value: Some(input.value()),
                             input: TransactionInput::new(input.init_code()),
                             nonce: Some(account.info.nonce),
-                            gas: if is_fixed_gas_limit {
-                                Some(input.gas_limit() as u128)
-                            } else {
-                                None
-                            },
+                            gas: if is_fixed_gas_limit { Some(input.gas_limit()) } else { None },
                             ..Default::default()
                         }
                         .into(),
@@ -1016,11 +1012,7 @@ impl Cheatcodes {
                             value: call.transfer_value(),
                             input: TransactionInput::new(call.input.clone()),
                             nonce: Some(account.info.nonce),
-                            gas: if is_fixed_gas_limit {
-                                Some(call.gas_limit as u128)
-                            } else {
-                                None
-                            },
+                            gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
                             ..Default::default()
                         }
                         .into(),

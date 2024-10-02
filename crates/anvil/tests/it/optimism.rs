@@ -25,18 +25,20 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
         .with_to(to)
         .with_value(U256::from(1234))
         .with_gas_limit(21000);
-    let tx = WithOtherFields {
-        inner: tx,
-        other: OptimismTransactionFields {
-            source_hash: Some(b256!(
-                "0000000000000000000000000000000000000000000000000000000000000000"
-            )),
-            mint: Some(0),
-            is_system_tx: Some(true),
-            deposit_receipt_version: None,
-        }
-        .into(),
+
+    let op_fields = OptimismTransactionFields {
+        source_hash: Some(b256!(
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        )),
+        mint: Some(0),
+        is_system_tx: Some(true),
+        deposit_receipt_version: None,
     };
+
+    // TODO: Test this
+    let other = serde_json::to_value(op_fields).unwrap().try_into().unwrap();
+
+    let tx = WithOtherFields { inner: tx, other };
 
     let err = provider.send_transaction(tx).await.unwrap_err();
     let s = err.to_string();
@@ -61,23 +63,22 @@ async fn test_send_value_deposit_transaction() {
     let send_value = U256::from(1234);
     let before_balance_to = provider.get_balance(to).await.unwrap();
 
+    let op_fields = OptimismTransactionFields {
+        source_hash: Some(b256!(
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        )),
+        mint: Some(0),
+        is_system_tx: Some(true),
+        deposit_receipt_version: None,
+    };
+
+    let other = serde_json::to_value(op_fields).unwrap().try_into().unwrap();
     let tx = TransactionRequest::default()
         .with_from(from)
         .with_to(to)
         .with_value(send_value)
         .with_gas_limit(21000);
-    let tx: WithOtherFields<TransactionRequest> = WithOtherFields {
-        inner: tx,
-        other: OptimismTransactionFields {
-            source_hash: Some(b256!(
-                "0000000000000000000000000000000000000000000000000000000000000000"
-            )),
-            mint: Some(0),
-            is_system_tx: Some(true),
-            deposit_receipt_version: None,
-        }
-        .into(),
-    };
+    let tx: WithOtherFields<TransactionRequest> = WithOtherFields { inner: tx, other };
 
     let pending = provider.send_transaction(tx).await.unwrap().register().await.unwrap();
 
@@ -121,18 +122,17 @@ async fn test_send_value_raw_deposit_transaction() {
         .with_gas_limit(21_000)
         .with_max_fee_per_gas(20_000_000_000)
         .with_max_priority_fee_per_gas(1_000_000_000);
-    let tx = WithOtherFields {
-        inner: tx,
-        other: OptimismTransactionFields {
-            source_hash: Some(b256!(
-                "0000000000000000000000000000000000000000000000000000000000000000"
-            )),
-            mint: Some(0),
-            is_system_tx: Some(true),
-            deposit_receipt_version: None,
-        }
-        .into(),
+
+    let op_fields = OptimismTransactionFields {
+        source_hash: Some(b256!(
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        )),
+        mint: Some(0),
+        is_system_tx: Some(true),
+        deposit_receipt_version: None,
     };
+    let other = serde_json::to_value(op_fields).unwrap().try_into().unwrap();
+    let tx = WithOtherFields { inner: tx, other };
     let tx_envelope = tx.build(&signer).await.unwrap();
     let mut tx_buffer = Vec::with_capacity(tx_envelope.encode_2718_len());
     tx_envelope.encode_2718(&mut tx_buffer);
