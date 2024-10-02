@@ -128,7 +128,7 @@ pub fn transaction_request_to_typed(
             }))
         }
         // EIP4844
-        (Some(3), None, _, _, _, Some(_), Some(_), Some(sidecar), to) => {
+        (Some(3), None, _, _, _, _, Some(_), Some(sidecar), to) => {
             let tx = TxEip4844 {
                 nonce: nonce.unwrap_or_default(),
                 max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),

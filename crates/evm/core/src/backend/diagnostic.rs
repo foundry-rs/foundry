@@ -1,7 +1,6 @@
 use crate::backend::LocalForkId;
-use alloy_primitives::Address;
+use alloy_primitives::{map::AddressHashMap, Address};
 use itertools::Itertools;
-use std::collections::HashMap;
 
 /// Represents possible diagnostic cases on revert
 #[derive(Clone, Debug)]
@@ -21,7 +20,7 @@ pub enum RevertDiagnostic {
 
 impl RevertDiagnostic {
     /// Converts the diagnostic to a readable error message
-    pub fn to_error_msg(&self, labels: &HashMap<Address, String>) -> String {
+    pub fn to_error_msg(&self, labels: &AddressHashMap<String>) -> String {
         let get_label =
             |addr: &Address| labels.get(addr).cloned().unwrap_or_else(|| addr.to_string());
 

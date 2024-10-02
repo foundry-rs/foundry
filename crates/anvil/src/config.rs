@@ -17,7 +17,7 @@ use crate::{
 };
 use alloy_genesis::Genesis;
 use alloy_network::AnyNetwork;
-use alloy_primitives::{hex, utils::Unit, BlockNumber, TxHash, U256};
+use alloy_primitives::{hex, map::HashMap, utils::Unit, BlockNumber, TxHash, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{Block, BlockNumberOrTag, Transaction};
 use alloy_serde::WithOtherFields;
@@ -46,7 +46,6 @@ use rand::thread_rng;
 use revm::primitives::BlobExcessGasAndPrice;
 use serde_json::{json, to_writer, Value};
 use std::{
-    collections::HashMap,
     fmt::Write as FmtWrite,
     fs::File,
     net::{IpAddr, Ipv4Addr},
@@ -493,7 +492,8 @@ impl NodeConfig {
         {
             BlobExcessGasAndPrice::new(excess_blob_gas as u64)
         } else {
-            BlobExcessGasAndPrice { blob_gasprice: 0, excess_blob_gas: 0 }
+            // If no excess blob gas is configured, default to 0
+            BlobExcessGasAndPrice::new(0)
         }
     }
 

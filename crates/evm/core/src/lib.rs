@@ -26,7 +26,7 @@ pub mod fork;
 pub mod opcodes;
 pub mod opts;
 pub mod precompiles;
-pub mod snapshot;
+pub mod state_snapshot;
 pub mod utils;
 
 /// An extension trait that allows us to add additional hooks to Inspector for later use in

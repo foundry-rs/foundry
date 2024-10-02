@@ -283,9 +283,8 @@ impl<'a> Linker<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::fixed_bytes;
+    use alloy_primitives::{fixed_bytes, map::HashMap};
     use foundry_compilers::{Project, ProjectCompileOutput, ProjectPathsConfig};
-    use std::collections::HashMap;
 
     struct LinkerTest {
         project: Project,
@@ -317,7 +316,7 @@ mod tests {
                 output = output.with_stripped_file_prefixes(project.root());
             }
 
-            Self { project, output, dependency_assertions: HashMap::new() }
+            Self { project, output, dependency_assertions: HashMap::default() }
         }
 
         fn assert_dependencies(

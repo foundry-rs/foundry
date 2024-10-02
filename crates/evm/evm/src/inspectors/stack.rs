@@ -2,7 +2,7 @@ use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Fuzzer, LogCollector,
     TracingInspector,
 };
-use alloy_primitives::{Address, Bytes, Log, TxKind, U256};
+use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, TxKind, U256};
 use foundry_cheatcodes::CheatcodesExecutor;
 use foundry_evm_core::{
     backend::{update_state, DatabaseExt},
@@ -22,7 +22,6 @@ use revm::{
     EvmContext, Inspector,
 };
 use std::{
-    collections::HashMap,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -243,7 +242,7 @@ macro_rules! call_inspectors_adjust_depth {
 /// The collected results of [`InspectorStack`].
 pub struct InspectorData {
     pub logs: Vec<Log>,
-    pub labels: HashMap<Address, String>,
+    pub labels: AddressHashMap<String>,
     pub traces: Option<SparsedTraceArena>,
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,

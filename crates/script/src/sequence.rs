@@ -3,7 +3,7 @@ use crate::{
     transaction::{AdditionalContract, TransactionWithMetadata},
     verify::VerifyBundle,
 };
-use alloy_primitives::{hex, Address, TxHash};
+use alloy_primitives::{hex, map::HashMap, Address, TxHash};
 use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::{eyre, ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
@@ -13,7 +13,7 @@ use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
