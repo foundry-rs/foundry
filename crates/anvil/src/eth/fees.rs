@@ -180,12 +180,7 @@ impl FeeManager {
 
 /// Calculate base fee for next block. [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) spec
 pub fn calculate_next_block_base_fee(gas_used: u128, gas_limit: u128, base_fee: u64) -> u64 {
-    calc_next_block_base_fee(
-        gas_used as u64,
-        gas_limit as u64,
-        base_fee,
-        BaseFeeParams::ethereum(),
-    )
+    calc_next_block_base_fee(gas_used as u64, gas_limit as u64, base_fee, BaseFeeParams::ethereum())
 }
 
 /// An async service that takes care of the `FeeHistory` cache
