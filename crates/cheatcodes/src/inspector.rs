@@ -73,10 +73,10 @@ pub type InnerEcx<'a, 'b, 'c> = &'a mut InnerEvmContext<&'b mut (dyn DatabaseExt
 pub trait CheatcodesExecutor {
     /// Core trait method accepting mutable reference to [Cheatcodes] and returning
     /// [revm::Inspector].
-    fn get_inspector<'a>(
+    fn get_inspector<'a, 'db>(
         &'a mut self,
         cheats: &'a mut Cheatcodes,
-    ) -> Box<dyn InspectorExt<&'a mut dyn DatabaseExt> + 'a>;
+    ) -> Box<dyn InspectorExt<'db> + 'a>;
 
     /// Obtains [revm::Evm] instance and executes the given CREATE frame.
     fn exec_create(
@@ -144,7 +144,7 @@ where
     F: for<'a, 'b> FnOnce(
         &mut revm::Evm<
             '_,
-            &'b mut dyn InspectorExt<&'a mut dyn DatabaseExt>,
+            &'b mut dyn InspectorExt<'a>,
             &'a mut dyn DatabaseExt,
         >,
     ) -> Result<O, EVMError<DatabaseError>>,
@@ -164,7 +164,7 @@ where
         l1_block_info,
     };
 
-    let mut evm = new_evm_with_existing_context(inner, &mut *inspector as _);
+    let mut evm = new_evm_with_existing_context(inner, inspector.get_inspector());
 
     let res = f(&mut evm)?;
 
@@ -182,11 +182,11 @@ where
 struct TransparentCheatcodesExecutor;
 
 impl CheatcodesExecutor for TransparentCheatcodesExecutor {
-    fn get_inspector<'a>(
-        &'a mut self,
-        cheats: &'a mut Cheatcodes,
-    ) -> Box<dyn InspectorExt<&'a mut dyn DatabaseExt> + 'a> {
-        Box::new(cheats as &mut dyn InspectorExt<&mut dyn DatabaseExt>)
+    fn get_inspector<'a, 'db>(
+            &'a mut self,
+            cheats: &'a mut Cheatcodes,
+        ) -> Box<dyn InspectorExt<'db> + 'a> {
+        Box::new(cheats)
     }
 }
 
@@ -1523,7 +1523,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
     }
 }
 
-impl InspectorExt<&mut dyn DatabaseExt> for Cheatcodes {
+impl<'a> InspectorExt<'a> for Cheatcodes {
     fn should_use_create2_factory(&mut self, ecx: Ecx, inputs: &mut CreateInputs) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme {
             let target_depth = if let Some(prank) = &self.prank {
@@ -1539,6 +1539,10 @@ impl InspectorExt<&mut dyn DatabaseExt> for Cheatcodes {
         } else {
             false
         }
+    }
+
+    fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b> {
+        self
     }
 }
 

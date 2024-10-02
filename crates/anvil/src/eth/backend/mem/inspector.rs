@@ -176,9 +176,13 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
     }
 }
 
-impl<DB: Database> InspectorExt<DB> for Inspector {
+impl InspectorExt<'_> for Inspector {
     fn is_alphanet(&self) -> bool {
         self.alphanet
+    }
+
+    fn get_inspector<'a>(&mut self) -> &mut dyn revm::Inspector<&'a mut DB> {
+        self
     }
 }
 

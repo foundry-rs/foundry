@@ -194,22 +194,22 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     ) -> eyre::Result<()>;
 
     /// Fetches the given transaction for the fork and executes it, committing the state in the DB
-    fn transact(
+    fn transact<'a>(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<&mut dyn DatabaseExt>,
+        inspector: &mut dyn InspectorExt<'a>,
     ) -> eyre::Result<()>;
 
     /// Executes a given TransactionRequest, commits the new state to the DB
-    fn transact_from_tx(
+    fn transact_from_tx<'a>(
         &mut self,
         transaction: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<&mut dyn DatabaseExt>,
+        inspector: &mut dyn InspectorExt<'a>,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -751,16 +751,16 @@ impl Backend {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<'a, I: InspectorExt<&'a mut dyn DatabaseExt>>(
+    pub fn inspect<'a, 'db, I: InspectorExt<'db> + 'a>(
         &'a mut self,
         env: &mut EnvWithHandlerCfg,
-        inspector: I,
+        mut inspector: I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
         let mut evm = crate::utils::new_evm_with_inspector(
             self as &mut dyn DatabaseExt,
             env.clone(),
-            inspector,
+            inspector.get_inspector(),
         );
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
@@ -1223,13 +1223,13 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    fn transact(
+    fn transact<'a>(
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<&mut dyn DatabaseExt>,
+        inspector: &mut dyn InspectorExt<'a>,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -1265,12 +1265,12 @@ impl DatabaseExt for Backend {
         )
     }
 
-    fn transact_from_tx(
+    fn transact_from_tx<'a>(
         &mut self,
         tx: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<&mut dyn DatabaseExt>,
+        inspector: &mut dyn InspectorExt<'a>,
     ) -> eyre::Result<()> {
         trace!(?tx, "execute signed transaction");
 
@@ -1295,11 +1295,8 @@ impl DatabaseExt for Backend {
 
         let res = {
             let mut db = self.clone();
-            let db = &mut db as &mut dyn DatabaseExt;
-            let db =
-                unsafe { std::mem::transmute::<&mut dyn DatabaseExt, &mut dyn DatabaseExt>(db) };
             let env = self.env_with_handler_cfg(env);
-            let mut evm = new_evm_with_inspector(db, env, inspector);
+            let mut evm = new_evm_with_inspector(&mut db as _, env, inspector.get_inspector());
             evm.context.evm.journaled_state.depth = journaled_state.depth + 1;
             evm.transact()?
         };
@@ -1917,14 +1914,14 @@ fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
-fn commit_transaction(
+fn commit_transaction<'a>(
     tx: &Transaction,
     mut env: EnvWithHandlerCfg,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
     fork_id: &ForkId,
     persistent_accounts: &HashSet<Address>,
-    inspector: &mut dyn InspectorExt<&mut dyn DatabaseExt>,
+    inspector: &mut dyn InspectorExt<'a>,
 ) -> eyre::Result<()> {
     configure_tx_env(&mut env.env, tx);
 
@@ -1934,10 +1931,9 @@ fn commit_transaction(
         let journaled_state = journaled_state.clone();
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state);
-        let db = &mut db as &mut dyn DatabaseExt;
-        let db = unsafe { std::mem::transmute::<&mut dyn DatabaseExt, &mut dyn DatabaseExt>(db) };
 
-        let mut evm = crate::utils::new_evm_with_inspector(db, env, inspector);
+        let mut evm =
+            crate::utils::new_evm_with_inspector(&mut db as _, env, inspector.get_inspector());
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
         evm.context.evm.inner.journaled_state.depth = depth + 1;
         evm.transact().wrap_err("backend: failed committing transaction")?

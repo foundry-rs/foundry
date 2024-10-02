@@ -62,10 +62,10 @@ impl<'a> CowBackend<'a> {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<'b, I: InspectorExt<&'b mut dyn DatabaseExt>>(
+    pub fn inspect<'b, I: InspectorExt<'b>>(
         &'b mut self,
         env: &mut EnvWithHandlerCfg,
-        inspector: I,
+        mut inspector: I,
     ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
@@ -74,7 +74,7 @@ impl<'a> CowBackend<'a> {
         let mut evm = crate::utils::new_evm_with_inspector(
             self as &mut dyn DatabaseExt,
             env.clone(),
-            inspector,
+            inspector.get_inspector(),
         );
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
@@ -184,23 +184,23 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         self.backend_mut(env).roll_fork_to_transaction(id, transaction, env, journaled_state)
     }
 
-    fn transact(
+    fn transact<'b>(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<&mut dyn DatabaseExt>,
+        inspector: &mut dyn InspectorExt<'b>,
     ) -> eyre::Result<()> {
         self.backend_mut(env).transact(id, transaction, env, journaled_state, inspector)
     }
 
-    fn transact_from_tx(
+    fn transact_from_tx<'b>(
         &mut self,
         transaction: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<&mut dyn DatabaseExt>,
+        inspector: &mut dyn InspectorExt<'b>,
     ) -> eyre::Result<()> {
         self.backend_mut(env).transact_from_tx(transaction, env, journaled_state, inspector)
     }

@@ -1,5 +1,8 @@
 pub use crate::ic::*;
-use crate::{constants::DEFAULT_CREATE2_DEPLOYER, precompiles::ALPHANET_P256, InspectorExt};
+use crate::{
+    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER, precompiles::ALPHANET_P256,
+    InspectorExt,
+};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Selector, TxKind, U256};
 use alloy_provider::{
@@ -8,8 +11,8 @@ use alloy_provider::{
 };
 use alloy_rpc_types::Transaction;
 use foundry_config::NamedChain;
+use foundry_fork_db::DatabaseError;
 use revm::{
-    db::WrapDatabaseRef,
     handler::register::EvmHandler,
     interpreter::{
         return_ok, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
@@ -123,15 +126,15 @@ fn get_create2_factory_call_inputs(salt: U256, inputs: CreateInputs) -> CallInpu
 /// hook by inserting decoded address directly into interpreter.
 ///
 /// Should be installed after [revm::inspector_handle_register] and before any other registers.
-pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
-    handler: &mut EvmHandler<'_, I, DB>,
+pub fn create2_handler_register<'a, I: InspectorExt<'a>>(
+    handler: &mut EvmHandler<'_, I, &'a mut dyn DatabaseExt>,
 ) {
     let create2_overrides = Rc::<RefCell<Vec<_>>>::new(RefCell::new(Vec::new()));
 
     let create2_overrides_inner = create2_overrides.clone();
     let old_handle = handler.execution.create.clone();
     handler.execution.create =
-        Arc::new(move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DB::Error>> {
+        Arc::new(move |ctx, mut inputs| -> Result<FrameOrResult, EVMError<DatabaseError>> {
             let CreateScheme::Create2 { salt } = inputs.scheme else {
                 return old_handle(ctx, inputs);
             };
@@ -219,8 +222,8 @@ pub fn create2_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
 }
 
 /// Adds Alphanet P256 precompile to the list of loaded precompiles.
-pub fn alphanet_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
-    handler: &mut EvmHandler<'_, I, DB>,
+pub fn alphanet_handler_register<'a, I: InspectorExt<'a>>(
+    handler: &mut EvmHandler<'_, I, &'a mut dyn DatabaseExt>,
 ) {
     let prev = handler.pre_execution.load_precompiles.clone();
     handler.pre_execution.load_precompiles = Arc::new(move || {
@@ -233,14 +236,13 @@ pub fn alphanet_handler_register<DB: revm::Database, I: InspectorExt<DB>>(
 }
 
 /// Creates a new EVM with the given inspector.
-pub fn new_evm_with_inspector<'a, DB, I>(
-    db: DB,
+pub fn new_evm_with_inspector<'a, I>(
+    db: &'a mut dyn DatabaseExt,
     env: revm::primitives::EnvWithHandlerCfg,
     inspector: I,
-) -> revm::Evm<'a, I, DB>
+) -> revm::Evm<'a, I, &'a mut dyn DatabaseExt>
 where
-    DB: revm::Database,
-    I: InspectorExt<DB>,
+    I: InspectorExt<'a>,
 {
     let revm::primitives::EnvWithHandlerCfg { env, handler_cfg } = env;
 
@@ -270,6 +272,7 @@ where
 }
 
 /// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
+#[cfg(ignore)]
 pub fn new_evm_with_inspector_ref<'a, DB, I>(
     db: DB,
     env: revm::primitives::EnvWithHandlerCfg,
@@ -282,13 +285,12 @@ where
     new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }
 
-pub fn new_evm_with_existing_context<'a, DB, I>(
-    inner: revm::InnerEvmContext<DB>,
+pub fn new_evm_with_existing_context<'a, I>(
+    inner: revm::InnerEvmContext<&'a mut dyn DatabaseExt>,
     inspector: I,
-) -> revm::Evm<'a, I, DB>
+) -> revm::Evm<'a, I, &'a mut dyn DatabaseExt>
 where
-    DB: revm::Database,
-    I: InspectorExt<DB>,
+    I: InspectorExt<'a>,
 {
     let handler_cfg = HandlerCfg::new(inner.spec_id());
 
