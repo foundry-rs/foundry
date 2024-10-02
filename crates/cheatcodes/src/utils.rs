@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::U256;
+use alloy_primitives::{map::HashMap, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
@@ -18,7 +18,7 @@ use rand::{Rng, RngCore};
 pub struct IgnoredTraces {
     /// Mapping from (start_node_idx, start_item_idx) to (end_node_idx, end_item_idx) representing
     /// ranges of trace nodes to ignore.
-    pub ignored: alloy_primitives::map::HashMap<(usize, usize), (usize, usize)>,
+    pub ignored: HashMap<(usize, usize), (usize, usize)>,
     /// Keeps track of (start_node_idx, start_item_idx) of the last `vm.pauseTracing` call.
     pub last_pause_call: Option<(usize, usize)>,
 }
