@@ -356,14 +356,14 @@ async fn can_call_with_state_override() {
     assert_eq!(value, init_value);
 
     // Test the `state` account override
-    let mut state_diff = B256HashMap::default();
-    state_diff.insert(B256::ZERO, account.into_word());
+    let mut state = B256HashMap::default();
+    state.insert(B256::ZERO, account.into_word());
     let mut overrides = AddressHashMap::default();
     overrides.insert(
         *simple_storage_contract.address(),
         AccountOverride {
             // The `lastSender` is in the first storage slot
-            state_diff: Some(state_diff),
+            state: Some(state),
             ..Default::default()
         },
     );
