@@ -1279,7 +1279,7 @@ impl DatabaseExt for Backend {
         env.tx.caller =
             tx.from.ok_or_else(|| eyre::eyre!("transact_from_tx: No `from` field found"))?;
         env.tx.gas_limit =
-            tx.gas.ok_or_else(|| eyre::eyre!("transact_from_tx: No `gas` field found"))? as u64;
+            tx.gas.ok_or_else(|| eyre::eyre!("transact_from_tx: No `gas` field found"))?;
         env.tx.gas_price = U256::from(tx.gas_price.or(tx.max_fee_per_gas).unwrap_or_default());
         env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(U256::from);
         env.tx.nonce = tx.nonce;

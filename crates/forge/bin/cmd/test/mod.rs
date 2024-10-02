@@ -310,6 +310,17 @@ impl TestArgs {
         let toml = config.get_config_path();
         let profiles = get_available_profiles(toml)?;
 
+        // Remove the snapshots directory if it exists.
+        // This is to ensure that we don't have any stale snapshots.
+        // If `FORGE_SNAPSHOT_CHECK` is set, we don't remove the snapshots directory as it is
+        // required for comparison.
+        if std::env::var("FORGE_SNAPSHOT_CHECK").is_err() {
+            let snapshot_dir = project_root.join(&config.snapshots);
+            if snapshot_dir.exists() {
+                let _ = fs::remove_dir_all(project_root.join(&config.snapshots));
+            }
+        }
+
         let test_options: TestOptions = TestOptionsBuilder::default()
             .fuzz(config.fuzz.clone())
             .invariant(config.invariant.clone())
@@ -546,6 +557,8 @@ impl TestArgs {
             .gas_report
             .then(|| GasReport::new(config.gas_reports.clone(), config.gas_reports_ignore.clone()));
 
+        let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
+
         let mut outcome = TestOutcome::empty(self.allow_failure);
 
         let mut any_test_failed = false;
@@ -655,6 +668,83 @@ impl TestArgs {
                         }
                     }
                 }
+
+                // Collect and merge gas snapshots.
+                for (group, new_snapshots) in result.gas_snapshots.iter() {
+                    gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
+                }
+            }
+
+            // Write gas snapshots to disk if any were collected.
+            if !gas_snapshots.is_empty() {
+                // Check for differences in gas snapshots if `FORGE_SNAPSHOT_CHECK` is set.
+                // Exiting early with code 1 if differences are found.
+                if std::env::var("FORGE_SNAPSHOT_CHECK").is_ok() {
+                    let differences_found = gas_snapshots.clone().into_iter().fold(
+                        false,
+                        |mut found, (group, snapshots)| {
+                            // If the snapshot file doesn't exist, we can't compare so we skip.
+                            if !&config.snapshots.join(format!("{group}.json")).exists() {
+                                return false;
+                            }
+
+                            let previous_snapshots: BTreeMap<String, String> =
+                                fs::read_json_file(&config.snapshots.join(format!("{group}.json")))
+                                    .expect("Failed to read snapshots from disk");
+
+                            let diff: BTreeMap<_, _> = snapshots
+                                .iter()
+                                .filter_map(|(k, v)| {
+                                    previous_snapshots.get(k).and_then(|previous_snapshot| {
+                                        if previous_snapshot != v {
+                                            Some((
+                                                k.clone(),
+                                                (previous_snapshot.clone(), v.clone()),
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                })
+                                .collect();
+
+                            if !diff.is_empty() {
+                                println!(
+                                    "{}",
+                                    format!("\n[{group}] Failed to match snapshots:").red().bold()
+                                );
+
+                                for (key, (previous_snapshot, snapshot)) in &diff {
+                                    println!(
+                                        "{}",
+                                        format!("- [{key}] {previous_snapshot} → {snapshot}").red()
+                                    );
+                                }
+
+                                found = true;
+                            }
+
+                            found
+                        },
+                    );
+
+                    if differences_found {
+                        println!();
+                        eyre::bail!("Snapshots differ from previous run");
+                    }
+                }
+
+                // Create `snapshots` directory if it doesn't exist.
+                fs::create_dir_all(&config.snapshots)?;
+
+                // Write gas snapshots to disk per group.
+                gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
+                    fs::write_pretty_json_file(
+                        &config.snapshots.join(format!("{group}.json")),
+                        &snapshots,
+                    )
+                    .expect("Failed to write gas snapshots to disk");
+                });
             }
 
             // Print suite summary.

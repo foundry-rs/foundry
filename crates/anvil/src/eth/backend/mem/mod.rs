@@ -460,7 +460,7 @@ impl Backend {
                     // this is the base fee of the current block, but we need the base fee of
                     // the next block
                     let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                        fork_block.header.gas_used,
+                        fork_block.header.gas_used as u128,
                         gas_limit,
                         fork_block.header.base_fee_per_gas.unwrap_or_default(),
                     );
@@ -665,7 +665,7 @@ impl Backend {
     }
 
     /// Returns the current base fee
-    pub fn base_fee(&self) -> u128 {
+    pub fn base_fee(&self) -> u64 {
         self.fees.base_fee()
     }
 
@@ -674,7 +674,7 @@ impl Backend {
     }
 
     /// Sets the current basefee
-    pub fn set_base_fee(&self, basefee: u128) {
+    pub fn set_base_fee(&self, basefee: u64) {
         self.fees.set_base_fee(basefee)
     }
 
@@ -1121,13 +1121,13 @@ impl Backend {
             (outcome, header, block_hash)
         };
         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-            header.gas_used,
-            header.gas_limit,
+            header.gas_used as u128,
+            header.gas_limit as u128,
             header.base_fee_per_gas.unwrap_or_default(),
         );
         let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
-            header.excess_blob_gas.unwrap_or_default(),
-            header.blob_gas_used.unwrap_or_default(),
+            header.excess_blob_gas.map(|g| g as u128).unwrap_or_default(),
+            header.blob_gas_used.map(|g| g as u128).unwrap_or_default(),
         );
 
         // update next base fee
@@ -1231,7 +1231,7 @@ impl Backend {
         env.tx =
             TxEnv {
                 caller,
-                gas_limit: gas_limit as u64,
+                gas_limit,
                 gas_price: U256::from(gas_price),
                 gas_priority_fee: max_priority_fee_per_gas.map(U256::from),
                 max_fee_per_blob_gas: max_fee_per_blob_gas
@@ -2230,7 +2230,7 @@ impl Backend {
 
         // Cancun specific
         let excess_blob_gas = block.header.excess_blob_gas;
-        let blob_gas_price = calc_blob_gasprice(excess_blob_gas.map_or(0, |g| g as u64));
+        let blob_gas_price = calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
         let blob_gas_used = transaction.blob_gas();
 
         let effective_gas_price = match transaction.transaction {
@@ -2239,17 +2239,17 @@ impl Backend {
             TypedTransaction::EIP1559(t) => block
                 .header
                 .base_fee_per_gas
-                .unwrap_or_else(|| self.base_fee())
+                .map_or(self.base_fee() as u128, |g| g as u128)
                 .saturating_add(t.tx().max_priority_fee_per_gas),
             TypedTransaction::EIP4844(t) => block
                 .header
                 .base_fee_per_gas
-                .unwrap_or_else(|| self.base_fee())
+                .map_or(self.base_fee() as u128, |g| g as u128)
                 .saturating_add(t.tx().tx().max_priority_fee_per_gas),
             TypedTransaction::EIP7702(t) => block
                 .header
                 .base_fee_per_gas
-                .unwrap_or_else(|| self.base_fee())
+                .map_or(self.base_fee() as u128, |g| g as u128)
                 .saturating_add(t.tx().max_priority_fee_per_gas),
             TypedTransaction::Deposit(_) => 0_u128,
         };
@@ -2298,7 +2298,7 @@ impl Backend {
             transaction_hash: info.transaction_hash,
             transaction_index: Some(info.transaction_index),
             block_number: Some(block.header.number),
-            gas_used: info.gas_used,
+            gas_used: info.gas_used as u128,
             contract_address: info.contract_address,
             effective_gas_price,
             block_hash: Some(block_hash),
@@ -2306,7 +2306,7 @@ impl Backend {
             to: info.to,
             state_root: Some(block.header.state_root),
             blob_gas_price: Some(blob_gas_price),
-            blob_gas_used,
+            blob_gas_used: blob_gas_used.map(|g| g as u128),
             authorization_list: None,
         };
 
@@ -2634,7 +2634,7 @@ impl TransactionValidator for Backend {
             }
         }
 
-        if tx.gas_limit() < MIN_TRANSACTION_GAS {
+        if tx.gas_limit() < MIN_TRANSACTION_GAS as u64 {
             warn!(target: "backend", "[{:?}] gas too low", tx.hash());
             return Err(InvalidTransactionError::GasTooLow);
         }
@@ -2760,7 +2760,7 @@ pub fn transaction_build(
     eth_transaction: MaybeImpersonatedTransaction,
     block: Option<&Block>,
     info: Option<TransactionInfo>,
-    base_fee: Option<u128>,
+    base_fee: Option<u64>,
 ) -> WithOtherFields<Transaction> {
     let mut transaction: Transaction = eth_transaction.clone().into();
     if info.is_some() && transaction.transaction_type == Some(0x7E) {
@@ -2774,7 +2774,7 @@ pub fn transaction_build(
         } else {
             // if transaction is already mined, gas price is considered base fee + priority fee: the
             // effective gas price.
-            let base_fee = base_fee.unwrap_or(0u128);
+            let base_fee = base_fee.map_or(0u128, |g| g as u128);
             let max_priority_fee_per_gas = transaction.max_priority_fee_per_gas.unwrap_or(0);
             transaction.gas_price = Some(base_fee.saturating_add(max_priority_fee_per_gas));
         }

@@ -308,6 +308,7 @@ impl SessionSource {
                         self.config.evm_opts.clone(),
                         None,
                         None,
+                        None,
                         Some(self.solc.version.clone()),
                     )
                     .into(),
