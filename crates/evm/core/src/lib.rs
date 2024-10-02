@@ -57,13 +57,13 @@ pub trait InspectorExt<'a>: Inspector<&'a mut dyn DatabaseExt> {
     fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b>;
 }
 
-impl<'a> InspectorExt<'a> for NoOpInspector {
+impl InspectorExt<'_> for NoOpInspector {
     fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b> {
         self
     }
 }
 
-impl<'a> InspectorExt<'a> for AccessListInspector {
+impl InspectorExt<'_> for AccessListInspector {
     fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b> {
         self
     }

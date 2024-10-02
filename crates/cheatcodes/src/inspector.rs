@@ -142,11 +142,7 @@ fn with_evm<E, F, O>(
 where
     E: CheatcodesExecutor + ?Sized,
     F: for<'a, 'b> FnOnce(
-        &mut revm::Evm<
-            '_,
-            &'b mut dyn InspectorExt<'a>,
-            &'a mut dyn DatabaseExt,
-        >,
+        &mut revm::Evm<'_, &'b mut dyn InspectorExt<'a>, &'a mut dyn DatabaseExt>,
     ) -> Result<O, EVMError<DatabaseError>>,
 {
     let mut inspector = executor.get_inspector(ccx.state);
@@ -183,9 +179,9 @@ struct TransparentCheatcodesExecutor;
 
 impl CheatcodesExecutor for TransparentCheatcodesExecutor {
     fn get_inspector<'a, 'db>(
-            &'a mut self,
-            cheats: &'a mut Cheatcodes,
-        ) -> Box<dyn InspectorExt<'db> + 'a> {
+        &'a mut self,
+        cheats: &'a mut Cheatcodes,
+    ) -> Box<dyn InspectorExt<'db> + 'a> {
         Box::new(cheats)
     }
 }
@@ -1523,7 +1519,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
     }
 }
 
-impl<'a> InspectorExt<'a> for Cheatcodes {
+impl InspectorExt<'_> for Cheatcodes {
     fn should_use_create2_factory(&mut self, ecx: Ecx, inputs: &mut CreateInputs) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme {
             let target_depth = if let Some(prank) = &self.prank {

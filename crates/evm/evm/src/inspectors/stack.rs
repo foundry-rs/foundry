@@ -631,7 +631,11 @@ impl<'a> InspectorStackRefMut<'a> {
 }
 
 impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut dyn DatabaseExt>) {
+    fn initialize_interp(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+    ) {
         call_inspectors_adjust_depth!(
             [&mut self.coverage, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| inspector.initialize_interp(interpreter, ecx),
@@ -655,7 +659,11 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
         );
     }
 
-    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut dyn DatabaseExt>) {
+    fn step_end(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+    ) {
         call_inspectors_adjust_depth!(
             [&mut self.tracer, &mut self.cheatcodes, &mut self.chisel_state, &mut self.printer],
             |inspector| inspector.step_end(interpreter, ecx),
@@ -664,7 +672,12 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
         );
     }
 
-    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut dyn DatabaseExt>, log: &Log) {
+    fn log(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        log: &Log,
+    ) {
         call_inspectors_adjust_depth!(
             [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
             |inspector| inspector.log(interpreter, ecx, log),
@@ -673,7 +686,11 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
         );
     }
 
-    fn call(&mut self, ecx: &mut EvmContext<&mut dyn DatabaseExt>, call: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(
+        &mut self,
+        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        call: &mut CallInputs,
+    ) -> Option<CallOutcome> {
         if self.in_inner_context && ecx.journaled_state.depth == 0 {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
@@ -943,7 +960,7 @@ impl<'a, 'db> InspectorExt<'db> for InspectorStackRefMut<'a> {
         self.inner.alphanet
     }
 
-    fn get_inspector<'b>(&mut self) ->  &mut dyn InspectorExt<'b> {
+    fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b> {
         self
     }
 }
@@ -955,7 +972,11 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
     }
 
     #[inline]
-    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut dyn DatabaseExt>) {
+    fn step_end(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+    ) {
         self.as_mut().step_end(interpreter, ecx)
     }
 
@@ -1010,11 +1031,20 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
         self.as_mut().eofcreate_end(context, call, outcome)
     }
 
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut dyn DatabaseExt>) {
+    fn initialize_interp(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+    ) {
         self.as_mut().initialize_interp(interpreter, ecx)
     }
 
-    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<&mut dyn DatabaseExt>, log: &Log) {
+    fn log(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        log: &Log,
+    ) {
         self.as_mut().log(interpreter, ecx, log)
     }
 
@@ -1023,10 +1053,10 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStack {
     }
 }
 
-impl<'a> InspectorExt<'a> for InspectorStack {
+impl InspectorExt<'_> for InspectorStack {
     fn should_use_create2_factory(
         &mut self,
-        ecx: &mut EvmContext<&'a mut dyn DatabaseExt>,
+        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
         inputs: &mut CreateInputs,
     ) -> bool {
         self.as_mut().should_use_create2_factory(ecx, inputs)
@@ -1036,7 +1066,7 @@ impl<'a> InspectorExt<'a> for InspectorStack {
         self.alphanet
     }
 
-    fn get_inspector<'b>(&mut self) ->  &mut dyn InspectorExt<'b> {
+    fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b> {
         self
     }
 }

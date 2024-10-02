@@ -2,13 +2,12 @@
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::U256;
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use proptest::prelude::Strategy;
 use rand::{Rng, RngCore};
-use std::collections::HashMap;
 
 /// Contains locations of traces ignored via cheatcodes.
 ///

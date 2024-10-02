@@ -60,7 +60,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
                         gas: Gas::new(inputs.gas_limit),
                     },
                     memory_offset: inputs.return_memory_offset.clone(),
-                })
+                });
             }
         }
 
@@ -68,7 +68,7 @@ impl<DB: Database> Inspector<DB> for LogCollector {
     }
 }
 
-impl<'a> InspectorExt<'a> for LogCollector {
+impl InspectorExt<'_> for LogCollector {
     fn console_log(&mut self, input: String) {
         self.logs.push(Log::new_unchecked(
             HARDHAT_CONSOLE_ADDRESS,
@@ -77,7 +77,7 @@ impl<'a> InspectorExt<'a> for LogCollector {
         ));
     }
 
-    fn get_inspector<'b>(&mut self) ->  &mut dyn InspectorExt<'b> {
+    fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b> {
         self
     }
 }

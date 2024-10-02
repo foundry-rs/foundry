@@ -744,10 +744,7 @@ fn inner_revert_to_state(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
     Ok(result.abi_encode())
 }
 
-fn inner_revert_to_state_and_delete(
-    ccx: &mut CheatsCtxt,
-    snapshot_id: U256,
-) -> Result {
+fn inner_revert_to_state_and_delete(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
     let result = if let Some(journaled_state) = ccx.ecx.db.revert_state(
         snapshot_id,
         &ccx.ecx.journaled_state,
@@ -763,10 +760,7 @@ fn inner_revert_to_state_and_delete(
     Ok(result.abi_encode())
 }
 
-fn inner_delete_state_snapshot(
-    ccx: &mut CheatsCtxt,
-    snapshot_id: U256,
-) -> Result {
+fn inner_delete_state_snapshot(ccx: &mut CheatsCtxt, snapshot_id: U256) -> Result {
     let result = ccx.ecx.db.delete_state_snapshot(snapshot_id);
     Ok(result.abi_encode())
 }
