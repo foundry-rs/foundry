@@ -1555,11 +1555,7 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn meter_gas_record<DB: DatabaseExt>(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EvmContext<DB>,
-    ) {
+    fn meter_gas_record(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         if matches!(interpreter.instruction_result, InstructionResult::Continue) {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 if ecx.journaled_state.depth() == record.depth {

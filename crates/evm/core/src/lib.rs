@@ -54,6 +54,7 @@ pub trait InspectorExt<'a>: Inspector<&'a mut dyn DatabaseExt> {
         false
     }
 
+    /// Casts this [`InspectorExt`] to a an instance with a different lifetime.
     fn get_inspector<'b>(&mut self) -> &mut dyn InspectorExt<'b>;
 }
 
