@@ -1987,7 +1987,8 @@ forgetest_async!(can_deploy_library_create2_different_sender, |prj, cmd| {
         .await;
 });
 
-// Tests that the `run` command works correctly
+// Tests that the `forge script` command warns if metadata disabled.
+// <https://github.com/foundry-rs/foundry/issues/8995>
 forgetest!(should_warn_if_no_metadata, |prj, cmd| {
     let script = prj
         .add_source(
@@ -2002,7 +2003,7 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).args(["--no-metadata"]).assert_success().stdout_eq(str![[r#"
-Warning! Running "forge script" with "--no-metadata" flag or with "cbor_metadata" set to false can result in deployment failures.
+Warning! "--no-metadata" flag or "cbor_metadata" set to false can result in deployment failures.
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!

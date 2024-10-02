@@ -212,11 +212,7 @@ impl ScriptArgs {
         let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         // print warning message if `cbor_metadata` is disabled
-        let msg = concat!(
-            "Warning! Running \"forge script\" with \"--no-metadata\" flag \
-             or with \"cbor_metadata\" set to false can result in deployment failures.",
-        )
-        .yellow();
+        let msg = "Warning! \"--no-metadata\" flag or \"cbor_metadata\" set to false can result in deployment failures.".yellow();
         p_println!(!config.cbor_metadata => "{msg}");
 
         if let Some(sender) = self.maybe_load_private_key()? {
