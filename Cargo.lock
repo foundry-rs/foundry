@@ -3711,9 +3711,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.11.3"
+version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "588bc1dd21020966a255a578433016d4637c810ed76127997a469bc4a3311e7f"
+checksum = "7c6cc925fc9fdd73f1038c528fef17ddbdd7512311809ace7d1860fe3666dbb5"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3749,9 +3749,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.11.3"
+version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b12c7a7ab554fde7521428b040205569c187995b817481720e99adf524bf7f8"
+checksum = "0d5c999c80c6d702c51522f5b4a805bec5fcae978637f0c337fa5c7a4b43d863"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3759,9 +3759,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.11.3"
+version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4654933ab983928d8e33e7fdf425bb60553e8a4ac415a6014f1f2e56a5b3741d"
+checksum = "3747cfeab1fc8299d70ceae0a28b7e2e005324e8eba78ac7d06729d67be5a1ec"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3783,9 +3783,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.11.3"
+version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2271a6689d27f42ffe1259f587196f56251508c6c9e362c585ccf234f5919f96"
+checksum = "dbd5c142355bd4822b8a7ec37268cfafe37b2e36835fa8d067b2b9d5a22c7529"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3798,9 +3798,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.11.3"
+version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb71494112126e7ecb92748913403c35ef949f18734e3ff4566a782ce2c8b986"
+checksum = "e1291c05a4c8c3b4558eb1b50f53ee1f1b599ff2490d62cdc519ad5ae4b088d6"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -3852,6 +3852,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "walkdir",
+ "yansi",
 ]
 
 [[package]]
