@@ -2302,7 +2302,7 @@ impl EthApi {
             let to = tx.to();
             let gas_price = tx.gas_price();
             let value = tx.value();
-            let gas = tx.gas_limit();
+            let gas = tx.gas_limit() as u128;
             TxpoolInspectSummary { to, value, gas, gas_price }
         }
 
@@ -2745,7 +2745,7 @@ impl EthApi {
                 })
             }
             Some(TypedTransactionRequest::Deposit(mut m)) => {
-                m.gas_limit = gas_limit as u128;
+                m.gas_limit = gas_limit;
                 TypedTransactionRequest::Deposit(m)
             }
             None => return Err(BlockchainError::FailedToDecodeTransaction),

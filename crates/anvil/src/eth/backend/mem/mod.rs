@@ -2634,7 +2634,7 @@ impl TransactionValidator for Backend {
             }
         }
 
-        if tx.gas_limit() < MIN_TRANSACTION_GAS {
+        if tx.gas_limit() < MIN_TRANSACTION_GAS as u64 {
             warn!(target: "backend", "[{:?}] gas too low", tx.hash());
             return Err(InvalidTransactionError::GasTooLow);
         }
