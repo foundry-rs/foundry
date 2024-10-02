@@ -397,6 +397,7 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
     }
 }
 
+/// Creates a database with given database and inspector, optionally enabling alphanet features.
 pub fn new_evm_with_inspector<DB: revm::Database>(
     db: DB,
     env: EnvWithHandlerCfg,
