@@ -14,7 +14,6 @@ use foundry_evm::{
         EvmContext,
     },
     traces::TracingInspectorConfig,
-    InspectorExt,
 };
 
 /// The [`revm::Inspector`] used when transacting in the evm
@@ -23,8 +22,6 @@ pub struct Inspector {
     pub tracer: Option<TracingInspector>,
     /// collects all `console.sol` logs
     pub log_collector: Option<LogCollector>,
-    /// Whether to enable Alphanet support
-    pub alphanet: bool,
 }
 
 impl Inspector {
@@ -57,12 +54,6 @@ impl Inspector {
     /// Configures the `Tracer` [`revm::Inspector`]
     pub fn with_log_collector(mut self) -> Self {
         self.log_collector = Some(Default::default());
-        self
-    }
-
-    /// Enables Alphanet features
-    pub fn with_alphanet(mut self, yes: bool) -> Self {
-        self.alphanet = yes;
         self
     }
 }
@@ -173,16 +164,6 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
         if let Some(tracer) = &mut self.tracer {
             revm::Inspector::<DB>::selfdestruct(tracer, contract, target, value);
         }
-    }
-}
-
-impl InspectorExt<'_> for Inspector {
-    fn is_alphanet(&self) -> bool {
-        self.alphanet
-    }
-
-    fn get_inspector<'a>(&mut self) -> &mut dyn revm::Inspector<&'a mut DB> {
-        self
     }
 }
 

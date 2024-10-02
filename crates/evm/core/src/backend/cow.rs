@@ -184,23 +184,23 @@ impl<'a> DatabaseExt for CowBackend<'a> {
         self.backend_mut(env).roll_fork_to_transaction(id, transaction, env, journaled_state)
     }
 
-    fn transact<'b>(
+    fn transact(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<'b>,
+        inspector: &mut dyn InspectorExt<'_>,
     ) -> eyre::Result<()> {
         self.backend_mut(env).transact(id, transaction, env, journaled_state, inspector)
     }
 
-    fn transact_from_tx<'b>(
+    fn transact_from_tx(
         &mut self,
         transaction: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<'b>,
+        inspector: &mut dyn InspectorExt<'_>,
     ) -> eyre::Result<()> {
         self.backend_mut(env).transact_from_tx(transaction, env, journaled_state, inspector)
     }

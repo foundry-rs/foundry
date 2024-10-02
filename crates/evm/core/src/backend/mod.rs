@@ -194,22 +194,22 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     ) -> eyre::Result<()>;
 
     /// Fetches the given transaction for the fork and executes it, committing the state in the DB
-    fn transact<'a>(
+    fn transact(
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<'a>,
+        inspector: &mut dyn InspectorExt<'_>,
     ) -> eyre::Result<()>;
 
     /// Executes a given TransactionRequest, commits the new state to the DB
-    fn transact_from_tx<'a>(
+    fn transact_from_tx(
         &mut self,
         transaction: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<'a>,
+        inspector: &mut dyn InspectorExt<'_>,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -1223,13 +1223,13 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    fn transact<'a>(
+    fn transact(
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<'a>,
+        inspector: &mut dyn InspectorExt<'_>,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -1265,12 +1265,12 @@ impl DatabaseExt for Backend {
         )
     }
 
-    fn transact_from_tx<'a>(
+    fn transact_from_tx(
         &mut self,
         tx: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<'a>,
+        inspector: &mut dyn InspectorExt<'_>,
     ) -> eyre::Result<()> {
         trace!(?tx, "execute signed transaction");
 
@@ -1914,14 +1914,14 @@ fn update_env_block<T>(env: &mut Env, block: &Block<T>) {
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
-fn commit_transaction<'a>(
+fn commit_transaction(
     tx: &Transaction,
     mut env: EnvWithHandlerCfg,
     journaled_state: &mut JournaledState,
     fork: &mut Fork,
     fork_id: &ForkId,
     persistent_accounts: &HashSet<Address>,
-    inspector: &mut dyn InspectorExt<'a>,
+    inspector: &mut dyn InspectorExt<'_>,
 ) -> eyre::Result<()> {
     configure_tx_env(&mut env.env, tx);
 

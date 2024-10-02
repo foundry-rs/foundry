@@ -81,8 +81,6 @@ use foundry_evm::{
         },
     },
     traces::TracingInspectorConfig,
-    utils::new_evm_with_inspector_ref,
-    InspectorExt,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
@@ -100,6 +98,8 @@ use std::{
 };
 use storage::{Blockchain, MinedTransaction, DEFAULT_HISTORY_LIMIT};
 use tokio::sync::RwLock as AsyncRwLock;
+
+use super::executor::new_evm_with_inspector_ref;
 
 pub mod cache;
 pub mod fork_db;
@@ -864,15 +864,15 @@ impl Backend {
         &self,
         db: &'db dyn DatabaseRef<Error = DatabaseError>,
         env: EnvWithHandlerCfg,
-        inspector: &'i mut dyn InspectorExt<
+        inspector: &'i mut dyn revm::Inspector<
             WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
         >,
     ) -> revm::Evm<
         '_,
-        &'i mut dyn InspectorExt<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>,
+        &'i mut dyn revm::Inspector<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>,
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
     > {
-        let mut evm = new_evm_with_inspector_ref(db, env, inspector);
+        let mut evm = new_evm_with_inspector_ref(db, env, inspector, self.alphanet);
         if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
         }
@@ -1269,7 +1269,7 @@ impl Backend {
 
     /// Builds [`Inspector`] with the configured options
     fn build_inspector(&self) -> Inspector {
-        let mut inspector = Inspector::default().with_alphanet(self.alphanet);
+        let mut inspector = Inspector::default();
 
         if self.print_logs {
             inspector = inspector.with_log_collector();

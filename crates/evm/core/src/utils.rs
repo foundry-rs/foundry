@@ -222,9 +222,7 @@ pub fn create2_handler_register<'a, I: InspectorExt<'a>>(
 }
 
 /// Adds Alphanet P256 precompile to the list of loaded precompiles.
-pub fn alphanet_handler_register<'a, I: InspectorExt<'a>>(
-    handler: &mut EvmHandler<'_, I, &'a mut dyn DatabaseExt>,
-) {
+pub fn alphanet_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandler<'_, EXT, DB>) {
     let prev = handler.pre_execution.load_precompiles.clone();
     handler.pre_execution.load_precompiles = Arc::new(move || {
         let mut loaded_precompiles = prev();
@@ -268,20 +266,6 @@ pub fn new_evm_with_inspector<'a>(
     revm::Evm::new(context, handler)
 }
 
-/// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-#[cfg(ignore)]
-pub fn new_evm_with_inspector_ref<'a, DB, I>(
-    db: DB,
-    env: revm::primitives::EnvWithHandlerCfg,
-    inspector: I,
-) -> revm::Evm<'a, I, WrapDatabaseRef<DB>>
-where
-    DB: revm::DatabaseRef,
-    I: InspectorExt<WrapDatabaseRef<DB>>,
-{
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
-}
-
 pub fn new_evm_with_existing_context<'a>(
     inner: revm::InnerEvmContext<&'a mut dyn DatabaseExt>,
     inspector: &'a mut dyn InspectorExt<'a>,
@@ -298,25 +282,4 @@ pub fn new_evm_with_existing_context<'a>(
     let context =
         revm::Context::new(revm::EvmContext { inner, precompiles: Default::default() }, inspector);
     revm::Evm::new(context, handler)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn build_evm() {
-        let mut db = revm::db::EmptyDB::default();
-
-        let env = Box::<revm::primitives::Env>::default();
-        let spec = SpecId::LATEST;
-        let handler_cfg = revm::primitives::HandlerCfg::new(spec);
-        let cfg = revm::primitives::EnvWithHandlerCfg::new(env, handler_cfg);
-
-        let mut inspector = revm::inspectors::NoOpInspector;
-
-        let mut evm = new_evm_with_inspector(&mut db, cfg, &mut inspector);
-        let result = evm.transact().unwrap();
-        assert!(result.result.is_success());
-    }
 }
