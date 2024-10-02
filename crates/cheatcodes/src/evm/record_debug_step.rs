@@ -1,39 +1,10 @@
-use alloy_primitives::U256;
+use alloy_primitives::{Bytes, U256};
 
-use foundry_evm_traces::CallTraceArena;
 use revm::interpreter::{InstructionResult, OpCode};
 
 use foundry_evm_core::buffer::{get_buffer_accesses, BufferKind};
 use revm_inspectors::tracing::types::{CallTraceStep, RecordedMemory};
 use spec::Vm::DebugStep;
-
-// A depth first traverse to flatten the recorded steps.
-pub(crate) fn flatten_call_trace(
-    root: usize,
-    arena: &CallTraceArena,
-    node_start_idx: usize,
-) -> Vec<&CallTraceStep> {
-    let mut out = Vec::new();
-    let mut nodes = Vec::new(); // Use a Vec as a stack
-    nodes.push(root);
-
-    while let Some(node_idx) = nodes.pop() {
-        // Pop from the end of the stack
-        let node = &arena.nodes()[node_idx];
-        if node_idx >= node_start_idx {
-            for step in &node.trace.steps {
-                out.push(step);
-            }
-        }
-        // Push children onto the stack in reverse order so that the first child is
-        // processed first
-        for &child_idx in node.children.iter().rev() {
-            nodes.push(child_idx);
-        }
-    }
-
-    out
-}
 
 // Function to convert CallTraceStep to DebugStep
 pub(crate) fn convert_call_trace_to_debug_step(step: &CallTraceStep) -> DebugStep {
@@ -50,7 +21,7 @@ pub(crate) fn convert_call_trace_to_debug_step(step: &CallTraceStep) -> DebugSte
 
     DebugStep {
         stack,
-        memoryData: memory,
+        memoryInput: memory,
         opcode: step.op.get(),
         depth: step.depth,
         isOutOfGas: is_out_of_gas,
@@ -64,9 +35,9 @@ fn get_memory_input_for_opcode(
     opcode: u8,
     stack: Option<&Vec<U256>>,
     memory: Option<&RecordedMemory>,
-) -> Vec<u8> {
-    let Some(stack_data) = stack else { return vec![] };
-    let Some(memory_data) = memory else { return vec![] };
+) -> Bytes {
+    let Some(stack_data) = stack else { return Bytes::new() };
+    let Some(memory_data) = memory else { return Bytes::new() };
 
     if let Some(accesses) = get_buffer_accesses(opcode, stack_data) {
         if let Some((kind, access)) = accesses.read {
@@ -74,12 +45,12 @@ fn get_memory_input_for_opcode(
                 BufferKind::Memory => {
                     get_slice_from_memory(memory_data.as_bytes(), access.offset, access.len)
                 }
-                _ => vec![],
+                _ => Bytes::new(),
             }
         }
     };
 
-    vec![]
+    Bytes::new()
 }
 
 // The expected `stack` here is from the trace stack, where the top of the stack
@@ -92,27 +63,31 @@ fn get_stack_inputs_for_opcode(opcode: u8, stack: Option<&Vec<U256>>) -> Vec<U25
 
     let Some(stack_data) = stack else { return vec![] };
 
-    let stack_input_size = op.inputs();
+    let stack_input_size = op.inputs() as usize;
     let mut inputs = Vec::new();
     for i in 0..stack_input_size {
-        inputs.push(peak_stack(stack_data, i.into()));
+        inputs.push(stack_data[stack_data.len() - 1 - i]);
     }
     inputs
 }
 
-fn peak_stack(stack: &[U256], i: usize) -> U256 {
-    stack[stack.len() - 1 - i]
-}
-
-fn get_slice_from_memory(memory: &[u8], start_index: usize, size: usize) -> Vec<u8> {
+fn get_slice_from_memory(memory: &Bytes, start_index: usize, size: usize) -> Bytes {
     let memory_len = memory.len();
 
-    let end_index = start_index + size;
+    let end_bound = start_index + size;
 
-    // Return the vector if start_index is within the slice, else return an empty vector
-    if start_index < memory_len && end_index < memory_len {
-        memory[start_index..end_index].to_vec()
-    } else {
-        Vec::new()
+    // Return the bytes if data is within the range.
+    if start_index < memory_len && end_bound <= memory_len {
+        return memory.slice(start_index..end_bound);
     }
+
+    // Pad zero bytes if attempting to load memory partially out of range.
+    if start_index < memory_len && end_bound > memory_len {
+        let mut result = memory.slice(start_index..memory_len).to_vec();
+        result.resize(size, 0u8);
+        return Bytes::from(result);
+    }
+
+    // Return empty bytes with the size if not in range at all.
+    Bytes::from(vec![0u8; size])
 }

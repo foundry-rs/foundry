@@ -267,10 +267,12 @@ interface Vm {
         /// stack\[0\] represents the top of the stack.
         /// and only stack data relevant to the opcode execution is contained.
         uint256[] stack;
-        /// The memory data before executing the step of the run.
-        /// only data relevant to the opcode execution is contained.
-        /// e.g. for MLOAD, it will have 32 bytes of the memory data here.
-        uint8[] memoryData;
+        /// The memory input data before executing the step of the run.
+        /// only input data relevant to the opcode execution is contained.
+        ///
+        /// e.g. for MLOAD, it will have memory\[offset:offset+32\] copied here.
+        /// the offset value can be get by the stack data.
+        bytes memoryInput;
         /// The opcode that was accessed.
         uint8 opcode;
         /// The call depth of the step.
