@@ -409,11 +409,13 @@ impl<'a> ContractRunner<'a> {
                 let mut res = match kind {
                     TestFunctionKind::UnitTest { should_fail } => {
                         let setup_address = setup.address;
-                        let mut test_result = self.run_unit_test(func, should_fail, setup);
+                        let mut test_result = self.run_unit_test(func, should_fail, setup.clone());
 
-                        if test_result.status.is_success() && call_after_test {
-                            test_result =
-                                self.run_after_test(test_result, self.sender, setup_address);
+                        if !test_result.status.is_skipped() && call_after_test {
+                            let after_test_result =
+                                self.run_after_test(setup, self.sender, setup_address);
+
+                            test_result.merge_after_test_result(&after_test_result);
                         }
 
                         test_result
@@ -427,13 +429,14 @@ impl<'a> ContractRunner<'a> {
                             func,
                             should_fail,
                             runner,
-                            setup,
+                            setup.clone(),
                             fuzz_config.clone(),
                         );
 
-                        if test_result.status.is_success() && call_after_test {
-                            test_result =
-                                self.run_after_test(test_result, self.sender, setup_address);
+                        if !test_result.status.is_skipped() && call_after_test {
+                            let after_test_result =
+                                self.run_after_test(setup, self.sender, setup_address);
+                            test_result.merge_after_test_result(&after_test_result);
                         }
 
                         test_result
@@ -505,23 +508,22 @@ impl<'a> ContractRunner<'a> {
         test_result.single_result(success, reason, raw_call_result)
     }
 
-    /// Runs the `afterTest` function. If successful then merges the results with the previous test
-    fn run_after_test(
-        &self,
-        mut prev_test_result: TestResult,
-        from: Address,
-        to: Address,
-    ) -> TestResult {
+    /// Runs the `afterTest` function.
+    fn run_after_test(&self, setup: TestSetup, from: Address, to: Address) -> TestResult {
         let res = self.executor.call_after_test(from, to, Some(self.revert_decoder));
 
-        match res {
-            Ok(call_result) => prev_test_result.merge_call_result(&call_result),
-            Err(EvmError::Execution(err)) => prev_test_result.merge_call_result(&err.raw),
-            Err(EvmError::Skip(reason)) => return prev_test_result.single_skip(reason),
-            Err(err) => return prev_test_result.single_fail(Some(err.to_string())),
-        }
+        let test_result = TestResult::new(setup);
 
-        prev_test_result
+        let (mut raw_call_result, reason) = match res {
+            Ok(call_result) => (call_result, None),
+            Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
+            Err(EvmError::Skip(reason)) => return test_result.single_skip(reason),
+            Err(err) => return test_result.single_fail(Some(err.to_string())),
+        };
+
+        let success = self.executor.is_raw_call_mut_success(to, &mut raw_call_result, false);
+
+        test_result.single_result(success, reason, raw_call_result)
     }
 
     #[allow(clippy::too_many_arguments)]

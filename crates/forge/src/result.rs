@@ -659,6 +659,26 @@ impl TestResult {
             (a, b) => a.or(b),
         };
     }
+
+    /// Function to merge with another TestResult extending logs, labeled addresses, traces and
+    /// coverage.
+    pub fn merge_after_test_result(&mut self, test_result: &TestResult) {
+        // We don't change the status of the previous test if its failing. We only set it to the
+        // status of the result of `afterTest` on success.
+        if self.status != TestStatus::Failure {
+            self.status = test_result.status;
+        }
+
+        self.logs.extend(test_result.logs.clone());
+        self.labeled_addresses.extend(test_result.labeled_addresses.clone());
+        self.traces.extend(test_result.traces.clone());
+        let old_coverage = std::mem::take(&mut self.coverage);
+        let other_coverage = test_result.coverage.clone();
+        self.coverage = match (old_coverage, other_coverage) {
+            (Some(old_coverage), Some(other)) => Some(old_coverage.merged(other)),
+            (a, b) => a.or(b),
+        };
+    }
 }
 
 /// Data report by a test.
