@@ -7039,6 +7039,46 @@
     },
     {
       "func": {
+        "id": "randomBytes4",
+        "description": "Returns random 4bytes",
+        "declaration": "function randomBytes4() external view returns (bytes4);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "randomBytes4()",
+        "selector": "0x9b7cd579",
+        "selectorBytes": [
+          155,
+          124,
+          213,
+          121
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "randomBytes8",
+        "description": "Returns random 8bytes",
+        "declaration": "function randomBytes8() external view returns (bytes8);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "randomBytes8()",
+        "selector": "0x0497b0a5",
+        "selectorBytes": [
+          4,
+          151,
+          176,
+          165
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "randomInt_0",
         "description": "Returns an random `int256` value.",
         "declaration": "function randomInt() external view returns (int256);",
