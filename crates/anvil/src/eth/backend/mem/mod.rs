@@ -1,6 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
+use super::executor::new_evm_with_inspector_ref;
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
@@ -32,6 +33,7 @@ use crate::{
     revm::{db::DatabaseRef, primitives::AccountInfo},
     ForkChoice, NodeConfig, PrecompileFactory,
 };
+use alloy_chains::NamedChain;
 use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
 use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U256, U64};
@@ -64,8 +66,6 @@ use anvil_core::eth::{
     utils::meets_eip155,
 };
 use anvil_rpc::error::RpcError;
-
-use alloy_chains::NamedChain;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
@@ -81,8 +81,6 @@ use foundry_evm::{
         },
     },
     traces::TracingInspectorConfig,
-    utils::new_evm_with_inspector_ref,
-    InspectorExt,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
@@ -864,15 +862,15 @@ impl Backend {
         &self,
         db: &'db dyn DatabaseRef<Error = DatabaseError>,
         env: EnvWithHandlerCfg,
-        inspector: &'i mut dyn InspectorExt<
+        inspector: &'i mut dyn revm::Inspector<
             WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
         >,
     ) -> revm::Evm<
         '_,
-        &'i mut dyn InspectorExt<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>,
+        &'i mut dyn revm::Inspector<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>,
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
     > {
-        let mut evm = new_evm_with_inspector_ref(db, env, inspector);
+        let mut evm = new_evm_with_inspector_ref(db, env, inspector, self.alphanet);
         if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
         }
@@ -1269,7 +1267,7 @@ impl Backend {
 
     /// Builds [`Inspector`] with the configured options
     fn build_inspector(&self) -> Inspector {
-        let mut inspector = Inspector::default().with_alphanet(self.alphanet);
+        let mut inspector = Inspector::default();
 
         if self.print_logs {
             inspector = inspector.with_log_collector();

@@ -28,8 +28,9 @@ use foundry_evm::{
         },
     },
     traces::CallTraceNode,
+    utils::alphanet_handler_register,
 };
-use revm::primitives::MAX_BLOB_GAS_PER_BLOCK;
+use revm::{db::WrapDatabaseRef, primitives::MAX_BLOB_GAS_PER_BLOCK};
 use std::sync::Arc;
 
 /// Represents an executed transaction (transacted on the DB)
@@ -303,7 +304,7 @@ impl<'a, 'b, DB: Db + ?Sized, V: TransactionValidator> Iterator
         let nonce = account.nonce;
 
         // records all call and step traces
-        let mut inspector = Inspector::default().with_tracing().with_alphanet(self.alphanet);
+        let mut inspector = Inspector::default().with_tracing();
         if self.enable_steps_tracing {
             inspector = inspector.with_steps_tracing();
         }
@@ -312,8 +313,7 @@ impl<'a, 'b, DB: Db + ?Sized, V: TransactionValidator> Iterator
         }
 
         let exec_result = {
-            let mut evm =
-                foundry_evm::utils::new_evm_with_inspector(&mut *self.db, env, &mut inspector);
+            let mut evm = new_evm_with_inspector(&mut *self.db, env, &mut inspector, self.alphanet);
             if let Some(factory) = &self.precompile_factory {
                 inject_precompiles(&mut evm, factory.precompiles());
             }
@@ -395,4 +395,38 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
             bloom.accrue(BloomInput::Raw(&topic[..]));
         }
     }
+}
+
+/// Creates a database with given database and inspector, optionally enabling alphanet features.
+pub fn new_evm_with_inspector<DB: revm::Database>(
+    db: DB,
+    env: EnvWithHandlerCfg,
+    inspector: &mut dyn revm::Inspector<DB>,
+    alphanet: bool,
+) -> revm::Evm<'_, &mut dyn revm::Inspector<DB>, DB> {
+    let EnvWithHandlerCfg { env, handler_cfg } = env;
+
+    let mut handler = revm::Handler::new(handler_cfg);
+
+    handler.append_handler_register_plain(revm::inspector_handle_register);
+    if alphanet {
+        handler.append_handler_register_plain(alphanet_handler_register);
+    }
+
+    let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
+
+    revm::Evm::new(context, handler)
+}
+
+/// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
+pub fn new_evm_with_inspector_ref<'a, DB>(
+    db: DB,
+    env: EnvWithHandlerCfg,
+    inspector: &mut dyn revm::Inspector<WrapDatabaseRef<DB>>,
+    alphanet: bool,
+) -> revm::Evm<'a, &mut dyn revm::Inspector<WrapDatabaseRef<DB>>, WrapDatabaseRef<DB>>
+where
+    DB: revm::DatabaseRef,
+{
+    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector, alphanet)
 }
