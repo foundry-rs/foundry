@@ -901,7 +901,7 @@ where {
                         call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
                             mock.value.map_or(true, |value| Some(value) == call.transfer_value())
                     })
-                    .map(|(_, v)| v)
+                    .map(|(_, v)| v),
             } {
                 if let Some(return_data) = if return_data_queue.len() == 1 {
                     // If the mocked calls stack has a single element in it, don't empty it
@@ -913,7 +913,7 @@ where {
                     return Some(CallOutcome {
                         result: InterpreterResult {
                             result: return_data.ret_type,
-                            output: return_data.data.clone(),
+                            output: return_data.data,
                             gas,
                         },
                         memory_offset: call.return_memory_offset.clone(),

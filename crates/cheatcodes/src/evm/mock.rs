@@ -136,9 +136,10 @@ fn mock_calls(
 ) {
     state.mocked_calls.entry(*callee).or_default().insert(
         MockCallDataContext { calldata: Bytes::copy_from_slice(cdata), value: value.copied() },
-        rdata_vec.iter().map(|rdata|
-            MockCallReturnData { ret_type, data: Bytes::copy_from_slice(rdata) }
-        ).collect::<VecDeque<_>>(),
+        rdata_vec
+            .iter()
+            .map(|rdata| MockCallReturnData { ret_type, data: Bytes::copy_from_slice(rdata) })
+            .collect::<VecDeque<_>>(),
     );
 }
 
