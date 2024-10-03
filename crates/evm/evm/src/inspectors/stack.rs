@@ -627,7 +627,7 @@ impl<'a> InspectorStackRefMut<'a> {
     fn with_stack<O>(&mut self, f: impl FnOnce(&mut InspectorStack) -> O) -> O {
         let mut stack = InspectorStack {
             cheatcodes: self.cheatcodes.as_deref_mut().map(std::mem::take),
-            inner: std::mem::take(&mut self.inner),
+            inner: std::mem::take(self.inner),
         };
 
         let out = f(&mut stack);
