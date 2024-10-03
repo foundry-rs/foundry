@@ -409,11 +409,10 @@ impl<'a> ContractRunner<'a> {
                 let mut res = match kind {
                     TestFunctionKind::UnitTest { should_fail } => {
                         let setup_address = setup.address;
-                        let mut test_result = self.run_unit_test(func, should_fail, setup.clone());
+                        let mut test_result = self.run_unit_test(func, should_fail, setup);
 
                         if !test_result.status.is_skipped() && call_after_test {
-                            let after_test_result =
-                                self.run_after_test(setup, self.sender, setup_address);
+                            let after_test_result = self.run_after_test(self.sender, setup_address);
 
                             test_result.merge_after_test_result(&after_test_result);
                         }
@@ -429,13 +428,12 @@ impl<'a> ContractRunner<'a> {
                             func,
                             should_fail,
                             runner,
-                            setup.clone(),
+                            setup,
                             fuzz_config.clone(),
                         );
 
                         if !test_result.status.is_skipped() && call_after_test {
-                            let after_test_result =
-                                self.run_after_test(setup, self.sender, setup_address);
+                            let after_test_result = self.run_after_test(self.sender, setup_address);
                             test_result.merge_after_test_result(&after_test_result);
                         }
 
@@ -509,10 +507,10 @@ impl<'a> ContractRunner<'a> {
     }
 
     /// Runs the `afterTest` function.
-    fn run_after_test(&self, setup: TestSetup, from: Address, to: Address) -> TestResult {
+    fn run_after_test(&self, from: Address, to: Address) -> TestResult {
         let res = self.executor.call_after_test(from, to, Some(self.revert_decoder));
 
-        let test_result = TestResult::new(setup);
+        let test_result = TestResult::default();
 
         let (mut raw_call_result, reason) = match res {
             Ok(call_result) => (call_result, None),
