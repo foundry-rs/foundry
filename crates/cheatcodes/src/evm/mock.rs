@@ -1,7 +1,7 @@
 use crate::{inspector::InnerEcx, Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
 use revm::{interpreter::InstructionResult, primitives::Bytecode};
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::VecDeque};
 
 /// Mocked call data.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -105,7 +105,7 @@ fn mock_call(
 ) {
     state.mocked_calls.entry(*callee).or_default().insert(
         MockCallDataContext { calldata: Bytes::copy_from_slice(cdata), value: value.copied() },
-        MockCallReturnData { ret_type, data: Bytes::copy_from_slice(rdata) },
+        VecDeque::from(vec![MockCallReturnData { ret_type, data: Bytes::copy_from_slice(rdata) }]),
     );
 }
 

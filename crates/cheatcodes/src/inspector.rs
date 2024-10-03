@@ -402,7 +402,7 @@ pub struct Cheatcodes {
 
     /// Mocked calls
     // **Note**: inner must a BTreeMap because of special `Ord` impl for `MockCallDataContext`
-    pub mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, MockCallReturnData>>,
+    pub mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, VecDeque<MockCallReturnData>>>,
 
     /// Mocked functions. Maps target address to be mocked to pair of (calldata, mock address).
     pub mocked_functions: HashMap<Address, HashMap<Bytes, Address>>,
@@ -889,26 +889,36 @@ where {
         }
 
         // Handle mocked calls
-        if let Some(mocks) = self.mocked_calls.get(&call.bytecode_address) {
+        if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
             let ctx =
                 MockCallDataContext { calldata: call.input.clone(), value: call.transfer_value() };
-            if let Some(return_data) = mocks.get(&ctx).or_else(|| {
-                mocks
-                    .iter()
+
+            if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
+                Some(queue) => Some(queue),
+                None => mocks
+                    .iter_mut()
                     .find(|(mock, _)| {
                         call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
                             mock.value.map_or(true, |value| Some(value) == call.transfer_value())
                     })
                     .map(|(_, v)| v)
-            }) {
-                return Some(CallOutcome {
-                    result: InterpreterResult {
-                        result: return_data.ret_type,
-                        output: return_data.data.clone(),
-                        gas,
-                    },
-                    memory_offset: call.return_memory_offset.clone(),
-                });
+            } {
+                if let Some(return_data) = if return_data_queue.len() == 1 {
+                    // If the mocked calls stack has a single element in it, don't empty it
+                    return_data_queue.front().map(|x| x.to_owned())
+                } else {
+                    // Else, we pop the front element
+                    return_data_queue.pop_front()
+                } {
+                    return Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: return_data.ret_type,
+                            output: return_data.data.clone(),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                    });
+                }
             }
         }
 
