@@ -14,7 +14,8 @@ use revm::{
         EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
     primitives::{
-        Account, AccountStatus, BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult, HashMap, Output, TransactTo
+        Account, AccountStatus, BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult,
+        HashMap, Output, TransactTo,
     },
     EvmContext, Inspector,
 };
@@ -571,7 +572,7 @@ impl<'a> InspectorStackRefMut<'a> {
 
             evm.context.evm.inner.journaled_state.state = {
                 let mut state = ecx.journaled_state.state.clone();
-                
+
                 for (addr, acc_mut) in &mut state {
                     // mark all accounts cold, besides preloaded addresses
                     if !ecx.journaled_state.warm_preloaded_addresses.contains(addr) {
@@ -689,7 +690,11 @@ impl<'a> InspectorStackRefMut<'a> {
     }
 
     /// Invoked at the end of root frame.
-    fn top_level_frame_end(&mut self, ecx: &mut EvmContext<&mut dyn DatabaseExt>, result: InstructionResult) {
+    fn top_level_frame_end(
+        &mut self,
+        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        result: InstructionResult,
+    ) {
         if !result.is_revert() {
             return;
         }
@@ -700,8 +705,9 @@ impl<'a> InspectorStackRefMut<'a> {
             cheats.on_revert(ecx);
         }
 
-        // If we're in isolation mode, we need to rollback to state before the root frame was created
-        // We can't rely on revm's journal because it doesn't account for changes made by isolated calls
+        // If we're in isolation mode, we need to rollback to state before the root frame was
+        // created We can't rely on revm's journal because it doesn't account for changes
+        // made by isolated calls
         if self.enable_isolation {
             ecx.journaled_state.state = std::mem::take(&mut self.top_frame_journal);
         }
