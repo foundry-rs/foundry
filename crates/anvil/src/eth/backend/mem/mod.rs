@@ -817,8 +817,7 @@ impl Backend {
             let best_hash =
                 self.blockchain.storage.read().hash(best_number.into()).ok_or_else(|| {
                     BlockchainError::RpcError(RpcError::internal_error_with(format!(
-                        "Best hash not found for best number: {}",
-                        best_number
+                        "Best hash not found for best number {best_number}",
                     )))
                 })?;
 
