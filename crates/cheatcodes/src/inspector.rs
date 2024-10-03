@@ -5,7 +5,7 @@ use crate::{
         mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
-        DealRecord, RecordAccess,
+        DealRecord, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
     script::{Broadcast, ScriptWallets},
@@ -17,8 +17,8 @@ use crate::{
         },
     },
     utils::IgnoredTraces,
-    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result, Vm,
-    Vm::AccountAccess,
+    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
+    Vm::{self, AccountAccess},
 };
 use alloy_primitives::{
     hex,
@@ -31,7 +31,7 @@ use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_config::Config;
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{DatabaseExt, RevertDiagnostic},
+    backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     utils::new_evm_with_existing_context,
     InspectorExt,
@@ -62,6 +62,9 @@ use std::{
 
 mod utils;
 
+pub type Ecx<'a, 'b, 'c> = &'a mut EvmContext<&'b mut (dyn DatabaseExt + 'c)>;
+pub type InnerEcx<'a, 'b, 'c> = &'a mut InnerEvmContext<&'b mut (dyn DatabaseExt + 'c)>;
+
 /// Helper trait for obtaining complete [revm::Inspector] instance from mutable reference to
 /// [Cheatcodes].
 ///
@@ -70,71 +73,30 @@ mod utils;
 pub trait CheatcodesExecutor {
     /// Core trait method accepting mutable reference to [Cheatcodes] and returning
     /// [revm::Inspector].
-    fn get_inspector<'a, DB: DatabaseExt>(
-        &'a mut self,
-        cheats: &'a mut Cheatcodes,
-    ) -> impl InspectorExt<DB> + 'a;
-
-    /// Constructs [revm::Evm] and runs a given closure with it.
-    fn with_evm<DB: DatabaseExt, F, O>(
-        &mut self,
-        ccx: &mut CheatsCtxt<DB>,
-        f: F,
-    ) -> Result<O, EVMError<DB::Error>>
-    where
-        F: for<'a, 'b> FnOnce(
-            &mut revm::Evm<
-                '_,
-                &'b mut dyn InspectorExt<&'a mut dyn DatabaseExt>,
-                &'a mut dyn DatabaseExt,
-            >,
-        ) -> Result<O, EVMError<DB::Error>>,
-    {
-        let mut inspector = self.get_inspector(ccx.state);
-        let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
-        let l1_block_info = std::mem::take(&mut ccx.ecx.l1_block_info);
-
-        let inner = revm::InnerEvmContext {
-            env: ccx.ecx.env.clone(),
-            journaled_state: std::mem::replace(
-                &mut ccx.ecx.journaled_state,
-                revm::JournaledState::new(Default::default(), Default::default()),
-            ),
-            db: &mut ccx.ecx.db as &mut dyn DatabaseExt,
-            error,
-            l1_block_info,
-        };
-
-        let mut evm = new_evm_with_existing_context(inner, &mut inspector as _);
-
-        let res = f(&mut evm)?;
-
-        ccx.ecx.journaled_state = evm.context.evm.inner.journaled_state;
-        ccx.ecx.env = evm.context.evm.inner.env;
-        ccx.ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
-        ccx.ecx.error = evm.context.evm.inner.error;
-
-        Ok(res)
-    }
+    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a>;
 
     /// Obtains [revm::Evm] instance and executes the given CREATE frame.
-    fn exec_create<DB: DatabaseExt>(
+    fn exec_create(
         &mut self,
         inputs: CreateInputs,
-        ccx: &mut CheatsCtxt<DB>,
-    ) -> Result<CreateOutcome, EVMError<DB::Error>> {
-        self.with_evm(ccx, |evm| {
+        ccx: &mut CheatsCtxt,
+    ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
+        with_evm(self, ccx, |evm| {
             evm.context.evm.inner.journaled_state.depth += 1;
 
             // Handle EOF bytecode
-            let first_frame_or_result = if evm.handler.cfg.spec_id.is_enabled_in(SpecId::PRAGUE_EOF)
-                && inputs.scheme == CreateScheme::Create && inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
+            let first_frame_or_result = if evm.handler.cfg.spec_id.is_enabled_in(SpecId::PRAGUE_EOF) &&
+                inputs.scheme == CreateScheme::Create &&
+                inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
             {
                 evm.handler.execution().eofcreate(
                     &mut evm.context,
-                    Box::new(EOFCreateInputs::new(inputs.caller, inputs.value, inputs.gas_limit, EOFCreateKind::Tx {
-                        initdata: inputs.init_code,
-                    })),
+                    Box::new(EOFCreateInputs::new(
+                        inputs.caller,
+                        inputs.value,
+                        inputs.gas_limit,
+                        EOFCreateKind::Tx { initdata: inputs.init_code },
+                    )),
                 )?
             } else {
                 evm.handler.execution().create(&mut evm.context, Box::new(inputs))?
@@ -158,8 +120,8 @@ pub trait CheatcodesExecutor {
         })
     }
 
-    fn console_log<DB: DatabaseExt>(&mut self, ccx: &mut CheatsCtxt<DB>, message: String) {
-        self.get_inspector::<DB>(ccx.state).console_log(message);
+    fn console_log(&mut self, ccx: &mut CheatsCtxt, message: String) {
+        self.get_inspector(ccx.state).console_log(message);
     }
 
     /// Returns a mutable reference to the tracing inspector if it is available.
@@ -168,17 +130,53 @@ pub trait CheatcodesExecutor {
     }
 }
 
+/// Constructs [revm::Evm] and runs a given closure with it.
+fn with_evm<E, F, O>(
+    executor: &mut E,
+    ccx: &mut CheatsCtxt,
+    f: F,
+) -> Result<O, EVMError<DatabaseError>>
+where
+    E: CheatcodesExecutor + ?Sized,
+    F: for<'a, 'b> FnOnce(
+        &mut revm::Evm<'_, &'b mut dyn InspectorExt, &'a mut dyn DatabaseExt>,
+    ) -> Result<O, EVMError<DatabaseError>>,
+{
+    let mut inspector = executor.get_inspector(ccx.state);
+    let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
+    let l1_block_info = std::mem::take(&mut ccx.ecx.l1_block_info);
+
+    let inner = revm::InnerEvmContext {
+        env: ccx.ecx.env.clone(),
+        journaled_state: std::mem::replace(
+            &mut ccx.ecx.journaled_state,
+            revm::JournaledState::new(Default::default(), Default::default()),
+        ),
+        db: &mut ccx.ecx.db as &mut dyn DatabaseExt,
+        error,
+        l1_block_info,
+    };
+
+    let mut evm = new_evm_with_existing_context(inner, &mut *inspector);
+
+    let res = f(&mut evm)?;
+
+    ccx.ecx.journaled_state = evm.context.evm.inner.journaled_state;
+    ccx.ecx.env = evm.context.evm.inner.env;
+    ccx.ecx.l1_block_info = evm.context.evm.inner.l1_block_info;
+    ccx.ecx.error = evm.context.evm.inner.error;
+
+    Ok(res)
+}
+
 /// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an
 /// inspector.
 #[derive(Debug, Default, Clone, Copy)]
 struct TransparentCheatcodesExecutor;
 
 impl CheatcodesExecutor for TransparentCheatcodesExecutor {
-    fn get_inspector<'a, DB: DatabaseExt>(
-        &'a mut self,
-        cheats: &'a mut Cheatcodes,
-    ) -> impl InspectorExt<DB> + 'a {
-        cheats
+    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a> {
+        Box::new(cheats)
     }
 }
 
@@ -232,15 +230,35 @@ pub struct GasMetering {
     pub touched: bool,
     /// True if gas metering should be reset to frame limit.
     pub reset: bool,
-    /// Stores frames paused gas.
+    /// Stores paused gas frames.
     pub paused_frames: Vec<Gas>,
+
+    /// The group and name of the active snapshot.
+    pub active_gas_snapshot: Option<(String, String)>,
 
     /// Cache of the amount of gas used in previous call.
     /// This is used by the `lastCallGas` cheatcode.
     pub last_call_gas: Option<crate::Vm::Gas>,
+
+    /// True if gas recording is enabled.
+    pub recording: bool,
+    /// The gas used in the last frame.
+    pub last_gas_used: u64,
+    /// Gas records for the active snapshots.
+    pub gas_records: Vec<GasRecord>,
 }
 
 impl GasMetering {
+    /// Start the gas recording.
+    pub fn start(&mut self) {
+        self.recording = true;
+    }
+
+    /// Stop the gas recording.
+    pub fn stop(&mut self) {
+        self.recording = false;
+    }
+
     /// Resume paused gas metering.
     pub fn resume(&mut self) {
         if self.paused {
@@ -286,13 +304,7 @@ impl ArbitraryStorage {
     /// Saves arbitrary storage value for a given address:
     /// - store value in changed values cache.
     /// - update account's storage with given value.
-    pub fn save<DB: DatabaseExt>(
-        &mut self,
-        ecx: &mut InnerEvmContext<DB>,
-        address: Address,
-        slot: U256,
-        data: U256,
-    ) {
+    pub fn save(&mut self, ecx: InnerEcx, address: Address, slot: U256, data: U256) {
         self.values.get_mut(&address).expect("missing arbitrary address entry").insert(slot, data);
         if let Ok(mut account) = ecx.load_account(address) {
             account.storage.insert(slot, EvmStorageSlot::new(data));
@@ -304,13 +316,7 @@ impl ArbitraryStorage {
     ///   existing value.
     /// - if no value was yet generated for given slot, then save new value in cache and update both
     ///   source and target storages.
-    pub fn copy<DB: DatabaseExt>(
-        &mut self,
-        ecx: &mut InnerEvmContext<DB>,
-        target: Address,
-        slot: U256,
-        new_value: U256,
-    ) -> U256 {
+    pub fn copy(&mut self, ecx: InnerEcx, target: Address, slot: U256, new_value: U256) -> U256 {
         let source = self.copies.get(&target).expect("missing arbitrary copy target entry");
         let storage_cache = self.values.get_mut(source).expect("missing arbitrary source storage");
         let value = match storage_cache.get(&slot) {
@@ -435,6 +441,10 @@ pub struct Cheatcodes {
     /// Gas metering state.
     pub gas_metering: GasMetering,
 
+    /// Contains gas snapshots made over the course of a test suite.
+    // **Note**: both must a BTreeMap to ensure the order of the keys is deterministic.
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
+
     /// Mapping slots.
     pub mapping_slots: Option<AddressHashMap<MappingSlots>>,
 
@@ -494,6 +504,7 @@ impl Cheatcodes {
             serialized_jsons: Default::default(),
             eth_deals: Default::default(),
             gas_metering: Default::default(),
+            gas_snapshots: Default::default(),
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
@@ -510,11 +521,11 @@ impl Cheatcodes {
     }
 
     /// Decodes the input data and applies the cheatcode.
-    fn apply_cheatcode<DB: DatabaseExt, E: CheatcodesExecutor>(
+    fn apply_cheatcode(
         &mut self,
-        ecx: &mut EvmContext<DB>,
+        ecx: Ecx,
         call: &CallInputs,
-        executor: &mut E,
+        executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
         // decode the cheatcode call
         let decoded = Vm::VmCalls::abi_decode(&call.input, false).map_err(|e| {
@@ -553,12 +564,7 @@ impl Cheatcodes {
     ///
     /// There may be cheatcodes in the constructor of the new contract, in order to allow them
     /// automatically we need to determine the new address.
-    fn allow_cheatcodes_on_create<DB: DatabaseExt>(
-        &self,
-        ecx: &mut InnerEvmContext<DB>,
-        caller: Address,
-        created_address: Address,
-    ) {
+    fn allow_cheatcodes_on_create(&self, ecx: InnerEcx, caller: Address, created_address: Address) {
         if ecx.journaled_state.depth <= 1 || ecx.db.has_cheatcode_access(&caller) {
             ecx.db.allow_cheatcode_access(created_address);
         }
@@ -568,7 +574,7 @@ impl Cheatcodes {
     ///
     /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
     /// revert would run into issues.
-    pub fn on_revert<DB: DatabaseExt>(&mut self, ecx: &mut EvmContext<DB>) {
+    pub fn on_revert(&mut self, ecx: Ecx) {
         trace!(deals=?self.eth_deals.len(), "rolling back deals");
 
         // Delay revert clean up until expected revert is handled, if set.
@@ -592,14 +598,9 @@ impl Cheatcodes {
     }
 
     // common create functionality for both legacy and EOF.
-    fn create_common<DB, Input>(
-        &mut self,
-        ecx: &mut EvmContext<DB>,
-        mut input: Input,
-    ) -> Option<CreateOutcome>
+    fn create_common<Input>(&mut self, ecx: Ecx, mut input: Input) -> Option<CreateOutcome>
     where
-        DB: DatabaseExt,
-        Input: CommonCreateInput<DB>,
+        Input: CommonCreateInput,
     {
         let ecx = &mut ecx.inner;
         let gas = Gas::new(input.gas_limit());
@@ -652,11 +653,7 @@ impl Cheatcodes {
                             value: Some(input.value()),
                             input: TransactionInput::new(input.init_code()),
                             nonce: Some(account.info.nonce),
-                            gas: if is_fixed_gas_limit {
-                                Some(input.gas_limit() as u128)
-                            } else {
-                                None
-                            },
+                            gas: if is_fixed_gas_limit { Some(input.gas_limit()) } else { None },
                             ..Default::default()
                         }
                         .into(),
@@ -696,14 +693,8 @@ impl Cheatcodes {
     }
 
     // common create_end functionality for both legacy and EOF.
-    fn create_end_common<DB>(
-        &mut self,
-        ecx: &mut EvmContext<DB>,
-        mut outcome: CreateOutcome,
-    ) -> CreateOutcome
-    where
-        DB: DatabaseExt,
-    {
+    fn create_end_common(&mut self, ecx: Ecx, mut outcome: CreateOutcome) -> CreateOutcome
+where {
         let ecx = &mut ecx.inner;
 
         // Clean up pranks
@@ -810,9 +801,9 @@ impl Cheatcodes {
         outcome
     }
 
-    pub fn call_with_executor<DB: DatabaseExt>(
+    pub fn call_with_executor(
         &mut self,
-        ecx: &mut EvmContext<DB>,
+        ecx: Ecx,
         call: &mut CallInputs,
         executor: &mut impl CheatcodesExecutor,
     ) -> Option<CallOutcome> {
@@ -991,11 +982,7 @@ impl Cheatcodes {
                             value: call.transfer_value(),
                             input: TransactionInput::new(call.input.clone()),
                             nonce: Some(account.info.nonce),
-                            gas: if is_fixed_gas_limit {
-                                Some(call.gas_limit as u128)
-                            } else {
-                                None
-                            },
+                            gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
                             ..Default::default()
                         }
                         .into(),
@@ -1110,9 +1097,9 @@ impl Cheatcodes {
     }
 }
 
-impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
+impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
     #[inline]
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
@@ -1129,7 +1116,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     }
 
     #[inline]
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         self.pc = interpreter.program_counter();
 
         // `pauseGasMetering`: pause / resume interpreter gas.
@@ -1161,10 +1148,15 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         if let Some(mapping_slots) = &mut self.mapping_slots {
             mapping::step(mapping_slots, interpreter);
         }
+
+        // `snapshotGas*`: take a snapshot of the current gas.
+        if self.gas_metering.recording {
+            self.meter_gas_record(interpreter, ecx);
+        }
     }
 
     #[inline]
-    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut EvmContext<DB>) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1179,7 +1171,7 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    fn log(&mut self, interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, interpreter: &mut Interpreter, _ecx: Ecx, log: &Log) {
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, log, interpreter);
         }
@@ -1194,16 +1186,11 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         }
     }
 
-    fn call(&mut self, ecx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(&mut self, ecx: Ecx, inputs: &mut CallInputs) -> Option<CallOutcome> {
         Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
     }
 
-    fn call_end(
-        &mut self,
-        ecx: &mut EvmContext<DB>,
-        call: &CallInputs,
-        mut outcome: CallOutcome,
-    ) -> CallOutcome {
+    fn call_end(&mut self, ecx: Ecx, call: &CallInputs, mut outcome: CallOutcome) -> CallOutcome {
         let ecx = &mut ecx.inner;
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS ||
             call.target_address == HARDHAT_CONSOLE_ADDRESS;
@@ -1499,34 +1486,26 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
         outcome
     }
 
-    fn create(
-        &mut self,
-        ecx: &mut EvmContext<DB>,
-        call: &mut CreateInputs,
-    ) -> Option<CreateOutcome> {
+    fn create(&mut self, ecx: Ecx, call: &mut CreateInputs) -> Option<CreateOutcome> {
         self.create_common(ecx, call)
     }
 
     fn create_end(
         &mut self,
-        ecx: &mut EvmContext<DB>,
+        ecx: Ecx,
         _call: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
         self.create_end_common(ecx, outcome)
     }
 
-    fn eofcreate(
-        &mut self,
-        ecx: &mut EvmContext<DB>,
-        call: &mut EOFCreateInputs,
-    ) -> Option<CreateOutcome> {
+    fn eofcreate(&mut self, ecx: Ecx, call: &mut EOFCreateInputs) -> Option<CreateOutcome> {
         self.create_common(ecx, call)
     }
 
     fn eofcreate_end(
         &mut self,
-        ecx: &mut EvmContext<DB>,
+        ecx: Ecx,
         _call: &EOFCreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
@@ -1534,12 +1513,8 @@ impl<DB: DatabaseExt> Inspector<DB> for Cheatcodes {
     }
 }
 
-impl<DB: DatabaseExt> InspectorExt<DB> for Cheatcodes {
-    fn should_use_create2_factory(
-        &mut self,
-        ecx: &mut EvmContext<DB>,
-        inputs: &mut CreateInputs,
-    ) -> bool {
+impl InspectorExt for Cheatcodes {
+    fn should_use_create2_factory(&mut self, ecx: Ecx, inputs: &mut CreateInputs) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme {
             let target_depth = if let Some(prank) = &self.prank {
                 prank.depth
@@ -1566,6 +1541,27 @@ impl Cheatcodes {
         } else {
             // Record frame paused gas.
             self.gas_metering.paused_frames.push(interpreter.gas);
+        }
+    }
+
+    #[cold]
+    fn meter_gas_record(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+        if matches!(interpreter.instruction_result, InstructionResult::Continue) {
+            self.gas_metering.gas_records.iter_mut().for_each(|record| {
+                if ecx.journaled_state.depth() == record.depth {
+                    // Skip the first opcode of the first call frame as it includes the gas cost of
+                    // creating the snapshot.
+                    if self.gas_metering.last_gas_used != 0 {
+                        let gas_diff =
+                            interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
+                        record.gas_used = record.gas_used.saturating_add(gas_diff);
+                    }
+
+                    // Update `last_gas_used` to the current spent gas for the next iteration to
+                    // compare against.
+                    self.gas_metering.last_gas_used = interpreter.gas.spent();
+                }
+            });
         }
     }
 
@@ -1605,11 +1601,7 @@ impl Cheatcodes {
     ///   cache) from mapped source address to the target address.
     /// - generates arbitrary value and saves it in target address storage.
     #[cold]
-    fn arbitrary_storage_end<DB: DatabaseExt>(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EvmContext<DB>,
-    ) {
+    fn arbitrary_storage_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         let (key, target_address) = if interpreter.current_opcode() == op::SLOAD {
             (try_or_return!(interpreter.stack().peek(0)), interpreter.contract().target_address)
         } else {
@@ -1659,11 +1651,7 @@ impl Cheatcodes {
     }
 
     #[cold]
-    fn record_state_diffs<DB: DatabaseExt>(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EvmContext<DB>,
-    ) {
+    fn record_state_diffs(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         match interpreter.current_opcode() {
             op::SELFDESTRUCT => {
@@ -2010,10 +1998,7 @@ fn disallowed_mem_write(
 
 // Determines if the gas limit on a given call was manually set in the script and should therefore
 // not be overwritten by later estimations
-fn check_if_fixed_gas_limit<DB: DatabaseExt>(
-    ecx: &InnerEvmContext<DB>,
-    call_gas_limit: u64,
-) -> bool {
+fn check_if_fixed_gas_limit(ecx: InnerEcx, call_gas_limit: u64) -> bool {
     // If the gas limit was not set in the source code it is set to the estimated gas left at the
     // time of the call, which should be rather close to configured gas limit.
     // TODO: Find a way to reliably make this determination.
@@ -2083,44 +2068,25 @@ fn append_storage_access(
 }
 
 /// Dispatches the cheatcode call to the appropriate function.
-fn apply_dispatch<DB: DatabaseExt, E: CheatcodesExecutor>(
+fn apply_dispatch(
     calls: &Vm::VmCalls,
-    ccx: &mut CheatsCtxt<DB>,
-    executor: &mut E,
+    ccx: &mut CheatsCtxt,
+    executor: &mut dyn CheatcodesExecutor,
 ) -> Result {
-    // TODO: Replace with `<dyn Cheatcode>::apply_full` once it's object-safe.
-    macro_rules! dispatch {
-        ($($variant:ident),*) => {
-            match calls {
-                $(Vm::VmCalls::$variant(cheat) => crate::Cheatcode::apply_full(cheat, ccx, executor),)*
-            }
-        };
-    }
-
     let cheat = calls_as_dyn_cheatcode(calls);
+
+    let _guard = debug_span!(target: "cheatcodes", "apply", id = %cheat.id()).entered();
+    trace!(target: "cheatcodes", cheat = ?cheat.as_debug(), "applying");
+
     if let spec::Status::Deprecated(replacement) = *cheat.status() {
         ccx.state.deprecated.insert(cheat.signature(), replacement);
     }
-    let _guard = trace_span_and_call(cheat);
-    let mut result = vm_calls!(dispatch);
-    fill_and_trace_return(cheat, &mut result);
-    result
-}
 
-/// Helper function to check if frame execution will exit.
-fn will_exit(ir: InstructionResult) -> bool {
-    !matches!(ir, InstructionResult::Continue | InstructionResult::CallOrCreate)
-}
+    // Apply the cheatcode.
+    let mut result = cheat.dyn_apply(ccx, executor);
 
-fn trace_span_and_call(cheat: &dyn DynCheatcode) -> tracing::span::EnteredSpan {
-    let span = debug_span!(target: "cheatcodes", "apply", id = %cheat.id());
-    let entered = span.entered();
-    trace!(target: "cheatcodes", cheat = ?cheat.as_debug(), "applying");
-    entered
-}
-
-fn fill_and_trace_return(cheat: &dyn DynCheatcode, result: &mut Result) {
-    if let Err(e) = result {
+    // Format the error message to include the cheatcode name.
+    if let Err(e) = &mut result {
         if e.is_str() {
             let name = cheat.name();
             // Skip showing the cheatcode name for:
@@ -2131,13 +2097,16 @@ fn fill_and_trace_return(cheat: &dyn DynCheatcode, result: &mut Result) {
             }
         }
     }
+
     trace!(
         target: "cheatcodes",
-        return = %match result {
+        return = %match &result {
             Ok(b) => hex::encode(b),
             Err(e) => e.to_string(),
         }
     );
+
+    result
 }
 
 fn calls_as_dyn_cheatcode(calls: &Vm::VmCalls) -> &dyn DynCheatcode {
@@ -2149,4 +2118,9 @@ fn calls_as_dyn_cheatcode(calls: &Vm::VmCalls) -> &dyn DynCheatcode {
         };
     }
     vm_calls!(as_dyn)
+}
+
+/// Helper function to check if frame execution will exit.
+fn will_exit(ir: InstructionResult) -> bool {
+    !matches!(ir, InstructionResult::Continue | InstructionResult::CallOrCreate)
 }

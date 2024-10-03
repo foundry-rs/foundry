@@ -781,7 +781,7 @@ async fn test_fork_can_send_opensea_tx() {
         .value(U256::from(20000000000000000u64))
         .with_input(input)
         .with_gas_price(22180711707u128)
-        .with_gas_limit(150_000u128);
+        .with_gas_limit(150_000);
     let tx = WithOtherFields::new(tx);
 
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
@@ -817,7 +817,7 @@ async fn test_fork_init_base_fee() {
     // <https://etherscan.io/block/13184859>
     assert_eq!(block.header.number, 13184859u64);
     let init_base_fee = block.header.base_fee_per_gas.unwrap();
-    assert_eq!(init_base_fee, 63739886069u128);
+    assert_eq!(init_base_fee, 63739886069);
 
     api.mine_one().await;
 
@@ -1185,7 +1185,7 @@ async fn test_fork_reset_basefee() {
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of +1 block: <https://etherscan.io/block/18835001>
-    assert_eq!(latest.header.base_fee_per_gas.unwrap(), 59455969592u128);
+    assert_eq!(latest.header.base_fee_per_gas.unwrap(), 59455969592u64);
 
     // now reset to block 18835000 -1
     api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(18835000u64 - 1) }))
@@ -1196,7 +1196,7 @@ async fn test_fork_reset_basefee() {
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of the forked block: <https://etherscan.io/block/18835000>
-    assert_eq!(latest.header.base_fee_per_gas.unwrap(), 59017001138u128);
+    assert_eq!(latest.header.base_fee_per_gas.unwrap(), 59017001138);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6795>
@@ -1288,7 +1288,7 @@ async fn test_base_fork_gas_limit() {
         .unwrap();
 
     assert!(api.gas_limit() >= uint!(132_000_000_U256));
-    assert!(block.header.gas_limit >= 132_000_000_u128);
+    assert!(block.header.gas_limit >= 132_000_000_u64);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/7023>
@@ -1443,7 +1443,7 @@ async fn test_reset_dev_account_nonce() {
                 .from(address)
                 .to(address)
                 .nonce(nonce_after)
-                .gas_limit(21000u128),
+                .gas_limit(21000),
         ))
         .await
         .unwrap()

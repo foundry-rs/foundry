@@ -200,7 +200,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<Backend>,
+        inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()>;
 
     /// Executes a given TransactionRequest, commits the new state to the DB
@@ -209,7 +209,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         transaction: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<Backend>,
+        inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -751,17 +751,13 @@ impl Backend {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<'a, I: InspectorExt<&'a mut dyn DatabaseExt>>(
-        &'a mut self,
+    pub fn inspect(
+        &mut self,
         env: &mut EnvWithHandlerCfg,
-        inspector: I,
+        inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::utils::new_evm_with_inspector(
-            self as &mut dyn DatabaseExt,
-            env.clone(),
-            inspector,
-        );
+        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
 
         let res = evm.transact().wrap_err("backend: failed while inspecting")?;
 
@@ -1229,7 +1225,7 @@ impl DatabaseExt for Backend {
         transaction: B256,
         env: &mut Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<Self>,
+        inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -1270,7 +1266,7 @@ impl DatabaseExt for Backend {
         tx: TransactionRequest,
         env: &Env,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt<Self>,
+        inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
         trace!(?tx, "execute signed transaction");
 
@@ -1279,7 +1275,7 @@ impl DatabaseExt for Backend {
         env.tx.caller =
             tx.from.ok_or_else(|| eyre::eyre!("transact_from_tx: No `from` field found"))?;
         env.tx.gas_limit =
-            tx.gas.ok_or_else(|| eyre::eyre!("transact_from_tx: No `gas` field found"))? as u64;
+            tx.gas.ok_or_else(|| eyre::eyre!("transact_from_tx: No `gas` field found"))?;
         env.tx.gas_price = U256::from(tx.gas_price.or(tx.max_fee_per_gas).unwrap_or_default());
         env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(U256::from);
         env.tx.nonce = tx.nonce;
@@ -1294,9 +1290,9 @@ impl DatabaseExt for Backend {
         self.commit(journaled_state.state.clone());
 
         let res = {
-            let db = self.clone();
+            let mut db = self.clone();
             let env = self.env_with_handler_cfg(env);
-            let mut evm = new_evm_with_inspector(db, env, inspector);
+            let mut evm = new_evm_with_inspector(&mut db, env, inspector);
             evm.context.evm.journaled_state.depth = journaled_state.depth + 1;
             evm.transact()?
         };
@@ -1921,7 +1917,7 @@ fn commit_transaction(
     fork: &mut Fork,
     fork_id: &ForkId,
     persistent_accounts: &HashSet<Address>,
-    inspector: &mut dyn InspectorExt<Backend>,
+    inspector: &mut dyn InspectorExt,
 ) -> eyre::Result<()> {
     configure_tx_env(&mut env.env, tx);
 
@@ -1930,9 +1926,9 @@ fn commit_transaction(
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let depth = journaled_state.depth;
-        let db = Backend::new_with_fork(fork_id, fork, journaled_state);
+        let mut db = Backend::new_with_fork(fork_id, fork, journaled_state);
 
-        let mut evm = crate::utils::new_evm_with_inspector(db, env, inspector);
+        let mut evm = crate::utils::new_evm_with_inspector(&mut db as _, env, inspector);
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
         evm.context.evm.inner.journaled_state.depth = depth + 1;
         evm.transact().wrap_err("backend: failed committing transaction")?

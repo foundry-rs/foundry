@@ -1,6 +1,6 @@
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
+use crate::{inspector::InnerEcx, Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
-use revm::{interpreter::InstructionResult, primitives::Bytecode, InnerEvmContext};
+use revm::{interpreter::InstructionResult, primitives::Bytecode};
 use std::cmp::Ordering;
 
 /// Mocked call data.
@@ -47,7 +47,7 @@ impl Cheatcode for clearMockedCallsCall {
 }
 
 impl Cheatcode for mockCall_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { callee, data, returnData } = self;
         let _ = make_acc_non_empty(callee, ccx.ecx)?;
 
@@ -57,7 +57,7 @@ impl Cheatcode for mockCall_0Call {
 }
 
 impl Cheatcode for mockCall_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { callee, msgValue, data, returnData } = self;
         ccx.ecx.load_account(*callee)?;
         mock_call(ccx.state, callee, data, Some(msgValue), returnData, InstructionResult::Return);
@@ -66,7 +66,7 @@ impl Cheatcode for mockCall_1Call {
 }
 
 impl Cheatcode for mockCallRevert_0Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { callee, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx.ecx)?;
 
@@ -76,7 +76,7 @@ impl Cheatcode for mockCallRevert_0Call {
 }
 
 impl Cheatcode for mockCallRevert_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { callee, msgValue, data, revertData } = self;
         let _ = make_acc_non_empty(callee, ccx.ecx)?;
 
@@ -111,7 +111,7 @@ fn mock_call(
 
 // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
 // check Solidity might perform.
-fn make_acc_non_empty<DB: DatabaseExt>(callee: &Address, ecx: &mut InnerEvmContext<DB>) -> Result {
+fn make_acc_non_empty(callee: &Address, ecx: InnerEcx) -> Result {
     let acc = ecx.load_account(*callee)?;
 
     let empty_bytecode = acc.info.code.as_ref().map_or(true, Bytecode::is_empty);
