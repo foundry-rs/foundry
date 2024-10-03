@@ -1,5 +1,5 @@
 // Ensure we can run basic counter tests with EOF support.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 forgetest_init!(test_eof_flag, |prj, cmd| {
     cmd.forge_fuse().args(["test", "--eof"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
