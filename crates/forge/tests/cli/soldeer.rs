@@ -1,7 +1,7 @@
 //! Contains various tests related to `forge soldeer`.
 
 use std::{
-    fs::{self},
+    fs,
     path::Path,
 };
 
@@ -233,7 +233,6 @@ mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_updates).unwrap();
 
-    cmd.env("NO_COLOR", "");
     cmd.arg("soldeer").arg(command).assert_success();
 
     // Making sure the path was created to the dependency and that foundry.toml exists
@@ -275,7 +274,6 @@ mario = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", re
 mario-custom-tag = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", tag = "custom-tag" }
 mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", tag = "custom-branch" }
 "#;
-    println!("str {:?}", read_file_to_string(&foundry_file));
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
 });
 
