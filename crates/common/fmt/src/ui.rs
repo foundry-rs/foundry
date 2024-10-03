@@ -622,6 +622,7 @@ mixHash              {}
 nonce                {}
 number               {}
 parentHash           {}
+parentBeaconRoot     {}
 transactionsRoot     {}
 receiptsRoot         {}
 sha3Uncles           {}
@@ -642,6 +643,7 @@ totalDifficulty      {}",
         block.header.nonce.pretty(),
         block.header.number.pretty(),
         block.header.parent_hash.pretty(),
+        block.header.parent_beacon_block_root.pretty(),
         block.header.transactions_root.pretty(),
         block.header.receipts_root.pretty(),
         block.header.uncles_hash.pretty(),

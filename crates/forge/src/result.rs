@@ -412,6 +412,9 @@ pub struct TestResult {
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
 
+    /// Any captured gas snapshots along the test's execution which should be accumulated.
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
+
     /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
     #[serde(skip)]
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
@@ -531,6 +534,7 @@ impl TestResult {
 
         if let Some(cheatcodes) = raw_call_result.cheatcodes {
             self.breakpoints = cheatcodes.breakpoints;
+            self.gas_snapshots = cheatcodes.gas_snapshots;
             self.deprecated_cheatcodes = cheatcodes.deprecated;
         }
 

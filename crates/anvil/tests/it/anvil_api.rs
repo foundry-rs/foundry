@@ -48,7 +48,7 @@ async fn can_set_block_gas_limit() {
     // Mine a new block, and check the new block gas limit
     api.mine_one().await;
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    assert_eq!(block_gas_limit.to::<u128>(), latest_block.header.gas_limit);
+    assert_eq!(block_gas_limit.to::<u64>(), latest_block.header.gas_limit);
 }
 
 // Ref <https://github.com/foundry-rs/foundry/issues/2341>
@@ -557,7 +557,7 @@ async fn test_get_transaction_receipt() {
 
     // the block should have the new base fee
     let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
-    assert_eq!(block.header.base_fee_per_gas.unwrap(), new_base_fee.to::<u128>());
+    assert_eq!(block.header.base_fee_per_gas.unwrap(), new_base_fee.to::<u64>());
 
     // mine blocks
     api.evm_mine(None).await.unwrap();
