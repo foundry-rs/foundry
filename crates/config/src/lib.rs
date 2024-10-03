@@ -175,6 +175,8 @@ pub struct Config {
     pub cache: bool,
     /// where the cache is stored if enabled
     pub cache_path: PathBuf,
+    /// where the gas snapshots are stored
+    pub snapshots: PathBuf,
     /// where the broadcast logs are stored
     pub broadcast: PathBuf,
     /// additional solc allow paths for `--allow-paths`
@@ -718,6 +720,7 @@ impl Config {
         self.out = p(&root, &self.out);
         self.broadcast = p(&root, &self.broadcast);
         self.cache_path = p(&root, &self.cache_path);
+        self.snapshots = p(&root, &self.snapshots);
 
         if let Some(build_info_path) = self.build_info_path {
             self.build_info_path = Some(p(&root, &build_info_path));
@@ -884,6 +887,12 @@ impl Config {
         };
         remove_test_dir(&self.fuzz.failure_persist_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
+
+        // Remove snapshot directory.
+        let snapshot_dir = project.root().join(&self.snapshots);
+        if snapshot_dir.exists() {
+            let _ = fs::remove_dir_all(&snapshot_dir);
+        }
 
         Ok(())
     }
@@ -2086,6 +2095,7 @@ impl Default for Config {
             cache: true,
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
+            snapshots: "snapshots".into(),
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
