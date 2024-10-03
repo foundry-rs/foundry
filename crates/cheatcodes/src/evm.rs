@@ -20,14 +20,13 @@ use revm::{
     primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY},
     InnerEvmContext,
 };
-use revm_inspectors::tracing::types::CallTraceStep;
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
 };
 
 mod record_debug_step;
-use record_debug_step::convert_call_trace_to_debug_step;
+use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
 
 mod fork;
 pub(crate) mod mapping;
@@ -696,14 +695,9 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
         // Revert the tracer config to the one before recording
         tracer.update_config(|_config| record_info.original_tracer_config);
 
-        // Use the trace nodes to get the call traces
-        let steps: Vec<&CallTraceStep> = tracer
-            .traces()
-            .nodes()
-            .iter()
-            .skip(record_info.start_node_idx)
-            .flat_map(|node| node.trace.steps.iter())
-            .collect();
+        // Use the trace nodes to flatten the call trace
+        let root = tracer.traces();
+        let steps = flatten_call_trace(0, root, record_info.start_node_idx);
 
         let debug_steps: Vec<DebugStep> =
             steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();

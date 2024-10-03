@@ -1,10 +1,68 @@
 use alloy_primitives::{Bytes, U256};
 
+use foundry_evm_traces::CallTraceArena;
 use revm::interpreter::{InstructionResult, OpCode};
 
 use foundry_evm_core::buffer::{get_buffer_accesses, BufferKind};
-use revm_inspectors::tracing::types::{CallTraceStep, RecordedMemory};
+use revm_inspectors::tracing::types::{CallTraceStep, RecordedMemory, TraceMemberOrder};
 use spec::Vm::DebugStep;
+
+// Do a depth first traverse of the nodes and steps and return steps
+// that are after `node_start_idx`
+pub(crate) fn flatten_call_trace(
+    root: usize,
+    arena: &CallTraceArena,
+    node_start_idx: usize,
+) -> Vec<&CallTraceStep> {
+    let mut steps = Vec::new();
+    let mut record_started = false;
+
+    // Start the recursion from the root node
+    recursive_flatten_call_trace(root, arena, node_start_idx, &mut record_started, &mut steps);
+    steps
+}
+
+// Inner recursive function to process nodes.
+// This implementation directly mutates `record_started` and `flatten_steps`.
+// So the recursive call can change the `record_started` flag even for the parent
+// unfinished processing, and append steps to the `flatten_steps` as the final result.
+fn recursive_flatten_call_trace<'a>(
+    node_idx: usize,
+    arena: &'a CallTraceArena,
+    node_start_idx: usize,
+    record_started: &mut bool,
+    flatten_steps: &mut Vec<&'a CallTraceStep>,
+) {
+    // Once node_idx exceeds node_start_idx, start recording steps
+    // for all the recursive processing.
+    if !*record_started && node_idx >= node_start_idx {
+        *record_started = true;
+    }
+
+    let node = &arena.nodes()[node_idx];
+
+    for order in node.ordering.iter() {
+        match order {
+            TraceMemberOrder::Step(step_idx) => {
+                if *record_started {
+                    let step = &node.trace.steps[*step_idx];
+                    flatten_steps.push(step);
+                }
+            }
+            TraceMemberOrder::Call(call_idx) => {
+                let child_node_idx = node.children[*call_idx];
+                recursive_flatten_call_trace(
+                    child_node_idx,
+                    arena,
+                    node_start_idx,
+                    record_started,
+                    flatten_steps,
+                );
+            }
+            _ => {}
+        }
+    }
+}
 
 // Function to convert CallTraceStep to DebugStep
 pub(crate) fn convert_call_trace_to_debug_step(step: &CallTraceStep) -> DebugStep {
