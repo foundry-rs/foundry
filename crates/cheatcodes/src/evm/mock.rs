@@ -122,10 +122,7 @@ fn mock_call(
     rdata: &Bytes,
     ret_type: InstructionResult,
 ) {
-    state.mocked_calls.entry(*callee).or_default().insert(
-        MockCallDataContext { calldata: Bytes::copy_from_slice(cdata), value: value.copied() },
-        VecDeque::from(vec![MockCallReturnData { ret_type, data: Bytes::copy_from_slice(rdata) }]),
-    );
+    mock_calls(state, callee, cdata, value, &[rdata.clone()], ret_type)
 }
 
 #[allow(clippy::ptr_arg)] // Not public API, doesn't matter
