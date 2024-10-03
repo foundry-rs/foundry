@@ -234,11 +234,11 @@ pub fn alphanet_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandl
 }
 
 /// Creates a new EVM with the given inspector.
-pub fn new_evm_with_inspector<'evm, 'i, 'db>(
+pub fn new_evm_with_inspector<'evm, 'i, 'db, I: InspectorExt + ?Sized>(
     db: &'db mut dyn DatabaseExt,
     env: revm::primitives::EnvWithHandlerCfg,
-    inspector: &'i mut dyn InspectorExt,
-) -> revm::Evm<'evm, &'i mut dyn InspectorExt, &'db mut dyn DatabaseExt> {
+    inspector: &'i mut I,
+) -> revm::Evm<'evm, &'i mut I, &'db mut dyn DatabaseExt> {
     let revm::primitives::EnvWithHandlerCfg { env, handler_cfg } = env;
 
     // NOTE: We could use `revm::Evm::builder()` here, but on the current patch it has some

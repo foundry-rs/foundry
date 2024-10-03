@@ -543,14 +543,14 @@ impl<'a> InspectorStackRefMut<'a> {
         self.in_inner_context = true;
 
         let env = EnvWithHandlerCfg::new_with_spec_id(ecx.env.clone(), ecx.spec_id());
-        let res = {
-            let mut evm = crate::utils::new_evm_with_inspector(&mut ecx.db, env, self);
+        let res = self.with_stack(|inspector| {
+            let mut evm = crate::utils::new_evm_with_inspector(&mut ecx.db, env, inspector);
             let res = evm.transact();
 
             // need to reset the env in case it was modified via cheatcodes during execution
             ecx.env = evm.context.evm.inner.env;
             res
-        };
+        });
 
         self.in_inner_context = false;
         self.inner_context_data = None;
@@ -620,6 +620,25 @@ impl<'a> InspectorStackRefMut<'a> {
             }
         };
         (InterpreterResult { result, output, gas }, address)
+    }
+
+    /// Moves out of references, constructs an [`InspectorStack`] and runs the given closure with
+    /// it.
+    fn with_stack<O>(&mut self, f: impl FnOnce(&mut InspectorStack) -> O) -> O {
+        let mut stack = InspectorStack {
+            cheatcodes: self.cheatcodes.as_deref_mut().map(std::mem::take),
+            inner: std::mem::take(self.inner),
+        };
+
+        let out = f(&mut stack);
+
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            *cheats = stack.cheatcodes.take().unwrap();
+        }
+
+        *self.inner = stack.inner;
+
+        out
     }
 }
 
