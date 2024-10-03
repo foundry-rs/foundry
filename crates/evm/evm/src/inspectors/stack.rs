@@ -632,9 +632,9 @@ impl<'a> InspectorStackRefMut<'a> {
 
         let out = f(&mut stack);
 
-        self.cheatcodes.as_deref_mut().map(|cheats| {
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
             *cheats = stack.cheatcodes.take().unwrap();
-        });
+        }
 
         *self.inner = stack.inner;
 
