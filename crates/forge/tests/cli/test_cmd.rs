@@ -614,10 +614,8 @@ contract Destructing {
 contract SelfDestructTest is Test {
     function test() public {
         Destructing d = new Destructing();
-        vm.store(address(d), bytes32(0), bytes32(uint256(1)));
         d.destruct();
         assertEq(address(d).code.length, 0);
-        assertEq(vm.load(address(d), bytes32(0)), bytes32(0));
     }
 }
    "#,

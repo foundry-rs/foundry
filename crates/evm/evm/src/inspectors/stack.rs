@@ -14,8 +14,7 @@ use revm::{
         EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
     primitives::{
-        AccountStatus, BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult, Output,
-        TransactTo,
+        Account, AccountStatus, BlockEnv, CreateScheme, Env, EnvWithHandlerCfg, ExecutionResult, HashMap, Output, TransactTo
     },
     EvmContext, Inspector,
 };
@@ -270,6 +269,7 @@ pub struct InspectorStackInner {
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
     pub inner_context_data: Option<InnerContextData>,
+    pub top_frame_journal: HashMap<Address, Account>,
 }
 
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
@@ -484,6 +484,56 @@ impl<'a> InspectorStackRefMut<'a> {
         outcome
     }
 
+    fn do_create_end(
+        &mut self,
+        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        call: &CreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        let result = outcome.result.result;
+        call_inspectors!(
+            #[ret]
+            [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
+            |inspector| {
+                let new_outcome = inspector.create_end(ecx, call, outcome.clone());
+
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                let different = new_outcome.result.result != result ||
+                    (new_outcome.result.result == InstructionResult::Revert &&
+                        new_outcome.output() != outcome.output());
+                different.then_some(new_outcome)
+            },
+        );
+
+        outcome
+    }
+
+    fn do_eofcreate_end(
+        &mut self,
+        ecx: &mut EvmContext<&mut dyn DatabaseExt>,
+        call: &EOFCreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        let result = outcome.result.result;
+        call_inspectors!(
+            #[ret]
+            [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
+            |inspector| {
+                let new_outcome = inspector.eofcreate_end(ecx, call, outcome.clone());
+
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                let different = new_outcome.result.result != result ||
+                    (new_outcome.result.result == InstructionResult::Revert &&
+                        new_outcome.output() != outcome.output());
+                different.then_some(new_outcome)
+            },
+        );
+
+        outcome
+    }
+
     fn transact_inner(
         &mut self,
         ecx: &mut EvmContext<&mut dyn DatabaseExt>,
@@ -521,11 +571,14 @@ impl<'a> InspectorStackRefMut<'a> {
 
             evm.context.evm.inner.journaled_state.state = {
                 let mut state = ecx.journaled_state.state.clone();
+                
                 for (addr, acc_mut) in &mut state {
+                    // mark all accounts cold, besides preloaded addresses
                     if !ecx.journaled_state.warm_preloaded_addresses.contains(addr) {
                         acc_mut.mark_cold();
                     }
 
+                    // mark all slots cold
                     for slot_mut in acc_mut.storage.values_mut() {
                         slot_mut.is_cold = true;
                         slot_mut.original_value = slot_mut.present_value;
@@ -534,6 +587,8 @@ impl<'a> InspectorStackRefMut<'a> {
 
                 state
             };
+
+            // set depth to 1 to make sure traces are collected correctly
             evm.context.evm.inner.journaled_state.depth = 1;
 
             let res = evm.transact();
@@ -623,6 +678,34 @@ impl<'a> InspectorStackRefMut<'a> {
 
         out
     }
+
+    /// Invoked at the beginning of a new top-level (0 depth) frame.
+    fn top_level_frame_start(&mut self, ecx: &mut EvmContext<&mut dyn DatabaseExt>) {
+        if self.enable_isolation {
+            // If we're in isolation mode, we need to keep track of the state at the beginning of
+            // the frame to be able to roll back on revert
+            self.top_frame_journal = ecx.journaled_state.state.clone();
+        }
+    }
+
+    /// Invoked at the end of root frame.
+    fn top_level_frame_end(&mut self, ecx: &mut EvmContext<&mut dyn DatabaseExt>, result: InstructionResult) {
+        if !result.is_revert() {
+            return;
+        }
+        // Encountered a revert, since cheatcodes may have altered the evm state in such a way
+        // that violates some constraints, e.g. `deal`, we need to manually roll back on revert
+        // before revm reverts the state itself
+        if let Some(cheats) = self.cheatcodes.as_mut() {
+            cheats.on_revert(ecx);
+        }
+
+        // If we're in isolation mode, we need to rollback to state before the root frame was created
+        // We can't rely on revm's journal because it doesn't account for changes made by isolated calls
+        if self.enable_isolation {
+            ecx.journaled_state.state = std::mem::take(&mut self.top_frame_journal);
+        }
+    }
 }
 
 impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
@@ -681,6 +764,10 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
+        }
+
+        if ecx.journaled_state.depth == 0 {
+            self.top_level_frame_start(ecx);
         }
 
         call_inspectors!(
@@ -749,13 +836,9 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
         }
 
         let outcome = self.do_call_end(ecx, inputs, outcome);
-        if outcome.result.is_revert() {
-            // Encountered a revert, since cheatcodes may have altered the evm state in such a way
-            // that violates some constraints, e.g. `deal`, we need to manually roll back on revert
-            // before revm reverts the state itself
-            if let Some(cheats) = self.cheatcodes.as_mut() {
-                cheats.on_revert(ecx);
-            }
+
+        if ecx.journaled_state.depth == 0 {
+            self.top_level_frame_end(ecx, outcome.result.result);
         }
 
         outcome
@@ -769,6 +852,10 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
+        }
+
+        if ecx.journaled_state.depth == 0 {
+            self.top_level_frame_start(ecx);
         }
 
         call_inspectors!(
@@ -808,22 +895,11 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
             return outcome;
         }
 
-        let result = outcome.result.result;
+        let outcome = self.do_create_end(ecx, call, outcome);
 
-        call_inspectors!(
-            #[ret]
-            [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
-            |inspector| {
-                let new_outcome = inspector.create_end(ecx, call, outcome.clone());
-
-                // If the inspector returns a different status or a revert with a non-empty message,
-                // we assume it wants to tell us something
-                let different = new_outcome.result.result != result ||
-                    (new_outcome.result.result == InstructionResult::Revert &&
-                        new_outcome.output() != outcome.output());
-                different.then_some(new_outcome)
-            },
-        );
+        if ecx.journaled_state.depth == 0 {
+            self.top_level_frame_end(ecx, outcome.result.result);
+        }
 
         outcome
     }
@@ -836,6 +912,10 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
+        }
+
+        if ecx.journaled_state.depth == 0 {
+            self.top_level_frame_start(ecx);
         }
 
         call_inspectors!(
@@ -880,22 +960,11 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
             return outcome;
         }
 
-        let result = outcome.result.result;
+        let outcome = self.do_eofcreate_end(ecx, call, outcome);
 
-        call_inspectors!(
-            #[ret]
-            [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
-            |inspector| {
-                let new_outcome = inspector.eofcreate_end(ecx, call, outcome.clone());
-
-                // If the inspector returns a different status or a revert with a non-empty message,
-                // we assume it wants to tell us something
-                let different = new_outcome.result.result != result ||
-                    (new_outcome.result.result == InstructionResult::Revert &&
-                        new_outcome.output() != outcome.output());
-                different.then_some(new_outcome)
-            },
-        );
+        if ecx.journaled_state.depth == 0 {
+            self.top_level_frame_end(ecx, outcome.result.result);
+        }
 
         outcome
     }
