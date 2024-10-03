@@ -39,7 +39,7 @@ impl SoldeerArgs {
 #[cfg(test)]
 mod tests {
     use soldeer_commands::{commands::Version, Command};
-    
+
     #[tokio::test]
     async fn test_soldeer_version() {
         let command = Command::Version(Version::default());

@@ -48,12 +48,11 @@ libs = ["lib"]
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
 
-
     let actual_lock_contents = read_file_to_string(&path_lock_file);
     assert!(actual_lock_contents.contains("forge-std"));
 
     // Making sure the foundry contents are the right ones
-     foundry_contents = r#"[profile.default]
+    foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
 libs = ["lib"]
@@ -81,8 +80,8 @@ libs = ["lib"]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 "#;
-        let foundry_file = prj.root().join("foundry.toml");
-        fs::write(&foundry_file, foundry_contents).unwrap();
+    let foundry_file = prj.root().join("foundry.toml");
+    fs::write(&foundry_file, foundry_contents).unwrap();
 
     cmd.arg("soldeer")
         .args([command, dependency, git])
@@ -127,13 +126,12 @@ libs = ["lib"]
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
     assert!(actual_lock_contents.contains("forge-std"));
 
     // Making sure the foundry contents are the right ones
-     foundry_contents = r#"[profile.default]
+    foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
 libs = ["lib"]
@@ -163,8 +161,8 @@ libs = ["lib"]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 "#;
-        let foundry_file = prj.root().join("foundry.toml");
-        fs::write(&foundry_file, foundry_contents).unwrap();
+    let foundry_file = prj.root().join("foundry.toml");
+    fs::write(&foundry_file, foundry_contents).unwrap();
 
     cmd.arg("soldeer")
         .args([command, dependency, git, rev_flag, commit])
@@ -194,13 +192,12 @@ libs = ["lib"]
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
     assert!(actual_lock_contents.contains("forge-std"));
 
     // Making sure the foundry contents are the right ones
-     foundry_contents = r#"[profile.default]
+    foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
 libs = ["lib"]
@@ -236,7 +233,6 @@ mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_updates).unwrap();
 
-    
     cmd.env("NO_COLOR", "");
     cmd.arg("soldeer").arg(command).assert_success();
 
@@ -258,7 +254,7 @@ mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    
+
     // assert_data_eq!(lock_contents, read_file_to_string(&path_lock_file));
     let actual_lock_contents = read_file_to_string(&path_lock_file);
     assert!(actual_lock_contents.contains("forge-std"));
@@ -279,7 +275,7 @@ mario = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", re
 mario-custom-tag = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", tag = "custom-tag" }
 mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/Mario.git", tag = "custom-branch" }
 "#;
-println!("str {:?}", read_file_to_string(&foundry_file));
+    println!("str {:?}", read_file_to_string(&foundry_file));
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
 });
 
@@ -301,7 +297,6 @@ forge-std = "1.8.1"
     let foundry_file = prj.root().join("foundry.toml");
 
     fs::write(&foundry_file, foundry_updates).unwrap();
-
 
     cmd.arg("soldeer").arg(command).assert_success().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Update 🦌
@@ -328,7 +323,6 @@ forge-std = "1.8.1"
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-  
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
     assert!(actual_lock_contents.contains("forge-std"));
@@ -347,7 +341,6 @@ forge-std = "1.8.1"
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
 });
-
 
 forgesoldeer!(install_dependency_with_remappings_config, |prj, cmd| {
     let command = "install";
@@ -369,7 +362,6 @@ remappings_regenerate = true
 "#;
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_updates).unwrap();
-
 
     cmd.arg("soldeer").args([command, dependency]).assert_success().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Install 🦌
@@ -396,7 +388,6 @@ remappings_regenerate = true
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-   
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
     assert!(actual_lock_contents.contains("forge-std"));
@@ -420,7 +411,7 @@ remappings_regenerate = true
 forge-std = "1.8.1"
 "#;
 
-println!("foundry fil {:?}",read_file_to_string(&foundry_file));
+    println!("foundry fil {:?}", read_file_to_string(&foundry_file));
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
 });
@@ -439,7 +430,6 @@ remappings_regenerate = true
 "#;
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_updates).unwrap();
-
 
     cmd.arg("soldeer").args([command, dependency]).assert_success().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Install 🦌
@@ -466,7 +456,6 @@ remappings_regenerate = true
 
     // Making sure the lock contents are the right ones
     let path_lock_file = prj.root().join("soldeer.lock");
-    
 
     let actual_lock_contents = read_file_to_string(&path_lock_file);
     assert!(actual_lock_contents.contains("forge-std"));
@@ -477,7 +466,6 @@ remappings_regenerate = true
     let remappings_file = prj.root().join("remappings.txt");
     assert_data_eq!(read_file_to_string(&remappings_file), remappings_content);
 });
-
 
 forgesoldeer!(login, |prj, cmd| {
     let command = "login";
