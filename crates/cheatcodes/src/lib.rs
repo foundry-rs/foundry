@@ -84,24 +84,8 @@ pub(crate) trait Cheatcode: CheatcodeDef + DynCheatcode {
     }
 }
 
-pub(crate) trait DynCheatcode {
+pub(crate) trait DynCheatcode: 'static {
     fn cheatcode(&self) -> &'static spec::Cheatcode<'static>;
-
-    fn name(&self) -> &'static str {
-        self.cheatcode().func.signature.split('(').next().unwrap()
-    }
-
-    fn id(&self) -> &'static str {
-        self.cheatcode().func.id
-    }
-
-    fn signature(&self) -> &'static str {
-        self.cheatcode().func.signature
-    }
-
-    fn status(&self) -> &Status<'static> {
-        &self.cheatcode().status
-    }
 
     fn as_debug(&self) -> &dyn std::fmt::Debug;
 
@@ -122,6 +106,24 @@ impl<T: Cheatcode> DynCheatcode for T {
     #[inline]
     fn dyn_apply(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         self.apply_full(ccx, executor)
+    }
+}
+
+impl dyn DynCheatcode {
+    pub(crate) fn name(&self) -> &'static str {
+        self.cheatcode().func.signature.split('(').next().unwrap()
+    }
+
+    pub(crate) fn id(&self) -> &'static str {
+        self.cheatcode().func.id
+    }
+
+    pub(crate) fn signature(&self) -> &'static str {
+        self.cheatcode().func.signature
+    }
+
+    pub(crate) fn status(&self) -> &Status<'static> {
+        &self.cheatcode().status
     }
 }
 
