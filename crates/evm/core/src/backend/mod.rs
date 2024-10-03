@@ -1283,8 +1283,8 @@ impl DatabaseExt for Backend {
         env.tx.value =
             tx.value.ok_or_else(|| eyre::eyre!("transact_from_tx: No `value` field found"))?;
         env.tx.data = tx.input.into_input().unwrap_or_default();
-        env.tx.transact_to =
-            tx.to.ok_or_else(|| eyre::eyre!("transact_from_tx: No `to` field found"))?;
+        // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
+        env.tx.transact_to = tx.to.unwrap_or(TxKind::Create);
         env.tx.chain_id = tx.chain_id;
 
         self.commit(journaled_state.state.clone());
