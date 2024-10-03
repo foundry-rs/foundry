@@ -138,7 +138,7 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
     let first_batch = vec![1u8; DATA_GAS_PER_BLOB as usize * 3];
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(&first_batch);
 
-    let num_blobs_first = sidecar.clone().take().len();
+    let num_blobs_first = sidecar.clone().take().len() as u64;
 
     let sidecar = sidecar.build().unwrap();
 
@@ -160,7 +160,7 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
 
     let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(&second_batch);
 
-    let num_blobs_second = sidecar.clone().take().len();
+    let num_blobs_second = sidecar.clone().take().len() as u64;
 
     let sidecar = sidecar.build().unwrap();
     tx.set_blob_sidecar(sidecar);
@@ -181,12 +181,12 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
     );
     assert_eq!(
         first_block.unwrap().unwrap().header.blob_gas_used,
-        Some(DATA_GAS_PER_BLOB as u128 * num_blobs_first as u128)
+        Some(DATA_GAS_PER_BLOB * num_blobs_first)
     );
 
     assert_eq!(
         second_block.unwrap().unwrap().header.blob_gas_used,
-        Some(DATA_GAS_PER_BLOB as u128 * num_blobs_second as u128)
+        Some(DATA_GAS_PER_BLOB * num_blobs_second)
     );
     // Mined in two different blocks
     assert_eq!(first_receipt.block_number.unwrap() + 1, second_receipt.block_number.unwrap());

@@ -1861,13 +1861,12 @@ interface Vm {
     function sleep(uint256 duration) external;
 
     function snapshot() external returns (uint256 snapshotId);
-
+    function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
+    function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
     function snapshotState() external returns (uint256 snapshotId);
-
-    function split(
-        string calldata input,
-        string calldata delimiter
-    ) external pure returns (string[] memory outputs);
+    function snapshotValue(string calldata name, uint256 value) external;
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
+    function split(string calldata input, string calldata delimiter) external pure returns (string[] memory outputs);
 
     function startBroadcast() external;
 
@@ -1880,6 +1879,9 @@ interface Vm {
     function startPrank(address msgSender) external;
 
     function startPrank(address msgSender, address txOrigin) external;
+
+    function startSnapshotGas(string calldata name) external;
+    function startSnapshotGas(string calldata group, string calldata name) external;
 
     function startStateDiffRecording() external;
 
@@ -1894,6 +1896,10 @@ interface Vm {
     function stopMappingRecording() external;
 
     function stopPrank() external;
+
+    function stopSnapshotGas() external returns (uint256 gasUsed);
+    function stopSnapshotGas(string calldata name) external returns (uint256 gasUsed);
+    function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     function store(address target, bytes32 slot, bytes32 value) external;
 
