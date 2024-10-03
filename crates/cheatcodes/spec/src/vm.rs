@@ -2405,7 +2405,7 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function randomUint(uint256 min, uint256 max) external returns (uint256);
 
-    /// Returns an random `uint256` value of given bits.
+    /// Returns a random `uint256` value of given bits.
     #[cheatcode(group = Utilities)]
     function randomUint(uint256 bits) external view returns (uint256);
 
@@ -2413,27 +2413,27 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function randomAddress() external returns (address);
 
-    /// Returns an random `int256` value.
+    /// Returns a random `int256` value.
     #[cheatcode(group = Utilities)]
     function randomInt() external view returns (int256);
 
-    /// Returns an random `int256` value of given bits.
+    /// Returns a random `int256` value of given bits.
     #[cheatcode(group = Utilities)]
     function randomInt(uint256 bits) external view returns (int256);
 
-    /// Returns an random `bool`.
+    /// Returns a random `bool`.
     #[cheatcode(group = Utilities)]
     function randomBool() external view returns (bool);
 
-    /// Returns an random byte array value of the given length.
+    /// Returns a random byte array value of the given length.
     #[cheatcode(group = Utilities)]
     function randomBytes(uint256 len) external view returns (bytes memory);
 
-    /// Returns random 4bytes
+    /// Returns a random fixed-size byte array of length 4.
     #[cheatcode(group = Utilities)]
     function randomBytes4() external view returns (bytes4);
 
-    /// Returns random 8bytes
+    /// Returns a random fixed-size byte array of length 8.
     #[cheatcode(group = Utilities)]
     function randomBytes8() external view returns (bytes8);
 
