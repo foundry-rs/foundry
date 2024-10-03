@@ -162,7 +162,7 @@ pub struct MultiWalletOpts {
     )]
     pub mnemonic_indexes: Option<Vec<u32>>,
 
-    /// Use the keystore in the given folder or file.
+    /// Use the keystore by its filename in the given folder.
     #[arg(
         long = "keystore",
         visible_alias = "keystores",
@@ -173,7 +173,7 @@ pub struct MultiWalletOpts {
     #[builder(default = "None")]
     pub keystore_paths: Option<Vec<String>>,
 
-    /// Use a keystore from the default keystores folder (~/.foundry/keystores) by its filename
+    /// Use a keystore from the default keystores folder (~/.foundry/keystores) by its filename.
     #[arg(
         long = "account",
         visible_alias = "accounts",

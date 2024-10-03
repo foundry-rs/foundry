@@ -2,7 +2,10 @@
 
 use alloy_consensus::{Transaction, TxEnvelope};
 use alloy_primitives::{Address, TxKind, U256};
-use alloy_provider::{network::AnyNetwork, Provider};
+use alloy_provider::{
+    network::{AnyNetwork, TransactionBuilder},
+    Provider,
+};
 use alloy_rpc_types::{AnyTransactionReceipt, BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
@@ -212,8 +215,8 @@ impl TransactionMaybeSigned {
 
     pub fn gas(&self) -> Option<u128> {
         match self {
-            Self::Signed { tx, .. } => Some(tx.gas_limit()),
-            Self::Unsigned(tx) => tx.gas,
+            Self::Signed { tx, .. } => Some(tx.gas_limit() as u128),
+            Self::Unsigned(tx) => tx.gas_limit().map(|g| g as u128),
         }
     }
 
