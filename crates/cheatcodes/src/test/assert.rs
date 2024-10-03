@@ -2,7 +2,7 @@ use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{hex, I256, U256};
 use foundry_evm_core::{
     abi::{format_units_int, format_units_uint},
-    backend::{DatabaseExt, GLOBAL_FAIL_SLOT},
+    backend::GLOBAL_FAIL_SLOT,
     constants::CHEATCODE_ADDRESS,
 };
 use itertools::Itertools;
@@ -169,10 +169,10 @@ impl EqRelAssertionError<I256> {
 
 type ComparisonResult<'a, T> = Result<Vec<u8>, ComparisonAssertionError<'a, T>>;
 
-fn handle_assertion_result<DB: DatabaseExt, E: CheatcodesExecutor, ERR>(
+fn handle_assertion_result<ERR>(
     result: core::result::Result<Vec<u8>, ERR>,
-    ccx: &mut CheatsCtxt<DB>,
-    executor: &mut E,
+    ccx: &mut CheatsCtxt,
+    executor: &mut dyn CheatcodesExecutor,
     error_formatter: impl Fn(&ERR) -> String,
     error_msg: Option<&str>,
     format_error: bool,
@@ -224,10 +224,10 @@ macro_rules! impl_assertions {
     };
     (@impl $no_error:ident, $with_error:ident, ($($arg:ident),*), $body:expr, $error_formatter:expr, $format_error:literal) => {
         impl crate::Cheatcode for $no_error {
-            fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+            fn apply_full(
                 &self,
-                ccx: &mut CheatsCtxt<DB>,
-                executor: &mut E,
+                ccx: &mut CheatsCtxt,
+                executor: &mut dyn CheatcodesExecutor,
             ) -> Result {
                 let Self { $($arg),* } = self;
                 handle_assertion_result($body, ccx, executor, $error_formatter, None, $format_error)
@@ -235,10 +235,10 @@ macro_rules! impl_assertions {
         }
 
         impl crate::Cheatcode for $with_error {
-            fn apply_full<DB: DatabaseExt, E: crate::CheatcodesExecutor>(
+            fn apply_full(
                 &self,
-                ccx: &mut CheatsCtxt<DB>,
-                executor: &mut E,
+                ccx: &mut CheatsCtxt,
+                executor: &mut dyn CheatcodesExecutor,
             ) -> Result {
                 let Self { $($arg),*, error} = self;
                 handle_assertion_result($body, ccx, executor, $error_formatter, Some(error), $format_error)
