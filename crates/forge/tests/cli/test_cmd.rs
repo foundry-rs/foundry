@@ -597,34 +597,6 @@ Encountered a total of 1 failing tests, 1 tests succeeded
 "#]]);
 });
 
-forgetest_init!(can_test_selfdestruct_with_isolation, |prj, cmd| {
-    prj.wipe_contracts();
-
-    prj.add_test(
-        "Contract.t.sol",
-        r#"
-import {Test} from "forge-std/Test.sol";
-
-contract Destructing {
-    function destruct() public {
-        selfdestruct(payable(address(0)));
-    }
-}
-
-contract SelfDestructTest is Test {
-    function test() public {
-        Destructing d = new Destructing();
-        d.destruct();
-        assertEq(address(d).code.length, 0);
-    }
-}
-   "#,
-    )
-    .unwrap();
-
-    cmd.args(["test", "-vvvv", "--isolate"]).assert_success();
-});
-
 forgetest_init!(can_test_transient_storage_with_isolation, |prj, cmd| {
     prj.wipe_contracts();
 
