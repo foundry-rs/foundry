@@ -65,6 +65,25 @@ impl Cheatcode for mockCall_1Call {
     }
 }
 
+impl Cheatcode for mockCalls_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { callee, data, returnData } = self;
+        let _ = make_acc_non_empty(callee, ccx.ecx)?;
+
+        mock_calls(ccx.state, callee, data, None, returnData, InstructionResult::Return);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for mockCalls_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { callee, msgValue, data, returnData } = self;
+        ccx.ecx.load_account(*callee)?;
+        mock_calls(ccx.state, callee, data, Some(msgValue), returnData, InstructionResult::Return);
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for mockCallRevert_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { callee, data, revertData } = self;
@@ -106,6 +125,23 @@ fn mock_call(
     state.mocked_calls.entry(*callee).or_default().insert(
         MockCallDataContext { calldata: Bytes::copy_from_slice(cdata), value: value.copied() },
         VecDeque::from(vec![MockCallReturnData { ret_type, data: Bytes::copy_from_slice(rdata) }]),
+    );
+}
+
+#[allow(clippy::ptr_arg)] // Not public API, doesn't matter
+fn mock_calls(
+    state: &mut Cheatcodes,
+    callee: &Address,
+    cdata: &Bytes,
+    value: Option<&U256>,
+    rdata_vec: &[Bytes],
+    ret_type: InstructionResult,
+) {
+    state.mocked_calls.entry(*callee).or_default().insert(
+        MockCallDataContext { calldata: Bytes::copy_from_slice(cdata), value: value.copied() },
+        rdata_vec.iter().map(|rdata|
+            MockCallReturnData { ret_type, data: Bytes::copy_from_slice(rdata) }
+        ).collect::<VecDeque<_>>(),
     );
 }
 
