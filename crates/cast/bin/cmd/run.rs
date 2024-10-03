@@ -52,6 +52,14 @@ pub struct RunArgs {
     #[arg(long, short)]
     verbose: bool,
 
+    /// Prints the trace in JSON format.
+    #[arg(long, short)]
+    json: bool,
+
+    /// Prints the state changes, only works with the `json` flag.
+    #[arg(long)]
+    with_state_changes: bool,
+
     /// Label addresses in the trace.
     ///
     /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
@@ -163,6 +171,7 @@ impl RunArgs {
             evm_version,
             self.debug,
             self.decode_internal,
+            self.with_state_changes,
             alphanet,
         );
         let mut env =
@@ -177,15 +186,15 @@ impl RunArgs {
                 pb.set_position(0);
 
                 let BlockTransactions::Full(ref txs) = block.transactions else {
-                    return Err(eyre::eyre!("Could not get block txs"))
+                    return Err(eyre::eyre!("Could not get block txs"));
                 };
 
                 for (index, tx) in txs.iter().enumerate() {
                     // System transactions such as on L2s don't contain any pricing info so
                     // we skip them otherwise this would cause
                     // reverts
-                    if is_known_system_sender(tx.from) ||
-                        tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
+                    if is_known_system_sender(tx.from)
+                        || tx.transaction_type == Some(SYSTEM_TRANSACTION_TYPE)
                     {
                         pb.set_position((index + 1) as u64);
                         continue;
@@ -250,6 +259,7 @@ impl RunArgs {
             self.debug,
             self.decode_internal,
             self.verbose,
+            self.json,
         )
         .await?;
 
