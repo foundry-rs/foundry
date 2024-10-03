@@ -1,6 +1,7 @@
-use alloy_primitives::U256;
+use alloy_primitives::{Bytes, Uint, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
+use alloy_transport::TransportResult;
 use cast::{revm::primitives::EnvWithHandlerCfg, traces::TraceKind};
 use clap::Parser;
 use eyre::{Result, WrapErr};
@@ -109,7 +110,7 @@ impl RunArgs {
         .build()?;
 
         let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
-        let tx = provider
+        let mut tx = provider
             .get_transaction_by_hash(tx_hash)
             .await
             .wrap_err_with(|| format!("tx not found: {tx_hash:?}"))?
@@ -230,6 +231,23 @@ impl RunArgs {
         // Execute our transaction
         let result = {
             executor.set_trace_printer(self.trace_printer);
+
+            if tx.inner.signature.is_some() {
+                // check if recovery id corresponds to a quorum private transaction (https://docs.goquorum.conssensys.io/concepts/privacy/private-and-public#private-transactions)
+                let v = tx.inner.signature.unwrap().v;
+                let is_private_quorum_txn = v >= Uint::from(37) && v <= Uint::from(38);
+                if is_private_quorum_txn {
+                    println!("Private quorum transaction detected.");
+                    let result: TransportResult<Bytes> = provider
+                        .client()
+                        .request("eth_getQuorumPayload", (tx.input.clone(),))
+                        .await;
+                    trace!(quorum_private_payload=?result, "fetch eth_getQuorumPayload");
+                    if result.is_ok() {
+                        tx.input = result.unwrap();
+                    }
+                }
+            }
 
             configure_tx_env(&mut env, &tx.inner);
 
