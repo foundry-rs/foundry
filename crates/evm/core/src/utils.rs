@@ -9,7 +9,7 @@ use alloy_provider::{
     network::{BlockResponse, HeaderResponse},
     Network,
 };
-use alloy_rpc_types::Transaction;
+use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_config::NamedChain;
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -84,17 +84,62 @@ pub fn get_function<'a>(
         .ok_or_else(|| eyre::eyre!("{contract_name} does not have the selector {selector}"))
 }
 
-/// Configures the env for the transaction
+/// Configures the env for the given RPC transaction.
 pub fn configure_tx_env(env: &mut revm::primitives::Env, tx: &Transaction) {
-    env.tx.caller = tx.from;
-    env.tx.gas_limit = tx.gas;
-    env.tx.gas_price = U256::from(tx.gas_price.unwrap_or_default());
-    env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(U256::from);
-    env.tx.nonce = Some(tx.nonce);
-    env.tx.access_list = tx.access_list.clone().unwrap_or_default().0.into_iter().collect();
-    env.tx.value = tx.value.to();
-    env.tx.data = alloy_primitives::Bytes(tx.input.0.clone());
-    env.tx.transact_to = tx.to.map(TxKind::Call).unwrap_or(TxKind::Create)
+    configure_tx_req_env(env, &tx.clone().into()).expect("cannot fail");
+}
+
+/// Configures the env for the given RPC transaction request.
+pub fn configure_tx_req_env(
+    env: &mut revm::primitives::Env,
+    tx: &TransactionRequest,
+) -> eyre::Result<()> {
+    let TransactionRequest {
+        nonce,
+        from,
+        to,
+        value,
+        gas_price,
+        gas,
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        max_fee_per_blob_gas,
+        ref input,
+        chain_id,
+        ref blob_versioned_hashes,
+        ref access_list,
+        transaction_type: _,
+        ref authorization_list,
+        sidecar: _,
+    } = *tx;
+
+    // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
+    env.tx.transact_to = to.unwrap_or(TxKind::Create);
+    env.tx.caller = from.ok_or_else(|| eyre::eyre!("missing `from` field"))?;
+    env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
+    env.tx.nonce = nonce;
+    env.tx.value = value.unwrap_or_default();
+    env.tx.data = input.input().cloned().unwrap_or_default();
+    env.tx.chain_id = chain_id;
+
+    // Type 1, EIP-2930
+    env.tx.access_list = access_list.clone().unwrap_or_default().0.into_iter().collect();
+
+    // Type 2, EIP-1559
+    env.tx.gas_price = U256::from(gas_price.or(max_fee_per_gas).unwrap_or_default());
+    env.tx.gas_priority_fee = max_priority_fee_per_gas.map(U256::from);
+
+    // Type 3, EIP-4844
+    env.tx.blob_hashes = blob_versioned_hashes.clone().unwrap_or_default();
+    env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas.map(U256::from);
+
+    // Type 4, EIP-7702
+    if let Some(authorization_list) = authorization_list {
+        env.tx.authorization_list =
+            Some(revm::primitives::AuthorizationList::Signed(authorization_list.clone()));
+    }
+
+    Ok(())
 }
 
 /// Get the gas used, accounting for refunds
