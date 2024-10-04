@@ -31,7 +31,7 @@ impl AsDoc for Comments {
     }
 }
 
-impl<'a> AsDoc for CommentsRef<'a> {
+impl AsDoc for CommentsRef<'_> {
     // TODO: support other tags
     fn as_doc(&self) -> AsDocResult {
         let mut writer = BufWriter::default();

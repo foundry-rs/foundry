@@ -1,7 +1,7 @@
 //! general eth api tests
 
 use crate::abi::Greeter;
-use alloy_primitives::{Bytes, Uint};
+use alloy_primitives::{Bytes, Uint, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use anvil::{spawn, NodeConfig};
@@ -14,6 +14,7 @@ async fn can_load_state() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
 
     api.mine_one().await;
+    api.mine_one().await;
 
     let num = api.block_number().unwrap();
 
@@ -23,7 +24,19 @@ async fn can_load_state() {
     let (api, _handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;
 
     let num2 = api.block_number().unwrap();
+
+    // Ref: https://github.com/foundry-rs/foundry/issues/9017
+    // Check responses of eth_blockNumber and eth_getBlockByNumber don't deviate after loading state
+    let num_from_tag = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .number;
     assert_eq!(num, num2);
+
+    assert_eq!(num, U256::from(num_from_tag));
 }
 
 #[tokio::test(flavor = "multi_thread")]

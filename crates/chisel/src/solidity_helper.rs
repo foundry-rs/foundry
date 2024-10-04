@@ -278,7 +278,7 @@ pub trait TokenStyle {
 }
 
 /// [TokenStyle] implementation for [Token]
-impl<'a> TokenStyle for Token<'a> {
+impl TokenStyle for Token<'_> {
     fn style(&self) -> Style {
         use Token::*;
         match self {

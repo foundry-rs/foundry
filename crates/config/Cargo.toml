@@ -43,6 +43,7 @@ toml = { version = "0.8", features = ["preserve_order"] }
 toml_edit = "0.22.4"
 tracing.workspace = true
 walkdir.workspace = true
+yansi.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.2.1"
