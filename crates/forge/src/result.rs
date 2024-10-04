@@ -163,8 +163,6 @@ impl TestOutcome {
             std::process::exit(1);
         }
 
-        // shell::println("")?;
-
         sh_println!();
         sh_println!("Failed tests:");
         for (suite_name, suite) in outcome.results.iter() {
