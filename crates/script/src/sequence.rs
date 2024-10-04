@@ -8,7 +8,7 @@ use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::{eyre, ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::{now, Git};
-use foundry_common::{fs, shell, TransactionMaybeSigned, SELECTOR_LEN};
+use foundry_common::{fs, sh_println, shell, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -188,8 +188,8 @@ impl ScriptSequence {
         }
 
         if !silent {
-            shell::println(format!("\nTransactions saved to: {}\n", path.display()))?;
-            shell::println(format!("Sensitive values saved to: {}\n", sensitive_path.display()))?;
+            sh_println!("\nTransactions saved to: {}\n", path.display());
+            sh_println!("Sensitive values saved to: {}\n", sensitive_path.display());
         }
 
         Ok(())

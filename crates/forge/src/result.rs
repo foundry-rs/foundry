@@ -9,7 +9,7 @@ use alloy_primitives::{
     Address, Log,
 };
 use eyre::Report;
-use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
+use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, sh_println, shell};
 use foundry_evm::{
     coverage::HitMaps,
     decode::SkipReason,
@@ -163,8 +163,10 @@ impl TestOutcome {
             std::process::exit(1);
         }
 
-        shell::println("")?;
-        shell::println("Failing tests:")?;
+        // shell::println("")?;
+
+        sh_println!();
+        sh_println!("Failed tests:");
         for (suite_name, suite) in outcome.results.iter() {
             let failed = suite.failed();
             if failed == 0 {
@@ -172,18 +174,18 @@ impl TestOutcome {
             }
 
             let term = if failed > 1 { "tests" } else { "test" };
-            shell::println(format!("Encountered {failed} failing {term} in {suite_name}"))?;
+            sh_println!("Encountered {failed} failing {term} in {suite_name}");
             for (name, result) in suite.failures() {
-                shell::println(result.short_result(name))?;
+                sh_println!("{}", result.short_result(name));
             }
-            shell::println("")?;
+            sh_println!();
         }
         let successes = outcome.passed();
-        shell::println(format!(
+        sh_println!(
             "Encountered a total of {} failing tests, {} tests succeeded",
             failures.to_string().red(),
             successes.to_string().green()
-        ))?;
+        );
 
         // TODO: Avoid process::exit
         std::process::exit(1);

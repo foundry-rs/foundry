@@ -63,7 +63,7 @@ impl ProjectCompiler {
             verify: None,
             print_names: None,
             print_sizes: None,
-            quiet: Some(crate::shell::verbosity().is_silent()),
+            quiet: Some(crate::shell::verbosity().is_quiet()),
             bail: None,
             files: Vec::new(),
         }
