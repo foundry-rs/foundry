@@ -86,7 +86,7 @@ impl<'a> LcovReporter<'a> {
     }
 }
 
-impl<'a> CoverageReporter for LcovReporter<'a> {
+impl CoverageReporter for LcovReporter<'_> {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         for (file, items) in report.items_by_source() {
             let summary = items.iter().fold(CoverageSummary::default(), |mut summary, item| {

@@ -471,7 +471,7 @@ impl InspectorStack {
     }
 }
 
-impl<'a> InspectorStackRefMut<'a> {
+impl InspectorStackRefMut<'_> {
     /// Adjusts the EVM data for the inner EVM context.
     /// Should be called on the top-level call of inner context (depth == 0 &&
     /// self.in_inner_context) Decreases sender nonce for CALLs to keep backwards compatibility
@@ -642,7 +642,7 @@ impl<'a> InspectorStackRefMut<'a> {
     }
 }
 
-impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
+impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
     fn initialize_interp(
         &mut self,
         interpreter: &mut Interpreter,

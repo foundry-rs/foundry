@@ -87,7 +87,7 @@ pub struct RemappingsProvider<'a> {
     pub remappings: Result<Vec<Remapping>, Error>,
 }
 
-impl<'a> RemappingsProvider<'a> {
+impl RemappingsProvider<'_> {
     /// Find and parse remappings for the projects
     ///
     /// **Order**
@@ -240,7 +240,7 @@ impl<'a> RemappingsProvider<'a> {
     }
 }
 
-impl<'a> Provider for RemappingsProvider<'a> {
+impl Provider for RemappingsProvider<'_> {
     fn metadata(&self) -> Metadata {
         Metadata::named("Remapping Provider")
     }
