@@ -188,11 +188,12 @@ pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
 pub fn render_trace_arena_inner(
     arena: &SparsedTraceArena,
     with_bytecodes: bool,
-    as_json: bool,
+    to_json: bool,
 ) -> String {
-    if as_json {
+    if to_json {
         return serde_json::to_string(&arena.resolve_arena()).expect("Failed to write traces");
     }
+
     let mut w = TraceWriter::new(Vec::<u8>::new()).write_bytecodes(with_bytecodes);
     w.write_arena(&arena.resolve_arena()).expect("Failed to write traces");
     String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
