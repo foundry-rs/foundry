@@ -113,7 +113,6 @@ impl Cheatcode for mockFunctionCall {
     }
 }
 
-#[allow(clippy::ptr_arg)] // Not public API, doesn't matter
 fn mock_call(
     state: &mut Cheatcodes,
     callee: &Address,
@@ -125,7 +124,6 @@ fn mock_call(
     mock_calls(state, callee, cdata, value, &[rdata.clone()], ret_type)
 }
 
-#[allow(clippy::ptr_arg)] // Not public API, doesn't matter
 fn mock_calls(
     state: &mut Cheatcodes,
     callee: &Address,
