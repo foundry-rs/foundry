@@ -146,8 +146,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-script failed: revert: failed
+Error: script failed: revert: failed
 
 "#]]);
 });
@@ -163,8 +162,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| 
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-script failed: revert: failed
+Error: script failed: revert: failed
 
 "#]]);
 });
@@ -1596,8 +1594,7 @@ contract Script {
 
     cmd.arg("script").args([&script.to_string_lossy(), "--sig", "run"]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-Multiple functions with the same name `run` found in the ABI
+Error: Multiple functions with the same name `run` found in the ABI
 
 "#]]);
 });
@@ -1639,8 +1636,7 @@ contract CustomErrorScript is Script {
 
     cmd.forge_fuse().arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-script failed: CustomError()
+Error: script failed: CustomError()
 
 "#]]);
 });
@@ -1873,8 +1869,7 @@ contract SimpleScript is Script {
     ]);
 
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: 
-script failed: missing CREATE2 deployer
+Error: script failed: missing CREATE2 deployer
 
 "#]]);
 });

@@ -190,11 +190,7 @@ impl Shell {
         #[cold]
         #[cfg_attr(debug_assertions, track_caller)]
         fn shell_get_fail() -> Mutex<Shell> {
-            if cfg!(test) {
-                Mutex::new(Shell::new())
-            } else {
-                panic!("attempted to get global shell before it was set");
-            }
+            Mutex::new(Shell::new())
         }
 
         GLOBAL_SHELL.get_or_init(shell_get_fail).lock().unwrap_or_else(PoisonError::into_inner)
