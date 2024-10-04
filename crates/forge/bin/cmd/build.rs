@@ -79,9 +79,7 @@ impl BuildArgs {
     pub fn run(self) -> Result<ProjectCompileOutput> {
         let mut config = self.try_load_config_emit_warnings()?;
 
-        if install::install_missing_dependencies(&mut config, self.args.silent) &&
-            config.auto_detect_remappings
-        {
+        if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
         }
@@ -102,7 +100,6 @@ impl BuildArgs {
             .files(files)
             .print_names(self.names)
             .print_sizes(self.sizes)
-            .quiet(self.format_json)
             .bail(!self.format_json);
 
         let output = compiler.compile(&project)?;

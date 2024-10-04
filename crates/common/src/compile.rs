@@ -98,15 +98,6 @@ impl ProjectCompiler {
         self
     }
 
-    /// Do not print anything at all if true. Overrides other `print` options.
-    #[inline]
-    pub fn quiet_if(mut self, maybe: bool) -> Self {
-        if maybe {
-            self.quiet = Some(true);
-        }
-        self
-    }
-
     /// Sets whether to bail on compiler errors.
     #[inline]
     pub fn bail(mut self, yes: bool) -> Self {
@@ -360,9 +351,8 @@ pub struct ContractInfo {
 pub fn compile_target<C: Compiler>(
     target_path: &Path,
     project: &Project<C>,
-    quiet: bool,
 ) -> Result<ProjectCompileOutput<C>> {
-    ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
+    ProjectCompiler::new().files([target_path.into()]).compile(project)
 }
 
 /// Creates a [Project] from an Etherscan source.

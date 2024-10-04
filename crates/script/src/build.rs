@@ -190,10 +190,7 @@ impl PreprocessedState {
         )
         .chain([target_path.to_path_buf()]);
 
-        let output = ProjectCompiler::new()
-            .quiet_if(args.opts.silent)
-            .files(sources_to_compile)
-            .compile(&project)?;
+        let output = ProjectCompiler::new().files(sources_to_compile).compile(&project)?;
 
         let mut target_id: Option<ArtifactId> = None;
 
@@ -281,7 +278,7 @@ impl CompiledState {
                     &self.build_data.target,
                 )?;
 
-                sequence.save(true, true)?;
+                sequence.save(true)?;
                 sequence
             }
         };

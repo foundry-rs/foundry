@@ -152,7 +152,7 @@ impl StorageArgs {
         };
 
         // Compile
-        let mut out = ProjectCompiler::new().quiet(true).compile(&project)?;
+        let mut out = ProjectCompiler::new().compile(&project)?;
         let artifact = {
             let (_, mut artifact) = out
                 .artifacts()
@@ -164,7 +164,7 @@ impl StorageArgs {
                 eprintln!("The requested contract was compiled with {version} while the minimum version for storage layouts is {MIN_SOLC} and as a result the output may be empty.");
                 let solc = Solc::find_or_install(&MIN_SOLC)?;
                 project.compiler = SolcCompiler::Specific(solc);
-                if let Ok(output) = ProjectCompiler::new().quiet(true).compile(&project) {
+                if let Ok(output) = ProjectCompiler::new().compile(&project) {
                     out = output;
                     let (_, new_artifact) = out
                         .artifacts()

@@ -44,14 +44,14 @@ pub struct InitArgs {
 impl InitArgs {
     pub fn run(self) -> Result<()> {
         let Self { root, template, branch, opts, offline, force, vscode } = self;
-        let DependencyInstallOpts { shallow, no_git, no_commit, quiet } = opts;
+        let DependencyInstallOpts { shallow, no_git, no_commit } = opts;
 
         // create the root dir if it does not exist
         if !root.exists() {
             fs::create_dir_all(&root)?;
         }
         let root = dunce::canonicalize(root)?;
-        let git = Git::new(&root).quiet(quiet).shallow(shallow);
+        let git = Git::new(&root).shallow(shallow);
 
         // if a template is provided, then this command initializes a git repo,
         // fetches the template repo, and resets the git history to the head of the fetched

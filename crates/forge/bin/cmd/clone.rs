@@ -124,12 +124,11 @@ impl CloneArgs {
             sh_eprintln!("Waiting for 5 seconds to avoid rate limit...");
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
-        Self::collect_compilation_metadata(&meta, chain, address, &root, &client, opts.quiet)
-            .await?;
+        Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
 
         // step 5. git add and commit the changes if needed
         if !opts.no_commit {
-            let git = Git::new(&root).quiet(opts.quiet);
+            let git = Git::new(&root);
             git.add(Some("--all"))?;
             let msg = format!("chore: forge clone {address}");
             git.commit(&msg)?;
@@ -187,10 +186,9 @@ impl CloneArgs {
         address: Address,
         root: &PathBuf,
         client: &C,
-        quiet: bool,
     ) -> Result<()> {
         // compile the cloned contract
-        let compile_output = compile_project(root, quiet)?;
+        let compile_output = compile_project(root)?;
         let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
         let main_file = main_file.strip_prefix(root)?.to_path_buf();
         let storage_layout =
@@ -548,11 +546,11 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
 }
 
 /// Compile the project in the root directory, and return the compilation result.
-pub fn compile_project(root: &Path, quiet: bool) -> Result<ProjectCompileOutput> {
+pub fn compile_project(root: &Path) -> Result<ProjectCompileOutput> {
     let mut config = Config::load_with_root(root).sanitized();
     config.extra_output.push(ContractOutputSelection::StorageLayout);
     let project = config.project()?;
-    let compiler = ProjectCompiler::new().quiet_if(quiet);
+    let compiler = ProjectCompiler::new();
     compiler.compile(&project)
 }
 
@@ -621,7 +619,7 @@ mod tests {
 
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
         println!("project_root: {root:#?}");
-        compile_project(root, false).expect("compilation failure")
+        compile_project(root).expect("compilation failure")
     }
 
     fn assert_compilation_result(
@@ -723,7 +721,6 @@ mod tests {
             address,
             &project_root,
             &client,
-            false,
         )
         .await
         .unwrap();

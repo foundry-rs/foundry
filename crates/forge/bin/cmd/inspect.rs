@@ -65,7 +65,7 @@ impl InspectArgs {
 
         // Build the project
         let project = modified_build_args.project()?;
-        let compiler = ProjectCompiler::new().quiet(true);
+        let compiler = ProjectCompiler::new();
         let target_path = if let Some(path) = &contract.path {
             canonicalize(project.root().join(path))?
         } else {
