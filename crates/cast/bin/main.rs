@@ -37,12 +37,20 @@ extern crate foundry_common;
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(err) = run() {
+        let _ = foundry_common::Shell::get().error(&err);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     handler::install();
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
     let args = CastArgs::parse();
+    args.shell.shell().set();
     main_args(args)
 }
 
