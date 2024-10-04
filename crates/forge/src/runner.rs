@@ -76,7 +76,7 @@ pub struct ContractRunner<'a> {
     pub span: tracing::Span,
 }
 
-impl<'a> ContractRunner<'a> {
+impl ContractRunner<'_> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, call_setup: bool) -> TestSetup {

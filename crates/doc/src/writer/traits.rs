@@ -56,7 +56,7 @@ impl ParamLike for solang_parser::pt::ErrorParameter {
     }
 }
 
-impl<'a, T> ParamLike for &'a T
+impl<T> ParamLike for &T
 where
     T: ParamLike,
 {
