@@ -409,7 +409,7 @@ impl std::iter::FusedIterator for CommentStateCharIndices<'_> {}
 /// An Iterator over characters in a string slice which are not a apart of comments
 pub struct NonCommentChars<'a>(CommentStateCharIndices<'a>);
 
-impl<'a> Iterator for NonCommentChars<'a> {
+impl Iterator for NonCommentChars<'_> {
     type Item = char;
 
     #[inline]
