@@ -4,7 +4,7 @@ extern crate tracing;
 use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
-use cast::{Cast, SimpleCast};
+use cast::{CastInstance, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
@@ -28,7 +28,7 @@ pub mod args;
 pub mod cmd;
 pub mod tx;
 
-use args::{Cast as CastArgs, CastSubcommand, ToBaseArgs};
+use args::{Cast, CastSubcommand, ToBaseArgs};
 
 #[macro_use]
 extern crate foundry_common;
@@ -49,14 +49,14 @@ fn run() -> Result<()> {
     utils::load_dotenv();
     utils::subscriber();
     utils::enable_paint();
-    let args = CastArgs::parse();
+    let args = Cast::parse();
     args.shell.shell().set();
     main_args(args)
 }
 
 #[allow(clippy::needless_return)]
 #[tokio::main]
-async fn main_args(args: CastArgs) -> Result<()> {
+async fn main_args(args: Cast) -> Result<()> {
     match args.cmd {
         // Constants
         CastSubcommand::MaxInt { r#type } => {
@@ -225,7 +225,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
-                Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
+                CastInstance::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
         CastSubcommand::Balance { block, who, ether, rpc, erc20 } => {
@@ -235,12 +235,13 @@ async fn main_args(args: CastArgs) -> Result<()> {
 
             match erc20 {
                 Some(token) => {
-                    let balance =
-                        Cast::new(&provider).erc20_balance(token, account_addr, block).await?;
+                    let balance = CastInstance::new(&provider)
+                        .erc20_balance(token, account_addr, block)
+                        .await?;
                     println!("{}", format_uint_exp(balance));
                 }
                 None => {
-                    let value = Cast::new(&provider).balance(account_addr, block).await?;
+                    let value = CastInstance::new(&provider).balance(account_addr, block).await?;
                     if ether {
                         println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?);
                     } else {
@@ -254,7 +255,9 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
-                Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
+                CastInstance::new(provider)
+                    .base_fee(block.unwrap_or(BlockId::Number(Latest)))
+                    .await?
             );
         }
         CastSubcommand::Block { block, full, field, json, rpc } => {
@@ -262,7 +265,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
-                Cast::new(provider)
+                CastInstance::new(provider)
                     .block(block.unwrap_or(BlockId::Number(Latest)), full, field, json)
                     .await?
             );
@@ -279,19 +282,19 @@ async fn main_args(args: CastArgs) -> Result<()> {
                         .header
                         .number
                 }
-                None => Cast::new(provider).block_number().await?,
+                None => CastInstance::new(provider).block_number().await?,
             };
             println!("{number}");
         }
         CastSubcommand::Chain { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).chain().await?);
+            println!("{}", CastInstance::new(provider).chain().await?);
         }
         CastSubcommand::ChainId { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).chain_id().await?);
+            println!("{}", CastInstance::new(provider).chain_id().await?);
         }
         CastSubcommand::Client { rpc } => {
             let config = Config::from(&rpc);
@@ -302,20 +305,20 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            println!("{}", Cast::new(provider).code(who, block, disassemble).await?);
+            println!("{}", CastInstance::new(provider).code(who, block, disassemble).await?);
         }
         CastSubcommand::Codesize { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            println!("{}", Cast::new(provider).codesize(who, block).await?);
+            println!("{}", CastInstance::new(provider).codesize(who, block).await?);
         }
         CastSubcommand::ComputeAddress { address, nonce, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
 
             let address: Address = stdin::unwrap_line(address)?.parse()?;
-            let computed = Cast::new(provider).compute_address(address, nonce).await?;
+            let computed = CastInstance::new(provider).compute_address(address, nonce).await?;
             println!("Computed Address: {}", computed.to_checksum(None));
         }
         CastSubcommand::Disassemble { bytecode } => {
@@ -347,7 +350,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
         CastSubcommand::GasPrice { rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            println!("{}", Cast::new(provider).gas_price().await?);
+            println!("{}", CastInstance::new(provider).gas_price().await?);
         }
         CastSubcommand::Index { key_type, key, slot_number } => {
             println!("{}", SimpleCast::index(&key_type, &key, &slot_number)?);
@@ -361,31 +364,31 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            println!("{}", Cast::new(provider).implementation(who, block).await?);
+            println!("{}", CastInstance::new(provider).implementation(who, block).await?);
         }
         CastSubcommand::Admin { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            println!("{}", Cast::new(provider).admin(who, block).await?);
+            println!("{}", CastInstance::new(provider).admin(who, block).await?);
         }
         CastSubcommand::Nonce { block, who, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            println!("{}", Cast::new(provider).nonce(who, block).await?);
+            println!("{}", CastInstance::new(provider).nonce(who, block).await?);
         }
         CastSubcommand::Codehash { block, who, slots, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            println!("{}", Cast::new(provider).codehash(who, slots, block).await?);
+            println!("{}", CastInstance::new(provider).codehash(who, slots, block).await?);
         }
         CastSubcommand::StorageRoot { block, who, slots, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            println!("{}", Cast::new(provider).storage_root(who, slots, block).await?);
+            println!("{}", CastInstance::new(provider).storage_root(who, slots, block).await?);
         }
         CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = Config::from(&rpc);
@@ -407,7 +410,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
         CastSubcommand::PublishTx { raw_tx, cast_async, rpc } => {
             let config = Config::from(&rpc);
             let provider = utils::get_provider(&config)?;
-            let cast = Cast::new(&provider);
+            let cast = CastInstance::new(&provider);
             let pending_tx = cast.publish(raw_tx).await?;
             let tx_hash = pending_tx.inner().tx_hash();
 
@@ -423,7 +426,7 @@ async fn main_args(args: CastArgs) -> Result<()> {
             let provider = utils::get_provider(&config)?;
             println!(
                 "{}",
-                Cast::new(provider)
+                CastInstance::new(provider)
                     .receipt(tx_hash, field, confirmations, None, cast_async, json)
                     .await?
             );
@@ -437,7 +440,10 @@ async fn main_args(args: CastArgs) -> Result<()> {
             // Can use either --raw or specify raw as a field
             let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
 
-            println!("{}", Cast::new(&provider).transaction(tx_hash, field, raw, json).await?)
+            println!(
+                "{}",
+                CastInstance::new(&provider).transaction(tx_hash, field, raw, json).await?
+            )
         }
 
         // 4Byte
@@ -584,11 +590,11 @@ async fn main_args(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Wallet { command } => command.run().await?,
         CastSubcommand::Completions { shell } => {
-            generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
+            generate(shell, &mut Cast::command(), "cast", &mut std::io::stdout())
         }
         CastSubcommand::GenerateFigSpec => clap_complete::generate(
             clap_complete_fig::Fig,
-            &mut CastArgs::command(),
+            &mut Cast::command(),
             "cast",
             &mut std::io::stdout(),
         ),

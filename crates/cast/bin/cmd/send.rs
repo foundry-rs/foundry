@@ -5,7 +5,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::Transport;
-use cast::Cast;
+use cast::CastInstance;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -191,7 +191,7 @@ async fn cast_send<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
     timeout: u64,
     to_json: bool,
 ) -> Result<()> {
-    let cast = Cast::new(provider);
+    let cast = CastInstance::new(provider);
     let pending_tx = cast.send(tx).await?;
 
     let tx_hash = pending_tx.inner().tx_hash();

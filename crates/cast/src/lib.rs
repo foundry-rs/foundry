@@ -65,12 +65,12 @@ sol! {
     }
 }
 
-pub struct Cast<P, T> {
+pub struct CastInstance<P, T> {
     provider: P,
     transport: PhantomData<T>,
 }
 
-impl<T, P> Cast<P, T>
+impl<T, P> CastInstance<P, T>
 where
     T: Transport + Clone,
     P: Provider<T, AnyNetwork>,

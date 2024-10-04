@@ -1,4 +1,4 @@
-use cast::Cast;
+use cast::CastInstance;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::RpcOpts, utils};
@@ -53,7 +53,7 @@ impl RpcArgs {
         } else {
             serde_json::Value::Array(params.into_iter().map(value_or_string).collect())
         };
-        println!("{}", Cast::new(provider).rpc(&method, params).await?);
+        println!("{}", CastInstance::new(provider).rpc(&method, params).await?);
         Ok(())
     }
 }
