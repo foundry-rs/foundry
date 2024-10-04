@@ -1,8 +1,8 @@
 use crate::cmd::{
     access_list::AccessListArgs, bind::BindArgs, call::CallArgs, create2::Create2Args,
-    estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
-    mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
-    wallet::WalletSubcommands,
+    creation_code::CreationCodeArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
+    interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs,
+    send::SendTxArgs, storage::StorageArgs, wallet::WalletSubcommands,
 };
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
@@ -897,6 +897,10 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: WalletSubcommands,
     },
+
+    /// Download a contract creation code from Etherscan and RPC.
+    #[command(visible_alias = "cc")]
+    CreationCode(CreationCodeArgs),
 
     /// Generate a Solidity interface from a given ABI.
     ///
