@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{ext::TraceApi, Provider};
 use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
@@ -41,7 +39,7 @@ impl CreationCodeArgs {
         let config = Config::from(&rpc);
         let provider = utils::get_provider(&config)?;
 
-        let bytecode = fetch_creation_code(contract, client, &Arc::new(provider)).await?;
+        let bytecode = fetch_creation_code(contract, client, provider).await?;
 
         if disassemble {
             print!("{}", format_operations(disassemble_bytes(bytecode.into())?)?);
@@ -54,10 +52,12 @@ impl CreationCodeArgs {
 }
 
 /// Fetches the creation code of a contract from Etherscan and RPC.
+///
+/// If present, constructor arguments are appended to the end of the bytecode.
 async fn fetch_creation_code(
     contract: Address,
     client: Client,
-    provider: &Arc<RetryProvider>,
+    provider: RetryProvider,
 ) -> Result<Bytes> {
     let creation_data = client.contract_creation_data(contract).await?;
     let creation_tx_hash = creation_data.transaction_hash;
@@ -72,7 +72,9 @@ async fn fetch_creation_code(
         // Extract creation code from tx traces
         let mut creation_bytecode = None;
 
-        let traces = provider.trace_transaction(creation_tx_hash).await?;
+        let traces = provider.trace_transaction(creation_tx_hash).await.map_err(|e| {
+            eyre::eyre!("Could not fetch traces for transaction {}: {}", creation_tx_hash, e)
+        })?;
 
         for trace in traces {
             if let Some(TraceOutput::Create(CreateOutput { address, code: _, gas_used: _ })) =
