@@ -58,9 +58,7 @@ async fn fetch_creation_code(
     contract: Address,
     client: Client,
     provider: &Arc<RetryProvider>,
-) -> Result<Bytes>
-where
-{
+) -> Result<Bytes> {
     let creation_data = client.contract_creation_data(contract).await?;
     let creation_tx_hash = creation_data.transaction_hash;
     let tx_data = provider.get_transaction_by_hash(creation_tx_hash).await?;
