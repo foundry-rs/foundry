@@ -163,22 +163,22 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return matches!(
             chain,
-            NamedChain::Acala
-                | NamedChain::AcalaMandalaTestnet
-                | NamedChain::AcalaTestnet
-                | NamedChain::Arbitrum
-                | NamedChain::ArbitrumGoerli
-                | NamedChain::ArbitrumSepolia
-                | NamedChain::ArbitrumTestnet
-                | NamedChain::Karura
-                | NamedChain::KaruraTestnet
-                | NamedChain::Mantle
-                | NamedChain::MantleSepolia
-                | NamedChain::MantleTestnet
-                | NamedChain::Moonbase
-                | NamedChain::Moonbeam
-                | NamedChain::MoonbeamDev
-                | NamedChain::Moonriver
+            NamedChain::Acala |
+                NamedChain::AcalaMandalaTestnet |
+                NamedChain::AcalaTestnet |
+                NamedChain::Arbitrum |
+                NamedChain::ArbitrumGoerli |
+                NamedChain::ArbitrumSepolia |
+                NamedChain::ArbitrumTestnet |
+                NamedChain::Karura |
+                NamedChain::KaruraTestnet |
+                NamedChain::Mantle |
+                NamedChain::MantleSepolia |
+                NamedChain::MantleTestnet |
+                NamedChain::Moonbase |
+                NamedChain::Moonbeam |
+                NamedChain::MoonbeamDev |
+                NamedChain::Moonriver
         );
     }
     false
@@ -189,10 +189,10 @@ pub fn has_batch_support(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return !matches!(
             chain,
-            NamedChain::Arbitrum
-                | NamedChain::ArbitrumTestnet
-                | NamedChain::ArbitrumGoerli
-                | NamedChain::ArbitrumSepolia
+            NamedChain::Arbitrum |
+                NamedChain::ArbitrumTestnet |
+                NamedChain::ArbitrumGoerli |
+                NamedChain::ArbitrumSepolia
         );
     }
     true
@@ -426,10 +426,7 @@ pub async fn print_traces(
 ) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
-    if !json {
-        println!("Traces:");
-    }
-
+    println!("Traces:");
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await?;
         println!("{}", render_trace_arena_inner(arena, verbose, json));

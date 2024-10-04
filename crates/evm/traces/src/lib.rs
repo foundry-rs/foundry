@@ -183,7 +183,8 @@ pub fn render_trace_arena(arena: &SparsedTraceArena) -> String {
     render_trace_arena_inner(arena, false, false)
 }
 
-/// Render a collection of call traces to a string optionally including contract creation bytecodes and in JSON format.
+/// Render a collection of call traces to a string optionally including contract creation bytecodes
+/// and in JSON format.
 pub fn render_trace_arena_inner(
     arena: &SparsedTraceArena,
     with_bytecodes: bool,
