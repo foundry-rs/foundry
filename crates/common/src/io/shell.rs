@@ -458,21 +458,6 @@ impl ShellOut {
         Ok(())
     }
 
-    /// Prints out a message with a status to stdout. The status comes first, and is bold plus the
-    /// given color. The status can be justified, in which case the max width that will right
-    /// align is 12 chars.
-    fn message_stdout(
-        &mut self,
-        status: &dyn fmt::Display,
-        message: Option<&dyn fmt::Display>,
-        style: &Style,
-        justified: bool,
-    ) -> Result<()> {
-        let buffer = Self::format_message(status, message, style, justified)?;
-        self.stdout().write_all(&buffer)?;
-        Ok(())
-    }
-
     /// Write a styled fragment
     fn write_stdout(&mut self, fragment: impl fmt::Display, style: &Style) -> Result<()> {
         let style = style.render();

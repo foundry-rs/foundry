@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate tracing;
-
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
@@ -12,6 +9,12 @@ use cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch};
 
 mod opts;
 use opts::{Forge, ForgeSubcommand};
+
+#[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
+extern crate tracing;
 
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
@@ -35,14 +38,7 @@ fn main() -> Result<()> {
                 outcome.ensure_ok()
             }
         }
-        ForgeSubcommand::Script(cmd) => {
-            // install the shell before executing the command
-            foundry_common::shell::set_shell(foundry_common::shell::Shell::from_args(
-                cmd.opts.silent,
-                cmd.json,
-            ))?;
-            utils::block_on(cmd.run_script())
-        }
+        ForgeSubcommand::Script(cmd) => utils::block_on(cmd.run_script()),
         ForgeSubcommand::Coverage(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Bind(cmd) => cmd.run(),
         ForgeSubcommand::Build(cmd) => {

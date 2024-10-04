@@ -18,7 +18,7 @@ use dialoguer::Confirm;
 use eyre::{Context, Result};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{get_contract_name, sh_println, sh_warn, shell, ContractData};
+use foundry_common::{get_contract_name, shell, ContractData};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
@@ -26,7 +26,6 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     sync::Arc,
 };
-use yansi::Paint;
 
 /// Same as [ExecutedState](crate::execute::ExecutedState), but also contains [ExecutionArtifacts]
 /// which are obtained from [ScriptResult].

@@ -8,7 +8,7 @@ use cast::{Cast, SimpleCast};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
-use foundry_cli::{handler, prompt, stdin, utils};
+use foundry_cli::{handler, utils};
 use foundry_common::{
     abi::get_event,
     ens::{namehash, ProviderEnsExt},
@@ -19,6 +19,7 @@ use foundry_common::{
         import_selectors, parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
         SelectorType,
     },
+    stdin,
 };
 use foundry_config::Config;
 use std::time::Instant;
@@ -28,6 +29,9 @@ pub mod cmd;
 pub mod tx;
 
 use args::{Cast as CastArgs, CastSubcommand, ToBaseArgs};
+
+#[macro_use]
+extern crate foundry_common;
 
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]

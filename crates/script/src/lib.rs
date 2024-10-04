@@ -6,6 +6,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
 extern crate tracing;
 
 use self::transaction::AdditionalContract;
@@ -27,7 +30,7 @@ use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
     abi::{encode_function_args, get_func},
     evm::{Breakpoints, EvmArgs},
-    sh_println, sh_warn, shell, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
+    ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN,
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
@@ -51,7 +54,6 @@ use foundry_evm::{
 };
 use foundry_wallets::MultiWalletOpts;
 use serde::{Deserialize, Serialize};
-use yansi::Paint;
 
 mod broadcast;
 mod build;

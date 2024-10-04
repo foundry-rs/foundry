@@ -19,7 +19,7 @@ use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
     provider::get_http_provider,
-    sh_err, sh_print, sh_println, sh_warn, shell, ContractsByArtifact,
+    ContractsByArtifact,
 };
 use foundry_config::{Config, NamedChain};
 use foundry_debugger::Debugger;

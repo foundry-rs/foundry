@@ -1,7 +1,7 @@
 use super::install::DependencyInstallOpts;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{p_println, utils::Git};
+use foundry_cli::utils::Git;
 use foundry_common::fs;
 use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::Config;
@@ -62,7 +62,7 @@ impl InitArgs {
             } else {
                 "https://github.com/".to_string() + &template
             };
-            p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
+            sh_eprintln!("Initializing {} from {}...", root.display(), template);
             // initialize the git repository
             git.init()?;
 
@@ -95,8 +95,7 @@ impl InitArgs {
                         Run with the `--force` flag to initialize regardless."
                     );
                 }
-
-                p_println!(!quiet => "Target directory is not empty, but `--force` was specified");
+                sh_eprintln!("Target directory is not empty, but `--force` was specified");
             }
 
             // ensure git status is clean before generating anything
@@ -104,7 +103,7 @@ impl InitArgs {
                 git.ensure_clean()?;
             }
 
-            p_println!(!quiet => "Initializing {}...", root.display());
+            sh_eprintln!("Initializing {}...", root.display());
 
             // make the dirs
             let src = root.join("src");
@@ -145,7 +144,7 @@ impl InitArgs {
             // install forge-std
             if !offline {
                 if root.join("lib/forge-std").exists() {
-                    p_println!(!quiet => "\"lib/forge-std\" already exists, skipping install....");
+                    sh_eprintln!("\"lib/forge-std\" already exists, skipping install...");
                     self.opts.install(&mut config, vec![])?;
                 } else {
                     let dep = "https://github.com/foundry-rs/forge-std".parse()?;
@@ -159,7 +158,7 @@ impl InitArgs {
             }
         }
 
-        p_println!(!quiet => "    {} forge project",  "Initialized".green());
+        sh_eprintln!("{}", "    Initialized forge project".green());
         Ok(())
     }
 }

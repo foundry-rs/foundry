@@ -20,7 +20,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{cli_warn, compile::ProjectCompiler, evm::EvmArgs, fs, sh_println, shell};
+use foundry_common::{cli_warn, compile::ProjectCompiler, evm::EvmArgs, fs};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -181,7 +181,6 @@ impl TestArgs {
 
     pub async fn run(self) -> Result<TestOutcome> {
         trace!(target: "forge::test", "executing test command");
-        shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json || self.junit))?;
         self.execute_tests().await
     }
 

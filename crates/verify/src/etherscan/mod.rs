@@ -17,7 +17,6 @@ use foundry_cli::utils::{get_provider, read_constructor_args_file, LoadConfig};
 use foundry_common::{
     abi::encode_function_args,
     retry::{Retry, RetryError},
-    sh_println, shell,
 };
 use foundry_compilers::{artifacts::BytecodeObject, Artifact};
 use foundry_config::{Chain, Config};

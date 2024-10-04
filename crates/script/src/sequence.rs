@@ -8,7 +8,7 @@ use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::{eyre, ContextCompat, Result, WrapErr};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::{now, Git};
-use foundry_common::{fs, sh_println, shell, TransactionMaybeSigned, SELECTOR_LEN};
+use foundry_common::{fs, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};

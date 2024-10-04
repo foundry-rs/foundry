@@ -21,7 +21,7 @@ use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     provider::{get_http_provider, try_get_http_provider, RetryProvider},
-    sh_println, shell, TransactionMaybeSigned,
+    TransactionMaybeSigned,
 };
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};

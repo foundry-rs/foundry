@@ -161,23 +161,6 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
     rt.block_on(future)
 }
 
-/// Conditionally print a message
-///
-/// This macro accepts a predicate and the message to print if the predicate is true
-///
-/// ```ignore
-/// let quiet = true;
-/// p_println!(!quiet => "message");
-/// ```
-#[macro_export]
-macro_rules! p_println {
-    ($p:expr => $($arg:tt)*) => {{
-        if $p {
-            println!($($arg)*)
-        }
-    }}
-}
-
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
 ///
 /// We could use `warn!` here, but that would imply that the dotenv file can't configure

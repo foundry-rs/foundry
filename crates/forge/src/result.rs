@@ -9,7 +9,7 @@ use alloy_primitives::{
     Address, Log,
 };
 use eyre::Report;
-use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, sh_println, shell};
+use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
 use foundry_evm::{
     coverage::HitMaps,
     decode::SkipReason,

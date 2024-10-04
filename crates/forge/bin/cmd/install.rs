@@ -2,7 +2,6 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    p_println, prompt,
     utils::{CommandUtils, Git, LoadConfig},
 };
 use foundry_common::fs;
@@ -98,10 +97,10 @@ impl DependencyInstallOpts {
         let lib = config.install_lib_dir();
         if self.git(config).has_missing_dependencies(Some(lib)).unwrap_or(false) {
             // The extra newline is needed, otherwise the compiler output will overwrite the message
-            p_println!(!quiet => "Missing dependencies found. Installing now...\n");
+            sh_eprintln!("Missing dependencies found. Installing now...\n");
             self.no_commit = true;
             if self.install(config, Vec::new()).is_err() && !quiet {
-                eprintln!(
+                sh_eprintln!(
                     "{}",
                     "Your project has missing dependencies that could not be installed.".yellow()
                 )
@@ -126,7 +125,8 @@ impl DependencyInstallOpts {
             let root = Git::root_of(git.root)?;
             match git.has_submodules(Some(&root)) {
                 Ok(true) => {
-                    p_println!(!quiet => "Updating dependencies in {}", libs.display());
+                    sh_eprintln!("Updating dependencies in {}", libs.display());
+
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
                 }
@@ -148,7 +148,13 @@ impl DependencyInstallOpts {
             let rel_path = path
                 .strip_prefix(git.root)
                 .wrap_err("Library directory is not relative to the repository root")?;
-            p_println!(!quiet => "Installing {} in {} (url: {:?}, tag: {:?})", dep.name, path.display(), dep.url, dep.tag);
+            sh_println!(
+                "Installing {} in {} (url: {:?}, tag: {:?})",
+                dep.name,
+                path.display(),
+                dep.url,
+                dep.tag
+            );
 
             // this tracks the actual installed tag
             let installed_tag;

@@ -7,7 +7,7 @@ use foundry_block_explorers::{
     errors::EtherscanError,
     Client,
 };
-use foundry_cli::{opts::EtherscanOpts, p_println, utils::Git};
+use foundry_cli::{opts::EtherscanOpts, utils::Git};
 use foundry_common::{compile::ProjectCompiler, fs};
 use foundry_compilers::{
     artifacts::{
@@ -102,7 +102,8 @@ impl CloneArgs {
         let client = Client::new(chain, etherscan_api_key.clone())?;
 
         // step 1. get the metadata from client
-        p_println!(!opts.quiet => "Downloading the source code of {} from Etherscan...", address);
+        sh_eprintln!("Downloading the source code of {address} from Etherscan...");
+
         let meta = Self::collect_metadata_from_client(address, &client).await?;
 
         // step 2. initialize an empty project
@@ -117,9 +118,10 @@ impl CloneArgs {
 
         // step 4. collect the compilation metadata
         // if the etherscan api key is not set, we need to wait for 3 seconds between calls
-        p_println!(!opts.quiet => "Collecting the creation information of {} from Etherscan...", address);
+        sh_eprintln!("Collecting the creation information of {address} from Etherscan...");
+
         if etherscan_api_key.is_empty() {
-            p_println!(!opts.quiet => "Waiting for 5 seconds to avoid rate limit...");
+            sh_eprintln!("Waiting for 5 seconds to avoid rate limit...");
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
         Self::collect_compilation_metadata(&meta, chain, address, &root, &client, opts.quiet)
