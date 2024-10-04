@@ -835,8 +835,8 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
         inputs: &CallInputs,
         outcome: CallOutcome,
     ) -> CallOutcome {
-        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
-        // Avoid processing twice.
+        // We are processing inner context outputs in the outer context, so need to avoid processing
+        // twice.
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
             return outcome;
         }
@@ -895,8 +895,8 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
         call: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
-        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
-        // Avoid processing twice.
+        // We are processing inner context outputs in the outer context, so need to avoid processing
+        // twice.
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
             return outcome;
         }
@@ -960,8 +960,8 @@ impl<'a> Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'a> {
         call: &EOFCreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
-        // Inner context calls with depth 0 are being dispatched as top-level calls with depth 1.
-        // Avoid processing twice.
+        // We are processing inner context outputs in the outer context, so need to avoid processing
+        // twice.
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
             return outcome;
         }
