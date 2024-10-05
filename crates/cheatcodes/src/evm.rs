@@ -683,13 +683,12 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 
 impl Cheatcode for broadcastRawTransactionCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
-        let mut data = self.data.as_ref();
-        let tx = TxEnvelope::decode(&mut data)
+        let tx = TxEnvelope::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
         ccx.ecx.db.transact_from_tx(
-            tx.clone().into(),
-            &ccx.ecx.env,
+            &tx.clone().into(),
+            (*ccx.ecx.env).clone(),
             &mut ccx.ecx.journaled_state,
             &mut *executor.get_inspector(ccx.state),
         )?;
