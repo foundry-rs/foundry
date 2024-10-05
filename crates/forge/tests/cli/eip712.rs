@@ -32,7 +32,7 @@ library Structs2 {
         .unwrap();
 
     cmd.forge_fuse()
-        .args(["eip712", path.to_string_lossy().to_string()])
+        .args(["eip712", path.to_string_lossy().as_ref()])
         .assert_success()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
