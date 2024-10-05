@@ -168,7 +168,8 @@ impl Resolver {
             if subtype_id == id {
                 continue
             }
-            let Some(encoded_subtype) = self.resolve_eip712_inner(subtype_id, subtypes, false, Some(&subtype_name))?
+            let Some(encoded_subtype) =
+                self.resolve_eip712_inner(subtype_id, subtypes, false, Some(&subtype_name))?
             else {
                 return Ok(None)
             };
