@@ -31,10 +31,8 @@ library Structs2 {
         )
         .unwrap();
 
-    cmd.forge_fuse()
-        .args(["eip712", path.to_string_lossy().as_ref()])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
+        str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 No files changed, compilation skipped
@@ -49,5 +47,6 @@ Complex(Foo foo2,Foo_1[] foos)Art(uint256 id)Bar(Art art)Foo(uint256 id)Foo_1(Ba
 Foo(uint256 id)
 
 
-"#]]);
+"#]],
+    );
 });
