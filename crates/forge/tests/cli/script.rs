@@ -2060,10 +2060,9 @@ forgetest_async!(can_simulate_with_default_sender, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
-    prj
-        .add_script(
-            "Script.s.sol",
-            r#"
+    prj.add_script(
+        "Script.s.sol",
+        r#"
 import "forge-std/Script.sol";
 contract A {
     function getValue() external pure returns (uint256) {
@@ -2083,8 +2082,8 @@ contract SimpleScript is Script {
     }
 }
             "#,
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint(), "-vvvv"]);
     cmd.assert_success().stdout_eq(str![[r#"
