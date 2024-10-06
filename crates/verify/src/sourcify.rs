@@ -8,7 +8,6 @@ use eyre::Result;
 use foundry_common::{fs, retry::Retry};
 use futures::FutureExt;
 use reqwest::Url;
-use revm_primitives::map::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -114,8 +113,7 @@ impl SourcifyVerificationProvider {
         let metadata = context.get_target_metadata()?;
         let imports = context.get_target_imports()?;
 
-        let mut files =
-            HashMap::with_capacity_and_hasher(2 + imports.len(), FxBuildHasher::default());
+        let mut files = HashMap::with_capacity_and_hasher(2 + imports.len(), Default::default());
 
         let metadata = serde_json::to_string_pretty(&metadata)?;
         files.insert("metadata.json".to_string(), metadata);
