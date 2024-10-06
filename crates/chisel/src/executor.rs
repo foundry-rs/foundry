@@ -1371,7 +1371,7 @@ impl<'a> InstructionIter<'a> {
     }
 }
 
-impl<'a> Iterator for InstructionIter<'a> {
+impl Iterator for InstructionIter<'_> {
     type Item = Instruction;
     fn next(&mut self) -> Option<Self::Item> {
         let pc = self.offset;

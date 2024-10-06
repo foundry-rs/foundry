@@ -37,27 +37,27 @@ macro_rules! format_values {
     };
 }
 
-impl<'a, T: Display> ComparisonAssertionError<'a, T> {
+impl<T: Display> ComparisonAssertionError<'_, T> {
     fn format_for_values(&self) -> String {
         format_values!(self, T::to_string)
     }
 }
 
-impl<'a, T: Display> ComparisonAssertionError<'a, Vec<T>> {
+impl<T: Display> ComparisonAssertionError<'_, Vec<T>> {
     fn format_for_arrays(&self) -> String {
         let formatter = |v: &Vec<T>| format!("[{}]", v.iter().format(", "));
         format_values!(self, formatter)
     }
 }
 
-impl<'a> ComparisonAssertionError<'a, U256> {
+impl ComparisonAssertionError<'_, U256> {
     fn format_with_decimals(&self, decimals: &U256) -> String {
         let formatter = |v: &U256| format_units_uint(v, decimals);
         format_values!(self, formatter)
     }
 }
 
-impl<'a> ComparisonAssertionError<'a, I256> {
+impl ComparisonAssertionError<'_, I256> {
     fn format_with_decimals(&self, decimals: &U256) -> String {
         let formatter = |v: &I256| format_units_int(v, decimals);
         format_values!(self, formatter)
