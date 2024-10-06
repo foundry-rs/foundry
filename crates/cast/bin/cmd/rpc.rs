@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use cast::Cast;
 use clap::Parser;
 use eyre::Result;
@@ -29,16 +31,29 @@ pub struct RpcArgs {
     #[arg(long, short = 'w')]
     raw: bool,
 
+    /// Timeout for the rpc request
+    ///
+    /// The timeout will be used to override the default timeout for RPC.
+    /// Default value is 45s
+    #[arg(long, env = "ETH_RPC_TIMEOUT")]
+    pub timeout: Option<u64>,
+
     #[command(flatten)]
     rpc: RpcOpts,
 }
 
 impl RpcArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { raw, method, params, rpc } = self;
+        let Self { raw, method, params, rpc, timeout } = self;
 
         let config = Config::from(&rpc);
-        let provider = utils::get_provider(&config)?;
+        let mut builder = utils::get_provider_builder(&config)?;
+
+        if let Some(timeout) = timeout {
+            builder = builder.timeout(Duration::from_secs(timeout));
+        }
+
+        let provider = builder.build()?;
 
         let params = if raw {
             if params.is_empty() {
