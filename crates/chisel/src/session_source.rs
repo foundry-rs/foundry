@@ -106,16 +106,6 @@ impl SessionSourceConfig {
 
         match solc_req {
             SolcReq::Version(version) => {
-                // Validate that the requested evm version is supported by the solc version
-                let req_evm_version = self.foundry_config.evm_version;
-                if let Some(compat_evm_version) = req_evm_version.normalize_version_solc(&version) {
-                    if req_evm_version > compat_evm_version {
-                        eyre::bail!(
-                            "The set evm version, {req_evm_version}, is not supported by solc {version}. Upgrade to a newer solc version."
-                        );
-                    }
-                }
-
                 let solc = if let Some(solc) = Solc::find_svm_installed_version(&version)? {
                     solc
                 } else {
@@ -322,7 +312,11 @@ impl SessionSource {
 
         let settings = Settings {
             remappings,
-            evm_version: Some(self.config.foundry_config.evm_version),
+            evm_version: self
+                .config
+                .foundry_config
+                .evm_version
+                .normalize_version_solc(&self.solc.version),
             ..Default::default()
         };
 
