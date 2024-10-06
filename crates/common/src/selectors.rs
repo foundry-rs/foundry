@@ -579,9 +579,8 @@ pub fn parse_signatures(tokens: Vec<String>) -> ParsedSignatures {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
-    #![allow(clippy::needless_return)]
-
     use super::*;
 
     #[tokio::test(flavor = "multi_thread")]

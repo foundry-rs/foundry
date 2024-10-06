@@ -49,7 +49,6 @@ use revm::{
     primitives::{BlockEnv, CreateScheme, EVMError, EvmStorageSlot, SpecId, EOF_MAGIC_BYTES},
     EvmContext, InnerEvmContext, Inspector,
 };
-use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -413,7 +412,7 @@ pub struct Cheatcodes {
     pub expected_emits: VecDeque<ExpectedEmit>,
 
     /// Map of context depths to memory offset ranges that may be written to within the call depth.
-    pub allowed_mem_writes: FxHashMap<u64, Vec<Range<u64>>>,
+    pub allowed_mem_writes: HashMap<u64, Vec<Range<u64>>>,
 
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
