@@ -2101,18 +2101,21 @@ Traces:
     │   │   └─ ← [Return] 100
     │   └─ ← [Return] 63 bytes of code
     └─ ← [Stop] 
+
+
 Script ran successfully.
+
 ## Setting up 1 EVM.
 ==========================
 Simulated On-chain Traces:
+
   [23875] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
     └─ ← [Return] 119 bytes of code
+
   [15867] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
     ├─ [146] A::getValue() [staticcall]
     │   └─ ← [Return] 100
     └─ ← [Return] 63 bytes of code
-...
-SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
 ...
 "#]]);
 });
