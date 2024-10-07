@@ -254,6 +254,7 @@ impl NodeArgs {
             .fork_compute_units_per_second(compute_units_per_second)
             .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
             .with_base_fee(self.evm_opts.block_base_fee_per_gas)
+            .disable_min_priority_fee(self.evm_opts.disable_min_priority_fee)
             .with_storage_caching(self.evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)
@@ -546,6 +547,15 @@ pub struct AnvilEvmArgs {
         help_heading = "Environment config"
     )]
     pub block_base_fee_per_gas: Option<u64>,
+
+    /// Disable the enforcement of a minimum suggested priority fee.
+    #[arg(
+        long,
+        value_name = "DISABLE_MIN_PRIORITY_FEE",
+        visible_alias = "no-priority-fee",
+        help_heading = "Environment config"
+    )]
+    pub disable_min_priority_fee: bool,
 
     /// The chain ID.
     #[arg(long, alias = "chain", help_heading = "Environment config")]
