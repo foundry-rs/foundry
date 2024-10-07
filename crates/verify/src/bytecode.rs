@@ -90,9 +90,10 @@ pub struct VerifyBytecodeArgs {
     #[clap(long, value_name = "BYTECODE_TYPE")]
     pub ignore: Option<BytecodeType>,
 
-    /// Ignore immutable references while verifiying runtime bytecode
+    /// Ignore immutable references while verifying runtime bytecode for predeployed contracts.
+    /// Use this to avoid passing `--constructor-args`.
     #[clap(long, default_value = "false")]
-    pub ignore_immutables: bool,
+    pub ignore_predeploy_immutables: bool,
 }
 
 impl figment::Provider for VerifyBytecodeArgs {
@@ -143,13 +144,13 @@ impl VerifyBytecodeArgs {
         )?;
 
         // ignore flag setup
-        let ignore_immutables = self.ignore_immutables;
+        let ignore_predeploy_immutables = self.ignore_predeploy_immutables;
         let mut ignore = self.ignore;
-        if ignore_immutables && self.ignore.is_none() {
+        if ignore_predeploy_immutables && self.ignore.is_none() {
             ignore = Some(BytecodeType::Creation);
         }
 
-        trace!(?ignore_immutables);
+        trace!(?ignore_predeploy_immutables);
         // Get the bytecode at the address, bailing if it doesn't exist.
         let code = provider.get_code_at(self.address).await?;
         if code.is_empty() {
@@ -162,14 +163,6 @@ impl VerifyBytecodeArgs {
                 self.contract.name.clone().green(),
                 self.address.green()
             );
-            if ignore_immutables {
-                println!(
-                    "{}",
-                    "Ignoring immutable references while verifying runtime bytecode."
-                        .yellow()
-                        .bold()
-                );
-            }
         }
 
         let mut json_results: Vec<JsonResult> = vec![];
@@ -242,7 +235,10 @@ impl VerifyBytecodeArgs {
                     format!("Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.", self.address)
                         .yellow()
                         .bold()
-                )
+                );
+                if ignore_predeploy_immutables {
+                    println!("{}", "Ignoring immutable references for predeploys.".yellow().bold());
+                }
             }
 
             // Append constructor args to the local_bytecode.
@@ -304,7 +300,7 @@ impl VerifyBytecodeArgs {
                 )
                 .await?;
 
-            if ignore_immutables {
+            if ignore_predeploy_immutables {
                 // Locate immutable refs using the offsets in the artifact
                 let immutable_refs = crate::utils::get_immutable_refs(&artifact);
 
@@ -512,35 +508,14 @@ impl VerifyBytecodeArgs {
             )?;
 
             // State commited using deploy_with_env, now get the runtime bytecode from the db.
-            let (mut fork_runtime_code, mut onchain_runtime_code) =
-                crate::utils::get_runtime_codes(
-                    &mut executor,
-                    &provider,
-                    self.address,
-                    fork_address,
-                    Some(simulation_block),
-                )
-                .await?;
-
-            if ignore_immutables {
-                // Locate immutable refs using the offsets in the artifact
-                let immutable_refs = crate::utils::get_immutable_refs(&artifact);
-
-                trace!(immutable_refs_found = immutable_refs.is_some());
-
-                if let Some(refs) = immutable_refs {
-                    // TODO: Extract those sections from both `deployed_bytecode` and
-                    // `onchain_runtime_code`.
-
-                    trace!("extracting immutable_refs - fork runtime code");
-                    fork_runtime_code =
-                        crate::utils::extract_immutables_refs(refs.clone(), fork_runtime_code);
-
-                    trace!("extracting immutable_refs - onchain runtime code");
-                    onchain_runtime_code =
-                        crate::utils::extract_immutables_refs(refs, onchain_runtime_code);
-                }
-            }
+            let (fork_runtime_code, onchain_runtime_code) = crate::utils::get_runtime_codes(
+                &mut executor,
+                &provider,
+                self.address,
+                fork_address,
+                Some(simulation_block),
+            )
+            .await?;
 
             // Compare the onchain runtime bytecode with the runtime code from the fork.
             let match_type = crate::utils::match_bytecodes(
