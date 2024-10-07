@@ -279,6 +279,10 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         journaled_state: &mut JournaledState,
     ) -> Result<(), BackendError>;
 
+    /// Copies bytecode, storage, nonce and balance from the given genesis account to the target
+    /// address.
+    ///
+    /// Returns [Ok] if data was successfully inserted into the journal, [Err] otherwise.
     fn copy_account(
         &mut self,
         source: &GenesisAccount,
@@ -1380,7 +1384,8 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
-    /// Copies bytecode, storage, nonce and balance from the given genesis account to the target address.
+    /// Copies bytecode, storage, nonce and balance from the given genesis account to the target
+    /// address.
     ///
     /// Returns [Ok] if data was successfully inserted into the journal, [Err] otherwise.
     fn copy_account(
