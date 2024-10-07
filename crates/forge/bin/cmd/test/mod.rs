@@ -499,6 +499,7 @@ impl TestArgs {
             runner.decode_internal = InternalTraceMode::Full;
         }
 
+        // Run tests in a non-streaming fashion and collect results for serialization.
         if self.json {
             let results = runner.test_collect(filter);
             println!("{}", serde_json::to_string(&results)?);
@@ -516,7 +517,7 @@ impl TestArgs {
 
         let libraries = runner.libraries.clone();
 
-        // Run tests.
+        // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
         let show_progress = config.show_progress;
