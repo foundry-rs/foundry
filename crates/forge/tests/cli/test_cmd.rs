@@ -320,7 +320,7 @@ forgetest_init!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
     // Assert that without verbose output the json output does not include the traces
     cmd.args(["test", "--json"])
         .assert_success()
-        .stdout_eq(file!["../fixtures/SimpleContractTestNonVerbose.json"]);
+        .stdout_eq(file!["../fixtures/SimpleContractTestNonVerbose.json"; Json]);
 });
 
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
