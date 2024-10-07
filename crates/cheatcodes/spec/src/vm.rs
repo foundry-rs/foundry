@@ -757,11 +757,11 @@ interface Vm {
 
     /// Writes a breakpoint to jump to in the debugger.
     #[cheatcode(group = Testing, safety = Safe)]
-    function breakpoint(string calldata char) external;
+    function breakpoint(string calldata char) external pure;
 
     /// Writes a conditional breakpoint to jump to in the debugger.
     #[cheatcode(group = Testing, safety = Safe)]
-    function breakpoint(string calldata char, bool value) external;
+    function breakpoint(string calldata char, bool value) external pure;
 
     /// Returns the Foundry version.
     /// Format: <cargo_version>+<git_sha>+<build_timestamp>
