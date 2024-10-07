@@ -219,8 +219,9 @@ alloy-chains = "0.1"
 alloy-rlp = "0.3"
 alloy-trie = "0.6.0"
 
-## op-alloy for tests in anvil
-op-alloy-rpc-types = "0.2.9"
+## op-alloy 
+op-alloy-rpc-types = "0.3.3"
+op-alloy-consensus = "0.3.3"
 
 ## misc
 async-trait = "0.1"
