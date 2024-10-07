@@ -32,7 +32,7 @@ impl<'a> LocalTraceIdentifier<'a> {
         self.known_contracts
     }
 
-    /// Tries to the bytecode most similar to the given one.
+    /// Identifies the artifact based on score computed for both creation and deployed bytecodes.
     pub fn identify_code(
         &self,
         runtime_code: &[u8],
@@ -45,8 +45,15 @@ impl<'a> LocalTraceIdentifier<'a> {
 
         let mut check = |id| {
             let contract = self.known_contracts.get(id)?;
-            if let Some(bytecode) = contract.bytecode() {
-                let score = bytecode_diff_score(bytecode, creation_code);
+            if let Some(deployed_bytecode) = contract.deployed_bytecode() {
+                let mut score = bytecode_diff_score(deployed_bytecode, runtime_code);
+
+                // Compute and use creation code score.
+                if let Some(bytecode) = contract.bytecode() {
+                    score += bytecode_diff_score(bytecode, creation_code);
+                    score /= 2.0;
+                }
+
                 if score == 0.0 {
                     trace!(target: "evm::traces", "found exact match");
                     return Some((id, &contract.abi));
