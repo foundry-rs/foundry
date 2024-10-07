@@ -121,7 +121,7 @@ fn mock_call(
     rdata: &Bytes,
     ret_type: InstructionResult,
 ) {
-    mock_calls(state, callee, cdata, value, &[rdata.clone()], ret_type)
+    mock_calls(state, callee, cdata, value, std::slice::from_ref(rdata), ret_type)
 }
 
 fn mock_calls(
@@ -136,7 +136,7 @@ fn mock_calls(
         MockCallDataContext { calldata: Bytes::copy_from_slice(cdata), value: value.copied() },
         rdata_vec
             .iter()
-            .map(|rdata| MockCallReturnData { ret_type, data: Bytes::copy_from_slice(rdata) })
+            .map(|rdata| MockCallReturnData { ret_type, data: rdata.clone() })
             .collect::<VecDeque<_>>(),
     );
 }
