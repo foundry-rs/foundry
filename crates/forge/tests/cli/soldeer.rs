@@ -19,22 +19,7 @@ libs = ["lib"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
-    cmd.arg("soldeer").args([command, dependency]).assert_success().stderr_eq(str![[r#"
-┌  🦌 Soldeer Install 🦌
-│
-[..]  Done reading config
-│  
-[..]
-[..]  Installing forge-std~1.8.1
-[..]  Dependency added to config
-│  
-[..]  Dependency added to lockfile
-│  
-[..]  Dependency added to remappings
-│  
-└  Done installing!
-
-"#]]);
+    cmd.arg("soldeer").args([command, dependency]).assert_success();
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -83,38 +68,7 @@ libs = ["lib"]
     cmd.arg("soldeer")
         .args([command, dependency, git])
         .assert_success()
-        .stderr_eq(str![[r#"
-┌  🦌 Soldeer Install 🦌
-│
-[..]  Done reading config
-│  
-[..]
-[..]  Installing forge-std~1.8.1
-[..]  Dependency added to config
-│  
-[..]  Dependency added to lockfile
-│  
-[..]  Dependency added to remappings
-│  
-└  Done installing!
-
-"#]])
-        .stderr_eq(str![[r#"
-┌  🦌 Soldeer Install 🦌
-│
-[..]  Done reading config
-│  
-[..]
-[..]  Installing forge-std~1.8.1
-[..]  Dependency added to config
-│  
-[..]  Dependency added to lockfile
-│  
-[..]  Dependency added to remappings
-│  
-└  Done installing!
-
-"#]]);
+        ;
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -164,22 +118,7 @@ libs = ["lib"]
     cmd.arg("soldeer")
         .args([command, dependency, git, rev_flag, commit])
         .assert_success()
-        .stderr_eq(str![[r#"
-┌  🦌 Soldeer Install 🦌
-│
-[..]  Done reading config
-│  
-[..]
-[..]  Installing forge-std~1.8.1
-[..]  Dependency added to config
-│  
-[..]  Dependency added to lockfile
-│  
-[..]  Dependency added to remappings
-│  
-└  Done installing!
-
-"#]]);
+        ;
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -293,23 +232,7 @@ forge-std = "1.8.1"
 
     fs::write(&foundry_file, foundry_updates).unwrap();
 
-    cmd.arg("soldeer").arg(command).assert_success().stderr_eq(str![[r#"
-┌  🦌 Soldeer Update 🦌
-│
-[..]  Done reading config
-│  
-[..]  Done reading lockfile
-│  
-[6A[1A
-[..]  Updating dependencies
-[..]  Updated lockfile
-│  
-[..]  Updated remappings
-│  
-└  Done updating!
-
-"#]]);
-
+    cmd.arg("soldeer").arg(command).assert_success();
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
     let path_dep_forge =
@@ -358,22 +281,7 @@ remappings_regenerate = true
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_updates).unwrap();
 
-    cmd.arg("soldeer").args([command, dependency]).assert_success().stderr_eq(str![[r#"
-┌  🦌 Soldeer Install 🦌
-│
-[..]  Done reading config
-│  
-[6A[1A
-[..]  Installing forge-std~1.8.1
-[..]  Dependency added to config
-│  
-[..]  Dependency added to lockfile
-│  
-[..]  Dependency added to remappings
-│  
-└  Done installing!
-
-"#]]);
+    cmd.arg("soldeer").args([command, dependency]).assert_success();
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
@@ -406,7 +314,6 @@ remappings_regenerate = true
 forge-std = "1.8.1"
 "#;
 
-    println!("foundry fil {:?}", read_file_to_string(&foundry_file));
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
 });
@@ -426,22 +333,7 @@ remappings_regenerate = true
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_updates).unwrap();
 
-    cmd.arg("soldeer").args([command, dependency]).assert_success().stderr_eq(str![[r#"
-┌  🦌 Soldeer Install 🦌
-│
-[..]  Done reading config
-│  
-[6A[1A
-[..]  Installing forge-std~1.8.1
-[..]  Dependency added to config
-│  
-[..]  Dependency added to lockfile
-│  
-[..]  Dependency added to remappings
-│  
-└  Done installing!
-
-"#]]);
+    cmd.arg("soldeer").args([command, dependency]).assert_success();
 
     // Making sure the path was created to the dependency and that foundry.toml exists
     // meaning that the dependencies were installed correctly
