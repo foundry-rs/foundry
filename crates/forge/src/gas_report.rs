@@ -15,13 +15,12 @@ use std::{
 use yansi::Paint;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ReportKind {
+pub enum GasReportKind {
     Markdown,
     JSON,
-    JUnit,
 }
 
-impl Default for ReportKind {
+impl Default for GasReportKind {
     fn default() -> Self {
         Self::Markdown
     }
@@ -32,8 +31,8 @@ impl Default for ReportKind {
 pub struct GasReport {
     /// Whether to report any contracts.
     report_any: bool,
-    /// Whether to format the report in markdown.
-    report_type: ReportKind,
+    /// What kind of report to generate.
+    report_type: GasReportKind,
     /// Contracts to generate the report for.
     report_for: HashSet<String>,
     /// Contracts to ignore when generating the report.
@@ -47,7 +46,7 @@ impl GasReport {
     pub fn new(
         report_for: impl IntoIterator<Item = String>,
         ignore: impl IntoIterator<Item = String>,
-        report_kind: ReportKind,
+        report_kind: GasReportKind,
     ) -> Self {
         let report_for = report_for.into_iter().collect::<HashSet<_>>();
         let ignore = ignore.into_iter().collect::<HashSet<_>>();
@@ -164,7 +163,7 @@ impl Display for GasReport {
                 continue;
             }
 
-            if self.report_type == ReportKind::JSON {
+            if self.report_type == GasReportKind::JSON {
                 let mut contract_json = serde_json::to_value(contract).unwrap();
                 if let Some(functions) =
                     contract_json.get_mut("functions").and_then(|f| f.as_object_mut())
@@ -189,12 +188,6 @@ impl Display for GasReport {
                     }
                 }
                 writeln!(f, "{}", serde_json::to_string_pretty(&contract_json).unwrap())?;
-
-                continue;
-            }
-
-            if self.report_type == ReportKind::JUnit {
-                writeln!(f, "Not implemented")?;
                 continue;
             }
 
