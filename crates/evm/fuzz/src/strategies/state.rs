@@ -1,7 +1,7 @@
 use crate::invariant::{BasicTxDetails, FuzzRunIdentifiedContracts};
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, Log, B256, U256};
+use alloy_primitives::{map::HashMap, Address, Bytes, Log, B256, U256};
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
 use indexmap::IndexSet;
@@ -11,11 +11,7 @@ use revm::{
     interpreter::opcode,
     primitives::AccountInfo,
 };
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, fmt, sync::Arc};
 
 type AIndexSet<T> = IndexSet<T, std::hash::BuildHasherDefault<ahash::AHasher>>;
 

@@ -3319,7 +3319,6 @@ dependencies = [
  "regex",
  "reqwest",
  "revm-inspectors",
- "rustc-hash",
  "semver 1.0.23",
  "serde",
  "serde_json",
@@ -3599,7 +3598,6 @@ dependencies = [
  "proptest",
  "rand",
  "revm",
- "rustc-hash",
  "semver 1.0.23",
  "serde_json",
  "thiserror",
@@ -3687,7 +3685,6 @@ dependencies = [
  "foundry-macros",
  "num-format",
  "reqwest",
- "rustc-hash",
  "semver 1.0.23",
  "serde",
  "serde_json",
@@ -3920,7 +3917,6 @@ dependencies = [
  "foundry-macros",
  "foundry-test-utils",
  "itertools 0.13.0",
- "rustc-hash",
 ]
 
 [[package]]
@@ -3949,7 +3945,6 @@ dependencies = [
  "parking_lot",
  "revm",
  "revm-inspectors",
- "rustc-hash",
  "serde",
  "serde_json",
  "thiserror",
@@ -3968,7 +3963,6 @@ dependencies = [
  "foundry-evm-core",
  "rayon",
  "revm",
- "rustc-hash",
  "semver 1.0.23",
  "tracing",
 ]
@@ -4019,7 +4013,6 @@ dependencies = [
  "rayon",
  "revm",
  "revm-inspectors",
- "rustc-hash",
  "serde",
  "solang-parser",
  "tempfile",

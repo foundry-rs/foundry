@@ -1,8 +1,8 @@
 use super::{CoverageItem, CoverageItemKind, SourceLocation};
+use alloy_primitives::map::HashMap;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::artifacts::ast::{self, Ast, Node, NodeType};
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
@@ -583,7 +583,7 @@ impl<'a> SourceAnalyzer<'a> {
 #[derive(Debug, Default)]
 pub struct SourceFiles<'a> {
     /// The versioned sources.
-    pub sources: FxHashMap<usize, SourceFile<'a>>,
+    pub sources: HashMap<usize, SourceFile<'a>>,
 }
 
 /// The source code and AST of a file.

@@ -1,12 +1,12 @@
+use alloy_primitives::map::HashMap;
 use revm::interpreter::opcode::{PUSH0, PUSH1, PUSH32};
-use rustc_hash::FxHashMap;
 
 /// Maps from program counter to instruction counter.
 ///
 /// Inverse of [`IcPcMap`].
 #[derive(Debug, Clone)]
 pub struct PcIcMap {
-    pub inner: FxHashMap<usize, usize>,
+    pub inner: HashMap<usize, usize>,
 }
 
 impl PcIcMap {
@@ -35,7 +35,7 @@ impl PcIcMap {
 ///
 /// Inverse of [`PcIcMap`].
 pub struct IcPcMap {
-    pub inner: FxHashMap<usize, usize>,
+    pub inner: HashMap<usize, usize>,
 }
 
 impl IcPcMap {
@@ -60,8 +60,8 @@ impl IcPcMap {
     }
 }
 
-fn make_map<const PC_FIRST: bool>(code: &[u8]) -> FxHashMap<usize, usize> {
-    let mut map = FxHashMap::default();
+fn make_map<const PC_FIRST: bool>(code: &[u8]) -> HashMap<usize, usize> {
+    let mut map = HashMap::default();
 
     let mut pc = 0;
     let mut cumulative_push_size = 0;

@@ -112,9 +112,8 @@ impl SourcifyVerificationProvider {
     ) -> Result<SourcifyVerifyRequest> {
         let metadata = context.get_target_metadata()?;
         let imports = context.get_target_imports()?;
-
-        let mut files =
-            HashMap::with_capacity_and_hasher(2 + imports.len(), DefaultHashBuilder::default());
+      
+        let mut files = HashMap::with_capacity_and_hasher(2 + imports.len(), Default::default());
 
         let metadata = serde_json::to_string_pretty(&metadata)?;
         files.insert("metadata.json".to_string(), metadata);
