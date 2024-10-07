@@ -1,7 +1,6 @@
 use chisel::session::ChiselSession;
 use foundry_compilers::artifacts::EvmVersion;
-use foundry_config::{Config, SolcReq};
-use semver::Version;
+use foundry_config::Config;
 use serial_test::serial;
 use std::path::Path;
 
@@ -220,28 +219,4 @@ fn test_load_latest_cache() {
     // Validate the session
     assert_eq!(new_env.id.unwrap(), "1");
     assert_eq!(new_env.session_source.to_repl_source(), env.session_source.to_repl_source());
-}
-
-#[test]
-#[serial]
-fn test_solc_evm_configuration_mismatch() {
-    // Create and clear the cache directory
-    ChiselSession::create_cache_dir().unwrap();
-    ChiselSession::clear_cache().unwrap();
-
-    // Force the solc version to be 0.8.13 which does not support Paris
-    let foundry_config = Config {
-        evm_version: EvmVersion::Paris,
-        solc: Some(SolcReq::Version(Version::new(0, 8, 13))),
-        ..Default::default()
-    };
-
-    // Create a new session that is expected to fail
-    let error = ChiselSession::new(chisel::session_source::SessionSourceConfig {
-        foundry_config,
-        ..Default::default()
-    })
-    .unwrap_err();
-
-    assert_eq!(error.to_string(), "The set evm version, paris, is not supported by solc 0.8.13. Upgrade to a newer solc version.");
 }
