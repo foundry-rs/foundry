@@ -234,11 +234,14 @@ impl RunArgs {
 
             if let Some(signature) = tx.inner.signature {
                 let v = signature.v;
-                let is_private_quorum_txn = v == Uint::from(37) || v == Uint::from(38);
+
+                // 37/38 for private quorum transactions, tessera hash is 64 bytes
+                let is_private_quorum_txn =
+                    (v == Uint::from(37) || v == Uint::from(38)) && tx.input.len() == 64;
+
                 if is_private_quorum_txn {
                     println!("Private quorum transaction detected.");
 
-                    // Ideally, this should be a method implemented in alloy_provider
                     let result: TransportResult<Bytes> = provider
                         .client()
                         .request("eth_getQuorumPayload", (tx.input.clone(),))
@@ -246,15 +249,14 @@ impl RunArgs {
 
                     match result {
                         Ok(tessera_input) => {
-                            // If non-empty, use tessera payload
-                            if !tessera_input.is_empty() {
-                                tx.input = tessera_input;
-                            } else {
-                                println!("eth_getQuorumPayload returned empty bytes, using original tx.input instead");
-                            }
+                            println!(
+                                "Executing private quorum transaction with quorum payload: {:?}",
+                                tessera_input.to_string()
+                            );
+                            tx.input = tessera_input;
                         }
                         Err(e) => {
-                            println!("eth_getQuorumPayload threw an error: {e}, proceeding with original tx.input");
+                            return Err(eyre::eyre!("eth_getQuorumPayload threw an error: {e}, cannot execute transaction {:?}", tx.hash));
                         }
                     }
                 }
