@@ -21,7 +21,7 @@ pub enum Markdown<'a> {
     CodeBlock(&'a str, &'a str),
 }
 
-impl<'a> AsDoc for Markdown<'a> {
+impl AsDoc for Markdown<'_> {
     fn as_doc(&self) -> AsDocResult {
         let doc = match self {
             Self::H1(val) => format!("# {val}"),
@@ -37,7 +37,7 @@ impl<'a> AsDoc for Markdown<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for Markdown<'a> {
+impl std::fmt::Display for Markdown<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{}", self.as_doc()?))
     }

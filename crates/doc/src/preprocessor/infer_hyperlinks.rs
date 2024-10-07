@@ -200,7 +200,7 @@ impl<'a> InlineLinkTarget<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for InlineLinkTarget<'a> {
+impl std::fmt::Display for InlineLinkTarget<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // NOTE: the url should be absolute for markdown and section names are lowercase
         write!(f, "/{}#{}", self.target_path.display(), self.section.to_lowercase())
