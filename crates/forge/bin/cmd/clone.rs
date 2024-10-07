@@ -608,9 +608,8 @@ impl EtherscanClient for Client {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
-    #![allow(clippy::needless_return)]
-
     use super::*;
     use alloy_primitives::hex;
     use foundry_compilers::Artifact;

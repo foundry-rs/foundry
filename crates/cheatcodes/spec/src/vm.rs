@@ -283,9 +283,13 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function load(address target, bytes32 slot) external view returns (bytes32 data);
 
-    /// Load a genesis JSON file's `allocs` into the in-memory revm state.
+    /// Load a genesis JSON file's `allocs` into the in-memory EVM state.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function loadAllocs(string calldata pathToAllocsJson) external;
+
+    /// Clones a source account code, state, balance and nonce to a target account and updates in-memory EVM state.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function cloneAccount(address source, address target) external;
 
     // -------- Record Storage --------
 
@@ -464,6 +468,14 @@ interface Vm {
     /// Calldata match takes precedence over `msg.value` in case of ambiguity.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCall(address callee, uint256 msgValue, bytes calldata data, bytes calldata returnData) external;
+
+    /// Mocks multiple calls to an address, returning specified data for each call.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;
+
+    /// Mocks multiple calls to an address with a specific `msg.value`, returning specified data for each call.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCalls(address callee, uint256 msgValue, bytes calldata data, bytes[] calldata returnData) external;
 
     /// Reverts a call to an address with specified revert data.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -757,11 +769,11 @@ interface Vm {
 
     /// Writes a breakpoint to jump to in the debugger.
     #[cheatcode(group = Testing, safety = Safe)]
-    function breakpoint(string calldata char) external;
+    function breakpoint(string calldata char) external pure;
 
     /// Writes a conditional breakpoint to jump to in the debugger.
     #[cheatcode(group = Testing, safety = Safe)]
-    function breakpoint(string calldata char, bool value) external;
+    function breakpoint(string calldata char, bool value) external pure;
 
     /// Returns the Foundry version.
     /// Format: <cargo_version>+<git_sha>+<build_timestamp>
@@ -2405,7 +2417,7 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function randomUint(uint256 min, uint256 max) external returns (uint256);
 
-    /// Returns an random `uint256` value of given bits.
+    /// Returns a random `uint256` value of given bits.
     #[cheatcode(group = Utilities)]
     function randomUint(uint256 bits) external view returns (uint256);
 
@@ -2413,21 +2425,29 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function randomAddress() external returns (address);
 
-    /// Returns an random `int256` value.
+    /// Returns a random `int256` value.
     #[cheatcode(group = Utilities)]
     function randomInt() external view returns (int256);
 
-    /// Returns an random `int256` value of given bits.
+    /// Returns a random `int256` value of given bits.
     #[cheatcode(group = Utilities)]
     function randomInt(uint256 bits) external view returns (int256);
 
-    /// Returns an random `bool`.
+    /// Returns a random `bool`.
     #[cheatcode(group = Utilities)]
     function randomBool() external view returns (bool);
 
-    /// Returns an random byte array value of the given length.
+    /// Returns a random byte array value of the given length.
     #[cheatcode(group = Utilities)]
     function randomBytes(uint256 len) external view returns (bytes memory);
+
+    /// Returns a random fixed-size byte array of length 4.
+    #[cheatcode(group = Utilities)]
+    function randomBytes4() external view returns (bytes4);
+
+    /// Returns a random fixed-size byte array of length 8.
+    #[cheatcode(group = Utilities)]
+    function randomBytes8() external view returns (bytes8);
 
     /// Pauses collection of call traces. Useful in cases when you want to skip tracing of
     /// complex calls which are not useful for debugging.

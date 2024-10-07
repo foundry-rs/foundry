@@ -130,28 +130,14 @@ impl Cheatcode for selectForkCall {
 impl Cheatcode for transact_0Call {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Self { txHash } = *self;
-        ccx.ecx.db.transact(
-            None,
-            txHash,
-            &mut ccx.ecx.env,
-            &mut ccx.ecx.journaled_state,
-            &mut executor.get_inspector(ccx.state),
-        )?;
-        Ok(Default::default())
+        transact(ccx, executor, txHash, None)
     }
 }
 
 impl Cheatcode for transact_1Call {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Self { forkId, txHash } = *self;
-        ccx.ecx.db.transact(
-            Some(forkId),
-            txHash,
-            &mut ccx.ecx.env,
-            &mut ccx.ecx.journaled_state,
-            &mut *executor.get_inspector(ccx.state),
-        )?;
-        Ok(Default::default())
+        transact(ccx, executor, txHash, Some(forkId))
     }
 }
 
@@ -350,7 +336,6 @@ fn create_fork_request(
     Ok(fork)
 }
 
-#[inline]
 fn check_broadcast(state: &Cheatcodes) -> Result<()> {
     if state.broadcast.is_none() {
         Ok(())
@@ -359,11 +344,26 @@ fn check_broadcast(state: &Cheatcodes) -> Result<()> {
     }
 }
 
+fn transact(
+    ccx: &mut CheatsCtxt,
+    executor: &mut dyn CheatcodesExecutor,
+    transaction: B256,
+    fork_id: Option<U256>,
+) -> Result {
+    ccx.ecx.db.transact(
+        fork_id,
+        transaction,
+        (*ccx.ecx.env).clone(),
+        &mut ccx.ecx.journaled_state,
+        &mut *executor.get_inspector(ccx.state),
+    )?;
+    Ok(Default::default())
+}
+
 // Helper to add the caller of fork cheat code as persistent account (in order to make sure that the
 // state of caller contract is not lost when fork changes).
 // Applies to create, select and roll forks actions.
 // https://github.com/foundry-rs/foundry/issues/8004
-#[inline]
 fn persist_caller(ccx: &mut CheatsCtxt) {
     ccx.ecx.db.add_persistent_account(ccx.caller);
 }

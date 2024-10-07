@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{map::HashMap, Address, Bytes, B256, U256};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
@@ -16,10 +16,7 @@ use foundry_evm_core::{
 };
 use rand::Rng;
 use revm::primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY};
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::Path,
-};
+use std::{collections::BTreeMap, path::Path};
 
 mod fork;
 pub(crate) mod mapping;
@@ -159,6 +156,22 @@ impl Cheatcode for loadAllocsCall {
     }
 }
 
+impl Cheatcode for cloneAccountCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { source, target } = self;
+
+        let account = ccx.ecx.journaled_state.load_account(*source, &mut ccx.ecx.db)?;
+        ccx.ecx.db.clone_account(
+            &genesis_account(account.data),
+            target,
+            &mut ccx.ecx.journaled_state,
+        )?;
+        // Cloned account should persist in forked envs.
+        ccx.ecx.db.add_persistent_account(*target);
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for dumpStateCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { pathToStateJson } = self;
@@ -181,23 +194,7 @@ impl Cheatcode for dumpStateCall {
             .state()
             .iter_mut()
             .filter(|(key, val)| !skip(key, val))
-            .map(|(key, val)| {
-                (
-                    key,
-                    GenesisAccount {
-                        nonce: Some(val.info.nonce),
-                        balance: val.info.balance,
-                        code: val.info.code.as_ref().map(|o| o.original_bytes()),
-                        storage: Some(
-                            val.storage
-                                .iter()
-                                .map(|(k, v)| (B256::from(*k), B256::from(v.present_value())))
-                                .collect(),
-                        ),
-                        private_key: None,
-                    },
-                )
-            })
+            .map(|(key, val)| (key, genesis_account(val)))
             .collect::<BTreeMap<_, _>>();
 
         write_json_file(path, &alloc)?;
@@ -683,13 +680,12 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 
 impl Cheatcode for broadcastRawTransactionCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
-        let mut data = self.data.as_ref();
-        let tx = TxEnvelope::decode(&mut data)
+        let tx = TxEnvelope::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
         ccx.ecx.db.transact_from_tx(
-            tx.clone().into(),
-            &ccx.ecx.env,
+            &tx.clone().into(),
+            (*ccx.ecx.env).clone(),
             &mut ccx.ecx.journaled_state,
             &mut *executor.get_inspector(ccx.state),
         )?;
@@ -960,4 +956,21 @@ fn get_state_diff(state: &mut Cheatcodes) -> Result {
         .flatten()
         .collect::<Vec<_>>();
     Ok(res.abi_encode())
+}
+
+/// Helper function that creates a `GenesisAccount` from a regular `Account`.
+fn genesis_account(account: &Account) -> GenesisAccount {
+    GenesisAccount {
+        nonce: Some(account.info.nonce),
+        balance: account.info.balance,
+        code: account.info.code.as_ref().map(|o| o.original_bytes()),
+        storage: Some(
+            account
+                .storage
+                .iter()
+                .map(|(k, v)| (B256::from(*k), B256::from(v.present_value())))
+                .collect(),
+        ),
+        private_key: None,
+    }
 }

@@ -112,7 +112,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
 }
 
-impl<'a, DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'a, DB, V> {
+impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     /// Executes all transactions and puts them in a new block with the provided `timestamp`
     pub fn execute(mut self) -> ExecutedTransactions {
         let mut transactions = Vec::new();
@@ -263,9 +263,7 @@ pub enum TransactionExecutionOutcome {
     DatabaseError(Arc<PoolTransaction>, DatabaseError),
 }
 
-impl<'a, 'b, DB: Db + ?Sized, V: TransactionValidator> Iterator
-    for &'b mut TransactionExecutor<'a, DB, V>
-{
+impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExecutor<'_, DB, V> {
     type Item = TransactionExecutionOutcome;
 
     fn next(&mut self) -> Option<Self::Item> {

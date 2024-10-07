@@ -11,7 +11,6 @@ use foundry_compilers::{
 use foundry_evm_core::utils::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
 use solang_parser::pt::SourceUnitPart;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -83,12 +82,14 @@ pub struct ArtifactData {
 
 impl ArtifactData {
     fn new(bytecode: ContractBytecodeSome, build_id: String, file_id: u32) -> Result<Self> {
-        let parse = |b: &Bytecode| {
+        let parse = |b: &Bytecode, name: &str| {
             // Only parse source map if it's not empty.
             let source_map = if b.source_map.as_ref().map_or(true, |s| s.is_empty()) {
                 Ok(None)
             } else {
-                b.source_map().transpose()
+                b.source_map().transpose().wrap_err_with(|| {
+                    format!("failed to parse {name} source map of file {file_id} in {build_id}")
+                })
             };
 
             // Only parse bytecode if it's not empty.
@@ -100,11 +101,11 @@ impl ArtifactData {
 
             source_map.map(|source_map| (source_map, pc_ic_map))
         };
-        let (source_map, pc_ic_map) = parse(&bytecode.bytecode)?;
+        let (source_map, pc_ic_map) = parse(&bytecode.bytecode, "creation")?;
         let (source_map_runtime, pc_ic_map_runtime) = bytecode
             .deployed_bytecode
             .bytecode
-            .map(|b| parse(&b))
+            .map(|b| parse(&b, "runtime"))
             .unwrap_or_else(|| Ok((None, None)))?;
 
         Ok(Self { source_map, source_map_runtime, pc_ic_map, pc_ic_map_runtime, build_id, file_id })
@@ -115,7 +116,7 @@ impl ArtifactData {
 #[derive(Clone, Debug, Default)]
 pub struct ContractSources {
     /// Map over build_id -> file_id -> (source code, language)
-    pub sources_by_id: HashMap<String, FxHashMap<u32, Arc<SourceData>>>,
+    pub sources_by_id: HashMap<String, HashMap<u32, Arc<SourceData>>>,
     /// Map over contract name -> Vec<(bytecode, build_id, file_id)>
     pub artifacts_by_name: HashMap<String, Vec<ArtifactData>>,
 }

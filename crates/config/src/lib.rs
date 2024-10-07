@@ -46,6 +46,8 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::mpsc::{self, RecvTimeoutError},
+    time::Duration,
 };
 
 mod macros;
@@ -466,6 +468,9 @@ pub struct Config {
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
 
+    /// Use EOF-enabled solc for compilation.
+    pub eof: bool,
+
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
@@ -529,6 +534,9 @@ impl Config {
 
     /// Default salt for create2 library deployments
     pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
+
+    /// Docker image with eof-enabled solc binary
+    pub const EOF_SOLC_IMAGE: &'static str = "ghcr.io/paradigmxyz/forge-eof@sha256:46f868ce5264e1190881a3a335d41d7f42d6f26ed20b0c823609c715e38d603f";
 
     /// Returns the current `Config`
     ///
@@ -786,6 +794,8 @@ impl Config {
         config.libs.sort_unstable();
         config.libs.dedup();
 
+        config.sanitize_eof_settings();
+
         config
     }
 
@@ -800,6 +810,22 @@ impl Config {
             self.remappings.iter_mut().for_each(|r| {
                 r.path.path = r.path.path.to_slash_lossy().into_owned().into();
             });
+        }
+    }
+
+    /// Adjusts settings if EOF compilation is enabled.
+    ///
+    /// This includes enabling via_ir, eof_version and ensuring that evm_version is not lower than
+    /// Prague.
+    pub fn sanitize_eof_settings(&mut self) {
+        if self.eof {
+            self.via_ir = true;
+            if self.eof_version.is_none() {
+                self.eof_version = Some(EofVersion::V1);
+            }
+            if self.evm_version < EvmVersion::Prague {
+                self.evm_version = EvmVersion::Prague;
+            }
         }
     }
 
@@ -904,6 +930,40 @@ impl Config {
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
+        if self.eof {
+            let (tx, rx) = mpsc::channel();
+            let root = self.root.0.clone();
+            std::thread::spawn(move || {
+                tx.send(
+                    Solc::new_with_args(
+                        "docker",
+                        [
+                            "run",
+                            "--rm",
+                            "-i",
+                            "-v",
+                            &format!("{}:/app/root", root.display()),
+                            Self::EOF_SOLC_IMAGE,
+                        ],
+                    )
+                    .map(Some),
+                )
+            });
+            // If it takes more than 1 second, this likely means we are pulling the image.
+            return match rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(res) => res,
+                Err(RecvTimeoutError::Timeout) => {
+                    eprintln!(
+                        "{}",
+                        yansi::Paint::yellow(
+                            "Pulling Docker image for eof-solc, this might take some time..."
+                        )
+                    );
+                    rx.recv().expect("sender dropped")
+                }
+                Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
+            }
+        }
         if let Some(ref solc) = self.solc {
             let solc = match solc {
                 SolcReq::Version(version) => {
@@ -2191,6 +2251,7 @@ impl Default for Config {
             eof_version: None,
             alphanet: false,
             transaction_timeout: 120,
+            eof: false,
             _non_exhaustive: (),
         }
     }
@@ -2395,7 +2456,7 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
 /// A provider that sets the `src` and `output` path depending on their existence.
 struct DappHardhatDirProvider<'a>(&'a Path);
 
-impl<'a> Provider for DappHardhatDirProvider<'a> {
+impl Provider for DappHardhatDirProvider<'_> {
     fn metadata(&self) -> Metadata {
         Metadata::named("Dapp Hardhat dir compat")
     }
