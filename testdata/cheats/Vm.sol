@@ -147,8 +147,8 @@ interface Vm {
     function assumeNoRevert() external pure;
     function blobBaseFee(uint256 newBlobBaseFee) external;
     function blobhashes(bytes32[] calldata hashes) external;
-    function breakpoint(string calldata char) external;
-    function breakpoint(string calldata char, bool value) external;
+    function breakpoint(string calldata char) external pure;
+    function breakpoint(string calldata char, bool value) external pure;
     function broadcastRawTransaction(bytes calldata data) external;
     function broadcast() external;
     function broadcast(address signer) external;

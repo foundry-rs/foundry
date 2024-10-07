@@ -3035,9 +3035,9 @@
       "func": {
         "id": "breakpoint_0",
         "description": "Writes a breakpoint to jump to in the debugger.",
-        "declaration": "function breakpoint(string calldata char) external;",
+        "declaration": "function breakpoint(string calldata char) external pure;",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "pure",
         "signature": "breakpoint(string)",
         "selector": "0xf0259e92",
         "selectorBytes": [
@@ -3055,9 +3055,9 @@
       "func": {
         "id": "breakpoint_1",
         "description": "Writes a conditional breakpoint to jump to in the debugger.",
-        "declaration": "function breakpoint(string calldata char, bool value) external;",
+        "declaration": "function breakpoint(string calldata char, bool value) external pure;",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "pure",
         "signature": "breakpoint(string,bool)",
         "selector": "0xf7d39a8d",
         "selectorBytes": [
