@@ -549,12 +549,7 @@ pub struct AnvilEvmArgs {
     pub block_base_fee_per_gas: Option<u64>,
 
     /// Disable the enforcement of a minimum suggested priority fee.
-    #[arg(
-        long,
-        value_name = "DISABLE_MIN_PRIORITY_FEE",
-        visible_alias = "no-priority-fee",
-        help_heading = "Environment config"
-    )]
+    #[arg(long, visible_alias = "no-priority-fee", help_heading = "Environment config")]
     pub disable_min_priority_fee: bool,
 
     /// The chain ID.
