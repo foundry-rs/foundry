@@ -5,7 +5,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result};
 use forge::{
     decode::decode_console_logs,
-    gas_report::{GasReport, ReportKind},
+    gas_report::{GasReport, GasReportKind},
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
@@ -112,7 +112,7 @@ pub struct TestArgs {
     json: bool,
 
     /// Output test results as JUnit XML report.
-    #[arg(long, conflicts_with = "json", help_heading = "Display options")]
+    #[arg(long, conflicts_with_all(["json", "gas_report"]), help_heading = "Display options")]
     junit: bool,
 
     /// Stop running tests after the first failure.
@@ -474,7 +474,8 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
-        let has_serialized_output = self.gas_report && (self.json || self.junit);
+        // If we need to render to a serialized format, we should not print anything else to stdout.
+        let silent = self.gas_report && self.json;
 
         let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
@@ -501,18 +502,16 @@ impl TestArgs {
             runner.decode_internal = InternalTraceMode::Full;
         }
 
-        if !self.gas_report {
-            if self.json {
-                let results = runner.test_collect(filter);
-                println!("{}", serde_json::to_string(&results)?);
-                return Ok(TestOutcome::new(results, self.allow_failure));
-            }
+        if !self.gas_report && self.json {
+            let results = runner.test_collect(filter);
+            println!("{}", serde_json::to_string(&results)?);
+            return Ok(TestOutcome::new(results, self.allow_failure));
+        }
 
-            if self.junit {
-                let results = runner.test_collect(filter);
-                println!("{}", junit_xml_report(&results, verbosity).to_string()?);
-                return Ok(TestOutcome::new(results, self.allow_failure));
-            }
+        if self.junit {
+            let results = runner.test_collect(filter);
+            println!("{}", junit_xml_report(&results, verbosity).to_string()?);
+            return Ok(TestOutcome::new(results, self.allow_failure));
         }
 
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
@@ -561,13 +560,7 @@ impl TestArgs {
             GasReport::new(
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
-                if self.json {
-                    ReportKind::JSON
-                } else if self.junit {
-                    ReportKind::JUnit
-                } else {
-                    ReportKind::Markdown
-                },
+                if self.json { GasReportKind::JSON } else { GasReportKind::Markdown },
             )
         });
 
@@ -590,7 +583,7 @@ impl TestArgs {
                 self.flamechart;
 
             // Print suite header.
-            if !has_serialized_output {
+            if !silent {
                 println!();
                 for warning in suite_result.warnings.iter() {
                     eprintln!("{} {warning}", "Warning:".yellow().bold());
@@ -604,7 +597,7 @@ impl TestArgs {
 
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
-                if !has_serialized_output {
+                if !silent {
                     shell::println(result.short_result(name))?;
 
                     // We only display logs at level 2 and above
@@ -659,7 +652,7 @@ impl TestArgs {
                     }
                 }
 
-                if !has_serialized_output && !decoded_traces.is_empty() {
+                if !silent && !decoded_traces.is_empty() {
                     shell::println("Traces:")?;
                     for trace in &decoded_traces {
                         shell::println(trace)?;
@@ -766,7 +759,7 @@ impl TestArgs {
             }
 
             // Print suite summary.
-            if !has_serialized_output {
+            if !silent {
                 shell::println(suite_result.summary())?;
             }
 
@@ -789,7 +782,7 @@ impl TestArgs {
             outcome.gas_report = Some(finalized);
         }
 
-        if !has_serialized_output && !outcome.results.is_empty() {
+        if !silent && !outcome.results.is_empty() {
             shell::println(outcome.summary(duration))?;
 
             if self.summary {

@@ -187,7 +187,7 @@ impl Display for GasReport {
                         }
                     }
                 }
-                writeln!(f, "{}", serde_json::to_string_pretty(&contract_json).unwrap())?;
+                writeln!(f, "{}", serde_json::to_string(&contract_json).unwrap())?;
                 continue;
             }
 
