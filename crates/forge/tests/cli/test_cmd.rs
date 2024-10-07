@@ -305,7 +305,7 @@ forgetest_init!(can_run_test_with_json_output_verbose, |prj, cmd| {
     // Assert that with verbose output the json output includes the traces
     cmd.args(["test", "-vvv", "--json"])
         .assert_success()
-        .stdout_eq(file!["../fixtures/SimpleContractTestVerbose.json"]);
+        .stdout_eq(file!["../fixtures/SimpleContractTestVerbose.json"; Json]);
 });
 
 forgetest_init!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
