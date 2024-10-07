@@ -1,16 +1,12 @@
 use alloy_json_abi::{Event, Function};
-use alloy_primitives::hex;
+use alloy_primitives::{hex, map::HashSet};
 use foundry_common::{
     abi::{get_event, get_func},
     fs,
     selectors::{OpenChainClient, SelectorType},
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashSet},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 
 pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
@@ -161,9 +157,8 @@ impl Drop for SignaturesIdentifier {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
-    #![allow(clippy::needless_return)]
-
     use super::*;
 
     #[tokio::test(flavor = "multi_thread")]

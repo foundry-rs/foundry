@@ -208,7 +208,7 @@ alloy-json-abi = "0.8.5"
 alloy-primitives = { version = "0.8.5", features = [
     "getrandom",
     "rand",
-    "map-fxhash",
+    "map-foldhash",
 ] }
 alloy-sol-macro-expander = "0.8.5"
 alloy-sol-macro-input = "0.8.5"
@@ -249,7 +249,6 @@ k256 = "0.13"
 parking_lot = "0.12"
 mesc = "0.3"
 rand = "0.8"
-rustc-hash = "2.0"
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
