@@ -280,7 +280,8 @@ soldeer = "=0.3.4"
 proptest = "1"
 comfy-table = "7"
 
-# [patch.crates-io]
+[patch.crates-io]
+op-alloy-consensus = { git = "https://github.com/alloy-rs/op-alloy", rev = "bfdef13" }
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
