@@ -363,6 +363,7 @@ pub async fn handle_traces(
     decode_internal: bool,
     verbose: bool,
     json: bool,
+    with_state_changes: bool,
 ) -> Result<()> {
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
@@ -412,7 +413,7 @@ pub async fn handle_traces(
             .build();
         debugger.try_run()?;
     } else {
-        print_traces(&mut result, &decoder, verbose, json).await?;
+        print_traces(&mut result, &decoder, verbose, json, with_state_changes).await?;
     }
 
     Ok(())
@@ -423,13 +424,14 @@ pub async fn print_traces(
     decoder: &CallTraceDecoder,
     verbose: bool,
     json: bool,
+    state_changes: bool,
 ) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
     println!("Traces:");
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await?;
-        println!("{}", render_trace_arena_inner(arena, verbose, json));
+        println!("{}", render_trace_arena_inner(arena, verbose, json, state_changes));
     }
 
     if json {

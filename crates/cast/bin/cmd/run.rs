@@ -260,6 +260,7 @@ impl RunArgs {
             self.decode_internal,
             self.verbose,
             self.json,
+            self.with_state_changes,
         )
         .await?;
 
