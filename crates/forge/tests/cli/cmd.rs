@@ -228,7 +228,7 @@ forgetest!(can_init_repo_with_config, |prj, cmd| {
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -276,7 +276,7 @@ forgetest!(can_init_no_git, |prj, cmd| {
     cmd.arg("init").arg(prj.root()).arg("--no-git").assert_success().stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -361,7 +361,7 @@ Run with the `--force` flag to initialize regardless.
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -396,7 +396,7 @@ Run with the `--force` flag to initialize regardless.
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -432,7 +432,7 @@ Run with the `--force` flag to initialize regardless.
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -451,7 +451,7 @@ forgetest!(can_init_vscode, |prj, cmd| {
     cmd.arg("init").arg(prj.root()).arg("--vscode").assert_success().stdout_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -547,7 +547,7 @@ forgetest!(can_clone, |prj, cmd| {
 Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -595,7 +595,7 @@ forgetest!(can_clone_no_remappings_txt, |prj, cmd| {
 Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -740,9 +740,17 @@ Compiler run successful!
 
 // checks that extra output works
 forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
-    cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args([
+        "build",
+        "--extra-output",
+        "metadata",
+        "legacyAssembly",
+        "ir-optimized",
+        "--extra-output",
+        "ir",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -753,6 +761,7 @@ Compiler run successful!
     let artifact: ConfigurableContractArtifact =
         foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
+    assert!(artifact.legacy_assembly.is_some());
     assert!(artifact.ir.is_some());
     assert!(artifact.ir_optimized.is_some());
 
@@ -763,6 +772,7 @@ Compiler run successful!
             "metadata",
             "ir-optimized",
             "evm.bytecode.sourceMap",
+            "evm.legacyAssembly",
             "--force",
         ])
         .root_arg()
@@ -784,6 +794,12 @@ Compiler run successful!
     let sourcemap =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.sourcemap"));
     std::fs::read_to_string(sourcemap).unwrap();
+
+    let legacy_assembly = prj
+        .paths()
+        .artifacts
+        .join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.legacyAssembly.json"));
+    std::fs::read_to_string(legacy_assembly).unwrap();
 });
 
 forgetest!(can_print_warnings, |prj, cmd| {
@@ -984,7 +1000,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 "#]]);
 });
 
-// test that `forge build` does not print `(with warnings)` if there arent any
+// test that `forge build` does not print `(with warnings)` if there aren't any
 forgetest!(can_compile_without_warnings, |prj, cmd| {
     let config = Config {
         ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
@@ -1228,7 +1244,7 @@ forgetest!(can_install_and_remove, |prj, cmd| {
             .assert_success()
             .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
 
 "#]]);
 
@@ -1296,7 +1312,7 @@ forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
             .assert_success()
             .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
 
 "#]]);
 

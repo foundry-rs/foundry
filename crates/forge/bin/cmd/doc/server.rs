@@ -90,6 +90,7 @@ impl Server {
     }
 }
 
+#[allow(clippy::needless_return)]
 #[tokio::main]
 async fn serve(build_dir: PathBuf, address: SocketAddr, file_404: &str) -> io::Result<()> {
     let file_404 = build_dir.join(file_404);

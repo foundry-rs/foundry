@@ -11,7 +11,8 @@ use anvil_core::eth::{
 use foundry_common::errors::FsPathError;
 use foundry_evm::{
     backend::{
-        BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertSnapshotAction, StateSnapshot,
+        BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction,
+        StateSnapshot,
     },
     revm::{
         db::{CacheDB, DatabaseRef, DbAccount},
@@ -19,54 +20,63 @@ use foundry_evm::{
         Database, DatabaseCommit,
     },
 };
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{MapAccess, Visitor},
+    Deserialize, Deserializer, Serialize,
+};
 use std::{collections::BTreeMap, fmt, path::Path};
 
 /// Helper trait get access to the full state data of the database
-#[auto_impl::auto_impl(Box)]
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
+    /// Returns a reference to the database as a `dyn DatabaseRef`.
+    // TODO: Required until trait upcasting is stabilized: <https://github.com/rust-lang/rust/issues/65991>
+    fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError>;
+
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         None
     }
 
-    /// Clear the state and move it into a new `StateSnapshot`
-    fn clear_into_snapshot(&mut self) -> StateSnapshot;
+    /// Clear the state and move it into a new `StateSnapshot`.
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot;
 
-    /// Read the state snapshot
+    /// Read the state snapshot.
     ///
-    /// This clones all the states and returns a new `StateSnapshot`
-    fn read_as_snapshot(&self) -> StateSnapshot;
+    /// This clones all the states and returns a new `StateSnapshot`.
+    fn read_as_state_snapshot(&self) -> StateSnapshot;
 
     /// Clears the entire database
     fn clear(&mut self);
 
-    /// Reverses `clear_into_snapshot` by initializing the db's state with the snapshot
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot);
+    /// Reverses `clear_into_snapshot` by initializing the db's state with the state snapshot.
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot);
 }
 
 impl<'a, T: 'a + MaybeFullDatabase + ?Sized> MaybeFullDatabase for &'a T
 where
     &'a T: DatabaseRef<Error = DatabaseError>,
 {
+    fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        T::as_dyn(self)
+    }
+
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         T::maybe_as_full_db(self)
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         unreachable!("never called for DatabaseRef")
     }
 
-    fn read_as_snapshot(&self) -> StateSnapshot {
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
         unreachable!("never called for DatabaseRef")
     }
 
     fn clear(&mut self) {}
 
-    fn init_from_snapshot(&mut self, _snapshot: StateSnapshot) {}
+    fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
 }
 
 /// Helper trait to reset the DB if it's forked
-#[auto_impl::auto_impl(Box)]
 pub trait MaybeForkedDatabase {
     fn maybe_reset(&mut self, _url: Option<String>, block_number: BlockId) -> Result<(), String>;
 
@@ -76,7 +86,6 @@ pub trait MaybeForkedDatabase {
 }
 
 /// This bundles all required revm traits
-#[auto_impl::auto_impl(Box)]
 pub trait Db:
     DatabaseRef<Error = DatabaseError>
     + Database<Error = DatabaseError>
@@ -168,13 +177,13 @@ pub trait Db:
         Ok(true)
     }
 
-    /// Creates a new snapshot
-    fn snapshot(&mut self) -> U256;
+    /// Creates a new state snapshot.
+    fn snapshot_state(&mut self) -> U256;
 
-    /// Reverts a snapshot
+    /// Reverts a state snapshot.
     ///
-    /// Returns `true` if the snapshot was reverted
-    fn revert(&mut self, snapshot: U256, action: RevertSnapshotAction) -> bool;
+    /// Returns `true` if the state snapshot was reverted.
+    fn revert_state(&mut self, state_snapshot: U256, action: RevertStateSnapshotAction) -> bool;
 
     /// Returns the state root if possible to compute
     fn maybe_state_root(&self) -> Option<B256> {
@@ -183,6 +192,13 @@ pub trait Db:
 
     /// Returns the current, standalone state of the Db
     fn current_state(&self) -> StateDb;
+}
+
+impl dyn Db {
+    // TODO: Required until trait upcasting is stabilized: <https://github.com/rust-lang/rust/issues/65991>
+    pub fn as_dbref(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        self.as_dyn()
+    }
 }
 
 /// Convenience impl only used to use any `Db` on the fly as the db layer for revm's CacheDB
@@ -213,11 +229,11 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
         Ok(None)
     }
 
-    fn snapshot(&mut self) -> U256 {
+    fn snapshot_state(&mut self) -> U256 {
         U256::ZERO
     }
 
-    fn revert(&mut self, _snapshot: U256, _action: RevertSnapshotAction) -> bool {
+    fn revert_state(&mut self, _state_snapshot: U256, _action: RevertStateSnapshotAction) -> bool {
         false
     }
 
@@ -227,14 +243,18 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
 }
 
 impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
+    fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        self
+    }
+
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         Some(&self.accounts)
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db_accounts = std::mem::take(&mut self.accounts);
-        let mut accounts = HashMap::new();
-        let mut account_storage = HashMap::new();
+        let mut accounts = HashMap::default();
+        let mut account_storage = HashMap::default();
 
         for (addr, mut acc) in db_accounts {
             account_storage.insert(addr, std::mem::take(&mut acc.storage));
@@ -246,10 +266,10 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
         StateSnapshot { accounts, storage: account_storage, block_hashes }
     }
 
-    fn read_as_snapshot(&self) -> StateSnapshot {
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
         let db_accounts = self.accounts.clone();
-        let mut accounts = HashMap::new();
-        let mut account_storage = HashMap::new();
+        let mut accounts = HashMap::default();
+        let mut account_storage = HashMap::default();
 
         for (addr, acc) in db_accounts {
             account_storage.insert(addr, acc.storage.clone());
@@ -263,11 +283,11 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
     }
 
     fn clear(&mut self) {
-        self.clear_into_snapshot();
+        self.clear_into_state_snapshot();
     }
 
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
-        let StateSnapshot { accounts, mut storage, block_hashes } = snapshot;
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        let StateSnapshot { accounts, mut storage, block_hashes } = state_snapshot;
 
         for (addr, mut acc) in accounts {
             if let Some(code) = acc.code.take() {
@@ -311,7 +331,7 @@ impl StateDb {
     pub fn serialize_state(&mut self) -> StateSnapshot {
         // Using read_as_snapshot makes sures we don't clear the historical state from the current
         // instance.
-        self.read_as_snapshot()
+        self.read_as_state_snapshot()
     }
 }
 
@@ -335,24 +355,28 @@ impl DatabaseRef for StateDb {
 }
 
 impl MaybeFullDatabase for StateDb {
+    fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        self.0.as_dyn()
+    }
+
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         self.0.maybe_as_full_db()
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
-        self.0.clear_into_snapshot()
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        self.0.clear_into_state_snapshot()
     }
 
-    fn read_as_snapshot(&self) -> StateSnapshot {
-        self.0.read_as_snapshot()
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        self.0.read_as_state_snapshot()
     }
 
     fn clear(&mut self) {
         self.0.clear()
     }
 
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
-        self.0.init_from_snapshot(snapshot)
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        self.0.init_from_state_snapshot(state_snapshot)
     }
 }
 
@@ -398,7 +422,38 @@ pub struct SerializableAccountRecord {
     pub nonce: u64,
     pub balance: U256,
     pub code: Bytes,
+
+    #[serde(deserialize_with = "deserialize_btree")]
     pub storage: BTreeMap<B256, B256>,
+}
+
+fn deserialize_btree<'de, D>(deserializer: D) -> Result<BTreeMap<B256, B256>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct BTreeVisitor;
+
+    impl<'de> Visitor<'de> for BTreeVisitor {
+        type Value = BTreeMap<B256, B256>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a mapping of hex encoded storage slots to hex encoded state data")
+        }
+
+        fn visit_map<M>(self, mut mapping: M) -> Result<BTreeMap<B256, B256>, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut btree = BTreeMap::new();
+            while let Some((key, value)) = mapping.next_entry::<U256, U256>()? {
+                btree.insert(B256::from(key), B256::from(value));
+            }
+
+            Ok(btree)
+        }
+    }
+
+    deserializer.deserialize_map(BTreeVisitor)
 }
 
 /// Defines a backwards-compatible enum for transactions.

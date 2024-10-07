@@ -6,7 +6,11 @@ use alloy_chains::Chain;
 use alloy_consensus::TxEnvelope;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{utils::format_units, Address, TxHash};
+use alloy_primitives::{
+    map::{AddressHashMap, AddressHashSet},
+    utils::format_units,
+    Address, TxHash,
+};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
@@ -22,10 +26,7 @@ use foundry_common::{
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 pub async fn estimate_gas<P, T>(
     tx: &mut WithOtherFields<TransactionRequest>,
@@ -42,7 +43,7 @@ where
 
     tx.set_gas_limit(
         provider.estimate_gas(tx).await.wrap_err("Failed to estimate gas for tx")? *
-            estimate_multiplier as u128 /
+            estimate_multiplier /
             100,
     );
     Ok(())
@@ -115,9 +116,9 @@ pub enum SendTransactionKind<'a> {
 /// Represents how to send _all_ transactions
 pub enum SendTransactionsKind {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
-    Unlocked(HashSet<Address>),
+    Unlocked(AddressHashSet),
     /// Send a signed transaction via `eth_sendRawTransaction`
-    Raw(HashMap<Address, EthereumWallet>),
+    Raw(AddressHashMap<EthereumWallet>),
 }
 
 impl SendTransactionsKind {
@@ -199,7 +200,7 @@ impl BundledState {
             .sequences()
             .iter()
             .flat_map(|sequence| sequence.transactions().map(|tx| tx.from().expect("missing from")))
-            .collect::<HashSet<_>>();
+            .collect::<AddressHashSet>();
 
         if required_addresses.contains(&Config::DEFAULT_SENDER) {
             eyre::bail!(
@@ -295,7 +296,7 @@ impl BundledState {
 
                                 tx.set_chain_id(sequence.chain);
 
-                                // Set TxKind::Create explicitly to satify `check_reqd_fields` in
+                                // Set TxKind::Create explicitly to satisfy `check_reqd_fields` in
                                 // alloy
                                 if tx.to.is_none() {
                                     tx.set_create();

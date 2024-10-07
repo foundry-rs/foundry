@@ -47,7 +47,7 @@ pub struct SolFileMetricsPrinter<'a, 'b> {
     pub root: &'b Path,
 }
 
-impl<'a, 'b> fmt::Display for SolFileMetricsPrinter<'a, 'b> {
+impl fmt::Display for SolFileMetricsPrinter<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let SolFileMetricsPrinter { metrics, root } = *self;
 

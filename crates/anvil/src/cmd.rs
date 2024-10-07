@@ -545,7 +545,7 @@ pub struct AnvilEvmArgs {
         value_name = "FEE",
         help_heading = "Environment config"
     )]
-    pub block_base_fee_per_gas: Option<u128>,
+    pub block_base_fee_per_gas: Option<u64>,
 
     /// The chain ID.
     #[arg(long, alias = "chain", help_heading = "Environment config")]

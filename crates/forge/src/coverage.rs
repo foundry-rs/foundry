@@ -86,7 +86,7 @@ impl<'a> LcovReporter<'a> {
     }
 }
 
-impl<'a> CoverageReporter for LcovReporter<'a> {
+impl CoverageReporter for LcovReporter<'_> {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         for (file, items) in report.items_by_source() {
             let summary = items.iter().fold(CoverageSummary::default(), |mut summary, item| {
@@ -268,7 +268,7 @@ struct LineNumberCache {
 
 impl LineNumberCache {
     pub fn new(root: PathBuf) -> Self {
-        Self { root, line_offsets: HashMap::new() }
+        Self { root, line_offsets: HashMap::default() }
     }
 
     pub fn get_position(&mut self, path: &Path, offset: usize) -> eyre::Result<(usize, usize)> {

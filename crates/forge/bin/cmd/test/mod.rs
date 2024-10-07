@@ -20,7 +20,7 @@ use foundry_cli::{
     opts::CoreBuildArgs,
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell};
+use foundry_common::{cli_warn, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
 use foundry_compilers::{
     artifacts::output_selection::OutputSelection,
     compilers::{multi::MultiCompilerLanguage, CompilerSettings, Language},
@@ -67,44 +67,36 @@ pub struct TestArgs {
     #[arg(value_hint = ValueHint::FilePath)]
     pub path: Option<GlobMatcher>,
 
-    /// Run a test in the debugger.
-    ///
-    /// The argument passed to this flag is the name of the test function you want to run, and it
-    /// works the same as --match-test.
-    ///
-    /// If more than one test matches your specified criteria, you must add additional filters
-    /// until only one test is found (see --match-contract and --match-path).
+    /// Run a single test in the debugger.
     ///
     /// The matching test will be opened in the debugger regardless of the outcome of the test.
     ///
     /// If the matching test is a fuzz test, then it will open the debugger on the first failure
-    /// case.
-    /// If the fuzz test does not fail, it will open the debugger on the last fuzz case.
-    ///
-    /// For more fine-grained control of which fuzz case is run, see forge run.
-    #[arg(long, value_name = "TEST_FUNCTION")]
-    debug: Option<Regex>,
+    /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
+    #[arg(long, value_name = "DEPRECATED_TEST_FUNCTION_REGEX")]
+    debug: Option<Option<Regex>>,
 
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
-    #[arg(long, conflicts_with = "flamechart")]
+    ///
+    /// A flame graph is used to visualize which functions or operations within the smart contract
+    /// are consuming the most gas overall in a sorted manner.
+    #[arg(long)]
     flamegraph: bool,
 
     /// Generate a flamechart for a single test. Implies `--decode-internal`.
+    ///
+    /// A flame chart shows the gas usage over time, illustrating when each function is
+    /// called (execution order) and how much gas it consumes at each point in the timeline.
     #[arg(long, conflicts_with = "flamegraph")]
     flamechart: bool,
 
-    /// Whether to identify internal functions in traces.
+    /// Identify internal functions in traces.
     ///
-    /// If no argument is passed to this flag, it will trace internal functions scope and decode
-    /// stack parameters, but parameters stored in memory (such as bytes or arrays) will not be
-    /// decoded.
+    /// This will trace internal functions and decode stack parameters.
     ///
-    /// To decode memory parameters, you should pass an argument with a test function name,
-    /// similarly to --debug and --match-test.
-    ///
-    /// If more than one test matches your specified criteria, you must add additional filters
-    /// until only one test is found (see --match-contract and --match-path).
-    #[arg(long, value_name = "TEST_FUNCTION")]
+    /// Parameters stored in memory (such as bytes or arrays) are currently decoded only when a
+    /// single function is matched, similarly to `--debug`, for performance reasons.
+    #[arg(long, value_name = "DEPRECATED_TEST_FUNCTION_REGEX")]
     decode_internal: Option<Option<Regex>>,
 
     /// Print a gas report.
@@ -195,7 +187,7 @@ impl TestArgs {
 
     /// Returns sources which include any tests to be executed.
     /// If no filters are provided, sources are filtered by existence of test/invariant methods in
-    /// them, If filters are provided, sources are additionaly filtered by them.
+    /// them, If filters are provided, sources are additionally filtered by them.
     pub fn get_sources_to_compile(
         &self,
         config: &Config,
@@ -318,6 +310,17 @@ impl TestArgs {
         let toml = config.get_config_path();
         let profiles = get_available_profiles(toml)?;
 
+        // Remove the snapshots directory if it exists.
+        // This is to ensure that we don't have any stale snapshots.
+        // If `FORGE_SNAPSHOT_CHECK` is set, we don't remove the snapshots directory as it is
+        // required for comparison.
+        if std::env::var("FORGE_SNAPSHOT_CHECK").is_err() {
+            let snapshot_dir = project_root.join(&config.snapshots);
+            if snapshot_dir.exists() {
+                let _ = fs::remove_dir_all(project_root.join(&config.snapshots));
+            }
+        }
+
         let test_options: TestOptions = TestOptionsBuilder::default()
             .fuzz(config.fuzz.clone())
             .invariant(config.invariant.clone())
@@ -336,19 +339,15 @@ impl TestArgs {
         let env = evm_opts.evm_env().await?;
 
         // Enable internal tracing for more informative flamegraph.
-        if should_draw {
+        if should_draw && self.decode_internal.is_none() {
             self.decode_internal = Some(None);
         }
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
-        let decode_internal = if let Some(maybe_fn) = self.decode_internal.as_ref() {
-            if maybe_fn.is_some() {
-                // If function filter is provided, we enable full tracing.
-                InternalTraceMode::Full
-            } else {
-                // If no function filter is provided, we enable simple tracing.
-                InternalTraceMode::Simple
-            }
+        let decode_internal = if self.decode_internal.is_some() {
+            // If more than one function matched, we enable simple tracing.
+            // If only one function matched, we enable full tracing. This is done in `run_tests`.
+            InternalTraceMode::Simple
         } else {
             InternalTraceMode::None
         };
@@ -367,13 +366,18 @@ impl TestArgs {
             .alphanet(evm_opts.alphanet)
             .build(project_root, &output, env, evm_opts)?;
 
-        let mut maybe_override_mt = |flag, maybe_regex: Option<&Regex>| {
-            if let Some(regex) = maybe_regex {
+        let mut maybe_override_mt = |flag, maybe_regex: Option<&Option<Regex>>| {
+            if let Some(Some(regex)) = maybe_regex {
+                cli_warn!(
+                    "specifying argument for --{flag} is deprecated and will be removed in the future, \
+                     use --match-test instead"
+                );
+
                 let test_pattern = &mut filter.args_mut().test_pattern;
                 if test_pattern.is_some() {
                     eyre::bail!(
                         "Cannot specify both --{flag} and --match-test. \
-                        Use --match-contract and --match-path to further limit the search instead."
+                         Use --match-contract and --match-path to further limit the search instead."
                     );
                 }
                 *test_pattern = Some(regex.clone());
@@ -381,12 +385,8 @@ impl TestArgs {
 
             Ok(())
         };
-
         maybe_override_mt("debug", self.debug.as_ref())?;
-        maybe_override_mt(
-            "decode-internal",
-            self.decode_internal.as_ref().and_then(|v| v.as_ref()),
-        )?;
+        maybe_override_mt("decode-internal", self.decode_internal.as_ref())?;
 
         let libraries = runner.libraries.clone();
         let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
@@ -395,18 +395,10 @@ impl TestArgs {
             let (suite_name, test_name, mut test_result) =
                 outcome.remove_first().ok_or_eyre("no tests were executed")?;
 
-            let arena = test_result
+            let (_, arena) = test_result
                 .traces
                 .iter_mut()
-                .find_map(
-                    |(kind, arena)| {
-                        if *kind == TraceKind::Execution {
-                            Some(arena)
-                        } else {
-                            None
-                        }
-                    },
-                )
+                .find(|(kind, _)| *kind == TraceKind::Execution)
                 .unwrap();
 
             // Decode traces.
@@ -419,6 +411,7 @@ impl TestArgs {
             let test_name = test_name.trim_end_matches("()");
             let file_name = format!("cache/{label}_{contract}_{test_name}.svg");
             let file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
+            let file = std::io::BufWriter::new(file);
 
             let mut options = inferno::flamegraph::Options::default();
             options.title = format!("{label} {contract}::{test_name}");
@@ -429,13 +422,13 @@ impl TestArgs {
             }
 
             // Generate SVG.
-            inferno::flamegraph::from_lines(&mut options, fst.iter().map(|s| s.as_str()), file)
+            inferno::flamegraph::from_lines(&mut options, fst.iter().map(String::as_str), file)
                 .wrap_err("failed to write svg")?;
             println!("\nSaved to {file_name}");
 
             // Open SVG in default program.
-            if opener::open(&file_name).is_err() {
-                println!("\nFailed to open {file_name}. Please open it manually.");
+            if let Err(e) = opener::open(&file_name) {
+                eprintln!("\nFailed to open {file_name}; please open it manually: {e}");
             }
         }
 
@@ -482,18 +475,28 @@ impl TestArgs {
         trace!(target: "forge::test", "running all tests");
 
         let num_filtered = runner.matching_test_functions(filter).count();
-        if (self.debug.is_some() ||
-            self.decode_internal.as_ref().map_or(false, |v| v.is_some()) ||
-            self.flamegraph ||
-            self.flamechart) &&
-            num_filtered != 1
-        {
+        if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
+            let action = if self.flamegraph {
+                "generate a flamegraph"
+            } else if self.flamechart {
+                "generate a flamechart"
+            } else {
+                "run the debugger"
+            };
+            let filter = if filter.is_empty() {
+                String::new()
+            } else {
+                format!("\n\nFilter used:\n{filter}")
+            };
             eyre::bail!(
                 "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to {action}.\n\n\
-                 Use --match-contract and --match-path to further limit the search.\n\
-                 Filter used:\n{filter}",
-                action = if self.flamegraph {"generate a flamegraph"} else if self.flamechart {"generate a flamechart"} else {"run the debugger"},
+                 Use --match-contract and --match-path to further limit the search.{filter}",
             );
+        }
+
+        // If exactly one test matched, we enable full tracing.
+        if num_filtered == 1 && self.decode_internal.is_some() {
+            runner.decode_internal = InternalTraceMode::Full;
         }
 
         if self.json {
@@ -553,6 +556,8 @@ impl TestArgs {
         let mut gas_report = self
             .gas_report
             .then(|| GasReport::new(config.gas_reports.clone(), config.gas_reports_ignore.clone()));
+
+        let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
 
         let mut outcome = TestOutcome::empty(self.allow_failure);
 
@@ -663,6 +668,83 @@ impl TestArgs {
                         }
                     }
                 }
+
+                // Collect and merge gas snapshots.
+                for (group, new_snapshots) in result.gas_snapshots.iter() {
+                    gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
+                }
+            }
+
+            // Write gas snapshots to disk if any were collected.
+            if !gas_snapshots.is_empty() {
+                // Check for differences in gas snapshots if `FORGE_SNAPSHOT_CHECK` is set.
+                // Exiting early with code 1 if differences are found.
+                if std::env::var("FORGE_SNAPSHOT_CHECK").is_ok() {
+                    let differences_found = gas_snapshots.clone().into_iter().fold(
+                        false,
+                        |mut found, (group, snapshots)| {
+                            // If the snapshot file doesn't exist, we can't compare so we skip.
+                            if !&config.snapshots.join(format!("{group}.json")).exists() {
+                                return false;
+                            }
+
+                            let previous_snapshots: BTreeMap<String, String> =
+                                fs::read_json_file(&config.snapshots.join(format!("{group}.json")))
+                                    .expect("Failed to read snapshots from disk");
+
+                            let diff: BTreeMap<_, _> = snapshots
+                                .iter()
+                                .filter_map(|(k, v)| {
+                                    previous_snapshots.get(k).and_then(|previous_snapshot| {
+                                        if previous_snapshot != v {
+                                            Some((
+                                                k.clone(),
+                                                (previous_snapshot.clone(), v.clone()),
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                })
+                                .collect();
+
+                            if !diff.is_empty() {
+                                println!(
+                                    "{}",
+                                    format!("\n[{group}] Failed to match snapshots:").red().bold()
+                                );
+
+                                for (key, (previous_snapshot, snapshot)) in &diff {
+                                    println!(
+                                        "{}",
+                                        format!("- [{key}] {previous_snapshot} → {snapshot}").red()
+                                    );
+                                }
+
+                                found = true;
+                            }
+
+                            found
+                        },
+                    );
+
+                    if differences_found {
+                        println!();
+                        eyre::bail!("Snapshots differ from previous run");
+                    }
+                }
+
+                // Create `snapshots` directory if it doesn't exist.
+                fs::create_dir_all(&config.snapshots)?;
+
+                // Write gas snapshots to disk per group.
+                gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
+                    fs::write_pretty_json_file(
+                        &config.snapshots.join(format!("{group}.json")),
+                        &snapshots,
+                    )
+                    .expect("Failed to write gas snapshots to disk");
+                });
             }
 
             // Print suite summary.

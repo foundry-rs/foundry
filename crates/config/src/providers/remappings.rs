@@ -39,9 +39,9 @@ impl Remappings {
 
     /// Consumes the wrapper and returns the inner remappings vector.
     pub fn into_inner(self) -> Vec<Remapping> {
-        let mut tmp = HashSet::new();
+        let mut seen = HashSet::new();
         let remappings =
-            self.remappings.iter().filter(|r| tmp.insert(Self::filter_key(r))).cloned().collect();
+            self.remappings.iter().filter(|r| seen.insert(Self::filter_key(r))).cloned().collect();
         remappings
     }
 
@@ -87,7 +87,7 @@ pub struct RemappingsProvider<'a> {
     pub remappings: Result<Vec<Remapping>, Error>,
 }
 
-impl<'a> RemappingsProvider<'a> {
+impl RemappingsProvider<'_> {
     /// Find and parse remappings for the projects
     ///
     /// **Order**
@@ -240,7 +240,7 @@ impl<'a> RemappingsProvider<'a> {
     }
 }
 
-impl<'a> Provider for RemappingsProvider<'a> {
+impl Provider for RemappingsProvider<'_> {
     fn metadata(&self) -> Metadata {
         Metadata::named("Remapping Provider")
     }

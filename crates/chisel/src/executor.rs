@@ -308,6 +308,7 @@ impl SessionSource {
                         self.config.evm_opts.clone(),
                         None,
                         None,
+                        None,
                         Some(self.solc.version.clone()),
                     )
                     .into(),
@@ -1161,7 +1162,7 @@ impl Type {
         Self::ethabi(&return_parameter.ty, Some(intermediate)).map(|p| (contract_expr.unwrap(), p))
     }
 
-    /// Inverts Int to Uint and viceversa.
+    /// Inverts Int to Uint and vice-versa.
     fn invert_int(self) -> Self {
         match self {
             Self::Builtin(DynSolType::Uint(n)) => Self::Builtin(DynSolType::Int(n)),
@@ -1370,7 +1371,7 @@ impl<'a> InstructionIter<'a> {
     }
 }
 
-impl<'a> Iterator for InstructionIter<'a> {
+impl Iterator for InstructionIter<'_> {
     type Item = Instruction;
     fn next(&mut self) -> Option<Self::Item> {
         let pc = self.offset;

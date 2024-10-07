@@ -597,36 +597,6 @@ Encountered a total of 1 failing tests, 1 tests succeeded
 "#]]);
 });
 
-forgetest_init!(can_test_selfdestruct_with_isolation, |prj, cmd| {
-    prj.wipe_contracts();
-
-    prj.add_test(
-        "Contract.t.sol",
-        r#"
-import {Test} from "forge-std/Test.sol";
-
-contract Destructing {
-    function destruct() public {
-        selfdestruct(payable(address(0)));
-    }
-}
-
-contract SelfDestructTest is Test {
-    function test() public {
-        Destructing d = new Destructing();
-        vm.store(address(d), bytes32(0), bytes32(uint256(1)));
-        d.destruct();
-        assertEq(address(d).code.length, 0);
-        assertEq(vm.load(address(d), bytes32(0)), bytes32(0));
-    }
-}
-   "#,
-    )
-    .unwrap();
-
-    cmd.args(["test", "-vvvv", "--isolate"]).assert_success();
-});
-
 forgetest_init!(can_test_transient_storage_with_isolation, |prj, cmd| {
     prj.wipe_contracts();
 
@@ -2096,6 +2066,112 @@ contract JunitReportTest is Test {
     </testsuite>
 </testsuites>
 
+
+"#]]);
+});
+
+forgetest_init!(
+    // Enable this if no cheatcodes are deprecated.
+    // #[ignore = "no cheatcodes are deprecated"]
+    test_deprecated_cheatcode_warning,
+    |prj, cmd| {
+        prj.add_test(
+            "DeprecatedCheatcodeTest.t.sol",
+            r#"
+        import "forge-std/Test.sol";
+        contract DeprecatedCheatcodeTest is Test {
+            function test_deprecated_cheatcode() public view {
+                vm.keyExists('{"a": 123}', ".a");
+                vm.keyExists('{"a": 123}', ".a");
+            }
+        }
+
+        contract DeprecatedCheatcodeFuzzTest is Test {
+            function test_deprecated_cheatcode(uint256 a) public view {
+                vm.keyExists('{"a": 123}', ".a");
+            }
+        }
+
+        contract Counter {
+            uint256 a;
+
+            function count() public {
+                a++;
+            }
+        }
+
+        contract DeprecatedCheatcodeInvariantTest is Test {
+            function setUp() public {
+                Counter counter = new Counter();
+            }
+
+            /// forge-config: default.invariant.runs = 1
+            function invariant_deprecated_cheatcode() public {
+                vm.keyExists('{"a": 123}', ".a");
+            }
+        }
+   "#,
+        )
+        .unwrap();
+
+        // Tests deprecated cheatcode warning for unit tests.
+        cmd.args(["test", "--mc", "DeprecatedCheatcodeTest"]).assert_success().stderr_eq(str![[
+            r#"
+Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
+  keyExists(string,string): replaced by `keyExistsJson`
+
+"#
+        ]]);
+
+        // Tests deprecated cheatcode warning for fuzz tests.
+        cmd.forge_fuse()
+            .args(["test", "--mc", "DeprecatedCheatcodeFuzzTest"])
+            .assert_success()
+            .stderr_eq(str![[r#"
+Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
+  keyExists(string,string): replaced by `keyExistsJson`
+
+"#]]);
+
+        // Tests deprecated cheatcode warning for invariant tests.
+        cmd.forge_fuse()
+            .args(["test", "--mc", "DeprecatedCheatcodeInvariantTest"])
+            .assert_success()
+            .stderr_eq(str![[r#"
+Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
+  keyExists(string,string): replaced by `keyExistsJson`
+
+"#]]);
+    }
+);
+
+forgetest_init!(requires_single_test, |prj, cmd| {
+    cmd.args(["test", "--debug"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+2 tests matched your criteria, but exactly 1 test must match in order to run the debugger.
+
+Use --match-contract and --match-path to further limit the search.
+
+"#]]);
+    cmd.forge_fuse().args(["test", "--flamegraph"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+2 tests matched your criteria, but exactly 1 test must match in order to generate a flamegraph.
+
+Use --match-contract and --match-path to further limit the search.
+
+"#]]);
+    cmd.forge_fuse().args(["test", "--flamechart"]).assert_failure().stderr_eq(str![[r#"
+Error: 
+2 tests matched your criteria, but exactly 1 test must match in order to generate a flamechart.
+
+Use --match-contract and --match-path to further limit the search.
+
+"#]]);
+});
+
+forgetest_init!(deprecated_regex_arg, |prj, cmd| {
+    cmd.args(["test", "--decode-internal", "test_Increment"]).assert_success().stderr_eq(str![[r#"
+warning: specifying argument for --decode-internal is deprecated and will be removed in the future, use --match-test instead
 
 "#]]);
 });

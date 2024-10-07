@@ -1,6 +1,6 @@
+use alloy_primitives::map::HashMap;
 use derive_more::{Deref, DerefMut};
 use solang_parser::doccomment::DocCommentTag;
-use std::collections::HashMap;
 
 /// The natspec comment tag explaining the purpose of the comment.
 /// See: <https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags>.

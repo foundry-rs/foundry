@@ -11,6 +11,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+  PROFILE: maxperf
 
 jobs:
   prepare:
@@ -129,25 +130,30 @@ jobs:
       - name: Build binaries
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
+          PLATFORM_NAME: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
         shell: bash
         run: |
           set -eo pipefail
-          target="${{ matrix.target }}"
-          flags=(--release --bins --no-default-features --features rustls,aws-kms,cli,asm-keccak)
+          flags=(--target $TARGET --profile $PROFILE --bins 
+            --no-default-features --features rustls,aws-kms,cli,asm-keccak)
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
-          if [[ "$target" != *msvc* && "$target" != "aarch64-unknown-linux-gnu" ]]; then
+          if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
             flags+=(--features jemalloc)
           fi
 
-          [[ "$target" == *windows* ]] && exe=".exe"
+          [[ "$TARGET" == *windows* ]] && ext=".exe"
 
-          cargo build --target "$target" "${flags[@]}"
+          cargo build "${flags[@]}"
 
           bins=(anvil cast chisel forge)
           for name in "${bins[@]}"; do
-            bin=./target/$target/release/$name$exe
+            bin=$OUT_DIR/$name$ext
+            echo ""
             file "$bin" || true
+            du -h "$bin" || true
             ldd "$bin" || true
             $bin --version || true
           done
@@ -156,21 +162,21 @@ jobs:
         id: artifacts
         env:
           PLATFORM_NAME: ${{ matrix.platform }}
-          TARGET: ${{ matrix.target }}
-          ARCH: ${{ matrix.arch }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
           VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
+          ARCH: ${{ matrix.arch }}
         shell: bash
         run: |
           if [ "$PLATFORM_NAME" == "linux" ]; then
-            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil chisel
+            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast anvil chisel
             echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
           elif [ "$PLATFORM_NAME" == "darwin" ]; then
             # We need to use gtar here otherwise the archive is corrupt.
             # See: https://github.com/actions/virtual-environments/issues/2619
-            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast anvil chisel
+            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR forge cast anvil chisel
             echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
           else
-            cd ./target/${TARGET}/release
+            cd $OUT_DIR
             7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe
             mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
             echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> $GITHUB_OUTPUT
@@ -180,16 +186,15 @@ jobs:
         id: man
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         env:
-          PLATFORM_NAME: ${{ matrix.platform }}
-          TARGET: ${{ matrix.target }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
           VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
         shell: bash
         run: |
           sudo apt-get -y install help2man
-          help2man -N ./target/${TARGET}/release/forge > forge.1
-          help2man -N ./target/${TARGET}/release/cast > cast.1
-          help2man -N ./target/${TARGET}/release/anvil > anvil.1
-          help2man -N ./target/${TARGET}/release/chisel > chisel.1
+          help2man -N $OUT_DIR/forge > forge.1
+          help2man -N $OUT_DIR/cast > cast.1
+          help2man -N $OUT_DIR/anvil > anvil.1
+          help2man -N $OUT_DIR/chisel > chisel.1
           gzip forge.1
           gzip cast.1
           gzip anvil.1

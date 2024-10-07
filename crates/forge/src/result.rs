@@ -4,7 +4,10 @@ use crate::{
     fuzz::{BaseCounterExample, FuzzedCases},
     gas_report::GasReport,
 };
-use alloy_primitives::{Address, Log};
+use alloy_primitives::{
+    map::{AddressHashMap, HashMap},
+    Address, Log,
+};
 use eyre::Report;
 use foundry_common::{evm::Breakpoints, get_contract_name, get_file_name, shell};
 use foundry_evm::{
@@ -16,7 +19,7 @@ use foundry_evm::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::{self, Write},
     time::Duration,
 };
@@ -215,8 +218,26 @@ impl SuiteResult {
     pub fn new(
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
-        warnings: Vec<String>,
+        mut warnings: Vec<String>,
     ) -> Self {
+        // Add deprecated cheatcodes warning, if any of them used in current test suite.
+        let mut deprecated_cheatcodes = HashMap::new();
+        for test_result in test_results.values() {
+            deprecated_cheatcodes.extend(test_result.deprecated_cheatcodes.clone());
+        }
+        if !deprecated_cheatcodes.is_empty() {
+            let mut warning =
+                "the following cheatcode(s) are deprecated and will be removed in future versions:"
+                    .to_string();
+            for (cheatcode, reason) in deprecated_cheatcodes {
+                write!(warning, "\n  {cheatcode}").unwrap();
+                if let Some(reason) = reason {
+                    write!(warning, ": {reason}").unwrap();
+                }
+            }
+            warnings.push(warning);
+        }
+
         Self { duration, test_results, warnings }
     }
 
@@ -384,12 +405,19 @@ pub struct TestResult {
     pub coverage: Option<HitMaps>,
 
     /// Labeled addresses
-    pub labeled_addresses: HashMap<Address, String>,
+    pub labeled_addresses: AddressHashMap<String>,
 
     pub duration: Duration,
 
     /// pc breakpoint char map
     pub breakpoints: Breakpoints,
+
+    /// Any captured gas snapshots along the test's execution which should be accumulated.
+    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
+
+    /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
+    #[serde(skip)]
+    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 }
 
 impl fmt::Display for TestResult {
@@ -501,9 +529,15 @@ impl TestResult {
             false => TestStatus::Failure,
         };
         self.reason = reason;
-        self.breakpoints = raw_call_result.cheatcodes.map(|c| c.breakpoints).unwrap_or_default();
         self.duration = Duration::default();
         self.gas_report_traces = Vec::new();
+
+        if let Some(cheatcodes) = raw_call_result.cheatcodes {
+            self.breakpoints = cheatcodes.breakpoints;
+            self.gas_snapshots = cheatcodes.gas_snapshots;
+            self.deprecated_cheatcodes = cheatcodes.deprecated;
+        }
+
         self
     }
 
@@ -535,6 +569,7 @@ impl TestResult {
         self.duration = Duration::default();
         self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
         self.breakpoints = result.breakpoints.unwrap_or_default();
+        self.deprecated_cheatcodes = result.deprecated_cheatcodes;
 
         self
     }
@@ -710,7 +745,7 @@ pub struct TestSetup {
     /// Call traces of the setup
     pub traces: Traces,
     /// Addresses labeled during setup
-    pub labeled_addresses: HashMap<Address, String>,
+    pub labeled_addresses: AddressHashMap<String>,
     /// The reason the setup failed, if it did
     pub reason: Option<String>,
     /// Coverage info during setup
@@ -724,7 +759,7 @@ impl TestSetup {
         error: EvmError,
         mut logs: Vec<Log>,
         mut traces: Traces,
-        mut labeled_addresses: HashMap<Address, String>,
+        mut labeled_addresses: AddressHashMap<String>,
     ) -> Self {
         match error {
             EvmError::Execution(err) => {
@@ -747,7 +782,7 @@ impl TestSetup {
         address: Address,
         logs: Vec<Log>,
         traces: Traces,
-        labeled_addresses: HashMap<Address, String>,
+        labeled_addresses: AddressHashMap<String>,
         coverage: Option<HitMaps>,
         fuzz_fixtures: FuzzFixtures,
     ) -> Self {
@@ -757,7 +792,7 @@ impl TestSetup {
     pub fn failed_with(
         logs: Vec<Log>,
         traces: Traces,
-        labeled_addresses: HashMap<Address, String>,
+        labeled_addresses: AddressHashMap<String>,
         reason: String,
     ) -> Self {
         Self {

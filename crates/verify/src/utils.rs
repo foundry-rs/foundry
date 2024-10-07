@@ -156,22 +156,12 @@ pub fn extract_immutables_refs(
 ) -> Bytes {
     let mut total_len_extracted_expected = 0;
     let init_length = bytecode.len();
-    for (key, offsets) in immutable_refs {
+    for (_key, offsets) in immutable_refs {
         for offset in offsets {
             let start = offset.start as usize;
             let end = (offset.start + offset.length) as usize;
 
             total_len_extracted_expected += offset.length;
-
-            tracing::info!(
-                "Removing immutable reference: {} at start: {}, len: {}, end: {}",
-                key,
-                start,
-                offset.length,
-                end
-            );
-
-            tracing::info!("Current bytecode length: {}", bytecode.len());
 
             // Remove this sections of bytes from the bytecode
             let start_section = bytecode.slice(0..start);

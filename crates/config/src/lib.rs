@@ -38,15 +38,16 @@ use foundry_compilers::{
 };
 use inflector::Inflector;
 use regex::Regex;
-use revm_primitives::{FixedBytes, SpecId};
+use revm_primitives::{map::AddressHashMap, FixedBytes, SpecId};
 use semver::Version;
 use serde::{Deserialize, Serialize, Serializer};
 use std::{
     borrow::Cow,
-    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::mpsc::{self, RecvTimeoutError},
+    time::Duration,
 };
 
 mod macros;
@@ -176,6 +177,8 @@ pub struct Config {
     pub cache: bool,
     /// where the cache is stored if enabled
     pub cache_path: PathBuf,
+    /// where the gas snapshots are stored
+    pub snapshots: PathBuf,
     /// where the broadcast logs are stored
     pub broadcast: PathBuf,
     /// additional solc allow paths for `--allow-paths`
@@ -418,7 +421,7 @@ pub struct Config {
     pub disable_block_gas_limit: bool,
 
     /// Address labels
-    pub labels: HashMap<Address, String>,
+    pub labels: AddressHashMap<String>,
 
     /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
     /// If disabled, it is possible to access artifacts which were not recompiled or cached.
@@ -464,6 +467,9 @@ pub struct Config {
 
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
+
+    /// Use EOF-enabled solc for compilation.
+    pub eof: bool,
 
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(rename = "__warnings", default, skip_serializing)]
@@ -528,6 +534,9 @@ impl Config {
 
     /// Default salt for create2 library deployments
     pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
+
+    /// Docker image with eof-enabled solc binary
+    pub const EOF_SOLC_IMAGE: &'static str = "ghcr.io/paradigmxyz/forge-eof@sha256:46f868ce5264e1190881a3a335d41d7f42d6f26ed20b0c823609c715e38d603f";
 
     /// Returns the current `Config`
     ///
@@ -719,6 +728,7 @@ impl Config {
         self.out = p(&root, &self.out);
         self.broadcast = p(&root, &self.broadcast);
         self.cache_path = p(&root, &self.cache_path);
+        self.snapshots = p(&root, &self.snapshots);
 
         if let Some(build_info_path) = self.build_info_path {
             self.build_info_path = Some(p(&root, &build_info_path));
@@ -784,6 +794,8 @@ impl Config {
         config.libs.sort_unstable();
         config.libs.dedup();
 
+        config.sanitize_eof_settings();
+
         config
     }
 
@@ -798,6 +810,22 @@ impl Config {
             self.remappings.iter_mut().for_each(|r| {
                 r.path.path = r.path.path.to_slash_lossy().into_owned().into();
             });
+        }
+    }
+
+    /// Adjusts settings if EOF compilation is enabled.
+    ///
+    /// This includes enabling via_ir, eof_version and ensuring that evm_version is not lower than
+    /// Prague.
+    pub fn sanitize_eof_settings(&mut self) {
+        if self.eof {
+            self.via_ir = true;
+            if self.eof_version.is_none() {
+                self.eof_version = Some(EofVersion::V1);
+            }
+            if self.evm_version < EvmVersion::Prague {
+                self.evm_version = EvmVersion::Prague;
+            }
         }
     }
 
@@ -886,6 +914,12 @@ impl Config {
         remove_test_dir(&self.fuzz.failure_persist_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
 
+        // Remove snapshot directory.
+        let snapshot_dir = project.root().join(&self.snapshots);
+        if snapshot_dir.exists() {
+            let _ = fs::remove_dir_all(&snapshot_dir);
+        }
+
         Ok(())
     }
 
@@ -896,6 +930,40 @@ impl Config {
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
+        if self.eof {
+            let (tx, rx) = mpsc::channel();
+            let root = self.root.0.clone();
+            std::thread::spawn(move || {
+                tx.send(
+                    Solc::new_with_args(
+                        "docker",
+                        [
+                            "run",
+                            "--rm",
+                            "-i",
+                            "-v",
+                            &format!("{}:/app/root", root.display()),
+                            Self::EOF_SOLC_IMAGE,
+                        ],
+                    )
+                    .map(Some),
+                )
+            });
+            // If it takes more than 1 second, this likely means we are pulling the image.
+            return match rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(res) => res,
+                Err(RecvTimeoutError::Timeout) => {
+                    eprintln!(
+                        "{}",
+                        yansi::Paint::yellow(
+                            "Pulling Docker image for eof-solc, this might take some time..."
+                        )
+                    );
+                    rx.recv().expect("sender dropped")
+                }
+                Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
+            }
+        }
         if let Some(ref solc) = self.solc {
             let solc = match solc {
                 SolcReq::Version(version) => {
@@ -2087,6 +2155,7 @@ impl Default for Config {
             cache: true,
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
+            snapshots: "snapshots".into(),
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
@@ -2182,6 +2251,7 @@ impl Default for Config {
             eof_version: None,
             alphanet: false,
             transaction_timeout: 120,
+            eof: false,
             _non_exhaustive: (),
         }
     }
@@ -2386,7 +2456,7 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
 /// A provider that sets the `src` and `output` path depending on their existence.
 struct DappHardhatDirProvider<'a>(&'a Path);
 
-impl<'a> Provider for DappHardhatDirProvider<'a> {
+impl Provider for DappHardhatDirProvider<'_> {
     fn metadata(&self) -> Metadata {
         Metadata::named("Dapp Hardhat dir compat")
     }
@@ -2717,7 +2787,7 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
         figment.data().map_err(|err| {
             // figment does tag metadata and tries to map metadata to an error, since we use a new
             // figment in this provider this new figment does not know about the metadata of the
-            // provider and can't map the metadata to the error. Therefor we return the root error
+            // provider and can't map the metadata to the error. Therefore we return the root error
             // if this error originated in the provider's data.
             if let Err(root_err) = self.provider.data() {
                 return root_err;
@@ -5034,7 +5104,7 @@ mod tests {
             let config = Config::load();
             assert_eq!(
                 config.labels,
-                HashMap::from_iter(vec![
+                AddressHashMap::from_iter(vec![
                     (
                         Address::from_str("0x1F98431c8aD98523631AE4a59f267346ea31F984").unwrap(),
                         "Uniswap V3: Factory".to_string()

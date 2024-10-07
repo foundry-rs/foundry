@@ -11,7 +11,7 @@ forgetest_async!(
 Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);

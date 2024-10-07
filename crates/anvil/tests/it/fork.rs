@@ -6,12 +6,12 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{address, b256, bytes, Address, Bytes, TxHash, TxKind, U256};
+use alloy_primitives::{address, b256, bytes, uint, Address, Bytes, TxHash, TxKind, U256, U64};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
-    BlockId, BlockNumberOrTag,
+    BlockId, BlockNumberOrTag, BlockTransactionsKind,
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
@@ -58,6 +58,37 @@ pub fn fork_config() -> NodeConfig {
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
         .silent()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_gas_limit_applied_from_config() {
+    let (api, _handle) = spawn(fork_config().with_gas_limit(Some(10_000_000_u128))).await;
+
+    assert_eq!(api.gas_limit(), uint!(10_000_000_U256));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_gas_limit_disabled_from_config() {
+    let (api, handle) = spawn(fork_config().disable_block_gas_limit(true)).await;
+
+    // see https://github.com/foundry-rs/foundry/pull/8933
+    assert_eq!(api.gas_limit(), U256::from(U64::MAX));
+
+    // try to mine a couple blocks
+    let provider = handle.http_provider();
+    let tx = TransactionRequest::default()
+        .to(Address::random())
+        .value(U256::from(1337u64))
+        .from(handle.dev_wallets().next().unwrap().address());
+    let tx = WithOtherFields::new(tx);
+    let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let tx = TransactionRequest::default()
+        .to(Address::random())
+        .value(U256::from(1337u64))
+        .from(handle.dev_wallets().next().unwrap().address());
+    let tx = WithOtherFields::new(tx);
+    let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -167,6 +198,26 @@ async fn test_fork_eth_get_nonce() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_optimism_with_transaction_hash() {
+    use std::str::FromStr;
+
+    // Fork to a block with a specific transaction
+    let fork_tx_hash =
+        TxHash::from_str("fcb864b5a50f0f0b111dbbf9e9167b2cb6179dfd6270e1ad53aac6049c0ec038")
+            .unwrap();
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(rpc::next_rpc_endpoint(NamedChain::Optimism)))
+            .with_fork_transaction_hash(Some(fork_tx_hash)),
+    )
+    .await;
+
+    // Make sure the fork starts from previous block
+    let block_number = api.block_number().unwrap().to::<u64>();
+    assert_eq!(block_number, 125777954 - 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_fee_history() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
@@ -251,10 +302,10 @@ async fn test_fork_reset_setup() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_snapshotting() {
+async fn test_fork_state_snapshotting() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
-    let snapshot = api.evm_snapshot().await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
@@ -278,7 +329,7 @@ async fn test_fork_snapshotting() {
     let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
-    assert!(api.evm_revert(snapshot).await.unwrap());
+    assert!(api.evm_revert(state_snapshot).await.unwrap());
 
     let nonce = provider.get_transaction_count(from).await.unwrap();
     assert_eq!(nonce, initial_nonce);
@@ -290,11 +341,11 @@ async fn test_fork_snapshotting() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_snapshotting_repeated() {
+async fn test_fork_state_snapshotting_repeated() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
-    let snapshot = api.evm_snapshot().await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
@@ -315,9 +366,9 @@ async fn test_fork_snapshotting_repeated() {
     let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
-    let _second_snapshot = api.evm_snapshot().await.unwrap();
+    let _second_state_snapshot = api.evm_snapshot().await.unwrap();
 
-    assert!(api.evm_revert(snapshot).await.unwrap());
+    assert!(api.evm_revert(state_snapshot).await.unwrap());
 
     let nonce = provider.get_transaction_count(from).await.unwrap();
     assert_eq!(nonce, initial_nonce);
@@ -332,17 +383,16 @@ async fn test_fork_snapshotting_repeated() {
     // assert!(!api.evm_revert(second_snapshot).await.unwrap());
 
     // nothing is reverted, snapshot gone
-    assert!(!api.evm_revert(snapshot).await.unwrap());
+    assert!(!api.evm_revert(state_snapshot).await.unwrap());
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6463>
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_snapshotting_blocks() {
+async fn test_fork_state_snapshotting_blocks() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
-    // create a snapshot
-    let snapshot = api.evm_snapshot().await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let from = accounts[0].address();
@@ -366,8 +416,7 @@ async fn test_fork_snapshotting_blocks() {
     let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
-    // revert snapshot
-    assert!(api.evm_revert(snapshot).await.unwrap());
+    assert!(api.evm_revert(state_snapshot).await.unwrap());
 
     assert_eq!(initial_nonce, provider.get_transaction_count(from).await.unwrap());
     let block_number_after = provider.get_block_number().await.unwrap();
@@ -378,8 +427,8 @@ async fn test_fork_snapshotting_blocks() {
     let nonce = provider.get_transaction_count(from).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
 
-    // revert again: nothing to revert since snapshot gone
-    assert!(!api.evm_revert(snapshot).await.unwrap());
+    // revert again: nothing to revert since state snapshot gone
+    assert!(!api.evm_revert(state_snapshot).await.unwrap());
     let nonce = provider.get_transaction_count(from).await.unwrap();
     assert_eq!(nonce, initial_nonce + 1);
     let block_number_after = provider.get_block_number().await.unwrap();
@@ -732,7 +781,7 @@ async fn test_fork_can_send_opensea_tx() {
         .value(U256::from(20000000000000000u64))
         .with_input(input)
         .with_gas_price(22180711707u128)
-        .with_gas_limit(150_000u128);
+        .with_gas_limit(150_000);
     let tx = WithOtherFields::new(tx);
 
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
@@ -768,7 +817,7 @@ async fn test_fork_init_base_fee() {
     // <https://etherscan.io/block/13184859>
     assert_eq!(block.header.number, 13184859u64);
     let init_base_fee = block.header.base_fee_per_gas.unwrap();
-    assert_eq!(init_base_fee, 63739886069u128);
+    assert_eq!(init_base_fee, 63739886069);
 
     api.mine_one().await;
 
@@ -1136,7 +1185,7 @@ async fn test_fork_reset_basefee() {
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of +1 block: <https://etherscan.io/block/18835001>
-    assert_eq!(latest.header.base_fee_per_gas.unwrap(), 59455969592u128);
+    assert_eq!(latest.header.base_fee_per_gas.unwrap(), 59455969592u64);
 
     // now reset to block 18835000 -1
     api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(18835000u64 - 1) }))
@@ -1147,7 +1196,7 @@ async fn test_fork_reset_basefee() {
     let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     // basefee of the forked block: <https://etherscan.io/block/18835000>
-    assert_eq!(latest.header.base_fee_per_gas.unwrap(), 59017001138u128);
+    assert_eq!(latest.header.base_fee_per_gas.unwrap(), 59017001138);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6795>
@@ -1193,7 +1242,7 @@ async fn test_arbitrum_fork_block_number() {
     assert_eq!(block_number, initial_block_number);
 
     // take snapshot at initial block number
-    let snapshot = api.evm_snapshot().await.unwrap();
+    let snapshot_state = api.evm_snapshot().await.unwrap();
 
     // mine new block and check block number returned by `eth_blockNumber`
     api.mine_one().await;
@@ -1206,7 +1255,7 @@ async fn test_arbitrum_fork_block_number() {
     assert!(block_by_number.other.get("l1BlockNumber").is_some());
 
     // revert to recorded snapshot and check block number
-    assert!(api.evm_revert(snapshot).await.unwrap());
+    assert!(api.evm_revert(snapshot_state).await.unwrap());
     let block_number = api.block_number().unwrap().to::<u64>();
     assert_eq!(block_number, initial_block_number);
 
@@ -1219,6 +1268,27 @@ async fn test_arbitrum_fork_block_number() {
     .unwrap();
     let block_number = api.block_number().unwrap().to::<u64>();
     assert_eq!(block_number, initial_block_number - 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_base_fork_gas_limit() {
+    // fork to get initial block for test
+    let (api, handle) = spawn(
+        fork_config()
+            .with_fork_block_number(None::<u64>)
+            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Base))),
+    )
+    .await;
+
+    let provider = handle.http_provider();
+    let block = provider
+        .get_block(BlockId::Number(BlockNumberOrTag::Latest), BlockTransactionsKind::Hashes)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(api.gas_limit() >= uint!(132_000_000_U256));
+    assert!(block.header.gas_limit >= 132_000_000_u64);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/7023>
@@ -1373,7 +1443,7 @@ async fn test_reset_dev_account_nonce() {
                 .from(address)
                 .to(address)
                 .nonce(nonce_after)
-                .gas_limit(21000u128),
+                .gas_limit(21000),
         ))
         .await
         .unwrap()

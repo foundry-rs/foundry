@@ -1872,7 +1872,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
-impl<'a, W: Write> Visitor for Formatter<'a, W> {
+impl<W: Write> Visitor for Formatter<'_, W> {
     type Error = FormatterError;
 
     #[instrument(name = "source", skip(self))]
@@ -3244,7 +3244,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 let is_constructor = self.context.is_constructor_function();
                 // we can't make any decisions here regarding trailing `()` because we'd need to
                 // find out if the `base` is a solidity modifier or an
-                // interface/contract therefor we we its raw content.
+                // interface/contract therefore we we its raw content.
 
                 // we can however check if the contract `is` the `base`, this however also does
                 // not cover all cases
@@ -3843,14 +3843,14 @@ struct Transaction<'f, 'a, W> {
     comments: Comments,
 }
 
-impl<'f, 'a, W> std::ops::Deref for Transaction<'f, 'a, W> {
+impl<'a, W> std::ops::Deref for Transaction<'_, 'a, W> {
     type Target = Formatter<'a, W>;
     fn deref(&self) -> &Self::Target {
         self.fmt
     }
 }
 
-impl<'f, 'a, W> std::ops::DerefMut for Transaction<'f, 'a, W> {
+impl<W> std::ops::DerefMut for Transaction<'_, '_, W> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.fmt
     }

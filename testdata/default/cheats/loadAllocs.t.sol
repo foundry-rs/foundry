@@ -16,7 +16,7 @@ contract LoadAllocsTest is DSTest {
         allocsPath = string.concat(vm.projectRoot(), "/fixtures/Json/test_allocs.json");
 
         // Snapshot the state; We'll restore it in each test that loads allocs inline.
-        snapshotId = vm.snapshot();
+        snapshotId = vm.snapshotState();
 
         // Load the allocs file.
         vm.loadAllocs(allocsPath);
@@ -40,7 +40,7 @@ contract LoadAllocsTest is DSTest {
     /// @dev Checks that the `loadAllocs` cheatcode persists account info if called inline
     function testLoadAllocsStatic() public {
         // Restore the state snapshot prior to the allocs file being loaded.
-        vm.revertTo(snapshotId);
+        vm.revertToState(snapshotId);
 
         // Load the allocs file
         vm.loadAllocs(allocsPath);
@@ -61,7 +61,7 @@ contract LoadAllocsTest is DSTest {
     /// @dev Checks that the `loadAllocs` cheatcode overrides existing account information (if present)
     function testLoadAllocsOverride() public {
         // Restore the state snapshot prior to the allocs file being loaded.
-        vm.revertTo(snapshotId);
+        vm.revertToState(snapshotId);
 
         // Populate the alloc'd account's code.
         vm.etch(ALLOCD, hex"FF");
@@ -88,7 +88,7 @@ contract LoadAllocsTest is DSTest {
     ///      within the allocs/genesis file for the account field (i.e., partial overrides)
     function testLoadAllocsPartialOverride() public {
         // Restore the state snapshot prior to the allocs file being loaded.
-        vm.revertTo(snapshotId);
+        vm.revertToState(snapshotId);
 
         // Populate the alloc'd account's code.
         vm.etch(ALLOCD_B, hex"FF");

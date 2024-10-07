@@ -33,6 +33,7 @@ fn test_verify_bytecode(
     prj.add_source(contract_name, &source_code).unwrap();
     prj.write_config(config);
 
+    let etherscan_key = next_mainnet_etherscan_api_key();
     let mut args = vec![
         "verify-bytecode",
         addr,

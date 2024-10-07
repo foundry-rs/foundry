@@ -123,9 +123,9 @@ pub enum ForgeSubcommand {
     /// Manage the Foundry cache.
     Cache(CacheArgs),
 
-    /// Create a snapshot of each test's gas usage.
+    /// Create a gas snapshot of each test's gas usage.
     #[command(visible_alias = "s")]
-    Snapshot(snapshot::SnapshotArgs),
+    Snapshot(snapshot::GasSnapshotArgs),
 
     /// Display the current config.
     #[command(visible_alias = "co")]

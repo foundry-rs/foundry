@@ -470,12 +470,14 @@ impl<'a> ContractVisitor<'a> {
     }
 
     fn source_location_for(&self, loc: &ast::LowFidelitySourceLocation) -> SourceLocation {
+        let loc_start =
+            self.source.char_indices().map(|(i, _)| i).nth(loc.start).unwrap_or_default();
         SourceLocation {
             source_id: self.source_id,
             contract_name: self.contract_name.clone(),
             start: loc.start as u32,
             length: loc.length.map(|x| x as u32),
-            line: self.source[..loc.start].lines().count(),
+            line: self.source[..loc_start].lines().count(),
         }
     }
 }

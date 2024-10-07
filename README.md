@@ -99,7 +99,7 @@ By default `forge config` shows the currently selected foundry profile and its v
 
 ### DappTools Compatibility
 
-You can re-use your `.dapprc` environment variables by running `source .dapprc` before using a Foundry tool.
+You can reuse your `.dapprc` environment variables by running `source .dapprc` before using a Foundry tool.
 
 ### Additional Configuration
 

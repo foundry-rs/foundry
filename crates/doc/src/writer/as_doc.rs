@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 pub type AsDocResult = Result<String, std::fmt::Error>;
 
 /// A trait for formatting a parse unit as documentation.
-#[auto_impl::auto_impl(&)]
 pub trait AsDoc {
     /// Formats a parse tree item into a doc string.
     fn as_doc(&self) -> AsDocResult;
@@ -32,7 +31,7 @@ impl AsDoc for Comments {
     }
 }
 
-impl<'a> AsDoc for CommentsRef<'a> {
+impl AsDoc for CommentsRef<'_> {
     // TODO: support other tags
     fn as_doc(&self) -> AsDocResult {
         let mut writer = BufWriter::default();
@@ -224,7 +223,7 @@ impl AsDoc for Document {
                         // TODO: cleanup
                         // Write function docs
                         writer.writeln_doc(
-                            item.comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
+                            &item.comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]),
                         )?;
 
                         // Write function header
@@ -295,7 +294,7 @@ impl Document {
         writer.writeln()?;
 
         // Write function docs
-        writer.writeln_doc(comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]))?;
+        writer.writeln_doc(&comments.exclude_tags(&[CommentTag::Param, CommentTag::Return]))?;
 
         // Write function header
         writer.write_code(code)?;

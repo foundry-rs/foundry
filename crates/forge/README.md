@@ -206,7 +206,7 @@ contract MyTest {
 
     function testBarExpectedRevert() public {
         vm.expectRevert("My expected revert string");
-        // This would fail *if* we didnt expect revert. Since we expect the revert,
+        // This would fail *if* we didn't expect revert. Since we expect the revert,
         // it doesn't, unless the revert string is wrong.
         foo.bar(101);
     }
