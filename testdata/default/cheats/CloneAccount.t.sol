@@ -18,10 +18,6 @@ contract Source {
         c[2] = 444;
         d = true;
     }
-
-    function getC(uint256 index) public returns (uint256 val) {
-        val = c[index];
-    }
 }
 
 contract CloneAccountTest is DSTest {
@@ -41,9 +37,9 @@ contract CloneAccountTest is DSTest {
         // Check clone storage.
         assertEq(Source(clone).a(), 100);
         assertEq(Source(clone).b(), address(111));
-        assertEq(Source(clone).getC(0), 222);
-        assertEq(Source(clone).getC(1), 333);
-        assertEq(Source(clone).getC(2), 444);
+        assertEq(Source(clone).c(0), 222);
+        assertEq(Source(clone).c(1), 333);
+        assertEq(Source(clone).c(2), 444);
         assertEq(Source(clone).d(), true);
     }
 }

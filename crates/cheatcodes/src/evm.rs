@@ -161,7 +161,7 @@ impl Cheatcode for cloneAccountCall {
         let Self { source, target } = self;
 
         let account = ccx.ecx.journaled_state.load_account(*source, &mut ccx.ecx.db)?;
-        ccx.ecx.db.copy_account(
+        ccx.ecx.db.clone_account(
             &genesis_account(account.data),
             target,
             &mut ccx.ecx.journaled_state,
@@ -959,7 +959,7 @@ fn get_state_diff(state: &mut Cheatcodes) -> Result {
 }
 
 /// Helper function that creates a `GenesisAccount` from a regular `Account`.
-fn genesis_account(account: &mut Account) -> GenesisAccount {
+fn genesis_account(account: &Account) -> GenesisAccount {
     GenesisAccount {
         nonce: Some(account.info.nonce),
         balance: account.info.balance,

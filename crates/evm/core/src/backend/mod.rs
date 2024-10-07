@@ -283,7 +283,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     /// address.
     ///
     /// Returns [Ok] if data was successfully inserted into the journal, [Err] otherwise.
-    fn copy_account(
+    fn clone_account(
         &mut self,
         source: &GenesisAccount,
         target: &Address,
@@ -1378,7 +1378,7 @@ impl DatabaseExt for Backend {
     ) -> Result<(), BackendError> {
         // Loop through all of the allocs defined in the map and commit them to the journal.
         for (addr, acc) in allocs.iter() {
-            self.copy_account(acc, addr, journaled_state)?;
+            self.clone_account(acc, addr, journaled_state)?;
         }
 
         Ok(())
@@ -1388,7 +1388,7 @@ impl DatabaseExt for Backend {
     /// address.
     ///
     /// Returns [Ok] if data was successfully inserted into the journal, [Err] otherwise.
-    fn copy_account(
+    fn clone_account(
         &mut self,
         source: &GenesisAccount,
         target: &Address,
