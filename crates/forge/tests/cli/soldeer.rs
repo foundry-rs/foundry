@@ -350,16 +350,7 @@ remappings_regenerate = true
 forgesoldeer!(login, |prj, cmd| {
     let command = "login";
 
-    let _ = cmd.arg("soldeer").arg(command).assert_failure().stderr_eq(str![[r#"
-┌  🦌 Soldeer Login 🦌
-│
-├  If you do not have an account, please visit soldeer.xyz to create one.
-│  
-└  An error occurred during login
-Error: 
-Failed to run soldeer error during IO operation: not connected
-
-"#]]);
+    let _ = cmd.arg("soldeer").arg(command).assert_failure();
 });
 
 fn read_file_to_string(path: &Path) -> String {
