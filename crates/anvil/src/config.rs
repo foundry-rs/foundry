@@ -99,7 +99,7 @@ pub struct NodeConfig {
     pub gas_price: Option<u128>,
     /// Default base fee
     pub base_fee: Option<u64>,
-    /// If set to `true`, disables the minimum suggested priority fee
+    /// If set to `true`, disables the enforcement of a minimum suggested priority fee
     pub disable_min_priority_fee: bool,
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
@@ -626,7 +626,7 @@ impl NodeConfig {
         self
     }
 
-    /// Disable minimum suggested priority fee
+    /// Disable the enforcement of a minimum suggested priority fee
     #[must_use]
     pub fn disable_min_priority_fee(mut self, disable_min_priority_fee: bool) -> Self {
         self.disable_min_priority_fee = disable_min_priority_fee;

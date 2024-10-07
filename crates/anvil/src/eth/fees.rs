@@ -48,7 +48,7 @@ pub struct FeeManager {
     ///
     /// This value will be updated after a new block was mined
     base_fee: Arc<RwLock<u64>>,
-    /// Whether the minimum suggested priority fee should be used
+    /// Whether the minimum suggested priority fee is enforced
     is_min_priority_fee_enforced: bool,
     /// Tracks the excess blob gas, and the base fee, for the next block post Cancun
     ///
