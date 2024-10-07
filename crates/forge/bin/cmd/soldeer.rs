@@ -41,6 +41,7 @@ mod tests {
     use soldeer_commands::{commands::Version, Command};
 
     #[tokio::test]
+    #[allow(clippy::needless_return)]
     async fn test_soldeer_version() {
         let command = Command::Version(Version::default());
         assert!(soldeer_commands::run(command).await.is_ok());

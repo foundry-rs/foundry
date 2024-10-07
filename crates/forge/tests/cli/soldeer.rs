@@ -1,9 +1,6 @@
 //! Contains various tests related to `forge soldeer`.
 
-use std::{
-    fs,
-    path::Path,
-};
+use std::{fs, path::Path};
 
 use foundry_test_utils::forgesoldeer;
 forgesoldeer!(install_dependency, |prj, cmd| {
@@ -22,6 +19,8 @@ libs = ["lib"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
+    // force use special symbols on windows
+    cmd.env("WT_SESSION", "true");
     cmd.arg("soldeer").args([command, dependency]).assert_success().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Install 🦌
 │
@@ -83,6 +82,8 @@ libs = ["lib"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
+    // force use special symbols on windows
+    cmd.env("WT_SESSION", "true");
     cmd.arg("soldeer")
         .args([command, dependency, git])
         .assert_success()
@@ -164,6 +165,8 @@ libs = ["lib"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
+    // force use special symbols on windows
+    cmd.env("WT_SESSION", "true");
     cmd.arg("soldeer")
         .args([command, dependency, git, rev_flag, commit])
         .assert_success()
@@ -296,6 +299,8 @@ forge-std = "1.8.1"
 
     fs::write(&foundry_file, foundry_updates).unwrap();
 
+    // force use special symbols on windows
+    cmd.env("WT_SESSION", "true");
     cmd.arg("soldeer").arg(command).assert_success().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Update 🦌
 │
@@ -361,6 +366,8 @@ remappings_regenerate = true
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_updates).unwrap();
 
+    // force use special symbols on windows
+    cmd.env("WT_SESSION", "true");
     cmd.arg("soldeer").args([command, dependency]).assert_success().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Install 🦌
 │
@@ -429,6 +436,8 @@ remappings_regenerate = true
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_updates).unwrap();
 
+    // force use special symbols on windows
+    cmd.env("WT_SESSION", "true");
     cmd.arg("soldeer").args([command, dependency]).assert_success().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Install 🦌
 │
@@ -468,6 +477,8 @@ remappings_regenerate = true
 forgesoldeer!(login, |prj, cmd| {
     let command = "login";
 
+    // force use special symbols on windows
+    cmd.env("WT_SESSION", "true");
     let _ = cmd.arg("soldeer").arg(command).assert_failure().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Login 🦌
 │
