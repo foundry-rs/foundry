@@ -1,5 +1,5 @@
 {
-    "test/Simple.t.sol:SimpleContractTest": {
+    "src/Simple.t.sol:SimpleContractTest": {
         "duration": "{...}",
         "test_results": {
             "test()": {

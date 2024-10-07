@@ -1,5 +1,5 @@
 {
-    "test/Simple.t.sol:SimpleContractTest": {
+    "src/Simple.t.sol:SimpleContractTest": {
         "duration": "{...}",
         "test_results": {
             "test()": {
@@ -141,8 +141,8 @@
                                         "value": "0x0",
                                         "data": "0xe26d14740000000000000000000000000000000000000000000000000000000000000064",
                                         "output": "0x",
-                                        "gas_used": 22520,
-                                        "gas_limit": 1056850875,
+                                        "gas_used": "{...}",
+                                        "gas_limit": "{...}",
                                         "status": "Stop",
                                         "steps": [],
                                         "decoded": {

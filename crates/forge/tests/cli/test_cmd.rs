@@ -275,7 +275,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 const SIMPLE_CONTRACT: &str = r#"
-import {Test} from "forge-std/Test.sol";
+import "./test.sol";
 
 contract SimpleContract {
     uint256 public num;
@@ -285,7 +285,7 @@ contract SimpleContract {
     }
 }
 
-contract SimpleContractTest is Test {
+contract SimpleContractTest is DSTest {
     function test() public {
         SimpleContract c = new SimpleContract();
         c.setValues(100);
@@ -293,34 +293,26 @@ contract SimpleContractTest is Test {
 }
    "#;
 
-forgetest_init!(can_run_test_with_json_output_verbose, |prj, cmd| {
-    prj.wipe_contracts();
-    prj.clear();
+forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
+    prj.insert_ds_test();
 
-    // Disable optimizer because for simple contract most functions will get inlined.
-    prj.write_config(Config { optimizer: false, ..Default::default() });
-
-    prj.add_test("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
 
     // Assert that with verbose output the json output includes the traces
     cmd.args(["test", "-vvv", "--json"])
         .assert_success()
-        .stdout_eq(file!["../fixtures/SimpleContractTestVerbose.json"; Json]);
+        .stdout_eq(file!["../fixtures/SimpleContractTestVerbose.json": Json]);
 });
 
-forgetest_init!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
-    prj.wipe_contracts();
-    prj.clear();
+forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
+    prj.insert_ds_test();
 
-    // Disable optimizer because for simple contract most functions will get inlined.
-    prj.write_config(Config { optimizer: false, ..Default::default() });
-
-    prj.add_test("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
 
     // Assert that without verbose output the json output does not include the traces
     cmd.args(["test", "--json"])
         .assert_success()
-        .stdout_eq(file!["../fixtures/SimpleContractTestNonVerbose.json"; Json]);
+        .stdout_eq(file!["../fixtures/SimpleContractTestNonVerbose.json": Json]);
 });
 
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
