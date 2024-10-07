@@ -4,7 +4,7 @@ use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
-    utils::{configure_tx_env, new_evm_with_inspector},
+    utils::{configure_tx_env, configure_tx_req_env, new_evm_with_inspector},
     InspectorExt,
 };
 use alloy_genesis::GenesisAccount;
@@ -198,7 +198,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut Env,
+        env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()>;
@@ -206,8 +206,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     /// Executes a given TransactionRequest, commits the new state to the DB
     fn transact_from_tx(
         &mut self,
-        transaction: TransactionRequest,
-        env: &Env,
+        transaction: &TransactionRequest,
+        env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()>;
@@ -751,10 +751,10 @@ impl Backend {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect(
+    pub fn inspect<I: InspectorExt>(
         &mut self,
         env: &mut EnvWithHandlerCfg,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
         let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
@@ -1223,7 +1223,7 @@ impl DatabaseExt for Backend {
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut Env,
+        mut env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
@@ -1245,7 +1245,6 @@ impl DatabaseExt for Backend {
         // So we modify the env to match the transaction's block.
         let (_fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
-        let mut env = env.clone();
         update_env_block(&mut env, &block);
 
         let env = self.env_with_handler_cfg(env);
@@ -1263,35 +1262,20 @@ impl DatabaseExt for Backend {
 
     fn transact_from_tx(
         &mut self,
-        tx: TransactionRequest,
-        env: &Env,
+        tx: &TransactionRequest,
+        mut env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
         trace!(?tx, "execute signed transaction");
 
-        let mut env = env.clone();
-
-        env.tx.caller =
-            tx.from.ok_or_else(|| eyre::eyre!("transact_from_tx: No `from` field found"))?;
-        env.tx.gas_limit =
-            tx.gas.ok_or_else(|| eyre::eyre!("transact_from_tx: No `gas` field found"))?;
-        env.tx.gas_price = U256::from(tx.gas_price.or(tx.max_fee_per_gas).unwrap_or_default());
-        env.tx.gas_priority_fee = tx.max_priority_fee_per_gas.map(U256::from);
-        env.tx.nonce = tx.nonce;
-        env.tx.access_list = tx.access_list.clone().unwrap_or_default().0.into_iter().collect();
-        env.tx.value =
-            tx.value.ok_or_else(|| eyre::eyre!("transact_from_tx: No `value` field found"))?;
-        env.tx.data = tx.input.into_input().unwrap_or_default();
-        env.tx.transact_to =
-            tx.to.ok_or_else(|| eyre::eyre!("transact_from_tx: No `to` field found"))?;
-        env.tx.chain_id = tx.chain_id;
-
         self.commit(journaled_state.state.clone());
 
         let res = {
-            let mut db = self.clone();
+            configure_tx_req_env(&mut env, tx)?;
             let env = self.env_with_handler_cfg(env);
+
+            let mut db = self.clone();
             let mut evm = new_evm_with_inspector(&mut db, env, inspector);
             evm.context.evm.journaled_state.depth = journaled_state.depth + 1;
             evm.transact()?

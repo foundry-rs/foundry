@@ -347,6 +347,8 @@ interface Vm {
     function randomAddress() external returns (address);
     function randomBool() external view returns (bool);
     function randomBytes(uint256 len) external view returns (bytes memory);
+    function randomBytes4() external view returns (bytes4);
+    function randomBytes8() external view returns (bytes8);
     function randomInt() external view returns (int256);
     function randomInt(uint256 bits) external view returns (int256);
     function randomUint() external returns (uint256);

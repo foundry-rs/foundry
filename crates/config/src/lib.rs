@@ -2456,7 +2456,7 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
 /// A provider that sets the `src` and `output` path depending on their existence.
 struct DappHardhatDirProvider<'a>(&'a Path);
 
-impl<'a> Provider for DappHardhatDirProvider<'a> {
+impl Provider for DappHardhatDirProvider<'_> {
     fn metadata(&self) -> Metadata {
         Metadata::named("Dapp Hardhat dir compat")
     }

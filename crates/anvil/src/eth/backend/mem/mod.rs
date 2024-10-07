@@ -66,6 +66,7 @@ use anvil_core::eth::{
     utils::meets_eip155,
 };
 use anvil_rpc::error::RpcError;
+use chrono::Datelike;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
@@ -800,14 +801,28 @@ impl Backend {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
+        // load the blocks and transactions into the storage
+        self.blockchain.storage.write().load_blocks(state.blocks.clone());
+        self.blockchain.storage.write().load_transactions(state.transactions.clone());
         // reset the block env
         if let Some(block) = state.block.clone() {
             self.env.write().block = block.clone();
 
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
-            self.blockchain.storage.write().best_number =
-                state.best_block_number.unwrap_or(block.number.to::<U64>());
+
+            let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
+            self.blockchain.storage.write().best_number = best_number;
+
+            // Set the current best block hash;
+            let best_hash =
+                self.blockchain.storage.read().hash(best_number.into()).ok_or_else(|| {
+                    BlockchainError::RpcError(RpcError::internal_error_with(format!(
+                        "Best hash not found for best number {best_number}",
+                    )))
+                })?;
+
+            self.blockchain.storage.write().best_hash = best_hash;
         }
 
         if !self.db.write().await.load_state(state.clone())? {
@@ -816,9 +831,6 @@ impl Backend {
             )
             .into());
         }
-
-        self.blockchain.storage.write().load_blocks(state.blocks.clone());
-        self.blockchain.storage.write().load_transactions(state.transactions.clone());
 
         if let Some(historical_states) = state.historical_states {
             self.states.write().load_states(historical_states);
@@ -1112,7 +1124,12 @@ impl Backend {
 
             node_info!("    Block Number: {}", block_number);
             node_info!("    Block Hash: {:?}", block_hash);
-            node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
+            if timestamp.year() > 9999 {
+                // rf2822 panics with more than 4 digits
+                node_info!("    Block Time: {:?}\n", timestamp.to_rfc3339());
+            } else {
+                node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
+            }
 
             let outcome = MinedBlockOutcome { block_number, included, invalid };
 
