@@ -19,20 +19,18 @@ libs = ["lib"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
-    // force use special symbols on windows
-    cmd.env("WT_SESSION", "true");
     cmd.arg("soldeer").args([command, dependency]).assert_success().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Install 🦌
 │
-◆  Done reading config
+[..]  Done reading config
 │  
-[6A[1A
-[2K[1B[1A◇  Installing forge-std~1.8.1
-[6B◆  Dependency added to config
+[..]
+[..]  Installing forge-std~1.8.1
+[..]  Dependency added to config
 │  
-◆  Dependency added to lockfile
+[..]  Dependency added to lockfile
 │  
-◆  Dependency added to remappings
+[..]  Dependency added to remappings
 │  
 └  Done installing!
 
@@ -82,23 +80,21 @@ libs = ["lib"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
-    // force use special symbols on windows
-    cmd.env("WT_SESSION", "true");
     cmd.arg("soldeer")
         .args([command, dependency, git])
         .assert_success()
         .stderr_eq(str![[r#"
 ┌  🦌 Soldeer Install 🦌
 │
-◆  Done reading config
+[..]  Done reading config
 │  
-[6A[1A
-[2K[1B[1A◇  Installing forge-std~1.8.1
-[6B◆  Dependency added to config
+[..]
+[..]  Installing forge-std~1.8.1
+[..]  Dependency added to config
 │  
-◆  Dependency added to lockfile
+[..]  Dependency added to lockfile
 │  
-◆  Dependency added to remappings
+[..]  Dependency added to remappings
 │  
 └  Done installing!
 
@@ -106,15 +102,15 @@ libs = ["lib"]
         .stderr_eq(str![[r#"
 ┌  🦌 Soldeer Install 🦌
 │
-◆  Done reading config
+[..]  Done reading config
 │  
-[6A[1A
-[2K[1B[1A◇  Installing forge-std~1.8.1
-[6B◆  Dependency added to config
+[..]
+[..]  Installing forge-std~1.8.1
+[..]  Dependency added to config
 │  
-◆  Dependency added to lockfile
+[..]  Dependency added to lockfile
 │  
-◆  Dependency added to remappings
+[..]  Dependency added to remappings
 │  
 └  Done installing!
 
@@ -165,23 +161,21 @@ libs = ["lib"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
-    // force use special symbols on windows
-    cmd.env("WT_SESSION", "true");
     cmd.arg("soldeer")
         .args([command, dependency, git, rev_flag, commit])
         .assert_success()
         .stderr_eq(str![[r#"
 ┌  🦌 Soldeer Install 🦌
 │
-◆  Done reading config
+[..]  Done reading config
 │  
-[6A[1A
-[2K[1B[1A◇  Installing forge-std~1.8.1
-[6B◆  Dependency added to config
+[..]
+[..]  Installing forge-std~1.8.1
+[..]  Dependency added to config
 │  
-◆  Dependency added to lockfile
+[..]  Dependency added to lockfile
 │  
-◆  Dependency added to remappings
+[..]  Dependency added to remappings
 │  
 └  Done installing!
 
@@ -299,20 +293,18 @@ forge-std = "1.8.1"
 
     fs::write(&foundry_file, foundry_updates).unwrap();
 
-    // force use special symbols on windows
-    cmd.env("WT_SESSION", "true");
     cmd.arg("soldeer").arg(command).assert_success().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Update 🦌
 │
-◆  Done reading config
+[..]  Done reading config
 │  
-◆  Done reading lockfile
+[..]  Done reading lockfile
 │  
 [6A[1A
-[2K[1B[1A◇  Updating dependencies
-[6B◆  Updated lockfile
+[..]  Updating dependencies
+[..]  Updated lockfile
 │  
-◆  Updated remappings
+[..]  Updated remappings
 │  
 └  Done updating!
 
@@ -366,20 +358,18 @@ remappings_regenerate = true
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_updates).unwrap();
 
-    // force use special symbols on windows
-    cmd.env("WT_SESSION", "true");
     cmd.arg("soldeer").args([command, dependency]).assert_success().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Install 🦌
 │
-◆  Done reading config
+[..]  Done reading config
 │  
 [6A[1A
-[2K[1B[1A◇  Installing forge-std~1.8.1
-[6B◆  Dependency added to config
+[..]  Installing forge-std~1.8.1
+[..]  Dependency added to config
 │  
-◆  Dependency added to lockfile
+[..]  Dependency added to lockfile
 │  
-◆  Dependency added to remappings
+[..]  Dependency added to remappings
 │  
 └  Done installing!
 
@@ -436,20 +426,18 @@ remappings_regenerate = true
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_updates).unwrap();
 
-    // force use special symbols on windows
-    cmd.env("WT_SESSION", "true");
     cmd.arg("soldeer").args([command, dependency]).assert_success().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Install 🦌
 │
-◆  Done reading config
+[..]  Done reading config
 │  
 [6A[1A
-[2K[1B[1A◇  Installing forge-std~1.8.1
-[6B◆  Dependency added to config
+[..]  Installing forge-std~1.8.1
+[..]  Dependency added to config
 │  
-◆  Dependency added to lockfile
+[..]  Dependency added to lockfile
 │  
-◆  Dependency added to remappings
+[..]  Dependency added to remappings
 │  
 └  Done installing!
 
@@ -477,8 +465,6 @@ remappings_regenerate = true
 forgesoldeer!(login, |prj, cmd| {
     let command = "login";
 
-    // force use special symbols on windows
-    cmd.env("WT_SESSION", "true");
     let _ = cmd.arg("soldeer").arg(command).assert_failure().stderr_eq(str![[r#"
 ┌  🦌 Soldeer Login 🦌
 │
