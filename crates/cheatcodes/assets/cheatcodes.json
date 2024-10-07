@@ -3193,6 +3193,26 @@
     },
     {
       "func": {
+        "id": "cloneAccount",
+        "description": "Load a genesis JSON file's `allocs` into the in-memory revm state.",
+        "declaration": "function cloneAccount(address source, address target) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "cloneAccount(address,address)",
+        "selector": "0x533d61c9",
+        "selectorBytes": [
+          83,
+          61,
+          97,
+          201
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "closeFile",
         "description": "Closes file for reading, resetting the offset and allowing to read it from beginning with readLine.\n`path` is relative to the project root.",
         "declaration": "function closeFile(string calldata path) external;",

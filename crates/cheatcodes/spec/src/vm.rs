@@ -287,6 +287,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function loadAllocs(string calldata pathToAllocsJson) external;
 
+    /// Clones a source account code, state, balance and nonce to a target account and updates in-memory revm state.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function cloneAccount(address source, address target) external;
+
     // -------- Record Storage --------
 
     /// Records all storage reads and writes.

@@ -155,6 +155,7 @@ interface Vm {
     function broadcast(uint256 privateKey) external;
     function chainId(uint256 newChainId) external;
     function clearMockedCalls() external;
+    function cloneAccount(address source, address target) external;
     function closeFile(string calldata path) external;
     function coinbase(address newCoinbase) external;
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
