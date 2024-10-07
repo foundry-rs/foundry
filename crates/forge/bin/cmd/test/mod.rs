@@ -5,7 +5,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result};
 use forge::{
     decode::decode_console_logs,
-    gas_report::GasReport,
+    gas_report::{GasReport, ReportKind},
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
@@ -474,6 +474,8 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
+        let has_serialized_output = self.gas_report && (self.json || self.junit);
+
         let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
             let action = if self.flamegraph {
@@ -499,16 +501,18 @@ impl TestArgs {
             runner.decode_internal = InternalTraceMode::Full;
         }
 
-        if self.json {
-            let results = runner.test_collect(filter);
-            println!("{}", serde_json::to_string(&results)?);
-            return Ok(TestOutcome::new(results, self.allow_failure));
-        }
+        if !self.gas_report {
+            if self.json {
+                let results = runner.test_collect(filter);
+                println!("{}", serde_json::to_string(&results)?);
+                return Ok(TestOutcome::new(results, self.allow_failure));
+            }
 
-        if self.junit {
-            let results = runner.test_collect(filter);
-            println!("{}", junit_xml_report(&results, verbosity).to_string()?);
-            return Ok(TestOutcome::new(results, self.allow_failure));
+            if self.junit {
+                let results = runner.test_collect(filter);
+                println!("{}", junit_xml_report(&results, verbosity).to_string()?);
+                return Ok(TestOutcome::new(results, self.allow_failure));
+            }
         }
 
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
@@ -553,9 +557,19 @@ impl TestArgs {
         }
         let mut decoder = builder.build();
 
-        let mut gas_report = self
-            .gas_report
-            .then(|| GasReport::new(config.gas_reports.clone(), config.gas_reports_ignore.clone()));
+        let mut gas_report = self.gas_report.then(|| {
+            GasReport::new(
+                config.gas_reports.clone(),
+                config.gas_reports_ignore.clone(),
+                if self.json {
+                    ReportKind::JSON
+                } else if self.junit {
+                    ReportKind::JUnit
+                } else {
+                    ReportKind::Markdown
+                },
+            )
+        });
 
         let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
 
@@ -576,30 +590,34 @@ impl TestArgs {
                 self.flamechart;
 
             // Print suite header.
-            println!();
-            for warning in suite_result.warnings.iter() {
-                eprintln!("{} {warning}", "Warning:".yellow().bold());
-            }
-            if !tests.is_empty() {
-                let len = tests.len();
-                let tests = if len > 1 { "tests" } else { "test" };
-                println!("Ran {len} {tests} for {contract_name}");
+            if !has_serialized_output {
+                println!();
+                for warning in suite_result.warnings.iter() {
+                    eprintln!("{} {warning}", "Warning:".yellow().bold());
+                }
+                if !tests.is_empty() {
+                    let len = tests.len();
+                    let tests = if len > 1 { "tests" } else { "test" };
+                    println!("Ran {len} {tests} for {contract_name}");
+                }
             }
 
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
-                shell::println(result.short_result(name))?;
+                if !has_serialized_output {
+                    shell::println(result.short_result(name))?;
 
-                // We only display logs at level 2 and above
-                if verbosity >= 2 {
-                    // We only decode logs from Hardhat and DS-style console events
-                    let console_logs = decode_console_logs(&result.logs);
-                    if !console_logs.is_empty() {
-                        println!("Logs:");
-                        for log in console_logs {
-                            println!("  {log}");
+                    // We only display logs at level 2 and above
+                    if verbosity >= 2 {
+                        // We only decode logs from Hardhat and DS-style console events
+                        let console_logs = decode_console_logs(&result.logs);
+                        if !console_logs.is_empty() {
+                            println!("Logs:");
+                            for log in console_logs {
+                                println!("  {log}");
+                            }
+                            println!();
                         }
-                        println!();
                     }
                 }
 
@@ -641,7 +659,7 @@ impl TestArgs {
                     }
                 }
 
-                if !decoded_traces.is_empty() {
+                if !has_serialized_output && !decoded_traces.is_empty() {
                     shell::println("Traces:")?;
                     for trace in &decoded_traces {
                         shell::println(trace)?;
@@ -748,7 +766,9 @@ impl TestArgs {
             }
 
             // Print suite summary.
-            shell::println(suite_result.summary())?;
+            if !has_serialized_output {
+                shell::println(suite_result.summary())?;
+            }
 
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
@@ -769,7 +789,7 @@ impl TestArgs {
             outcome.gas_report = Some(finalized);
         }
 
-        if !outcome.results.is_empty() {
+        if !has_serialized_output && !outcome.results.is_empty() {
             shell::println(outcome.summary(duration))?;
 
             if self.summary {

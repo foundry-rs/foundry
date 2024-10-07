@@ -14,11 +14,26 @@ use std::{
 };
 use yansi::Paint;
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ReportKind {
+    Markdown,
+    JSON,
+    JUnit,
+}
+
+impl Default for ReportKind {
+    fn default() -> Self {
+        Self::Markdown
+    }
+}
+
 /// Represents the gas report for a set of contracts.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GasReport {
     /// Whether to report any contracts.
     report_any: bool,
+    /// Whether to format the report in markdown.
+    report_type: ReportKind,
     /// Contracts to generate the report for.
     report_for: HashSet<String>,
     /// Contracts to ignore when generating the report.
@@ -32,11 +47,13 @@ impl GasReport {
     pub fn new(
         report_for: impl IntoIterator<Item = String>,
         ignore: impl IntoIterator<Item = String>,
+        report_kind: ReportKind,
     ) -> Self {
         let report_for = report_for.into_iter().collect::<HashSet<_>>();
         let ignore = ignore.into_iter().collect::<HashSet<_>>();
         let report_any = report_for.is_empty() || report_for.contains("*");
-        Self { report_any, report_for, ignore, ..Default::default() }
+        let report_type = report_kind;
+        Self { report_any, report_type, report_for, ignore, ..Default::default() }
     }
 
     /// Whether the given contract should be reported.
@@ -144,6 +161,40 @@ impl Display for GasReport {
         for (name, contract) in &self.contracts {
             if contract.functions.is_empty() {
                 trace!(name, "gas report contract without functions");
+                continue;
+            }
+
+            if self.report_type == ReportKind::JSON {
+                let mut contract_json = serde_json::to_value(contract).unwrap();
+                if let Some(functions) =
+                    contract_json.get_mut("functions").and_then(|f| f.as_object_mut())
+                {
+                    for sigs in functions.values_mut() {
+                        if let Some(sigs) = sigs.as_object_mut() {
+                            for gas_info in sigs.values_mut() {
+                                if let Some(gas_info) = gas_info.as_object_mut() {
+                                    if let Some(calls) =
+                                        gas_info.get("calls").and_then(|v| v.as_array())
+                                    {
+                                        gas_info.insert(
+                                            "calls".to_string(),
+                                            serde_json::Value::Number(serde_json::Number::from(
+                                                calls.len(),
+                                            )),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                writeln!(f, "{}", serde_json::to_string_pretty(&contract_json).unwrap())?;
+
+                continue;
+            }
+
+            if self.report_type == ReportKind::JUnit {
+                writeln!(f, "Not implemented")?;
                 continue;
             }
 
