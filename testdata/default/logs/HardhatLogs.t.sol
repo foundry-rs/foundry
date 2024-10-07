@@ -25,10 +25,10 @@ contract HardhatLogsTest {
     }
 
     function testInts() public view {
-        console.log(0);
-        console.log(1);
-        console.log(2);
-        console.log(3);
+        console.log(uint256(0));
+        console.log(uint256(1));
+        console.log(uint256(2));
+        console.log(uint256(3));
     }
 
     function testStrings() public view {
@@ -37,7 +37,7 @@ contract HardhatLogsTest {
 
     function testMisc() public view {
         console.log("testMisc", address(1));
-        console.log("testMisc", 42);
+        console.log("testMisc", uint256(42));
     }
 
     function testConsoleLog() public view {
