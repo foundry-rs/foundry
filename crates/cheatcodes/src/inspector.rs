@@ -119,8 +119,8 @@ pub trait CheatcodesExecutor {
         })
     }
 
-    fn console_log(&mut self, ccx: &mut CheatsCtxt, message: String) {
-        self.get_inspector(ccx.state).console_log(message);
+    fn console_log(&mut self, ccx: &mut CheatsCtxt, msg: &str) {
+        self.get_inspector(ccx.state).console_log(msg);
     }
 
     /// Returns a mutable reference to the tracing inspector if it is available.
