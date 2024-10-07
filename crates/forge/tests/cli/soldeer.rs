@@ -65,10 +65,7 @@ libs = ["lib"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
-    cmd.arg("soldeer")
-        .args([command, dependency, git])
-        .assert_success()
-        ;
+    cmd.arg("soldeer").args([command, dependency, git]).assert_success();
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -115,10 +112,7 @@ libs = ["lib"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
-    cmd.arg("soldeer")
-        .args([command, dependency, git, rev_flag, commit])
-        .assert_success()
-        ;
+    cmd.arg("soldeer").args([command, dependency, git, rev_flag, commit]).assert_success();
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -313,7 +307,6 @@ remappings_regenerate = true
 [dependencies]
 forge-std = "1.8.1"
 "#;
-
 
     assert_data_eq!(read_file_to_string(&foundry_file), foundry_contents);
 });
