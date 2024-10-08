@@ -1530,14 +1530,51 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
         ..Default::default()
     });
 
-    let first_out = cmd
-        .forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
+    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/Contracts.sol:ContractOneTest
+[PASS] testFoo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractTwoTest
+[PASS] testBar() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractThreeTest
+[PASS] testBaz() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+
+
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
     cmd.forge_fuse()
         .arg("test")
         .arg("--gas-report")
@@ -1552,14 +1589,49 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 "#]]);
 
     prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
-    let second_out = cmd
-        .forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
+    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for src/Contracts.sol:ContractOneTest
+[PASS] testFoo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractTwoTest
+[PASS] testBar() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractThreeTest
+[PASS] testBaz() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+
+
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
     cmd.forge_fuse()
         .arg("test")
         .arg("--gas-report")
@@ -1574,14 +1646,49 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 "#]]);
 
     prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
-    let third_out = cmd
-        .forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for src/Contracts.sol:ContractOneTest
+[PASS] testFoo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractTwoTest
+[PASS] testBar() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractThreeTest
+[PASS] testBaz() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+
+
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
     cmd.forge_fuse()
         .arg("test")
         .arg("--gas-report")
@@ -1603,14 +1710,49 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
         ]),
         ..Default::default()
     });
-    let fourth_out = cmd
-        .forge_fuse()
-        .arg("test")
-        .arg("--gas-report")
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
+    cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for src/Contracts.sol:ContractOneTest
+[PASS] testFoo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractTwoTest
+[PASS] testBar() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractThreeTest
+[PASS] testBaz() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+
+
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
     cmd.forge_fuse()
         .arg("test")
         .arg("--gas-report")
@@ -1632,12 +1774,35 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
     // report for One
     prj.write_config(Config { gas_reports: vec!["ContractOne".to_string()], ..Default::default() });
     cmd.forge_fuse();
-    let first_out =
-        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
-    assert!(
-        first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"),
-        "foo:\n{first_out}"
-    );
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/Contracts.sol:ContractOneTest
+[PASS] testFoo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractTwoTest
+[PASS] testBar() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractThreeTest
+[PASS] testBaz() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
     cmd.forge_fuse()
         .arg("test")
         .arg("--gas-report")
@@ -1652,12 +1817,33 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
     // report for Two
     prj.write_config(Config { gas_reports: vec!["ContractTwo".to_string()], ..Default::default() });
     cmd.forge_fuse();
-    let second_out =
-        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
-    assert!(
-        !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz"),
-        "bar:\n{second_out}"
-    );
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for src/Contracts.sol:ContractOneTest
+[PASS] testFoo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractTwoTest
+[PASS] testBar() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractThreeTest
+[PASS] testBaz() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+
+
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
     cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
         str![[r#"
 {"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
@@ -1672,12 +1858,33 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out =
-        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
-    assert!(
-        !third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"),
-        "baz:\n{third_out}"
-    );
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for src/Contracts.sol:ContractOneTest
+[PASS] testFoo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractTwoTest
+[PASS] testBar() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractThreeTest
+[PASS] testBaz() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
     cmd.forge_fuse()
         .arg("test")
         .arg("--gas-report")
@@ -1701,9 +1908,43 @@ forgetest!(gas_ignore_some_contracts, |prj, cmd| {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let first_out =
-        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
-    assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/Contracts.sol:ContractOneTest
+[PASS] testFoo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractTwoTest
+[PASS] testBar() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractThreeTest
+[PASS] testBaz() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+
+
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
     cmd.forge_fuse()
         .arg("test")
         .arg("--gas-report")
@@ -1724,11 +1965,41 @@ forgetest!(gas_ignore_some_contracts, |prj, cmd| {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let second_out =
-        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
-    assert!(
-        second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
-    );
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for src/Contracts.sol:ContractOneTest
+[PASS] testFoo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractTwoTest
+[PASS] testBar() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractThreeTest
+[PASS] testBaz() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
     cmd.forge_fuse()
         .arg("test")
         .arg("--gas-report")
@@ -1753,9 +2024,49 @@ forgetest!(gas_ignore_some_contracts, |prj, cmd| {
         ..Default::default()
     });
     cmd.forge_fuse();
-    let third_out =
-        cmd.arg("test").arg("--gas-report").assert_success().get_output().stdout_lossy();
-    assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+    cmd.arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for src/Contracts.sol:ContractOneTest
+[PASS] testFoo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractTwoTest
+[PASS] testBar() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/Contracts.sol:ContractThreeTest
+[PASS] testBaz() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+| src/Contracts.sol:ContractOne contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| foo                                    | 45387           | 45387 | 45387  | 45387 | 1       |
+
+
+| src/Contracts.sol:ContractThree contract |                 |        |        |        |         |
+|------------------------------------------|-----------------|--------|--------|--------|---------|
+| Deployment Cost                          | Deployment Size |        |        |        |         |
+| 103591                                   | 256             |        |        |        |         |
+| Function Name                            | min             | avg    | median | max    | # calls |
+| baz                                      | 260712          | 260712 | 260712 | 260712 | 1       |
+
+
+| src/Contracts.sol:ContractTwo contract |                 |       |        |       |         |
+|----------------------------------------|-----------------|-------|--------|-------|---------|
+| Deployment Cost                        | Deployment Size |       |        |       |         |
+| 103375                                 | 255             |       |        |       |         |
+| Function Name                          | min             | avg   | median | max   | # calls |
+| bar                                    | 64984           | 64984 | 64984  | 64984 | 1       |
+
+
+
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
     cmd.forge_fuse()
         .arg("test")
         .arg("--gas-report")

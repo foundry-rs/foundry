@@ -131,7 +131,7 @@ impl GasReport {
                     .or_default()
                     .entry(signature.clone())
                     .or_default();
-                gas_info.calls.push(trace.gas_used);
+                gas_info.frames.push(trace.gas_used);
             }
         }
     }
@@ -143,12 +143,12 @@ impl GasReport {
         for contract in self.contracts.values_mut() {
             for sigs in contract.functions.values_mut() {
                 for func in sigs.values_mut() {
-                    func.calls.sort_unstable();
-                    func.min = func.calls.first().copied().unwrap_or_default();
-                    func.max = func.calls.last().copied().unwrap_or_default();
-                    func.mean = calc::mean(&func.calls);
-                    func.median = calc::median_sorted(&func.calls);
-                    func.count = func.calls.len() as u64;
+                    func.frames.sort_unstable();
+                    func.min = func.frames.first().copied().unwrap_or_default();
+                    func.max = func.frames.last().copied().unwrap_or_default();
+                    func.mean = calc::mean(&func.frames);
+                    func.median = calc::median_sorted(&func.frames);
+                    func.calls = func.frames.len() as u64;
                 }
             }
         }
@@ -200,7 +200,7 @@ impl Display for GasReport {
                         Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
                         Cell::new(gas_info.median.to_string()).fg(Color::Yellow),
                         Cell::new(gas_info.max.to_string()).fg(Color::Red),
-                        Cell::new(gas_info.count.to_string()),
+                        Cell::new(gas_info.calls.to_string()),
                     ]);
                 })
             });
@@ -221,11 +221,12 @@ pub struct ContractInfo {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GasInfo {
-    #[serde(skip)]
-    pub calls: Vec<u64>,
-    pub count: u64,
+    pub calls: u64,
     pub min: u64,
     pub mean: u64,
     pub median: u64,
     pub max: u64,
+
+    #[serde(skip)]
+    pub frames: Vec<u64>,
 }
