@@ -103,9 +103,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         block_gas_limit: Some(100u64.into()),
         disable_block_gas_limit: false,
         memory_limit: 1 << 27,
-        eth_rpc_url: Some(
-            "https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD".to_string(),
-        ),
+        eth_rpc_url: Some("localhost".to_string()),
         eth_rpc_jwt: None,
         etherscan_api_key: None,
         etherscan: Default::default(),
@@ -158,14 +156,17 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
+    cmd.unset_env("ETH_RPC_URL");
     let config = cmd.config();
     similar_asserts::assert_eq!(input, config);
 });
 
 // tests config gets printed to std out
 forgetest!(can_show_config, |prj, cmd| {
+    println!("prj.root {}", prj.root().display());
     let expected =
         Config::load_with_root(prj.root()).to_string_pretty().unwrap().trim().to_string();
+    cmd.unset_env("ETH_RPC_URL");
     let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
     assert_eq!(expected, output);
 });
@@ -193,6 +194,7 @@ forgetest_init!(can_override_config, |prj, cmd| {
     );
 
     let expected = profile.to_string_pretty().unwrap().trim().to_string();
+    cmd.unset_env("ETH_RPC_URL");
     let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
     assert_eq!(expected, output);
 
