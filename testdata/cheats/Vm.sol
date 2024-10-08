@@ -147,14 +147,15 @@ interface Vm {
     function assumeNoRevert() external pure;
     function blobBaseFee(uint256 newBlobBaseFee) external;
     function blobhashes(bytes32[] calldata hashes) external;
-    function breakpoint(string calldata char) external;
-    function breakpoint(string calldata char, bool value) external;
+    function breakpoint(string calldata char) external pure;
+    function breakpoint(string calldata char, bool value) external pure;
     function broadcastRawTransaction(bytes calldata data) external;
     function broadcast() external;
     function broadcast(address signer) external;
     function broadcast(uint256 privateKey) external;
     function chainId(uint256 newChainId) external;
     function clearMockedCalls() external;
+    function cloneAccount(address source, address target) external;
     function closeFile(string calldata path) external;
     function coinbase(address newCoinbase) external;
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
@@ -284,6 +285,8 @@ interface Vm {
     function mockCallRevert(address callee, uint256 msgValue, bytes calldata data, bytes calldata revertData) external;
     function mockCall(address callee, bytes calldata data, bytes calldata returnData) external;
     function mockCall(address callee, uint256 msgValue, bytes calldata data, bytes calldata returnData) external;
+    function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;
+    function mockCalls(address callee, uint256 msgValue, bytes calldata data, bytes[] calldata returnData) external;
     function mockFunction(address callee, address target, bytes calldata data) external;
     function parseAddress(string calldata stringifiedValue) external pure returns (address parsedValue);
     function parseBool(string calldata stringifiedValue) external pure returns (bool parsedValue);

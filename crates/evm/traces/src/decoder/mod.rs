@@ -7,7 +7,10 @@ use crate::{
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
-use alloy_primitives::{Address, LogData, Selector, B256};
+use alloy_primitives::{
+    map::{hash_map::Entry, HashMap},
+    Address, LogData, Selector, B256,
+};
 use foundry_common::{
     abi::get_indexed_event, fmt::format_token, get_contract_name, ContractsByArtifact, SELECTOR_LEN,
 };
@@ -25,11 +28,7 @@ use foundry_evm_core::{
 };
 use itertools::Itertools;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
-use rustc_hash::FxHashMap;
-use std::{
-    collections::{hash_map::Entry, BTreeMap, HashMap},
-    sync::OnceLock,
-};
+use std::{collections::BTreeMap, sync::OnceLock};
 
 mod precompiles;
 
@@ -124,7 +123,7 @@ pub struct CallTraceDecoder {
     pub receive_contracts: Vec<Address>,
 
     /// All known functions.
-    pub functions: FxHashMap<Selector, Vec<Function>>,
+    pub functions: HashMap<Selector, Vec<Function>>,
     /// All known events.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// Revert decoder. Contains all known custom errors.
@@ -171,7 +170,7 @@ impl CallTraceDecoder {
 
         Self {
             contracts: Default::default(),
-            labels: [
+            labels: HashMap::from_iter([
                 (CHEATCODE_ADDRESS, "VM".to_string()),
                 (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
                 (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
@@ -187,8 +186,7 @@ impl CallTraceDecoder {
                 (EC_PAIRING, "ECPairing".to_string()),
                 (BLAKE_2F, "Blake2F".to_string()),
                 (POINT_EVALUATION, "PointEvaluation".to_string()),
-            ]
-            .into(),
+            ]),
             receive_contracts: Default::default(),
 
             functions: hh_funcs()

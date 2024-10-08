@@ -1,5 +1,5 @@
 use super::{install, test::TestArgs};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{map::HashMap, Address, Bytes, U256};
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use forge::{
@@ -24,10 +24,8 @@ use foundry_compilers::{
 };
 use foundry_config::{Config, SolcReq};
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
 use semver::Version;
 use std::{
-    collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -150,7 +148,7 @@ impl CoverageArgs {
 
         // Collect source files.
         let project_paths = &project.paths;
-        let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::new();
+        let mut versioned_sources = HashMap::<Version, SourceFiles<'_>>::default();
         for (path, source_file, version) in output.output().sources.sources_with_version() {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
@@ -191,7 +189,7 @@ impl CoverageArgs {
             let source_analysis = SourceAnalyzer::new(sources).analyze()?;
 
             // Build helper mapping used by `find_anchors`
-            let mut items_by_source_id = FxHashMap::<_, Vec<_>>::with_capacity_and_hasher(
+            let mut items_by_source_id = HashMap::<_, Vec<_>>::with_capacity_and_hasher(
                 source_analysis.items.len(),
                 Default::default(),
             );
@@ -410,7 +408,7 @@ impl BytecodeData {
     pub fn find_anchors(
         &self,
         source_analysis: &SourceAnalysis,
-        items_by_source_id: &FxHashMap<usize, Vec<usize>>,
+        items_by_source_id: &HashMap<usize, Vec<usize>>,
     ) -> Vec<ItemAnchor> {
         find_anchors(
             &self.bytecode,
