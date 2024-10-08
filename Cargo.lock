@@ -1835,6 +1835,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "bon"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97493a391b4b18ee918675fb8663e53646fd09321c58b46afa04e8ce2499c869"
+dependencies = [
+ "bon-macros",
+ "rustversion",
+]
+
+[[package]]
+name = "bon-macros"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a2af3eac944c12cdf4423eab70d310da0a8e5851a18ffb192c0a5e3f7ae1663"
+dependencies = [
+ "darling",
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.79",
+]
+
+[[package]]
 name = "bs58"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2181,6 +2204,20 @@ dependencies = [
  "thiserror",
  "which",
  "winapi",
+]
+
+[[package]]
+name = "cliclack"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a80570d35684e725e9d2d4aaaf32bc0cbfcfb8539898f9afea3da0d2e5189e4"
+dependencies = [
+ "console",
+ "indicatif",
+ "once_cell",
+ "strsim",
+ "textwrap",
+ "zeroize",
 ]
 
 [[package]]
@@ -3399,7 +3436,7 @@ dependencies = [
  "similar",
  "similar-asserts",
  "solang-parser",
- "soldeer",
+ "soldeer-commands",
  "strum",
  "svm-rs",
  "tempfile",
@@ -8166,6 +8203,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
 
 [[package]]
+name = "smawk"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7c388c1b5e93756d0c740965c41e8822f866621d41acbdf6336a6a168f8840c"
+
+[[package]]
 name = "snapbox"
 version = "0.6.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8215,24 +8258,39 @@ dependencies = [
 ]
 
 [[package]]
-name = "soldeer"
-version = "0.3.4"
+name = "soldeer-commands"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9ed763c2bb43241ca0fb6c00feea54187895b7f4eb1090654fbf82807127369"
+checksum = "236ae9bfdac074b0cf30caef23e59265b8f609334be3941727c1babcbb04c9cf"
 dependencies = [
- "chrono",
  "clap",
- "const-hex",
- "dunce",
+ "cliclack",
+ "derive_more 1.0.0",
  "email-address-parser",
- "futures",
+ "rayon",
+ "soldeer-core",
+]
+
+[[package]]
+name = "soldeer-core"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d84a27730c18b4ae2bce01a81bec17397009e3dd739e26f9c10ed8807a97d93e"
+dependencies = [
+ "bon",
+ "chrono",
+ "cliclack",
+ "const-hex",
+ "derive_more 1.0.0",
+ "dunce",
  "home",
  "ignore",
  "path-slash",
+ "rayon",
  "regex",
  "reqwest",
- "rpassword",
  "sanitize-filename",
+ "semver 1.0.23",
  "serde",
  "serde_json",
  "sha2",
@@ -8240,7 +8298,6 @@ dependencies = [
  "tokio",
  "toml_edit",
  "uuid 1.10.0",
- "yansi",
  "zip",
  "zip-extract",
 ]
@@ -8509,6 +8566,17 @@ name = "termtree"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3369f5ac52d5eb6ab48c6b4ffdc8efbcad6b89c765749064ba298f2c68a16a76"
+
+[[package]]
+name = "textwrap"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23d434d3f8967a09480fb04132ebe0a3e088c173e6d0ee7897abbdf4eab0f8b9"
+dependencies = [
+ "smawk",
+ "unicode-linebreak",
+ "unicode-width 0.1.14",
+]
 
 [[package]]
 name = "thiserror"
@@ -9125,6 +9193,12 @@ name = "unicode-ident"
 version = "1.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e91b56cd4cadaeb79bbf1a5645f6b4f8dc5bde8834ad5894a8db35fda9efa1fe"
+
+[[package]]
+name = "unicode-linebreak"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
 
 [[package]]
 name = "unicode-normalization"
