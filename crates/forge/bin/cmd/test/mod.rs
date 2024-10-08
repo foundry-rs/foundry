@@ -1064,7 +1064,7 @@ contract FooBarTest is DSTest {
         let call_cnts = gas_report
             .contracts
             .values()
-            .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.calls.len())))
+            .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.frames.len())))
             .collect::<Vec<_>>();
         // assert that all functions were called at least 100 times
         assert!(call_cnts.iter().all(|c| *c > 100));
