@@ -3465,7 +3465,6 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-serde 0.4.2",
  "alloy-signer",
- "alloy-signer-local",
  "alloy-transport",
  "async-recursion",
  "clap",

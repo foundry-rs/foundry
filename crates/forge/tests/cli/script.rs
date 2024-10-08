@@ -2055,24 +2055,3 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 "#]]);
 });
-
-forgetest_async!(test_get_script_wallets, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
-    prj.add_script(
-        "GetScriptWallets.s.sol",
-        r#"
-        import {Script, console} from "forge-std/Script.sol";
-
-        contract GetScriptWallets is Script {
-            function run() external {
-                console.log(vm.getScriptWallets());
-            }
-        }
-    "#,
-    )
-    .unwrap();
-
-    let output = cmd.arg("script").arg("GetScriptWallets").assert_success();
-
-    println!("{:?}", output.get_output());
-});

@@ -17,8 +17,6 @@ use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256,
 };
 use alloy_signer::Signer;
-use alloy_signer_local::coins_bip39::English;
-use alloy_transport::utils::guess_local_url;
 use broadcast::next_nonce;
 use build::PreprocessedState;
 use clap::{Parser, ValueHint};
@@ -215,22 +213,6 @@ impl ScriptArgs {
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
-        }
-
-        // Add default anvil accounts.
-        if let Some(fork_url) = evm_opts.fork_url.as_ref() {
-            let chain_id = evm_opts.get_chain_id().await;
-            if guess_local_url(fork_url) && chain_id == 31337 {
-                let builder = alloy_signer_local::MnemonicBuilder::<English>::default()
-                    .phrase("test test test test test test test test test test test junk");
-
-                for idx in 0..10 {
-                    let builder =
-                        builder.clone().derivation_path(format!("m/44'/60'/0'/0/{idx}"))?;
-                    let wallet = builder.build().unwrap().with_chain_id(Some(31337));
-                    script_wallets.add_local_signer(wallet);
-                }
-            }
         }
 
         let script_config = ScriptConfig::new(config, evm_opts).await?;
