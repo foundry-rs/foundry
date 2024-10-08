@@ -64,14 +64,12 @@ impl Cheatcode for stopBroadcastCall {
 impl Cheatcode for getScriptWalletsCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let script_wallets =
-            ccx.state.script_wallets().cloned().map(|sw| sw.signers().unwrap_or(vec![]));
+            ccx.state.script_wallets().cloned().map(|sw| sw.signers().unwrap_or_default());
 
         if let Some(script_wallets) = script_wallets {
-            tracing::info!(?script_wallets, "script wallets");
-            let script_wallets: Vec<Address> = script_wallets.into_iter().map(|a| a).collect();
-            return Ok(script_wallets.abi_encode());
+            let script_wallets: Vec<Address> = script_wallets.into_iter().collect();
+            Ok(script_wallets.abi_encode())
         } else {
-            tracing::info!("no script wallets");
             Ok("".abi_encode())
         }
     }
