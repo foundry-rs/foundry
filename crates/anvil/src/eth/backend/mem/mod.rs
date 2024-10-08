@@ -668,6 +668,11 @@ impl Backend {
         self.fees.base_fee()
     }
 
+    /// Returns whether the minimum suggested priority fee is enforced
+    pub fn is_min_priority_fee_enforced(&self) -> bool {
+        self.fees.is_min_priority_fee_enforced()
+    }
+
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
         self.fees.excess_blob_gas_and_price()
     }

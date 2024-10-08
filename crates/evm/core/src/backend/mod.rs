@@ -279,6 +279,17 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         journaled_state: &mut JournaledState,
     ) -> Result<(), BackendError>;
 
+    /// Copies bytecode, storage, nonce and balance from the given genesis account to the target
+    /// address.
+    ///
+    /// Returns [Ok] if data was successfully inserted into the journal, [Err] otherwise.
+    fn clone_account(
+        &mut self,
+        source: &GenesisAccount,
+        target: &Address,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), BackendError>;
+
     /// Returns true if the given account is currently marked as persistent.
     fn is_persistent(&self, acc: &Address) -> bool;
 
@@ -1367,44 +1378,59 @@ impl DatabaseExt for Backend {
     ) -> Result<(), BackendError> {
         // Loop through all of the allocs defined in the map and commit them to the journal.
         for (addr, acc) in allocs.iter() {
-            // Fetch the account from the journaled state. Will create a new account if it does
-            // not already exist.
-            let mut state_acc = journaled_state.load_account(*addr, self)?;
-
-            // Set the account's bytecode and code hash, if the `bytecode` field is present.
-            if let Some(bytecode) = acc.code.as_ref() {
-                state_acc.info.code_hash = keccak256(bytecode);
-                let bytecode = Bytecode::new_raw(bytecode.0.clone().into());
-                state_acc.info.code = Some(bytecode);
-            }
-
-            // Set the account's storage, if the `storage` field is present.
-            if let Some(storage) = acc.storage.as_ref() {
-                state_acc.storage = storage
-                    .iter()
-                    .map(|(slot, value)| {
-                        let slot = U256::from_be_bytes(slot.0);
-                        (
-                            slot,
-                            EvmStorageSlot::new_changed(
-                                state_acc
-                                    .storage
-                                    .get(&slot)
-                                    .map(|s| s.present_value)
-                                    .unwrap_or_default(),
-                                U256::from_be_bytes(value.0),
-                            ),
-                        )
-                    })
-                    .collect();
-            }
-            // Set the account's nonce and balance.
-            state_acc.info.nonce = acc.nonce.unwrap_or_default();
-            state_acc.info.balance = acc.balance;
-
-            // Touch the account to ensure the loaded information persists if called in `setUp`.
-            journaled_state.touch(addr);
+            self.clone_account(acc, addr, journaled_state)?;
         }
+
+        Ok(())
+    }
+
+    /// Copies bytecode, storage, nonce and balance from the given genesis account to the target
+    /// address.
+    ///
+    /// Returns [Ok] if data was successfully inserted into the journal, [Err] otherwise.
+    fn clone_account(
+        &mut self,
+        source: &GenesisAccount,
+        target: &Address,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), BackendError> {
+        // Fetch the account from the journaled state. Will create a new account if it does
+        // not already exist.
+        let mut state_acc = journaled_state.load_account(*target, self)?;
+
+        // Set the account's bytecode and code hash, if the `bytecode` field is present.
+        if let Some(bytecode) = source.code.as_ref() {
+            state_acc.info.code_hash = keccak256(bytecode);
+            let bytecode = Bytecode::new_raw(bytecode.0.clone().into());
+            state_acc.info.code = Some(bytecode);
+        }
+
+        // Set the account's storage, if the `storage` field is present.
+        if let Some(storage) = source.storage.as_ref() {
+            state_acc.storage = storage
+                .iter()
+                .map(|(slot, value)| {
+                    let slot = U256::from_be_bytes(slot.0);
+                    (
+                        slot,
+                        EvmStorageSlot::new_changed(
+                            state_acc
+                                .storage
+                                .get(&slot)
+                                .map(|s| s.present_value)
+                                .unwrap_or_default(),
+                            U256::from_be_bytes(value.0),
+                        ),
+                    )
+                })
+                .collect();
+        }
+        // Set the account's nonce and balance.
+        state_acc.info.nonce = source.nonce.unwrap_or_default();
+        state_acc.info.balance = source.balance;
+
+        // Touch the account to ensure the loaded information persists if called in `setUp`.
+        journaled_state.touch(target);
 
         Ok(())
     }
@@ -1960,9 +1986,8 @@ fn apply_state_changeset(
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
-    #![allow(clippy::needless_return)]
-
     use crate::{backend::Backend, fork::CreateFork, opts::EvmOpts};
     use alloy_primitives::{Address, U256};
     use alloy_provider::Provider;

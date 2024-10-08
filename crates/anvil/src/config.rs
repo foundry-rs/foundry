@@ -99,6 +99,8 @@ pub struct NodeConfig {
     pub gas_price: Option<u128>,
     /// Default base fee
     pub base_fee: Option<u64>,
+    /// If set to `true`, disables the enforcement of a minimum suggested priority fee
+    pub disable_min_priority_fee: bool,
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// The hardfork to use
@@ -432,6 +434,7 @@ impl Default for NodeConfig {
             fork_choice: None,
             account_generator: None,
             base_fee: None,
+            disable_min_priority_fee: false,
             blob_excess_gas_and_price: None,
             enable_tracing: true,
             enable_steps_tracing: false,
@@ -620,6 +623,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_base_fee(mut self, base_fee: Option<u64>) -> Self {
         self.base_fee = base_fee;
+        self
+    }
+
+    /// Disable the enforcement of a minimum suggested priority fee
+    #[must_use]
+    pub fn disable_min_priority_fee(mut self, disable_min_priority_fee: bool) -> Self {
+        self.disable_min_priority_fee = disable_min_priority_fee;
         self
     }
 
@@ -994,6 +1004,7 @@ impl NodeConfig {
         let fees = FeeManager::new(
             cfg.handler_cfg.spec_id,
             self.get_base_fee(),
+            !self.disable_min_priority_fee,
             self.get_gas_price(),
             self.get_blob_excess_gas_and_price(),
         );

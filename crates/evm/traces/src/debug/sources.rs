@@ -11,7 +11,6 @@ use foundry_compilers::{
 use foundry_evm_core::utils::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
 use solang_parser::pt::SourceUnitPart;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -117,7 +116,7 @@ impl ArtifactData {
 #[derive(Clone, Debug, Default)]
 pub struct ContractSources {
     /// Map over build_id -> file_id -> (source code, language)
-    pub sources_by_id: HashMap<String, FxHashMap<u32, Arc<SourceData>>>,
+    pub sources_by_id: HashMap<String, HashMap<u32, Arc<SourceData>>>,
     /// Map over contract name -> Vec<(bytecode, build_id, file_id)>
     pub artifacts_by_name: HashMap<String, Vec<ArtifactData>>,
 }

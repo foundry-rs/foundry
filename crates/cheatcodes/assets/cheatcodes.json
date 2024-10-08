@@ -3193,6 +3193,26 @@
     },
     {
       "func": {
+        "id": "cloneAccount",
+        "description": "Clones a source account code, state, balance and nonce to a target account and updates in-memory EVM state.",
+        "declaration": "function cloneAccount(address source, address target) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "cloneAccount(address,address)",
+        "selector": "0x533d61c9",
+        "selectorBytes": [
+          83,
+          61,
+          97,
+          201
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "closeFile",
         "description": "Closes file for reading, resetting the offset and allowing to read it from beginning with readLine.\n`path` is relative to the project root.",
         "declaration": "function closeFile(string calldata path) external;",
@@ -5600,7 +5620,7 @@
     {
       "func": {
         "id": "loadAllocs",
-        "description": "Load a genesis JSON file's `allocs` into the in-memory revm state.",
+        "description": "Load a genesis JSON file's `allocs` into the in-memory EVM state.",
         "declaration": "function loadAllocs(string calldata pathToAllocsJson) external;",
         "visibility": "external",
         "mutability": "",
@@ -5771,6 +5791,46 @@
           64,
           155,
           145
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCalls_0",
+        "description": "Mocks multiple calls to an address, returning specified data for each call.",
+        "declaration": "function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCalls(address,bytes,bytes[])",
+        "selector": "0x5c5c3de9",
+        "selectorBytes": [
+          92,
+          92,
+          61,
+          233
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCalls_1",
+        "description": "Mocks multiple calls to an address with a specific `msg.value`, returning specified data for each call.",
+        "declaration": "function mockCalls(address callee, uint256 msgValue, bytes calldata data, bytes[] calldata returnData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCalls(address,uint256,bytes,bytes[])",
+        "selector": "0x08bcbae1",
+        "selectorBytes": [
+          8,
+          188,
+          186,
+          225
         ]
       },
       "group": "evm",

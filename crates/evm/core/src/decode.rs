@@ -3,12 +3,11 @@
 use crate::abi::{Console, Vm};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Error, JsonAbi};
-use alloy_primitives::{hex, Log, Selector};
+use alloy_primitives::{hex, map::HashMap, Log, Selector};
 use alloy_sol_types::{SolEventInterface, SolInterface, SolValue};
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
 use revm::interpreter::InstructionResult;
-use rustc_hash::FxHashMap;
 use std::{fmt, sync::OnceLock};
 
 /// A skip reason.
@@ -60,7 +59,7 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
 #[derive(Clone, Debug, Default)]
 pub struct RevertDecoder {
     /// The custom errors to use for decoding.
-    pub errors: FxHashMap<Selector, Vec<Error>>,
+    pub errors: HashMap<Selector, Vec<Error>>,
 }
 
 impl Default for &RevertDecoder {

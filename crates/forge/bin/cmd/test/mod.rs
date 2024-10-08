@@ -519,7 +519,7 @@ impl TestArgs {
 
         let libraries = runner.libraries.clone();
 
-        // Run tests.
+        // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
         let show_progress = config.show_progress;

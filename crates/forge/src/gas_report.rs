@@ -4,14 +4,12 @@ use crate::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
+use alloy_primitives::map::HashSet;
 use comfy_table::{presets::ASCII_MARKDOWN, *};
 use foundry_common::{calc, TestFunctionExt};
 use foundry_evm::traces::CallKind;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashSet},
-    fmt::Display,
-};
+use std::{collections::BTreeMap, fmt::Display};
 use yansi::Paint;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
