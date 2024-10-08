@@ -6,7 +6,10 @@ use crate::{
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{
+    map::{HashMap, HashSet},
+    Address, Bytes,
+};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionInput;
 use async_recursion::async_recursion;
@@ -31,7 +34,6 @@ use foundry_evm::{
 };
 use futures::future::join_all;
 use itertools::Itertools;
-use std::collections::{HashMap, HashSet};
 use yansi::Paint;
 
 /// State after linking, contains the linked build data along with library addresses and optional
@@ -350,7 +352,7 @@ impl ExecutedState {
 
     /// Collects the return values from the execution result.
     fn get_returns(&self) -> Result<HashMap<String, NestedValue>> {
-        let mut returns = HashMap::new();
+        let mut returns = HashMap::default();
         let returned = &self.execution_result.returned;
         let func = &self.execution_data.func;
 

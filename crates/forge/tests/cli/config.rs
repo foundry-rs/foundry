@@ -37,6 +37,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         libs: vec!["lib-test".into()],
         cache: true,
         cache_path: "test-cache".into(),
+        snapshots: "snapshots".into(),
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
@@ -153,6 +154,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eof_version: None,
         alphanet: false,
         transaction_timeout: 120,
+        eof: false,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -606,7 +608,7 @@ forgetest!(can_update_libs_section, |prj, cmd| {
     cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]).assert_success().stdout_eq(str![
         [r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
 
 "#]
     ]);
@@ -638,7 +640,7 @@ forgetest!(config_emit_warnings, |prj, cmd| {
     cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]).assert_success().stdout_eq(str![
         [r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std [..]
+    Installed forge-std[..]
 
 "#]
     ]);

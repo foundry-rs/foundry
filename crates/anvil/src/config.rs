@@ -17,7 +17,7 @@ use crate::{
 };
 use alloy_genesis::Genesis;
 use alloy_network::AnyNetwork;
-use alloy_primitives::{hex, utils::Unit, BlockNumber, TxHash, U256};
+use alloy_primitives::{hex, map::HashMap, utils::Unit, BlockNumber, TxHash, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{Block, BlockNumberOrTag, Transaction};
 use alloy_serde::WithOtherFields;
@@ -46,7 +46,6 @@ use rand::thread_rng;
 use revm::primitives::BlobExcessGasAndPrice;
 use serde_json::{json, to_writer, Value};
 use std::{
-    collections::HashMap,
     fmt::Write as FmtWrite,
     fs::File,
     net::{IpAddr, Ipv4Addr},
@@ -99,7 +98,9 @@ pub struct NodeConfig {
     /// Default gas price for all txs
     pub gas_price: Option<u128>,
     /// Default base fee
-    pub base_fee: Option<u128>,
+    pub base_fee: Option<u64>,
+    /// If set to `true`, disables the enforcement of a minimum suggested priority fee
+    pub disable_min_priority_fee: bool,
     /// Default blob excess gas and price
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// The hardfork to use
@@ -433,6 +434,7 @@ impl Default for NodeConfig {
             fork_choice: None,
             account_generator: None,
             base_fee: None,
+            disable_min_priority_fee: false,
             blob_excess_gas_and_price: None,
             enable_tracing: true,
             enable_steps_tracing: false,
@@ -475,9 +477,9 @@ impl NodeConfig {
         self
     }
     /// Returns the base fee to use
-    pub fn get_base_fee(&self) -> u128 {
+    pub fn get_base_fee(&self) -> u64 {
         self.base_fee
-            .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas))
+            .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas.map(|g| g as u64)))
             .unwrap_or(INITIAL_BASE_FEE)
     }
 
@@ -493,7 +495,8 @@ impl NodeConfig {
         {
             BlobExcessGasAndPrice::new(excess_blob_gas as u64)
         } else {
-            BlobExcessGasAndPrice { blob_gasprice: 0, excess_blob_gas: 0 }
+            // If no excess blob gas is configured, default to 0
+            BlobExcessGasAndPrice::new(0)
         }
     }
 
@@ -618,8 +621,15 @@ impl NodeConfig {
 
     /// Sets the base fee
     #[must_use]
-    pub fn with_base_fee(mut self, base_fee: Option<u128>) -> Self {
+    pub fn with_base_fee(mut self, base_fee: Option<u64>) -> Self {
         self.base_fee = base_fee;
+        self
+    }
+
+    /// Disable the enforcement of a minimum suggested priority fee
+    #[must_use]
+    pub fn disable_min_priority_fee(mut self, disable_min_priority_fee: bool) -> Self {
+        self.disable_min_priority_fee = disable_min_priority_fee;
         self
     }
 
@@ -994,6 +1004,7 @@ impl NodeConfig {
         let fees = FeeManager::new(
             cfg.handler_cfg.spec_id,
             self.get_base_fee(),
+            !self.disable_min_priority_fee,
             self.get_gas_price(),
             self.get_blob_excess_gas_and_price(),
         );
@@ -1183,7 +1194,7 @@ latest block number: {latest_block}"
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
-                    block.header.gas_used,
+                    block.header.gas_used as u128,
                     gas_limit,
                     block.header.base_fee_per_gas.unwrap_or_default(),
                 );
@@ -1195,9 +1206,9 @@ latest block number: {latest_block}"
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
                 env.block.blob_excess_gas_and_price =
-                    Some(BlobExcessGasAndPrice::new(blob_excess_gas as u64));
-                let next_block_blob_excess_gas =
-                    fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
+                    Some(BlobExcessGasAndPrice::new(blob_excess_gas));
+                let next_block_blob_excess_gas = fees
+                    .get_next_block_blob_excess_gas(blob_excess_gas as u128, blob_gas_used as u128);
                 fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                     next_block_blob_excess_gas,
                 ));
@@ -1257,13 +1268,13 @@ latest block number: {latest_block}"
             chain_id,
             override_chain_id,
             timestamp: block.header.timestamp,
-            base_fee: block.header.base_fee_per_gas,
+            base_fee: block.header.base_fee_per_gas.map(|g| g as u128),
             timeout: self.fork_request_timeout,
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
-            blob_gas_used: block.header.blob_gas_used,
+            blob_gas_used: block.header.blob_gas_used.map(|g| g as u128),
             blob_excess_gas_and_price: env.block.blob_excess_gas_and_price.clone(),
             force_transactions,
         };
@@ -1284,7 +1295,7 @@ latest block number: {latest_block}"
             if let Some(gas_limit) = self.gas_limit {
                 return gas_limit;
             } else if block.header.gas_limit > 0 {
-                return block.header.gas_limit;
+                return block.header.gas_limit as u128;
             }
         }
 

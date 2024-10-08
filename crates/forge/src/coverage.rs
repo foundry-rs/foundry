@@ -1,14 +1,16 @@
 //! Coverage reports.
 
+use alloy_primitives::map::HashMap;
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
 use foundry_common::fs;
-pub use foundry_evm::coverage::*;
 use std::{
-    collections::{hash_map, HashMap},
+    collections::hash_map,
     io::Write,
     path::{Path, PathBuf},
 };
+
+pub use foundry_evm::coverage::*;
 
 /// A coverage reporter.
 pub trait CoverageReporter {
@@ -86,7 +88,7 @@ impl<'a> LcovReporter<'a> {
     }
 }
 
-impl<'a> CoverageReporter for LcovReporter<'a> {
+impl CoverageReporter for LcovReporter<'_> {
     fn report(self, report: &CoverageReport) -> eyre::Result<()> {
         for (file, items) in report.items_by_source() {
             let summary = items.iter().fold(CoverageSummary::default(), |mut summary, item| {
@@ -268,7 +270,7 @@ struct LineNumberCache {
 
 impl LineNumberCache {
     pub fn new(root: PathBuf) -> Self {
-        Self { root, line_offsets: HashMap::new() }
+        Self { root, line_offsets: HashMap::default() }
     }
 
     pub fn get_position(&mut self, path: &Path, offset: usize) -> eyre::Result<(usize, usize)> {

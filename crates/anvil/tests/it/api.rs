@@ -5,7 +5,10 @@ use crate::{
     utils::{connect_pubsub_with_wallet, http_provider_with_signer},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, ChainId, B256, U256};
+use alloy_primitives::{
+    map::{AddressHashMap, B256HashMap, HashMap},
+    Address, ChainId, B256, U256,
+};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     request::TransactionRequest, state::AccountOverride, BlockId, BlockNumberOrTag,
@@ -14,7 +17,7 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
 use futures::join;
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_number() {
@@ -174,7 +177,7 @@ async fn can_estimate_gas_with_undersized_max_fee_per_gas() {
     let simple_storage_contract =
         SimpleStorage::deploy(&provider, init_value.clone()).await.unwrap();
 
-    let undersized_max_fee_per_gas = 1_u128;
+    let undersized_max_fee_per_gas = 1;
 
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     let latest_block_base_fee_per_gas = latest_block.header.base_fee_per_gas.unwrap();
@@ -183,7 +186,7 @@ async fn can_estimate_gas_with_undersized_max_fee_per_gas() {
 
     let estimated_gas = simple_storage_contract
         .setValue("new_value".to_string())
-        .max_fee_per_gas(undersized_max_fee_per_gas)
+        .max_fee_per_gas(undersized_max_fee_per_gas.into())
         .from(wallet.address())
         .estimate_gas()
         .await
@@ -255,7 +258,7 @@ async fn can_call_on_pending_block() {
             .call()
             .await
             .unwrap();
-        assert_eq!(block.header.gas_limit, ret_gas_limit.to::<u128>());
+        assert_eq!(block.header.gas_limit, ret_gas_limit.to::<u64>());
 
         let Multicall::getCurrentBlockCoinbaseReturn { coinbase: ret_coinbase, .. } = contract
             .getCurrentBlockCoinbase()
@@ -284,13 +287,13 @@ async fn can_call_with_undersized_max_fee_per_gas() {
 
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     let latest_block_base_fee_per_gas = latest_block.header.base_fee_per_gas.unwrap();
-    let undersized_max_fee_per_gas = 1_u128;
+    let undersized_max_fee_per_gas = 1;
 
     assert!(undersized_max_fee_per_gas < latest_block_base_fee_per_gas);
 
     let last_sender = simple_storage_contract
         .lastSender()
-        .max_fee_per_gas(undersized_max_fee_per_gas)
+        .max_fee_per_gas(undersized_max_fee_per_gas.into())
         .from(wallet.address())
         .call()
         .await
@@ -319,23 +322,24 @@ async fn can_call_with_state_override() {
 
     // Test the `balance` account override
     let balance = U256::from(42u64);
-    let overrides = HashMap::from([(
-        account,
-        AccountOverride { balance: Some(balance), ..Default::default() },
-    )]);
+    let mut overrides = AddressHashMap::default();
+    overrides.insert(account, AccountOverride { balance: Some(balance), ..Default::default() });
     let result =
         multicall_contract.getEthBalance(account).state(overrides).call().await.unwrap().balance;
     assert_eq!(result, balance);
 
     // Test the `state_diff` account override
-    let overrides = HashMap::from([(
+    let mut state_diff = B256HashMap::default();
+    state_diff.insert(B256::ZERO, account.into_word());
+    let mut overrides = AddressHashMap::default();
+    overrides.insert(
         *simple_storage_contract.address(),
         AccountOverride {
             // The `lastSender` is in the first storage slot
-            state_diff: Some(HashMap::from([(B256::ZERO, account.into_word())])),
+            state_diff: Some(state_diff),
             ..Default::default()
         },
-    )]);
+    );
 
     let last_sender =
         simple_storage_contract.lastSender().state(HashMap::default()).call().await.unwrap()._0;
@@ -352,14 +356,17 @@ async fn can_call_with_state_override() {
     assert_eq!(value, init_value);
 
     // Test the `state` account override
-    let overrides = HashMap::from([(
+    let mut state = B256HashMap::default();
+    state.insert(B256::ZERO, account.into_word());
+    let mut overrides = AddressHashMap::default();
+    overrides.insert(
         *simple_storage_contract.address(),
         AccountOverride {
             // The `lastSender` is in the first storage slot
-            state: Some(HashMap::from([(B256::ZERO, account.into_word())])),
+            state: Some(state),
             ..Default::default()
         },
-    )]);
+    );
 
     let last_sender =
         simple_storage_contract.lastSender().state(overrides.clone()).call().await.unwrap()._0;

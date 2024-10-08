@@ -6,6 +6,7 @@ use super::*;
 use crate::Vm::ForgeContext;
 use alloy_sol_types::sol;
 use foundry_macros::Cheatcode;
+use std::fmt;
 
 sol! {
 // Cheatcodes are marked as view/pure/none using the following rules:
@@ -282,9 +283,13 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function load(address target, bytes32 slot) external view returns (bytes32 data);
 
-    /// Load a genesis JSON file's `allocs` into the in-memory revm state.
+    /// Load a genesis JSON file's `allocs` into the in-memory EVM state.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function loadAllocs(string calldata pathToAllocsJson) external;
+
+    /// Clones a source account code, state, balance and nonce to a target account and updates in-memory EVM state.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function cloneAccount(address source, address target) external;
 
     // -------- Record Storage --------
 
@@ -464,6 +469,14 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCall(address callee, uint256 msgValue, bytes calldata data, bytes calldata returnData) external;
 
+    /// Mocks multiple calls to an address, returning specified data for each call.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;
+
+    /// Mocks multiple calls to an address with a specific `msg.value`, returning specified data for each call.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCalls(address callee, uint256 msgValue, bytes calldata data, bytes[] calldata returnData) external;
+
     /// Reverts a call to an address with specified revert data.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCallRevert(address callee, bytes calldata data, bytes calldata revertData) external;
@@ -508,13 +521,64 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
 
+    // ----- Arbitrary Snapshots -----
+
+    /// Snapshot capture an arbitrary numerical value by name.
+    /// The group name is derived from the contract name.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotValue(string calldata name, uint256 value) external;
+
+    /// Snapshot capture an arbitrary numerical value by name in a group.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
+
+    // -------- Gas Snapshots --------
+
+    /// Snapshot capture the gas usage of the last call by name from the callee perspective.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call by name in a group from the callee perspective.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
+
+    /// Start a snapshot capture of the current gas usage by name.
+    /// The group name is derived from the contract name.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function startSnapshotGas(string calldata name) external;
+
+    /// Start a snapshot capture of the current gas usage by name in a group.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function startSnapshotGas(string calldata group, string calldata name) external;
+
+    /// Stop the snapshot capture of the current gas by latest snapshot name, capturing the gas used since the start.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function stopSnapshotGas() external returns (uint256 gasUsed);
+
+    /// Stop the snapshot capture of the current gas usage by name, capturing the gas used since the start.
+    /// The group name is derived from the contract name.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function stopSnapshotGas(string calldata name) external returns (uint256 gasUsed);
+
+    /// Stop the snapshot capture of the current gas usage by name in a group, capturing the gas used since the start.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
+
     // -------- State Snapshots --------
+
+    /// `snapshot` is being deprecated in favor of `snapshotState`. It will be removed in future versions.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotState`")))]
+    function snapshot() external returns (uint256 snapshotId);
 
     /// Snapshot the current state of the evm.
     /// Returns the ID of the snapshot that was created.
-    /// To revert a snapshot use `revertTo`.
+    /// To revert a snapshot use `revertToState`.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function snapshot() external returns (uint256 snapshotId);
+    function snapshotState() external returns (uint256 snapshotId);
+
+    /// `revertTo` is being deprecated in favor of `revertToState`. It will be removed in future versions.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `revertToState`")))]
+    function revertTo(uint256 snapshotId) external returns (bool success);
 
     /// Revert the state of the EVM to a previous snapshot
     /// Takes the snapshot ID to revert to.
@@ -522,9 +586,13 @@ interface Vm {
     /// Returns `true` if the snapshot was successfully reverted.
     /// Returns `false` if the snapshot does not exist.
     ///
-    /// **Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteSnapshot`.
+    /// **Note:** This does not automatically delete the snapshot. To delete the snapshot use `deleteStateSnapshot`.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function revertTo(uint256 snapshotId) external returns (bool success);
+    function revertToState(uint256 snapshotId) external returns (bool success);
+
+    /// `revertToAndDelete` is being deprecated in favor of `revertToStateAndDelete`. It will be removed in future versions.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `revertToStateAndDelete`")))]
+    function revertToAndDelete(uint256 snapshotId) external returns (bool success);
 
     /// Revert the state of the EVM to a previous snapshot and automatically deletes the snapshots
     /// Takes the snapshot ID to revert to.
@@ -532,7 +600,11 @@ interface Vm {
     /// Returns `true` if the snapshot was successfully reverted and deleted.
     /// Returns `false` if the snapshot does not exist.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function revertToAndDelete(uint256 snapshotId) external returns (bool success);
+    function revertToStateAndDelete(uint256 snapshotId) external returns (bool success);
+
+    /// `deleteSnapshot` is being deprecated in favor of `deleteStateSnapshot`. It will be removed in future versions.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `deleteStateSnapshot`")))]
+    function deleteSnapshot(uint256 snapshotId) external returns (bool success);
 
     /// Removes the snapshot with the given ID created by `snapshot`.
     /// Takes the snapshot ID to delete.
@@ -540,11 +612,15 @@ interface Vm {
     /// Returns `true` if the snapshot was successfully deleted.
     /// Returns `false` if the snapshot does not exist.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function deleteSnapshot(uint256 snapshotId) external returns (bool success);
+    function deleteStateSnapshot(uint256 snapshotId) external returns (bool success);
+
+    /// `deleteSnapshots` is being deprecated in favor of `deleteStateSnapshots`. It will be removed in future versions.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `deleteStateSnapshots`")))]
+    function deleteSnapshots() external;
 
     /// Removes _all_ snapshots previously created by `snapshot`.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function deleteSnapshots() external;
+    function deleteStateSnapshots() external;
 
     // -------- Forking --------
     // --- Creation and Selection ---
@@ -677,7 +753,7 @@ interface Vm {
 
     // -------- Gas Measurement --------
 
-    /// Gets the gas used in the last call.
+    /// Gets the gas used in the last call from the callee perspective.
     #[cheatcode(group = Evm, safety = Safe)]
     function lastCallGas() external view returns (Gas memory gas);
 
@@ -693,11 +769,11 @@ interface Vm {
 
     /// Writes a breakpoint to jump to in the debugger.
     #[cheatcode(group = Testing, safety = Safe)]
-    function breakpoint(string calldata char) external;
+    function breakpoint(string calldata char) external pure;
 
     /// Writes a conditional breakpoint to jump to in the debugger.
     #[cheatcode(group = Testing, safety = Safe)]
-    function breakpoint(string calldata char, bool value) external;
+    function breakpoint(string calldata char, bool value) external pure;
 
     /// Returns the Foundry version.
     /// Format: <cargo_version>+<git_sha>+<build_timestamp>
@@ -2341,7 +2417,7 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function randomUint(uint256 min, uint256 max) external returns (uint256);
 
-    /// Returns an random `uint256` value of given bits.
+    /// Returns a random `uint256` value of given bits.
     #[cheatcode(group = Utilities)]
     function randomUint(uint256 bits) external view returns (uint256);
 
@@ -2349,21 +2425,29 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function randomAddress() external returns (address);
 
-    /// Returns an random `int256` value.
+    /// Returns a random `int256` value.
     #[cheatcode(group = Utilities)]
     function randomInt() external view returns (int256);
 
-    /// Returns an random `int256` value of given bits.
+    /// Returns a random `int256` value of given bits.
     #[cheatcode(group = Utilities)]
     function randomInt(uint256 bits) external view returns (int256);
 
-    /// Returns an random `bool`.
+    /// Returns a random `bool`.
     #[cheatcode(group = Utilities)]
     function randomBool() external view returns (bool);
 
-    /// Returns an random byte array value of the given length.
+    /// Returns a random byte array value of the given length.
     #[cheatcode(group = Utilities)]
     function randomBytes(uint256 len) external view returns (bytes memory);
+
+    /// Returns a random fixed-size byte array of length 4.
+    #[cheatcode(group = Utilities)]
+    function randomBytes4() external view returns (bytes4);
+
+    /// Returns a random fixed-size byte array of length 8.
+    #[cheatcode(group = Utilities)]
+    function randomBytes8() external view returns (bytes8);
 
     /// Pauses collection of call traces. Useful in cases when you want to skip tracing of
     /// complex calls which are not useful for debugging.
@@ -2403,6 +2487,20 @@ impl PartialEq for ForgeContext {
             (Self::ScriptResume, Self::ScriptResume) |
             (Self::Unknown, Self::Unknown) => true,
             _ => false,
+        }
+    }
+}
+
+impl fmt::Display for Vm::CheatcodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.message.fmt(f)
+    }
+}
+
+impl fmt::Display for Vm::VmErrors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CheatcodeError(err) => err.fmt(f),
         }
     }
 }

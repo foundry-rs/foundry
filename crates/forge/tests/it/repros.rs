@@ -251,7 +251,7 @@ test_repro!(6355, false, None, |res| {
     let test = res.test_results.remove("test_shouldFail()").unwrap();
     assert_eq!(test.status, TestStatus::Failure);
 
-    let test = res.test_results.remove("test_shouldFailWithRevertTo()").unwrap();
+    let test = res.test_results.remove("test_shouldFailWithRevertToState()").unwrap();
     assert_eq!(test.status, TestStatus::Failure);
 });
 
@@ -387,3 +387,10 @@ test_repro!(1543);
 
 // https://github.com/foundry-rs/foundry/issues/6643
 test_repro!(6643);
+
+// https://github.com/foundry-rs/foundry/issues/8971
+test_repro!(8971; |config| {
+  let mut prj_config = Config::clone(&config.runner.config);
+  prj_config.isolate = true;
+  config.runner.config = Arc::new(prj_config);
+});

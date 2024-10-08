@@ -35,7 +35,10 @@ use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, TxEnvelop
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{eip2718::Decodable2718, BlockResponse};
-use alloy_primitives::{Address, Bytes, Parity, TxHash, TxKind, B256, B64, U256, U64};
+use alloy_primitives::{
+    map::{HashMap, HashSet},
+    Address, Bytes, Parity, TxHash, TxKind, B256, B64, U256, U64,
+};
 use alloy_rpc_types::{
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
@@ -79,12 +82,7 @@ use foundry_evm::{
 };
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
-use std::{
-    collections::{HashMap, HashSet},
-    future::Future,
-    sync::Arc,
-    time::Duration,
-};
+use std::{future::Future, sync::Arc, time::Duration};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -594,7 +592,11 @@ impl EthApi {
     /// Returns the current gas price
     pub fn gas_price(&self) -> u128 {
         if self.backend.is_eip1559() {
-            self.backend.base_fee().saturating_add(self.lowest_suggestion_tip())
+            if self.backend.is_min_priority_fee_enforced() {
+                (self.backend.base_fee() as u128).saturating_add(self.lowest_suggestion_tip())
+            } else {
+                self.backend.base_fee() as u128
+            }
         } else {
             self.backend.fees().raw_gas_price()
         }
@@ -1407,7 +1409,7 @@ impl EthApi {
         // The spec states that `base_fee_per_gas` "[..] includes the next block after the
         // newest of the returned range, because this value can be derived from the
         // newest block"
-        response.base_fee_per_gas.push(self.backend.fees().base_fee());
+        response.base_fee_per_gas.push(self.backend.fees().base_fee() as u128);
 
         // Same goes for the `base_fee_per_blob_gas`:
         // > [..] includes the next block after the newest of the returned range, because this
@@ -1913,7 +1915,6 @@ impl EthApi {
     pub async fn anvil_metadata(&self) -> Result<Metadata> {
         node_info!("anvil_metadata");
         let fork_config = self.backend.get_fork();
-        let snapshots = self.backend.list_snapshots();
 
         Ok(Metadata {
             client_version: CLIENT_VERSION.to_string(),
@@ -1926,7 +1927,7 @@ impl EthApi {
                 fork_block_number: cfg.block_number(),
                 fork_block_hash: cfg.block_hash(),
             }),
-            snapshots,
+            snapshots: self.backend.list_state_snapshots(),
         })
     }
 
@@ -1969,7 +1970,7 @@ impl EthApi {
         // Convert the transaction requests to pool transactions if they exist, otherwise use empty
         // hashmap
         let block_pool_txs = if tx_block_pairs.is_empty() {
-            HashMap::new()
+            HashMap::default()
         } else {
             let mut pairs = tx_block_pairs;
 
@@ -1986,9 +1987,9 @@ impl EthApi {
 
             // Manage nonces for each signer
             // address -> cumulative nonce
-            let mut nonces: HashMap<Address, u64> = HashMap::new();
+            let mut nonces: HashMap<Address, u64> = HashMap::default();
 
-            let mut txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::new();
+            let mut txs: HashMap<u64, Vec<Arc<PoolTransaction>>> = HashMap::default();
             for pair in pairs {
                 let (tx_data, block_index) = pair;
 
@@ -2059,7 +2060,7 @@ impl EthApi {
     /// Handler for RPC call: `evm_snapshot`
     pub async fn evm_snapshot(&self) -> Result<U256> {
         node_info!("evm_snapshot");
-        Ok(self.backend.create_snapshot().await)
+        Ok(self.backend.create_state_snapshot().await)
     }
 
     /// Revert the state of the blockchain to a previous snapshot.
@@ -2068,7 +2069,7 @@ impl EthApi {
     /// Handler for RPC call: `evm_revert`
     pub async fn evm_revert(&self, id: U256) -> Result<bool> {
         node_info!("evm_revert");
-        self.backend.revert_snapshot(id).await
+        self.backend.revert_state_snapshot(id).await
     }
 
     /// Jump forward in time by the given amount of time, in seconds.
@@ -2305,7 +2306,7 @@ impl EthApi {
             let to = tx.to();
             let gas_price = tx.gas_price();
             let value = tx.value();
-            let gas = tx.gas_limit();
+            let gas = tx.gas_limit() as u128;
             TxpoolInspectSummary { to, value, gas, gas_price }
         }
 
@@ -2488,7 +2489,8 @@ impl EthApi {
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit = request.gas.unwrap_or(block_env.gas_limit.to());
+        let mut highest_gas_limit =
+            request.gas.map_or(block_env.gas_limit.to::<u128>(), |g| g as u128);
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // If we have non-zero gas price, cap gas limit by sender balance
@@ -2510,7 +2512,7 @@ impl EthApi {
         }
 
         let mut call_to_estimate = request.clone();
-        call_to_estimate.gas = Some(highest_gas_limit);
+        call_to_estimate.gas = Some(highest_gas_limit as u64);
 
         // execute the call without writing to db
         let ethres =
@@ -2544,7 +2546,7 @@ impl EthApi {
 
         // Binary search for the ideal gas limit
         while (highest_gas_limit - lowest_gas_limit) > 1 {
-            request.gas = Some(mid_gas_limit);
+            request.gas = Some(mid_gas_limit as u64);
             let ethres = self.backend.call_with_state(
                 &state,
                 request.clone(),
@@ -2691,7 +2693,7 @@ impl EthApi {
         let max_fee_per_blob_gas = request.max_fee_per_blob_gas;
         let gas_price = request.gas_price;
 
-        let gas_limit = request.gas.unwrap_or(self.backend.gas_limit());
+        let gas_limit = request.gas.unwrap_or(self.backend.gas_limit() as u64);
 
         let request = match transaction_request_to_typed(request) {
             Some(TypedTransactionRequest::Legacy(mut m)) => {

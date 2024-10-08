@@ -1,7 +1,8 @@
 //! Module containing documentation preprocessors.
 
 use crate::{Comments, Document};
-use std::{collections::HashMap, fmt::Debug, path::PathBuf};
+use alloy_primitives::map::HashMap;
+use std::{fmt::Debug, path::PathBuf};
 
 mod contract_inheritance;
 pub use contract_inheritance::{ContractInheritance, CONTRACT_INHERITANCE_ID};

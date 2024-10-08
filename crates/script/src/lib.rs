@@ -11,7 +11,11 @@ extern crate tracing;
 use self::transaction::AdditionalContract;
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{hex, Address, Bytes, Log, TxKind, U256};
+use alloy_primitives::{
+    hex,
+    map::{AddressHashMap, HashMap},
+    Address, Bytes, Log, TxKind, U256,
+};
 use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
@@ -47,7 +51,6 @@ use foundry_evm::{
 };
 use foundry_wallets::MultiWalletOpts;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use yansi::Paint;
 
 mod broadcast;
@@ -476,7 +479,7 @@ pub struct ScriptResult {
     pub logs: Vec<Log>,
     pub traces: Traces,
     pub gas_used: u64,
-    pub labeled_addresses: HashMap<Address, String>,
+    pub labeled_addresses: AddressHashMap<String>,
     #[serde(skip)]
     pub transactions: Option<BroadcastableTransactions>,
     pub returned: Bytes,
@@ -536,7 +539,7 @@ impl ScriptConfig {
             // dapptools compatibility
             1
         };
-        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::new() })
+        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default() })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
@@ -609,6 +612,7 @@ impl ScriptConfig {
                             self.evm_opts.clone(),
                             Some(known_contracts),
                             Some(script_wallets),
+                            Some(target.name),
                             Some(target.version),
                         )
                         .into(),

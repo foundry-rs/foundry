@@ -48,7 +48,7 @@ async fn can_set_block_gas_limit() {
     // Mine a new block, and check the new block gas limit
     api.mine_one().await;
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    assert_eq!(block_gas_limit.to::<u128>(), latest_block.header.gas_limit);
+    assert_eq!(block_gas_limit.to::<u64>(), latest_block.header.gas_limit);
 }
 
 // Ref <https://github.com/foundry-rs/foundry/issues/2341>
@@ -557,7 +557,7 @@ async fn test_get_transaction_receipt() {
 
     // the block should have the new base fee
     let block = provider.get_block(BlockId::default(), false.into()).await.unwrap().unwrap();
-    assert_eq!(block.header.base_fee_per_gas.unwrap(), new_base_fee.to::<u128>());
+    assert_eq!(block.header.base_fee_per_gas.unwrap(), new_base_fee.to::<u64>());
 
     // mine blocks
     api.evm_mine(None).await.unwrap();
@@ -591,9 +591,9 @@ async fn test_fork_revert_next_block_timestamp() {
     api.mine_one().await;
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    let snapshot_id = api.evm_snapshot().await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
     api.mine_one().await;
-    api.evm_revert(snapshot_id).await.unwrap();
+    api.evm_revert(state_snapshot).await.unwrap();
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block, latest_block);
 
@@ -613,9 +613,9 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     api.mine_one().await;
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    let snapshot_id = api.evm_snapshot().await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
     api.mine_one().await;
-    api.evm_revert(snapshot_id).await.unwrap();
+    api.evm_revert(state_snapshot).await.unwrap();
 
     let multicall_contract =
         Multicall::new(address!("eefba1e63905ef1d7acba5a8513c70307c1ce441"), &provider);

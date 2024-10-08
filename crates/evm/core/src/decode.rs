@@ -3,12 +3,11 @@
 use crate::abi::{Console, Vm};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Error, JsonAbi};
-use alloy_primitives::{hex, Log, Selector};
-use alloy_sol_types::{SolCall, SolError, SolEventInterface, SolInterface, SolValue};
+use alloy_primitives::{hex, map::HashMap, Log, Selector};
+use alloy_sol_types::{SolEventInterface, SolInterface, SolValue};
 use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
 use revm::interpreter::InstructionResult;
-use rustc_hash::FxHashMap;
 use std::{fmt, sync::OnceLock};
 
 /// A skip reason.
@@ -60,7 +59,7 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
 #[derive(Clone, Debug, Default)]
 pub struct RevertDecoder {
     /// The custom errors to use for decoding.
-    pub errors: FxHashMap<Selector, Vec<Error>>,
+    pub errors: HashMap<Selector, Vec<Error>>,
 }
 
 impl Default for &RevertDecoder {
@@ -139,7 +138,7 @@ impl RevertDecoder {
     ///
     /// See [`decode`](Self::decode) for more information.
     pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
-        if err.len() < SELECTOR_LEN {
+        let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>() else {
             if let Some(status) = status {
                 if !status.is_ok() {
                     return Some(format!("EvmError: {status:?}"));
@@ -150,57 +149,15 @@ impl RevertDecoder {
             } else {
                 Some(format!("custom error bytes {}", hex::encode_prefixed(err)))
             };
-        }
+        };
 
         if let Some(reason) = SkipReason::decode(err) {
             return Some(reason.to_string());
         }
 
-        // Solidity's `Error(string)` or `Panic(uint256)`
-        if let Ok(e) = alloy_sol_types::GenericContractError::abi_decode(err, false) {
+        // Solidity's `Error(string)` or `Panic(uint256)`, or `Vm`'s custom errors.
+        if let Ok(e) = alloy_sol_types::ContractError::<Vm::VmErrors>::abi_decode(err, false) {
             return Some(e.to_string());
-        }
-
-        let (selector, data) = err.split_at(SELECTOR_LEN);
-        let selector: &[u8; 4] = selector.try_into().unwrap();
-
-        match *selector {
-            // `CheatcodeError(string)`
-            Vm::CheatcodeError::SELECTOR => {
-                let e = Vm::CheatcodeError::abi_decode_raw(data, false).ok()?;
-                return Some(e.message);
-            }
-            // `expectRevert(bytes)`
-            Vm::expectRevert_2Call::SELECTOR => {
-                let e = Vm::expectRevert_2Call::abi_decode_raw(data, false).ok()?;
-                return self.maybe_decode(&e.revertData[..], status);
-            }
-            // `expectRevert(bytes,address)`
-            Vm::expectRevert_5Call::SELECTOR => {
-                let e = Vm::expectRevert_5Call::abi_decode_raw(data, false).ok()?;
-                return self.maybe_decode(&e.revertData[..], status);
-            }
-            // `expectRevert(bytes4)`
-            Vm::expectRevert_1Call::SELECTOR => {
-                let e = Vm::expectRevert_1Call::abi_decode_raw(data, false).ok()?;
-                return self.maybe_decode(&e.revertData[..], status);
-            }
-            // `expectRevert(bytes4,address)`
-            Vm::expectRevert_4Call::SELECTOR => {
-                let e = Vm::expectRevert_4Call::abi_decode_raw(data, false).ok()?;
-                return self.maybe_decode(&e.revertData[..], status);
-            }
-            // `expectPartialRevert(bytes4)`
-            Vm::expectPartialRevert_0Call::SELECTOR => {
-                let e = Vm::expectPartialRevert_0Call::abi_decode_raw(data, false).ok()?;
-                return self.maybe_decode(&e.revertData[..], status);
-            }
-            // `expectPartialRevert(bytes4,address)`
-            Vm::expectPartialRevert_1Call::SELECTOR => {
-                let e = Vm::expectPartialRevert_1Call::abi_decode_raw(data, false).ok()?;
-                return self.maybe_decode(&e.revertData[..], status);
-            }
-            _ => {}
         }
 
         // Custom errors.

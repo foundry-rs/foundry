@@ -1,11 +1,11 @@
-use super::{build::BuildArgs, doc::DocArgs, snapshot::SnapshotArgs, test::TestArgs};
+use super::{build::BuildArgs, doc::DocArgs, snapshot::GasSnapshotArgs, test::TestArgs};
+use alloy_primitives::map::HashSet;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::utils::{self, FoundryPathExt};
 use foundry_config::Config;
 use parking_lot::Mutex;
 use std::{
-    collections::HashSet,
     path::PathBuf,
     sync::{
         atomic::{AtomicU8, Ordering},
@@ -249,7 +249,7 @@ pub async fn watch_build(args: BuildArgs) -> Result<()> {
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// snapshot`
-pub async fn watch_snapshot(args: SnapshotArgs) -> Result<()> {
+pub async fn watch_gas_snapshot(args: GasSnapshotArgs) -> Result<()> {
     let config = args.watchexec_config()?;
     run(config).await
 }
@@ -265,7 +265,7 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
         filter.args().contract_pattern.is_some() ||
         args.watch.run_all;
 
-    let last_test_files = Mutex::new(HashSet::<String>::new());
+    let last_test_files = Mutex::new(HashSet::<String>::default());
     let project_root = config.root.0.to_string_lossy().into_owned();
     let config = args.watch.watchexec_config_with_override(
         || [&config.test, &config.src],

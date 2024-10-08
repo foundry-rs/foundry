@@ -8,8 +8,10 @@ use crate::{
 use alloy_primitives::{Address, B256, U256, U64};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
-    backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertSnapshotAction, StateSnapshot},
-    fork::database::ForkDbSnapshot,
+    backend::{
+        BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction, StateSnapshot,
+    },
+    fork::database::ForkDbStateSnapshot,
     revm::{primitives::BlockEnv, Database},
 };
 use revm::DatabaseRef;
@@ -72,16 +74,16 @@ impl Db for ForkedDatabase {
         }))
     }
 
-    fn snapshot(&mut self) -> U256 {
-        self.insert_snapshot()
+    fn snapshot_state(&mut self) -> U256 {
+        self.insert_state_snapshot()
     }
 
-    fn revert(&mut self, id: U256, action: RevertSnapshotAction) -> bool {
-        self.revert_snapshot(id, action)
+    fn revert_state(&mut self, id: U256, action: RevertStateSnapshotAction) -> bool {
+        self.revert_state_snapshot(id, action)
     }
 
     fn current_state(&self) -> StateDb {
-        StateDb::new(self.create_snapshot())
+        StateDb::new(self.create_state_snapshot())
     }
 }
 
@@ -90,7 +92,7 @@ impl MaybeFullDatabase for ForkedDatabase {
         self
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = std::mem::take(&mut *db.accounts.write());
         let storage = std::mem::take(&mut *db.storage.write());
@@ -98,7 +100,7 @@ impl MaybeFullDatabase for ForkedDatabase {
         StateSnapshot { accounts, storage, block_hashes }
     }
 
-    fn read_as_snapshot(&self) -> StateSnapshot {
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = db.accounts.read().clone();
         let storage = db.storage.read().clone();
@@ -108,38 +110,38 @@ impl MaybeFullDatabase for ForkedDatabase {
 
     fn clear(&mut self) {
         self.flush_cache();
-        self.clear_into_snapshot();
+        self.clear_into_state_snapshot();
     }
 
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
         let db = self.inner().db();
-        let StateSnapshot { accounts, storage, block_hashes } = snapshot;
+        let StateSnapshot { accounts, storage, block_hashes } = state_snapshot;
         *db.accounts.write() = accounts;
         *db.storage.write() = storage;
         *db.block_hashes.write() = block_hashes;
     }
 }
 
-impl MaybeFullDatabase for ForkDbSnapshot {
+impl MaybeFullDatabase for ForkDbStateSnapshot {
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
         self
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
-        std::mem::take(&mut self.snapshot)
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        std::mem::take(&mut self.state_snapshot)
     }
 
-    fn read_as_snapshot(&self) -> StateSnapshot {
-        self.snapshot.clone()
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        self.state_snapshot.clone()
     }
 
     fn clear(&mut self) {
-        std::mem::take(&mut self.snapshot);
+        std::mem::take(&mut self.state_snapshot);
         self.local.clear()
     }
 
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
-        self.snapshot = snapshot;
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        self.state_snapshot = state_snapshot;
     }
 }
 

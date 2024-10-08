@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
-use alloy_primitives::{address, Address, Bytes, U256};
+use alloy_primitives::{address, map::HashMap, Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
@@ -35,12 +35,7 @@ use foundry_evm::{
 };
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
-use std::{
-    borrow::Cow,
-    cmp::min,
-    collections::{BTreeMap, HashMap},
-    time::Instant,
-};
+use std::{borrow::Cow, cmp::min, collections::BTreeMap, time::Instant};
 
 /// When running tests, we deploy all external libraries present in the project. To avoid additional
 /// libraries affecting nonces of senders used in tests, we are using separate address to
@@ -76,7 +71,7 @@ pub struct ContractRunner<'a> {
     pub span: tracing::Span,
 }
 
-impl<'a> ContractRunner<'a> {
+impl ContractRunner<'_> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, call_setup: bool) -> TestSetup {
@@ -164,9 +159,13 @@ impl<'a> ContractRunner<'a> {
                     } = *err;
                     (logs, traces, labels, Some(format!("setup failed: {reason}")), coverage)
                 }
-                Err(err) => {
-                    (Vec::new(), None, HashMap::new(), Some(format!("setup failed: {err}")), None)
-                }
+                Err(err) => (
+                    Vec::new(),
+                    None,
+                    HashMap::default(),
+                    Some(format!("setup failed: {err}")),
+                    None,
+                ),
             };
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
             logs.extend(setup_logs);
@@ -210,7 +209,7 @@ impl<'a> ContractRunner<'a> {
     /// returns an array of addresses to be used for fuzzing `owner` named parameter in scope of the
     /// current test.
     fn fuzz_fixtures(&mut self, address: Address) -> FuzzFixtures {
-        let mut fixtures = HashMap::new();
+        let mut fixtures = HashMap::default();
         let fixture_functions = self.contract.abi.functions().filter(|func| func.is_fixture());
         for func in fixture_functions {
             if func.inputs.is_empty() {

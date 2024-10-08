@@ -274,6 +274,47 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+const SIMPLE_CONTRACT: &str = r#"
+import "./test.sol";
+
+contract SimpleContract {
+    uint256 public num;
+
+    function setValues(uint256 _num) public {
+        num = _num;
+    }
+}
+
+contract SimpleContractTest is DSTest {
+    function test() public {
+        SimpleContract c = new SimpleContract();
+        c.setValues(100);
+    }
+}
+   "#;
+
+forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
+
+    // Assert that with verbose output the json output includes the traces
+    cmd.args(["test", "-vvv", "--json"])
+        .assert_success()
+        .stdout_eq(file!["../fixtures/SimpleContractTestVerbose.json": Json]);
+});
+
+forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
+
+    // Assert that without verbose output the json output does not include the traces
+    cmd.args(["test", "--json"])
+        .assert_success()
+        .stdout_eq(file!["../fixtures/SimpleContractTestNonVerbose.json": Json]);
+});
+
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
 forgetest!(can_run_test_in_custom_test_folder, |prj, cmd| {
     prj.insert_ds_test();
@@ -595,36 +636,6 @@ Encountered 1 failing test in test/Contract.t.sol:CustomTypesTest
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 "#]]);
-});
-
-forgetest_init!(can_test_selfdestruct_with_isolation, |prj, cmd| {
-    prj.wipe_contracts();
-
-    prj.add_test(
-        "Contract.t.sol",
-        r#"
-import {Test} from "forge-std/Test.sol";
-
-contract Destructing {
-    function destruct() public {
-        selfdestruct(payable(address(0)));
-    }
-}
-
-contract SelfDestructTest is Test {
-    function test() public {
-        Destructing d = new Destructing();
-        vm.store(address(d), bytes32(0), bytes32(uint256(1)));
-        d.destruct();
-        assertEq(address(d).code.length, 0);
-        assertEq(vm.load(address(d), bytes32(0)), bytes32(0));
-    }
-}
-   "#,
-    )
-    .unwrap();
-
-    cmd.args(["test", "-vvvv", "--isolate"]).assert_success();
 });
 
 forgetest_init!(can_test_transient_storage_with_isolation, |prj, cmd| {

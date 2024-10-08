@@ -4,16 +4,14 @@ use super::string::parse;
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_primitives::{hex, Bytes, U256};
+use alloy_primitives::{hex, map::Entry, Bytes, U256};
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_core::backend::DatabaseExt;
 use revm::interpreter::CreateInputs;
 use semver::Version;
 use std::{
-    collections::hash_map::Entry,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::Command,
@@ -293,11 +291,7 @@ impl Cheatcode for getDeployedCodeCall {
 }
 
 impl Cheatcode for deployCode_0Call {
-    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
-        &self,
-        ccx: &mut CheatsCtxt<DB>,
-        executor: &mut E,
-    ) -> Result {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Self { artifactPath: path } = self;
         let bytecode = get_artifact_code(ccx.state, path, false)?;
         let address = executor
@@ -319,11 +313,7 @@ impl Cheatcode for deployCode_0Call {
 }
 
 impl Cheatcode for deployCode_1Call {
-    fn apply_full<DB: DatabaseExt, E: CheatcodesExecutor>(
-        &self,
-        ccx: &mut CheatsCtxt<DB>,
-        executor: &mut E,
-    ) -> Result {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Self { artifactPath: path, constructorArgs } = self;
         let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
         bytecode.extend_from_slice(constructorArgs);
