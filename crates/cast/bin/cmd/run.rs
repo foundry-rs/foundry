@@ -256,7 +256,7 @@ impl RunArgs {
                             tx.input = tessera_input;
                         }
                         Err(e) => {
-                            return Err(eyre::eyre!("eth_getQuorumPayload threw an error: {e}, cannot execute transaction {:?}", tx.hash));
+                            println!("eth_getQuorumPayload threw an error: {e}, cannot fetch transaction input {:?}", tx.hash);
                         }
                     }
                 }
