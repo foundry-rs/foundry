@@ -59,7 +59,6 @@ ecdsa = "0.16"
 rand = "0.8"
 revm.workspace = true
 revm-inspectors.workspace = true
-rustc-hash.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

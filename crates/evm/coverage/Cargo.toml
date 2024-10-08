@@ -23,5 +23,4 @@ eyre.workspace = true
 revm.workspace = true
 semver.workspace = true
 tracing.workspace = true
-rustc-hash.workspace = true
 rayon.workspace = true

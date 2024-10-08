@@ -22,7 +22,6 @@ alloy-sol-types = { workspace = true, features = ["json"] }
 
 derive_more.workspace = true
 itertools.workspace = true
-rustc-hash.workspace = true
 
 [dev-dependencies]
 foundry-test-utils.workspace = true

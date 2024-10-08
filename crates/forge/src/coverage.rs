@@ -1,14 +1,16 @@
 //! Coverage reports.
 
+use alloy_primitives::map::HashMap;
 use comfy_table::{presets::ASCII_MARKDOWN, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
 use foundry_common::fs;
-pub use foundry_evm::coverage::*;
 use std::{
-    collections::{hash_map, HashMap},
+    collections::hash_map,
     io::Write,
     path::{Path, PathBuf},
 };
+
+pub use foundry_evm::coverage::*;
 
 /// A coverage reporter.
 pub trait CoverageReporter {

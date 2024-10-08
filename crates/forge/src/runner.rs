@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::Function;
-use alloy_primitives::{address, Address, Bytes, U256};
+use alloy_primitives::{address, map::HashMap, Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
@@ -35,12 +35,7 @@ use foundry_evm::{
 };
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
-use std::{
-    borrow::Cow,
-    cmp::min,
-    collections::{BTreeMap, HashMap},
-    time::Instant,
-};
+use std::{borrow::Cow, cmp::min, collections::BTreeMap, time::Instant};
 
 /// When running tests, we deploy all external libraries present in the project. To avoid additional
 /// libraries affecting nonces of senders used in tests, we are using separate address to
