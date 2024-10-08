@@ -148,6 +148,7 @@ impl GasReport {
                     func.max = func.calls.last().copied().unwrap_or_default();
                     func.mean = calc::mean(&func.calls);
                     func.median = calc::median_sorted(&func.calls);
+                    func.count = func.calls.len() as u64;
                 }
             }
         }
@@ -164,30 +165,7 @@ impl Display for GasReport {
             }
 
             if self.report_type == GasReportKind::JSON {
-                let mut contract_json = serde_json::to_value(contract).unwrap();
-                if let Some(functions) =
-                    contract_json.get_mut("functions").and_then(|f| f.as_object_mut())
-                {
-                    for sigs in functions.values_mut() {
-                        if let Some(sigs) = sigs.as_object_mut() {
-                            for gas_info in sigs.values_mut() {
-                                if let Some(gas_info) = gas_info.as_object_mut() {
-                                    if let Some(calls) =
-                                        gas_info.get("calls").and_then(|v| v.as_array())
-                                    {
-                                        gas_info.insert(
-                                            "calls".to_string(),
-                                            serde_json::Value::Number(serde_json::Number::from(
-                                                calls.len(),
-                                            )),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                writeln!(f, "{}", serde_json::to_string(&contract_json).unwrap())?;
+                writeln!(f, "{}", serde_json::to_string(&contract).unwrap())?;
                 continue;
             }
 
@@ -222,7 +200,7 @@ impl Display for GasReport {
                         Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
                         Cell::new(gas_info.median.to_string()).fg(Color::Yellow),
                         Cell::new(gas_info.max.to_string()).fg(Color::Red),
-                        Cell::new(gas_info.calls.len().to_string()),
+                        Cell::new(gas_info.count.to_string()),
                     ]);
                 })
             });
@@ -243,7 +221,9 @@ pub struct ContractInfo {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GasInfo {
+    #[serde(skip)]
     pub calls: Vec<u64>,
+    pub count: u64,
     pub min: u64,
     pub mean: u64,
     pub median: u64,
