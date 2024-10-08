@@ -157,7 +157,6 @@ contract RecordDebugTraceTest is DSTest {
         for (uint256 i = 0; i < steps.length; i++) {
             Vm.DebugStep memory step = steps[i];
 
-            // https://github.com/bluealloy/revm/blob/5a47ae0d2bb0909cc70d1b8ae2b6fc721ab1ca7d/crates/interpreter/src/instruction_result.rs#L23
             if (step.isOutOfGas) {
                 isOOG = true;
             }
