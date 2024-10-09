@@ -2,7 +2,7 @@ use crate::{
     provider::{VerificationContext, VerificationProvider},
     verify::{VerifyArgs, VerifyCheckArgs},
 };
-use alloy_primitives::map::{DefaultHashBuilder, HashMap};
+use alloy_primitives::map::HashMap;
 use async_trait::async_trait;
 use eyre::Result;
 use foundry_common::{fs, retry::Retry};
@@ -112,7 +112,7 @@ impl SourcifyVerificationProvider {
     ) -> Result<SourcifyVerifyRequest> {
         let metadata = context.get_target_metadata()?;
         let imports = context.get_target_imports()?;
-      
+
         let mut files = HashMap::with_capacity_and_hasher(2 + imports.len(), Default::default());
 
         let metadata = serde_json::to_string_pretty(&metadata)?;

@@ -6021,7 +6021,8 @@ checksum = "b410bbe7e14ab526a0e86877eb47c6996a2bd7746f027ba551028c925390e4e9"
 [[package]]
 name = "op-alloy-consensus"
 version = "0.3.3"
-source = "git+https://github.com/alloy-rs/op-alloy?rev=bfdef13#bfdef132eea95ab203e19c16b5936220403fb828"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4f7f318f885db6e1455370ca91f74b7faed152c8142f6418f0936d606e582ff"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",

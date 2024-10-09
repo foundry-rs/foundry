@@ -105,7 +105,9 @@ impl Signer for DevSigner {
             TypedTransactionRequest::EIP2930(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::EIP1559(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::EIP4844(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::Deposit(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            TypedTransactionRequest::Deposit(_) => {
+                unreachable!("op deposit txs should not be signed")
+            }
         }
     }
 }

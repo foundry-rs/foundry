@@ -60,11 +60,13 @@ pub fn transaction_request_to_typed(
 
     // Special case: OP-stack deposit tx
     if transaction_type == Some(0x7E) || has_optimism_fields(&other) {
+        let mint = other.get_deserialized::<U256>("mint")?.map(|m| m.to::<u128>()).ok()?;
+
         return Some(TypedTransactionRequest::Deposit(TxDeposit {
             from: from.unwrap_or_default(),
             source_hash: other.get_deserialized::<B256>("sourceHash")?.ok()?,
             to: to.unwrap_or_default(),
-            mint: Some(other.get_deserialized::<u128>("mint")?.ok()?),
+            mint: Some(mint),
             value: value.unwrap_or_default(),
             gas_limit: gas.unwrap_or_default(),
             is_system_transaction: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
