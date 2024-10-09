@@ -1960,8 +1960,8 @@ impl SimpleCast {
     /// # Example
     ///
     /// ```
-    /// use cast::SimpleCast as Cast;
     /// use alloy_primitives::hex;
+    /// use cast::SimpleCast as Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let bytecode = "0x608060405260043610603f57600035";
