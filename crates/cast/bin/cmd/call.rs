@@ -74,7 +74,7 @@ pub struct CallArgs {
     json: bool,
 
     /// Enable Alphanet features.
-    #[arg(long)]
+    #[arg(long, alias = "odyssey")]
     pub alphanet: bool,
 
     #[command(subcommand)]

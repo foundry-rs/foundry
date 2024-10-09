@@ -147,7 +147,7 @@ pub struct EvmArgs {
     pub isolate: bool,
 
     /// Whether to enable Alphanet features.
-    #[arg(long)]
+    #[arg(long, alias = "odyssey")]
     #[serde(skip)]
     pub alphanet: bool,
 }
