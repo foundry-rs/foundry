@@ -8,6 +8,7 @@ use foundry_config::{
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
     rpc::next_mainnet_etherscan_api_key,
+    snapbox::IntoData,
     util::{pretty_err, read_string, OutputExt, TestCommand},
 };
 use semver::Version;
@@ -1566,9 +1567,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 {"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
 {"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
 {"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-
-
-"#]]);
+"#]].is_jsonlines());
 
     prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -1607,9 +1606,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 {"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
 {"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
 {"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-
-
-"#]]);
+"#]].is_jsonlines());
 
     prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
     cmd.forge_fuse().arg("test").arg("--gas-report").assert_success().stdout_eq(str![[r#"
@@ -1648,9 +1645,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 {"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
 {"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
 {"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-
-
-"#]]);
+"#]].is_jsonlines());
 
     prj.write_config(Config {
         gas_reports: (vec![
@@ -1696,9 +1691,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 {"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
 {"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
 {"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-
-
-"#]]);
+"#]].is_jsonlines());
 });
 
 forgetest!(gas_report_some_contracts, |prj, cmd| {
@@ -1726,9 +1719,7 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 {"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
-
-
-"#]]);
+"#]].is_jsonlines());
 
     // report for Two
     prj.write_config(Config { gas_reports: vec!["ContractTwo".to_string()], ..Default::default() });
@@ -1747,9 +1738,7 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
     cmd.forge_fuse().arg("test").arg("--gas-report").arg("--json").assert_success().stdout_eq(
         str![[r#"
 {"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-
-
-"#]],
+"#]].is_jsonlines(),
     );
 
     // report for Three
@@ -1776,9 +1765,7 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
         .assert_success()
         .stdout_eq(str![[r#"
 {"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
-
-
-"#]]);
+"#]].is_jsonlines());
 });
 
 forgetest!(gas_ignore_some_contracts, |prj, cmd| {
@@ -1819,9 +1806,7 @@ forgetest!(gas_ignore_some_contracts, |prj, cmd| {
         .stdout_eq(str![[r#"
 {"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
 {"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-
-
-"#]]);
+"#]].is_jsonlines());
 
     // ignore ContractTwo
     cmd.forge_fuse();
@@ -1858,9 +1843,7 @@ forgetest!(gas_ignore_some_contracts, |prj, cmd| {
         .stdout_eq(str![[r#"
 {"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
 {"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
-
-
-"#]]);
+"#]].is_jsonlines());
 
     // ignore ContractThree
     cmd.forge_fuse();
@@ -1910,9 +1893,7 @@ forgetest!(gas_ignore_some_contracts, |prj, cmd| {
 {"gas":103375,"size":255,"functions":{"foo":{"foo()":{"calls":1,"min":45387,"mean":45387,"median":45387,"max":45387}}}}
 {"gas":103591,"size":256,"functions":{"baz":{"baz()":{"calls":1,"min":260712,"mean":260712,"median":260712,"max":260712}}}}
 {"gas":103375,"size":255,"functions":{"bar":{"bar()":{"calls":1,"min":64984,"mean":64984,"median":64984,"max":64984}}}}
-
-
-"#]]);
+"#]].is_jsonlines());
 });
 
 forgetest_init!(can_use_absolute_imports, |prj, cmd| {
