@@ -198,7 +198,7 @@ impl<'a> CommentsRef<'a> {
             .and_then(|c| c.value.split_whitespace().next())
     }
 
-    /// Filter a collection of comments and return only the custom comments.
+    /// Filter a collection of comments and only return the custom tags.
     pub fn get_custom_tags(&self) -> Self {
         CommentsRef(self.iter().cloned().filter(|c| c.is_custom()).collect())
     }
