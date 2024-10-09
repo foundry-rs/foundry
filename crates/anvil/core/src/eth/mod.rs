@@ -19,6 +19,7 @@ pub mod subscription;
 pub mod transaction;
 pub mod trie;
 pub mod utils;
+pub mod wallet;
 
 #[cfg(feature = "serde")]
 pub mod serde_helpers;
@@ -769,6 +770,14 @@ pub enum EthRequest {
     /// Reorg the chain
     #[cfg_attr(feature = "serde", serde(rename = "anvil_reorg",))]
     Reorg(ReorgOptions),
+
+    /// Wallet
+    #[cfg_attr(feature = "serde", serde(rename = "wallet_getCapabilities", with = "empty_params"))]
+    WalletGetCapabilities(()),
+
+    /// Wallet send_tx
+    #[cfg_attr(feature = "serde", serde(rename = "wallet_sendTransaction", with = "sequence"))]
+    WalletSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 }
 
 /// Represents ethereum JSON-RPC API

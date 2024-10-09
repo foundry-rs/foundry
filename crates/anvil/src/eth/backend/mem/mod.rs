@@ -64,6 +64,7 @@ use anvil_core::eth::{
         TransactionInfo, TypedReceipt, TypedTransaction,
     },
     utils::meets_eip155,
+    wallet::WalletCapabilities,
 };
 use anvil_rpc::error::RpcError;
 use chrono::Datelike;
@@ -186,6 +187,7 @@ pub struct Backend {
     precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Prevent race conditions during mining
     mining: Arc<tokio::sync::Mutex<()>>,
+    capabilities: WalletCapabilities,
 }
 
 impl Backend {
@@ -244,6 +246,13 @@ impl Backend {
             (cfg.slots_in_an_epoch, cfg.precompile_factory.clone())
         };
 
+        let capabilities = if alphanet {
+            // Insert account that sponsors the delegated txs. And deploy P256 delegation contract.
+            todo!("Insert account that sponsors the delegated txs. And deploy P256 delegation contract.")
+        } else {
+            WalletCapabilities::default()
+        };
+
         let backend = Self {
             db,
             blockchain,
@@ -265,6 +274,7 @@ impl Backend {
             slots_in_an_epoch,
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
+            capabilities,
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -281,6 +291,15 @@ impl Backend {
         self.set_code(address, Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE)).await?;
 
         Ok(())
+    }
+
+    /// Get the capabilities of the wallet.
+    ///
+    /// Currently the only capability is [`DelegationCapability`].
+    ///
+    /// [`DelegationCapability`]: anvil_core::eth::wallet::DelegationCapability
+    pub(crate) fn get_capabilities(&self) -> WalletCapabilities {
+        self.capabilities.clone()
     }
 
     /// Updates memory limits that should be more strict when auto-mine is enabled

@@ -65,6 +65,7 @@ use anvil_core::{
             transaction_request_to_typed, PendingTransaction, ReceiptResponse, TypedTransaction,
             TypedTransactionRequest,
         },
+        wallet::WalletCapabilities,
         EthRequest,
     },
     types::{ReorgOptions, TransactionData, Work},
@@ -449,6 +450,8 @@ impl EthApi {
             EthRequest::Reorg(reorg_options) => {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
+            EthRequest::WalletGetCapabilities(_) => self.get_capabilities().to_rpc_result(),
+            EthRequest::WalletSendTransaction(_tx) => todo!("wallet_sendTransaction"),
         }
     }
 
@@ -2366,6 +2369,30 @@ impl EthApi {
         }
 
         Ok(content)
+    }
+}
+
+// ===== impl Wallet endppoints =====
+impl EthApi {
+    /// Get the capabilities of the wallet.
+    ///
+    /// Currently the only capability is [`DelegationCapability`].
+    ///
+    /// See also [EIP-5792][eip-5792].
+    ///
+    /// [eip-5792]: https://eips.ethereum.org/EIPS/eip-5792
+    pub fn get_capabilities(&self) -> Result<WalletCapabilities> {
+        node_info!("wallet_getCapabilities");
+        Ok(self.backend.get_capabilities())
+    }
+
+    pub fn wallet_send_transaction(
+        &self,
+        _tx: WithOtherFields<TransactionRequest>,
+    ) -> Result<TxHash> {
+        node_info!("wallet_sendTransaction");
+
+        todo!("impl wallet_sendTransaction")
     }
 }
 
