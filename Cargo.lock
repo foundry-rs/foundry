@@ -3644,7 +3644,6 @@ dependencies = [
  "comfy-table",
  "criterion",
  "dunce",
- "evm-disassembler",
  "evmole",
  "eyre",
  "foundry-block-explorers",

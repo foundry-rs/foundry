@@ -21,7 +21,6 @@ use alloy_sol_types::sol;
 use alloy_transport::Transport;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
-use evm_disassembler::{disassemble_bytes, disassemble_str, format_operations};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
@@ -37,6 +36,7 @@ use rayon::prelude::*;
 use revm::primitives::Eof;
 use std::{
     borrow::Cow,
+    fmt::Write,
     io,
     marker::PhantomData,
     path::PathBuf,
@@ -45,6 +45,7 @@ use std::{
     time::Duration,
 };
 use tokio::signal::ctrl_c;
+use utils::decode_instructions;
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
@@ -670,7 +671,7 @@ where
         if disassemble {
             let code =
                 self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?.to_vec();
-            Ok(format_operations(disassemble_bytes(code)?)?)
+            SimpleCast::disassemble(&code)
         } else {
             Ok(format!(
                 "{}",
@@ -1968,8 +1969,26 @@ impl SimpleCast {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn disassemble(bytecode: &str) -> Result<String> {
-        format_operations(disassemble_str(bytecode)?)
+    pub fn disassemble(code: &[u8]) -> Result<String> {
+        let mut output = String::new();
+
+        for step in decode_instructions(code) {
+            write!(output, "{:08x}: ", step.pc)?;
+
+            if let Some(op) = step.op {
+                write!(output, "{op}")?;
+            } else {
+                write!(output, "INVALID")?;
+            }
+
+            if !step.immediate.is_empty() {
+                write!(output, " {}", hex::encode_prefixed(step.immediate))?;
+            }
+
+            writeln!(output)?;
+        }
+
+        Ok(output)
     }
 
     /// Gets the selector for a given function signature
