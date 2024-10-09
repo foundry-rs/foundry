@@ -68,7 +68,6 @@ tracing.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["async_tokio"] }
 serial_test = "3"
 tracing-subscriber.workspace = true
 
@@ -78,7 +77,3 @@ rustls = ["reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
 openssl = ["foundry-compilers/openssl", "reqwest/default-tls"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
-
-[[bench]]
-name = "session_source"
-harness = false
