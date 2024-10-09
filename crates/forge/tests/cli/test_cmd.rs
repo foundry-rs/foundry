@@ -275,8 +275,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 const SIMPLE_CONTRACT: &str = r#"
-pragma solidity 0.8.18;
-
 import "./test.sol";
 import "./console.sol";
 
@@ -650,7 +648,6 @@ forgetest_init!(can_test_transient_storage_with_isolation, |prj, cmd| {
     prj.add_test(
         "Contract.t.sol",
         r#"
-pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 
 contract TransientTester {

@@ -49,8 +49,9 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 /// The default Solc version used when compiling tests.
 pub const SOLC_VERSION: &str = "0.8.27";
 
-/// Another Solc version used when compiling tests. Necessary to avoid downloading multiple
-/// versions.
+/// Another Solc version used when compiling tests.
+///
+/// Necessary to avoid downloading multiple versions.
 pub const OTHER_SOLC_VERSION: &str = "0.8.26";
 
 /// External test builder
