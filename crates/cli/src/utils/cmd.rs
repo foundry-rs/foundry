@@ -17,8 +17,7 @@ use foundry_evm::{
         debug::DebugTraceIdentifier,
         decode_trace_arena,
         identifier::{EtherscanIdentifier, SignaturesIdentifier},
-        render_trace_arena_with_bytecodes, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
-        Traces,
+        render_trace_arena_inner, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
 use std::{
@@ -363,6 +362,8 @@ pub async fn handle_traces(
     debug: bool,
     decode_internal: bool,
     verbose: bool,
+    json: bool,
+    with_state_changes: bool,
 ) -> Result<()> {
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
@@ -412,7 +413,7 @@ pub async fn handle_traces(
             .build();
         debugger.try_run()?;
     } else {
-        print_traces(&mut result, &decoder, verbose).await?;
+        print_traces(&mut result, &decoder, verbose, json, with_state_changes).await?;
     }
 
     Ok(())
@@ -422,14 +423,21 @@ pub async fn print_traces(
     result: &mut TraceResult,
     decoder: &CallTraceDecoder,
     verbose: bool,
+    json: bool,
+    state_changes: bool,
 ) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
     println!("Traces:");
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await?;
-        println!("{}", render_trace_arena_with_bytecodes(arena, verbose));
+        println!("{}", render_trace_arena_inner(arena, verbose, json, state_changes));
     }
+
+    if json {
+        return Ok(());
+    }
+
     println!();
 
     if result.success {
