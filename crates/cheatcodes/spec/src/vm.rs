@@ -283,9 +283,13 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function load(address target, bytes32 slot) external view returns (bytes32 data);
 
-    /// Load a genesis JSON file's `allocs` into the in-memory revm state.
+    /// Load a genesis JSON file's `allocs` into the in-memory EVM state.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function loadAllocs(string calldata pathToAllocsJson) external;
+
+    /// Clones a source account code, state, balance and nonce to a target account and updates in-memory EVM state.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function cloneAccount(address source, address target) external;
 
     // -------- Record Storage --------
 
@@ -1872,6 +1876,10 @@ interface Vm {
     /// Takes a signed transaction and broadcasts it to the network.
     #[cheatcode(group = Scripting)]
     function broadcastRawTransaction(bytes calldata data) external;
+
+    /// Returns addresses of available unlocked wallets in the script environment.
+    #[cheatcode(group = Scripting)]
+    function getScriptWallets() external returns (address[] memory wallets);
 
     // ======== Utilities ========
 

@@ -155,6 +155,7 @@ interface Vm {
     function broadcast(uint256 privateKey) external;
     function chainId(uint256 newChainId) external;
     function clearMockedCalls() external;
+    function cloneAccount(address source, address target) external;
     function closeFile(string calldata path) external;
     function coinbase(address newCoinbase) external;
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
@@ -264,6 +265,7 @@ interface Vm {
     function getNonce(address account) external view returns (uint64 nonce);
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
     function getRecordedLogs() external returns (Log[] memory logs);
+    function getScriptWallets() external returns (address[] memory wallets);
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
     function isContext(ForgeContext context) external view returns (bool result);
     function isDir(string calldata path) external returns (bool result);

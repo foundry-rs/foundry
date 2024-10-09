@@ -106,7 +106,7 @@ tower-http = { workspace = true, features = ["fs"] }
 opener = "0.7"
 
 # soldeer
-soldeer.workspace = true
+soldeer-commands.workspace = true
 quick-junit = "0.5.0"
 
 [target.'cfg(unix)'.dependencies]

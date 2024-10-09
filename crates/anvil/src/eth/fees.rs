@@ -48,6 +48,8 @@ pub struct FeeManager {
     ///
     /// This value will be updated after a new block was mined
     base_fee: Arc<RwLock<u64>>,
+    /// Whether the minimum suggested priority fee is enforced
+    is_min_priority_fee_enforced: bool,
     /// Tracks the excess blob gas, and the base fee, for the next block post Cancun
     ///
     /// This value will be updated after a new block was mined
@@ -63,12 +65,14 @@ impl FeeManager {
     pub fn new(
         spec_id: SpecId,
         base_fee: u64,
+        is_min_priority_fee_enforced: bool,
         gas_price: u128,
         blob_excess_gas_and_price: BlobExcessGasAndPrice,
     ) -> Self {
         Self {
             spec_id,
             base_fee: Arc::new(RwLock::new(base_fee)),
+            is_min_priority_fee_enforced,
             gas_price: Arc::new(RwLock::new(gas_price)),
             blob_excess_gas_and_price: Arc::new(RwLock::new(blob_excess_gas_and_price)),
             elasticity: Arc::new(RwLock::new(default_elasticity())),
@@ -103,6 +107,10 @@ impl FeeManager {
         } else {
             0
         }
+    }
+
+    pub fn is_min_priority_fee_enforced(&self) -> bool {
+        self.is_min_priority_fee_enforced
     }
 
     /// Raw base gas price

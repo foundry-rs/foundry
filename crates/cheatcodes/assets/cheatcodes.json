@@ -3193,6 +3193,26 @@
     },
     {
       "func": {
+        "id": "cloneAccount",
+        "description": "Clones a source account code, state, balance and nonce to a target account and updates in-memory EVM state.",
+        "declaration": "function cloneAccount(address source, address target) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "cloneAccount(address,address)",
+        "selector": "0x533d61c9",
+        "selectorBytes": [
+          83,
+          61,
+          97,
+          201
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "closeFile",
         "description": "Closes file for reading, resetting the offset and allowing to read it from beginning with readLine.\n`path` is relative to the project root.",
         "declaration": "function closeFile(string calldata path) external;",
@@ -5377,6 +5397,26 @@
     },
     {
       "func": {
+        "id": "getScriptWallets",
+        "description": "Returns addresses of available unlocked wallets in the script environment.",
+        "declaration": "function getScriptWallets() external returns (address[] memory wallets);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getScriptWallets()",
+        "selector": "0x7c49aa1f",
+        "selectorBytes": [
+          124,
+          73,
+          170,
+          31
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "indexOf",
         "description": "Returns the index of the first occurrence of a `key` in an `input` string.\nReturns `NOT_FOUND` (i.e. `type(uint256).max`) if the `key` is not found.\nReturns 0 in case of an empty `key`.",
         "declaration": "function indexOf(string calldata input, string calldata key) external pure returns (uint256);",
@@ -5600,7 +5640,7 @@
     {
       "func": {
         "id": "loadAllocs",
-        "description": "Load a genesis JSON file's `allocs` into the in-memory revm state.",
+        "description": "Load a genesis JSON file's `allocs` into the in-memory EVM state.",
         "declaration": "function loadAllocs(string calldata pathToAllocsJson) external;",
         "visibility": "external",
         "mutability": "",

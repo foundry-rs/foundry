@@ -1,7 +1,7 @@
 use clap::Parser;
 use eyre::Result;
 
-use soldeer::commands::Subcommands;
+use soldeer_commands::Command;
 
 // CLI arguments for `forge soldeer`.
 // The following list of commands and their actions:
@@ -22,14 +22,14 @@ use soldeer::commands::Subcommands;
     override_usage = "Native Solidity Package Manager, `run forge soldeer [COMMAND] --help` for more details"
 )]
 pub struct SoldeerArgs {
-    /// Command must be one of the following install/push/login/update/version.
+    /// Command must be one of the following init/install/login/push/uninstall/update/version.
     #[command(subcommand)]
-    command: Subcommands,
+    command: Command,
 }
 
 impl SoldeerArgs {
-    pub fn run(self) -> Result<()> {
-        match soldeer::run(self.command) {
+    pub async fn run(self) -> Result<()> {
+        match soldeer_commands::run(self.command).await {
             Ok(_) => Ok(()),
             Err(err) => Err(eyre::eyre!("Failed to run soldeer {}", err)),
         }
@@ -38,11 +38,12 @@ impl SoldeerArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use soldeer::commands::Version;
+    use soldeer_commands::{commands::Version, Command};
 
-    #[test]
-    fn test_soldeer_version() {
-        assert!(soldeer::run(Subcommands::Version(Version {})).is_ok());
+    #[tokio::test]
+    #[allow(clippy::needless_return)]
+    async fn test_soldeer_version() {
+        let command = Command::Version(Version::default());
+        assert!(soldeer_commands::run(command).await.is_ok());
     }
 }

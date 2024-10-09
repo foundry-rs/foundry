@@ -592,7 +592,11 @@ impl EthApi {
     /// Returns the current gas price
     pub fn gas_price(&self) -> u128 {
         if self.backend.is_eip1559() {
-            (self.backend.base_fee() as u128).saturating_add(self.lowest_suggestion_tip())
+            if self.backend.is_min_priority_fee_enforced() {
+                (self.backend.base_fee() as u128).saturating_add(self.lowest_suggestion_tip())
+            } else {
+                self.backend.base_fee() as u128
+            }
         } else {
             self.backend.fees().raw_gas_price()
         }
