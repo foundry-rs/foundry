@@ -1,5 +1,8 @@
 use alloy_primitives::map::HashMap;
-use revm::interpreter::OpCode;
+use revm::interpreter::{
+    opcode::{PUSH0, PUSH1, PUSH32},
+    OpCode,
+};
 use revm_inspectors::opcode::immediate_size;
 
 /// Maps from program counter to instruction counter.
@@ -65,20 +68,23 @@ fn make_map<const PC_FIRST: bool>(code: &[u8]) -> HashMap<usize, usize> {
     let mut map = HashMap::default();
 
     let mut pc = 0;
-    let mut ic = 0;
-
+    let mut cumulative_push_size = 0;
     while pc < code.len() {
+        let ic = pc - cumulative_push_size;
         if PC_FIRST {
             map.insert(pc, ic);
         } else {
             map.insert(ic, pc);
         }
 
-        let immediate_size =
-            OpCode::new(code[pc]).map(|op| immediate_size(op, &code[pc + 1..])).unwrap_or(0);
+        if (PUSH1..=PUSH32).contains(&code[pc]) {
+            // Skip the push bytes.
+            let push_size = (code[pc] - PUSH0) as usize;
+            pc += push_size;
+            cumulative_push_size += push_size;
+        }
 
-        pc += 1 + immediate_size as usize;
-        ic += 1;
+        pc += 1;
     }
     map
 }
