@@ -52,7 +52,7 @@ impl SessionSource {
             // Record loc of last yul block return statement (if any).
             // This is used to decide which is the final statement within the `run()` method.
             // see <https://github.com/foundry-rs/foundry/issues/4617>.
-            let last_yul_return = run_func_statements.iter().rev().find_map(|statement| {
+            let last_yul_return = run_func_statements.iter().find_map(|statement| {
                 if let pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } = statement {
                     if let Some(statement) = block.statements.last() {
                         if let pt::YulStatement::FunctionCall(yul_call) = statement {
