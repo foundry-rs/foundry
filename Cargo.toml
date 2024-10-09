@@ -219,8 +219,9 @@ alloy-chains = "0.1"
 alloy-rlp = "0.3"
 alloy-trie = "0.6.0"
 
-## op-alloy for tests in anvil
-op-alloy-rpc-types = "0.2.9"
+## op-alloy 
+op-alloy-rpc-types = "0.3.3"
+op-alloy-consensus = "0.3.3"
 
 ## misc
 async-trait = "0.1"
@@ -278,7 +279,7 @@ soldeer-commands = "=0.4.0"
 proptest = "1"
 comfy-table = "7"
 
-# [patch.crates-io]
+[patch.crates-io]
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }

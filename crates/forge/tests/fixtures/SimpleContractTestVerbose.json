@@ -6,7 +6,18 @@
                 "status": "Success",
                 "reason": null,
                 "counterexample": null,
-                "logs": [],
+                "logs": [
+                    {
+                        "address": "0x000000000000000000636F6e736F6c652e6c6f67",
+                        "topics": [
+                            "0x41304facd9323d75b11bcdd609cb38effffdb05710f7caf0e9b16c6d9d709f50"
+                        ],
+                        "data": "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000f56616c7565207365743a20203130300000000000000000000000000000000000"
+                    }
+                ],
+                "decoded_logs": [
+                    "Value set:  100"
+                ],
                 "kind": {
                     "Unit": {
                         "gas": "{...}"
@@ -58,7 +69,8 @@
                                     "parent": null,
                                     "children": [
                                         1,
-                                        2
+                                        2,
+                                        3
                                     ],
                                     "idx": 0,
                                     "trace": {
@@ -91,6 +103,9 @@
                                         },
                                         {
                                             "Call": 1
+                                        },
+                                        {
+                                            "Call": 2
                                         }
                                     ]
                                 },
@@ -140,6 +155,36 @@
                                         "kind": "CALL",
                                         "value": "0x0",
                                         "data": "0xe26d14740000000000000000000000000000000000000000000000000000000000000064",
+                                        "output": "0x",
+                                        "gas_used": "{...}",
+                                        "gas_limit": "{...}",
+                                        "status": "Stop",
+                                        "steps": [],
+                                        "decoded": {
+                                            "label": null,
+                                            "return_data": null,
+                                            "call_data": null
+                                        }
+                                    },
+                                    "logs": [],
+                                    "ordering": []
+                                },
+                                {
+                                    "parent": 0,
+                                    "children": [],
+                                    "idx": 3,
+                                    "trace": {
+                                        "depth": 1,
+                                        "success": true,
+                                        "caller": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+                                        "address": "0x000000000000000000636F6e736F6c652e6c6f67",
+                                        "maybe_precompile": null,
+                                        "selfdestruct_address": null,
+                                        "selfdestruct_refund_target": null,
+                                        "selfdestruct_transferred_value": null,
+                                        "kind": "STATICCALL",
+                                        "value": "0x0",
+                                        "data": "{...}",
                                         "output": "0x",
                                         "gas_used": "{...}",
                                         "gas_limit": "{...}",

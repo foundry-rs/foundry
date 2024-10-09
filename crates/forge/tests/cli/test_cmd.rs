@@ -276,6 +276,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 const SIMPLE_CONTRACT: &str = r#"
 import "./test.sol";
+import "./console.sol";
 
 contract SimpleContract {
     uint256 public num;
@@ -289,12 +290,14 @@ contract SimpleContractTest is DSTest {
     function test() public {
         SimpleContract c = new SimpleContract();
         c.setValues(100);
+        console.log("Value set: ", 100);
     }
 }
    "#;
 
 forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
     prj.insert_ds_test();
+    prj.insert_console();
 
     prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
 
@@ -306,6 +309,7 @@ forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
 
 forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
     prj.insert_ds_test();
+    prj.insert_console();
 
     prj.add_source("Simple.t.sol", SIMPLE_CONTRACT).unwrap();
 
@@ -644,7 +648,6 @@ forgetest_init!(can_test_transient_storage_with_isolation, |prj, cmd| {
     prj.add_test(
         "Contract.t.sol",
         r#"
-pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 
 contract TransientTester {
