@@ -94,35 +94,28 @@ fn get_memory_input_for_opcode(
     stack: Option<&Vec<U256>>,
     memory: Option<&RecordedMemory>,
 ) -> Bytes {
-    let Some(stack_data) = stack else { return Bytes::new() };
-    let Some(memory_data) = memory else { return Bytes::new() };
+    let mut memory_input = Bytes::new();
+    let Some(stack_data) = stack else { return memory_input };
+    let Some(memory_data) = memory else { return memory_input };
 
     if let Some(accesses) = get_buffer_accesses(opcode, stack_data) {
-        if let Some((kind, access)) = accesses.read {
-            return match kind {
-                BufferKind::Memory => {
-                    get_slice_from_memory(memory_data.as_bytes(), access.offset, access.len)
-                }
-                _ => Bytes::new(),
-            }
+        if let Some((BufferKind::Memory, access)) = accesses.read {
+            memory_input = get_slice_from_memory(memory_data.as_bytes(), access.offset, access.len);
         }
     };
 
-    Bytes::new()
+    memory_input
 }
 
 // The expected `stack` here is from the trace stack, where the top of the stack
 // is the last value of the vector
 fn get_stack_inputs_for_opcode(opcode: u8, stack: Option<&Vec<U256>>) -> Vec<U256> {
-    let Some(op) = OpCode::new(opcode) else {
-        // unknown opcode
-        return vec![]
-    };
+    let mut inputs = Vec::new();
 
-    let Some(stack_data) = stack else { return vec![] };
+    let Some(op) = OpCode::new(opcode) else { return inputs };
+    let Some(stack_data) = stack else { return inputs };
 
     let stack_input_size = op.inputs() as usize;
-    let mut inputs = Vec::new();
     for i in 0..stack_input_size {
         inputs.push(stack_data[stack_data.len() - 1 - i]);
     }
