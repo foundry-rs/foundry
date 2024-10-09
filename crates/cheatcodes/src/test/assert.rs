@@ -453,7 +453,7 @@ impl Cheatcode for assertContainsCall {
         if haystack.contains(needle) {
             Ok(Default::default())
         } else {
-            Err(format!("String '{}' does not contain '{}'", haystack, needle).into())
+            Err(format!("String '{haystack}' does not contain '{needle}'").into())
         }
     }
 }
