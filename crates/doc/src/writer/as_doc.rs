@@ -61,7 +61,7 @@ impl AsDoc for CommentsRef<'_> {
         // Write custom tags
         let customs = self.get_custom_tags();
         for c in customs.iter() {
-            writer.write_italic(&format!("// Custom:"))?;
+            writer.write_italic("// Custom::")?;
             writer.writeln_raw(&c.value)?;
             writer.writeln()?;
         }
