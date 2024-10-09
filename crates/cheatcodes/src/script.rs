@@ -70,7 +70,7 @@ impl Cheatcode for getScriptWalletsCall {
             let script_wallets: Vec<Address> = script_wallets.into_iter().collect();
             Ok(script_wallets.abi_encode())
         } else {
-            Ok("".abi_encode())
+            Ok(Default::default())
         }
     }
 }
