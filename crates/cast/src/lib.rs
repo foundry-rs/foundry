@@ -1961,10 +1961,11 @@ impl SimpleCast {
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
+    /// use alloy_primitives::hex;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let bytecode = "0x608060405260043610603f57600035";
-    /// let opcodes = Cast::disassemble(bytecode)?;
+    /// let opcodes = Cast::disassemble(&hex::decode(bytecode)?)?;
     /// println!("{}", opcodes);
     /// # Ok(())
     /// # }
