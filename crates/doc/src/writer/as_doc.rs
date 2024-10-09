@@ -46,15 +46,23 @@ impl AsDoc for CommentsRef<'_> {
 
         // Write notice tags
         let notices = self.include_tag(CommentTag::Notice);
-        for notice in notices.iter() {
-            writer.writeln_raw(&notice.value)?;
+        for n in notices.iter() {
+            writer.writeln_raw(&n.value)?;
             writer.writeln()?;
         }
 
         // Write dev tags
         let devs = self.include_tag(CommentTag::Dev);
-        for dev in devs.iter() {
-            writer.write_italic(&dev.value)?;
+        for d in devs.iter() {
+            writer.write_italic(&d.value)?;
+            writer.writeln()?;
+        }
+
+        // Write custom tags
+        let customs = self.get_custom_tags();
+        for c in customs.iter() {
+            writer.write_italic(&format!("// Custom:"))?;
+            writer.writeln_raw(&c.value)?;
             writer.writeln()?;
         }
 
@@ -234,7 +242,7 @@ impl AsDoc for Document {
                             func.params.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
                         writer.try_write_param_table(CommentTag::Param, &params, &item.comments)?;
 
-                        // Write function parameter comments in a table
+                        // Write function return parameter comments in a table
                         let returns =
                             func.returns.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
                         writer.try_write_param_table(
@@ -303,7 +311,7 @@ impl Document {
         let params = func.params.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
         writer.try_write_param_table(CommentTag::Param, &params, &comments)?;
 
-        // Write function parameter comments in a table
+        // Write function return parameter comments in a table
         let returns = func.returns.iter().filter_map(|p| p.1.as_ref()).collect::<Vec<_>>();
         writer.try_write_param_table(CommentTag::Return, &returns, &comments)?;
 
