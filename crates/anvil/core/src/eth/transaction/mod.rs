@@ -1,6 +1,6 @@
 //! Transaction related types
 
-use crate::eth::transaction::optimism::{DepositTransaction, DepositTransactionRequest};
+use crate::eth::transaction::optimism::DepositTransaction;
 use alloy_consensus::{
     transaction::{
         eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
@@ -21,6 +21,7 @@ use alloy_rpc_types::{
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
+use op_alloy_consensus::TxDeposit;
 use revm::{
     interpreter::InstructionResult,
     primitives::{OptimismFields, TxEnv},
@@ -59,14 +60,16 @@ pub fn transaction_request_to_typed(
 
     // Special case: OP-stack deposit tx
     if transaction_type == Some(0x7E) || has_optimism_fields(&other) {
-        return Some(TypedTransactionRequest::Deposit(DepositTransactionRequest {
+        let mint = other.get_deserialized::<U256>("mint")?.map(|m| m.to::<u128>()).ok()?;
+
+        return Some(TypedTransactionRequest::Deposit(TxDeposit {
             from: from.unwrap_or_default(),
             source_hash: other.get_deserialized::<B256>("sourceHash")?.ok()?,
-            kind: to.unwrap_or_default(),
-            mint: other.get_deserialized::<U256>("mint")?.ok()?,
+            to: to.unwrap_or_default(),
+            mint: Some(mint),
             value: value.unwrap_or_default(),
             gas_limit: gas.unwrap_or_default(),
-            is_system_tx: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
+            is_system_transaction: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
             input: input.into_input().unwrap_or_default(),
         }));
     }
@@ -165,7 +168,7 @@ pub enum TypedTransactionRequest {
     EIP2930(TxEip2930),
     EIP1559(TxEip1559),
     EIP4844(TxEip4844Variant),
-    Deposit(DepositTransactionRequest),
+    Deposit(TxDeposit),
 }
 
 /// A wrapper for [TypedTransaction] that allows impersonating accounts.
