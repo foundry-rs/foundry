@@ -114,7 +114,7 @@ fn test_verify_bytecode_with_ignore(
     ];
 
     if ignore_immutables {
-        args.push("--ignore-immutables");
+        args.push("--ignore-predeploy-immutables");
     }
 
     let output = cmd.forge_fuse().args(args).assert_success().get_output().stdout_lossy();
@@ -293,49 +293,3 @@ forgetest_async!(can_ignore_runtime, |prj, cmd| {
         "1",
     );
 });
-
-forgetest_async!(can_ignore_immutables_happy_path, |prj, cmd| {
-    test_verify_bytecode_with_ignore(
-        prj,
-        cmd,
-        "0x70f44C13944d49a236E3cD7a94f48f5daB6C619b",
-        "StrategyManager",
-        Config {
-            evm_version: EvmVersion::London,
-            optimizer: true,
-            optimizer_runs: 200,
-            ..Default::default()
-        },
-        "blockscout",
-        "https://eth.blockscout.com/api",
-        ("ignored", "partial"),
-        "creation",
-        true,
-        "1",
-    );
-});
-
-// Test predeploy contracts
-// TODO: Add test utils for base such as basescan keys and alchemy keys.
-// WETH9 Predeploy
-// forgetest_async!(can_verify_predeploys, |prj, cmd| {
-//     test_verify_bytecode_with_ignore(
-//         prj,
-//         cmd,
-//         "0x4200000000000000000000000000000000000006",
-//         "WETH9",
-//         Config {
-//             evm_version: EvmVersion::default(),
-//             optimizer: true,
-//             optimizer_runs: 10000,
-//             cbor_metadata: true,
-//             bytecode_hash: BytecodeHash::Bzzr1,
-//             ..Default::default()
-//         },
-//         "etherscan",
-//         "https://api.basescan.org/api",
-//         ("ignored", "partial"),
-//         "creation",
-//         "base",
-//     );
-// });
