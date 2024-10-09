@@ -266,8 +266,8 @@ impl Provider for CoreBuildArgs {
             dict.insert("ast".to_string(), true.into());
         }
 
-        if self.compiler.optimize {
-            dict.insert("optimizer".to_string(), self.compiler.optimize.into());
+        if let Some(optimize) = self.compiler.optimize {
+            dict.insert("optimizer".to_string(), optimize.into());
         }
 
         if !self.compiler.extra_output.is_empty() {
