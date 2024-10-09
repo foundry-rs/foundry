@@ -49,7 +49,7 @@ impl SessionSource {
             // Fetch the run function's body statement
             let run_func_statements = compiled.intermediate.run_func_body()?;
 
-            // Record loc of last yul block return statement (if any).
+            // Record loc of first yul block return statement (if any).
             // This is used to decide which is the final statement within the `run()` method.
             // see <https://github.com/foundry-rs/foundry/issues/4617>.
             let last_yul_return = run_func_statements.iter().find_map(|statement| {
