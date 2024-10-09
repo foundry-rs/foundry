@@ -238,4 +238,26 @@ mod tests {
         assert_eq!(CommentTag::from_str("custom"), None);
         assert_eq!(CommentTag::from_str("sometag"), None);
     }
+
+    #[test]
+    fn test_is_custom() {
+        // Test custom tag.
+        let custom_comment = Comment::new(CommentTag::from_str("custom:test").unwrap(), "value".to_owned());
+        assert!(custom_comment.is_custom(), "Custom tag should return true for is_custom");
+
+        // Test non-custom tags.
+        let non_custom_tags = [
+            CommentTag::Title,
+            CommentTag::Author,
+            CommentTag::Notice,
+            CommentTag::Dev,
+            CommentTag::Param,
+            CommentTag::Return,
+            CommentTag::Inheritdoc,
+        ];
+        for tag in non_custom_tags {
+            let comment = Comment::new(tag.clone(), "Non-custom comment".to_string());
+            assert!(!comment.is_custom(), "Non-custom tag {tag:?} should return false for is_custom");
+        }
+    }
 }
