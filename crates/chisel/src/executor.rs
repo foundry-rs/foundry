@@ -51,6 +51,7 @@ impl SessionSource {
 
             // Record loc of last yul block return statement (if any).
             // This is used to decide which is the final statement within the `run()` method.
+            // see <https://github.com/foundry-rs/foundry/issues/4617>.
             let last_yul_return = run_func_statements.iter().rev().find_map(|statement| {
                 if let pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } = statement {
                     if let Some(statement) = block.statements.last() {
@@ -75,7 +76,11 @@ impl SessionSource {
                 // the [pt::Statement] type and the [pt::YulStatement] types.
                 let mut source_loc = match final_statement {
                     pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } => {
-                        if let Some(statement) = block.statements.last() {
+                        // Select last non variable declaration statement, see <https://github.com/foundry-rs/foundry/issues/4938>.
+                        let last_statement = block.statements.iter().rev().find(|statement| {
+                            !matches!(statement, pt::YulStatement::VariableDeclaration(_, _, _))
+                        });
+                        if let Some(statement) = last_statement {
                             statement.loc()
                         } else {
                             // In the case where the block is empty, attempt to grab the statement
