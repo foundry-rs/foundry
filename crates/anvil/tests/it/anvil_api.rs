@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{address, fixed_bytes, Address, Bytes, TxKind, U256};
+use alloy_primitives::{address, fixed_bytes, utils::Unit, Address, Bytes, TxKind, U256};
 use alloy_provider::{ext::TxPoolApi, Provider};
 use alloy_rpc_types::{
     anvil::{
@@ -16,12 +16,19 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
-use anvil::{eth::api::CLIENT_VERSION, spawn, EthereumHardfork, NodeConfig};
+use anvil::{
+    eth::{
+        api::CLIENT_VERSION,
+        backend::mem::{ODYSSEY_SPONSOR, P256_DELEGATION_CONTRACT, P256_DELEGATION_RUNTIME_CODE},
+    },
+    spawn, EthereumHardfork, NodeConfig,
+};
 use anvil_core::{
     eth::EthRequest,
     types::{ReorgOptions, TransactionData},
 };
 use foundry_evm::revm::primitives::SpecId;
+use foundry_test_utils::rpc::next_http_rpc_endpoint;
 use std::{
     str::FromStr,
     time::{Duration, SystemTime},
@@ -792,4 +799,28 @@ async fn test_reorg() {
         })
         .await;
     assert!(res.is_err());
+}
+
+// === wallet endpoints === //
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_wallet_capabilities() {
+    use anvil::eth::backend::mem::{
+        ODYSSEY_SPONSOR, P256_DELEGATION_CONTRACT, P256_DELEGATION_RUNTIME_CODE,
+    };
+    let (api, handle) = spawn(NodeConfig::test().with_alphanet(true)).await;
+
+    let provider = handle.http_provider();
+
+    let init_sponsor_bal = provider.get_balance(ODYSSEY_SPONSOR).await.unwrap();
+
+    let expected_bal = Unit::ETHER.wei().saturating_mul(U256::from(10_000));
+    assert_eq!(init_sponsor_bal, expected_bal);
+
+    let p256_code = provider.get_code_at(P256_DELEGATION_CONTRACT).await.unwrap();
+
+    assert_eq!(p256_code, Bytes::from_static(P256_DELEGATION_RUNTIME_CODE));
+
+    let capabilities = api.get_capabilities().unwrap();
+
+    println!("{:?}", capabilities);
 }
