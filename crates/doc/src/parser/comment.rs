@@ -242,7 +242,10 @@ mod tests {
     #[test]
     fn test_is_custom() {
         // Test custom tag.
-        let custom_comment = Comment::new(CommentTag::from_str("custom:test").unwrap(), "value".to_owned());
+        let custom_comment = Comment::new(
+            CommentTag::from_str("custom:test").unwrap(),
+            "dummy custom tag".to_owned(),
+        );
         assert!(custom_comment.is_custom(), "Custom tag should return true for is_custom");
 
         // Test non-custom tags.
@@ -257,7 +260,10 @@ mod tests {
         ];
         for tag in non_custom_tags {
             let comment = Comment::new(tag.clone(), "Non-custom comment".to_string());
-            assert!(!comment.is_custom(), "Non-custom tag {tag:?} should return false for is_custom");
+            assert!(
+                !comment.is_custom(),
+                "Non-custom tag {tag:?} should return false for is_custom"
+            );
         }
     }
 }
