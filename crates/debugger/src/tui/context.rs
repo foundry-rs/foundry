@@ -3,6 +3,7 @@
 use crate::{DebugNode, Debugger, ExitReason};
 use alloy_primitives::{hex, Address};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use foundry_evm_core::buffer::BufferKind;
 use revm::interpreter::OpCode;
 use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::ops::ControlFlow;
@@ -13,34 +14,6 @@ pub(crate) struct DrawMemory {
     pub(crate) inner_call_index: usize,
     pub(crate) current_buf_startline: usize,
     pub(crate) current_stack_startline: usize,
-}
-
-/// Used to keep track of which buffer is currently active to be drawn by the debugger.
-#[derive(Debug, PartialEq)]
-pub(crate) enum BufferKind {
-    Memory,
-    Calldata,
-    Returndata,
-}
-
-impl BufferKind {
-    /// Helper to cycle through the active buffers.
-    pub(crate) fn next(&self) -> Self {
-        match self {
-            Self::Memory => Self::Calldata,
-            Self::Calldata => Self::Returndata,
-            Self::Returndata => Self::Memory,
-        }
-    }
-
-    /// Helper to format the title of the active buffer pane
-    pub(crate) fn title(&self, size: usize) -> String {
-        match self {
-            Self::Memory => format!("Memory (max expansion: {size} bytes)"),
-            Self::Calldata => format!("Calldata (size: {size} bytes)"),
-            Self::Returndata => format!("Returndata (size: {size} bytes)"),
-        }
-    }
 }
 
 pub(crate) struct DebuggerContext<'a> {
