@@ -823,3 +823,35 @@ contract BalanceAssumeTest is Test {
 ...
 "#]]);
 });
+
+// Test proper message displayed if `targetSelector`/`excludeSelector` called with empty selectors.
+// <https://github.com/foundry-rs/foundry/issues/9066>
+forgetest_init!(should_not_panic_if_no_selectors, |prj, cmd| {
+    prj.add_test(
+        "NoSelectorTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract TestHandler is Test {}
+
+contract NoSelectorTest is Test {
+    bytes4[] selectors;
+
+    function setUp() public {
+        TestHandler handler = new TestHandler();
+        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
+        excludeSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
+    }
+
+    function invariant_panic() public {}
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_panic"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: No contracts to fuzz.] invariant_panic() (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+});
