@@ -60,10 +60,16 @@ impl AsDoc for CommentsRef<'_> {
 
         // Write custom tags
         let customs = self.get_custom_tags();
-        for c in customs.iter() {
-            writer.write_italic("// Custom::")?;
-            writer.writeln_raw(&c.value)?;
-            writer.writeln()?;
+        if !customs.is_empty() {
+            writer.write_bold(&format!("Note{}:", if customs.len() == 1 { "" } else { "s" }))?;
+            for c in customs.iter() {
+                writer.writeln_raw(format!(
+                    "{}{}",
+                    if customs.len() == 1 { "" } else { "- " },
+                    &c.value
+                ))?;
+                writer.writeln()?;
+            }
         }
 
         Ok(writer.finish())
