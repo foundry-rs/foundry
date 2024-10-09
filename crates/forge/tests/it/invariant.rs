@@ -769,3 +769,57 @@ contract AssumeTest is Test {
 ...
 "#]]);
 });
+
+// Test too many inputs rejected for `assumePrecompile`/`assumeForgeAddress`.
+// <https://github.com/foundry-rs/foundry/issues/9054>
+forgetest_init!(should_revert_with_assume_code, |prj, cmd| {
+    let config = Config {
+        invariant: {
+            InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() }
+        },
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    // Add initial test that breaks invariant.
+    prj.add_test(
+        "AssumeTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract BalanceTestHandler is Test {
+    address public ref = address(1412323);
+    address alice;
+
+    constructor(address _alice) {
+        alice = _alice;
+    }
+
+    function increment(uint256 amount_, address addr) public {
+        assumeNotPrecompile(addr);
+        assumeNotForgeAddress(addr);
+        assertEq(alice.balance, 100_000 ether);
+    }
+}
+
+contract BalanceAssumeTest is Test {
+    function setUp() public {
+        address alice = makeAddr("alice");
+        vm.deal(alice, 100_000 ether);
+        targetSender(alice);
+        BalanceTestHandler handler = new BalanceTestHandler(alice);
+        targetContract(address(handler));
+    }
+
+    function invariant_balance() public {}
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+});

@@ -1910,6 +1910,10 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function broadcastRawTransaction(bytes calldata data) external;
 
+    /// Returns addresses of available unlocked wallets in the script environment.
+    #[cheatcode(group = Scripting)]
+    function getScriptWallets() external returns (address[] memory wallets);
+
     // ======== Utilities ========
 
     // -------- Strings --------

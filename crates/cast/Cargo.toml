@@ -54,7 +54,6 @@ alloy-sol-types.workspace = true
 alloy-transport.workspace = true
 
 chrono.workspace = true
-evm-disassembler.workspace = true
 eyre.workspace = true
 futures.workspace = true
 rand.workspace = true

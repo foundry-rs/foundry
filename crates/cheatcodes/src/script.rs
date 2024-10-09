@@ -3,6 +3,7 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -57,6 +58,20 @@ impl Cheatcode for stopBroadcastCall {
         };
         debug!(target: "cheatcodes", ?broadcast, "stopped");
         Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getScriptWalletsCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let script_wallets =
+            ccx.state.script_wallets().cloned().map(|sw| sw.signers().unwrap_or_default());
+
+        if let Some(script_wallets) = script_wallets {
+            let script_wallets: Vec<Address> = script_wallets.into_iter().collect();
+            Ok(script_wallets.abi_encode())
+        } else {
+            Ok(Default::default())
+        }
     }
 }
 
