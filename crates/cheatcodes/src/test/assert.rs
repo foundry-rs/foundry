@@ -1,4 +1,4 @@
-use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{hex, I256, U256};
 use foundry_evm_core::{
     abi::{format_units_int, format_units_uint},
@@ -445,6 +445,17 @@ impl_assertions! {
     |left, right, decimals, maxPercentDelta| int_assert_approx_eq_rel(*left, *right, *maxPercentDelta),
     |e| e.format_with_decimals(decimals),
     (assertApproxEqRelDecimal_2Call, assertApproxEqRelDecimal_3Call),
+}
+
+impl Cheatcode for assertContainsCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { haystack, needle } = self;
+        if haystack.contains(needle) {
+            Ok(Default::default())
+        } else {
+            Err(format!("String '{}' does not contain '{}'", haystack, needle).into())
+        }
+    }
 }
 
 fn assert_true(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {

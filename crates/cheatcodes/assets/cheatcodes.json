@@ -989,6 +989,26 @@
     },
     {
       "func": {
+        "id": "assertContains",
+        "description": "Asserts that a string contains another string.",
+        "declaration": "function assertContains(string calldata haystack, string calldata needle) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assertContains(string,string)",
+        "selector": "0x8489d8fc",
+        "selectorBytes": [
+          132,
+          137,
+          216,
+          252
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assertEqDecimal_0",
         "description": "Asserts that two `uint256` values are equal, formatting them with decimals in failure message.",
         "declaration": "function assertEqDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
