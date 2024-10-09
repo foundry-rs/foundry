@@ -742,9 +742,6 @@ impl<'a> InvariantExecutor<'a> {
     ) -> Result<()> {
         for (address, (identifier, _)) in self.setup_contracts.iter() {
             if let Some(selectors) = self.artifact_filters.targeted.get(identifier) {
-                if selectors.is_empty() {
-                    continue;
-                }
                 self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
             }
         }
@@ -774,6 +771,11 @@ impl<'a> InvariantExecutor<'a> {
         should_exclude: bool,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
+        // Do not add address in target contracts if no function selected.
+        if selectors.is_empty() {
+            return Ok(())
+        }
+
         let contract = match targeted_contracts.entry(address) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {

@@ -84,7 +84,7 @@ pub struct RunArgs {
     pub no_rate_limit: bool,
 
     /// Enables Alphanet features.
-    #[arg(long)]
+    #[arg(long, alias = "odyssey")]
     pub alphanet: bool,
 }
 

@@ -96,6 +96,11 @@ impl Comment {
             },
         )
     }
+
+    /// Check if this comment is a custom tag.
+    pub fn is_custom(&self) -> bool {
+        matches!(self.tag, CommentTag::Custom(_))
+    }
 }
 
 /// The collection of natspec [Comment] items.
@@ -157,18 +162,18 @@ impl From<Vec<DocCommentTag>> for Comments {
 pub struct CommentsRef<'a>(Vec<&'a Comment>);
 
 impl<'a> CommentsRef<'a> {
-    /// Filter a collection of comments and return only those that match a provided tag
+    /// Filter a collection of comments and return only those that match a provided tag.
     pub fn include_tag(&self, tag: CommentTag) -> Self {
         self.include_tags(&[tag])
     }
 
-    /// Filter a collection of comments and return only those that match provided tags
+    /// Filter a collection of comments and return only those that match provided tags.
     pub fn include_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
         CommentsRef(self.iter().cloned().filter(|c| tags.contains(&c.tag)).collect())
     }
 
-    /// Filter a collection of comments and return  only those that do not match provided tags
+    /// Filter a collection of comments and return only those that do not match provided tags.
     pub fn exclude_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
         CommentsRef(self.iter().cloned().filter(|c| !tags.contains(&c.tag)).collect())
@@ -191,6 +196,11 @@ impl<'a> CommentsRef<'a> {
         self.iter()
             .find(|c| matches!(c.tag, CommentTag::Inheritdoc))
             .and_then(|c| c.value.split_whitespace().next())
+    }
+
+    /// Filter a collection of comments and only return the custom tags.
+    pub fn get_custom_tags(&self) -> Self {
+        CommentsRef(self.iter().cloned().filter(|c| c.is_custom()).collect())
     }
 }
 
@@ -227,5 +237,33 @@ mod tests {
         assert_eq!(CommentTag::from_str(""), None);
         assert_eq!(CommentTag::from_str("custom"), None);
         assert_eq!(CommentTag::from_str("sometag"), None);
+    }
+
+    #[test]
+    fn test_is_custom() {
+        // Test custom tag.
+        let custom_comment = Comment::new(
+            CommentTag::from_str("custom:test").unwrap(),
+            "dummy custom tag".to_owned(),
+        );
+        assert!(custom_comment.is_custom(), "Custom tag should return true for is_custom");
+
+        // Test non-custom tags.
+        let non_custom_tags = [
+            CommentTag::Title,
+            CommentTag::Author,
+            CommentTag::Notice,
+            CommentTag::Dev,
+            CommentTag::Param,
+            CommentTag::Return,
+            CommentTag::Inheritdoc,
+        ];
+        for tag in non_custom_tags {
+            let comment = Comment::new(tag.clone(), "Non-custom comment".to_string());
+            assert!(
+                !comment.is_custom(),
+                "Non-custom tag {tag:?} should return false for is_custom"
+            );
+        }
     }
 }

@@ -261,6 +261,28 @@ interface Vm {
         uint64 depth;
     }
 
+    /// The result of the `stopDebugTraceRecording` call
+    struct DebugStep {
+        /// The stack before executing the step of the run.
+        /// stack\[0\] represents the top of the stack.
+        /// and only stack data relevant to the opcode execution is contained.
+        uint256[] stack;
+        /// The memory input data before executing the step of the run.
+        /// only input data relevant to the opcode execution is contained.
+        ///
+        /// e.g. for MLOAD, it will have memory\[offset:offset+32\] copied here.
+        /// the offset value can be get by the stack data.
+        bytes memoryInput;
+        /// The opcode that was accessed.
+        uint8 opcode;
+        /// The call depth of the step.
+        uint64 depth;
+        /// Whether the call end up with out of gas error.
+        bool isOutOfGas;
+        /// The contract address where the opcode is running
+        address contractAddr;
+    }
+
     // ======== EVM ========
 
     /// Gets the address for a given private key.
@@ -286,6 +308,17 @@ interface Vm {
     /// Load a genesis JSON file's `allocs` into the in-memory EVM state.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function loadAllocs(string calldata pathToAllocsJson) external;
+
+    // -------- Record Debug Traces --------
+
+    /// Records the debug trace during the run.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function startDebugTraceRecording() external;
+
+    /// Stop debug trace recording and returns the recorded debug trace.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function stopAndReturnDebugTraceRecording() external returns (DebugStep[] memory step);
+
 
     /// Clones a source account code, state, balance and nonce to a target account and updates in-memory EVM state.
     #[cheatcode(group = Evm, safety = Unsafe)]

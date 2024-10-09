@@ -2,13 +2,13 @@ use crate::eth::error::BlockchainError;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSignerSync;
-use alloy_primitives::{map::AddressHashMap, Address, Signature, B256};
+use alloy_primitives::{map::AddressHashMap, Address, Signature, B256, U256};
 use alloy_signer::Signer as AlloySigner;
 use alloy_signer_local::PrivateKeySigner;
 use anvil_core::eth::transaction::{
-    optimism::{DepositTransaction, DepositTransactionRequest},
-    TypedTransaction, TypedTransactionRequest,
+    optimism::DepositTransaction, TypedTransaction, TypedTransactionRequest,
 };
+use op_alloy_consensus::TxDeposit;
 
 /// A transaction signer
 #[async_trait::async_trait]
@@ -105,7 +105,9 @@ impl Signer for DevSigner {
             TypedTransactionRequest::EIP2930(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::EIP1559(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::EIP4844(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::Deposit(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            TypedTransactionRequest::Deposit(_) => {
+                unreachable!("op deposit txs should not be signed")
+            }
         }
     }
 }
@@ -131,26 +133,26 @@ pub fn build_typed_transaction(
             TypedTransaction::EIP4844(tx.into_signed(signature))
         }
         TypedTransactionRequest::Deposit(tx) => {
-            let DepositTransactionRequest {
+            let TxDeposit {
                 from,
                 gas_limit,
-                kind,
+                to,
                 value,
                 input,
                 source_hash,
                 mint,
-                is_system_tx,
+                is_system_transaction,
                 ..
             } = tx;
             TypedTransaction::Deposit(DepositTransaction {
                 from,
                 gas_limit,
-                kind,
+                kind: to,
                 value,
                 input,
                 source_hash,
-                mint,
-                is_system_tx,
+                mint: mint.map_or(U256::ZERO, U256::from),
+                is_system_tx: is_system_transaction,
                 nonce: 0,
             })
         }
