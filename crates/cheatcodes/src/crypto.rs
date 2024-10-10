@@ -97,10 +97,26 @@ impl Cheatcode for rememberKeyCall {
     }
 }
 
-impl Cheatcode for rememberKeysCall {
+impl Cheatcode for rememberKeys_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { mnemonic, derivationPath, count } = self;
         let wallets = derive_wallets::<English>(mnemonic, derivationPath, *count)?;
+        let mut addresses = Vec::<Address>::with_capacity(wallets.len());
+        for wallet in wallets {
+            if let Some(script_wallets) = state.script_wallets() {
+                addresses.push(wallet.address());
+                script_wallets.add_local_signer(wallet);
+            }
+        }
+
+        Ok(addresses.abi_encode())
+    }
+}
+
+impl Cheatcode for rememberKeys_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { mnemonic, derivationPath, language, count } = self;
+        let wallets = derive_wallets_str(mnemonic, derivationPath, language, *count)?;
         let mut addresses = Vec::<Address>::with_capacity(wallets.len());
         for wallet in wallets {
             if let Some(script_wallets) = state.script_wallets() {
@@ -325,10 +341,31 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
     Ok(private_key.abi_encode())
 }
 
+fn derive_wallets_str(
+    mnemonic: &str,
+    path: &str,
+    language: &str,
+    count: u32,
+) -> Result<Vec<LocalSigner<SigningKey>>> {
+    match language {
+        "chinese_simplified" => derive_wallets::<ChineseSimplified>(mnemonic, path, count),
+        "chinese_traditional" => derive_wallets::<ChineseTraditional>(mnemonic, path, count),
+        "czech" => derive_wallets::<Czech>(mnemonic, path, count),
+        "english" => derive_wallets::<English>(mnemonic, path, count),
+        "french" => derive_wallets::<French>(mnemonic, path, count),
+        "italian" => derive_wallets::<Italian>(mnemonic, path, count),
+        "japanese" => derive_wallets::<Japanese>(mnemonic, path, count),
+        "korean" => derive_wallets::<Korean>(mnemonic, path, count),
+        "portuguese" => derive_wallets::<Portuguese>(mnemonic, path, count),
+        "spanish" => derive_wallets::<Spanish>(mnemonic, path, count),
+        _ => Err(fmt_err!("unsupported mnemonic language: {language:?}")),
+    }
+}
+
 fn derive_wallets<W: Wordlist>(
     mnemonic: &str,
     path: &str,
-    count: u8,
+    count: u32,
 ) -> Result<Vec<LocalSigner<SigningKey>>> {
     let mut out = path.to_string();
 
