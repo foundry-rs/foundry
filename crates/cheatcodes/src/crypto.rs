@@ -1,6 +1,6 @@
 //! Implementations of [`Crypto`](spec::Group::Crypto) Cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
+use crate::{Cheatcode, Cheatcodes, Result, ScriptWallets, Vm::*};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{
@@ -11,11 +11,13 @@ use alloy_signer_local::{
     LocalSigner, MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_sol_types::SolValue;
+use foundry_wallets::multi_wallet::MultiWallet;
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{bigint::ArrayEncoding, sec1::ToEncodedPoint},
 };
 use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey as P256SigningKey};
+use std::sync::Arc;
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -89,10 +91,7 @@ impl Cheatcode for rememberKeyCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { privateKey } = self;
         let wallet = parse_wallet(privateKey)?;
-        let address = wallet.address();
-        if let Some(script_wallets) = state.script_wallets() {
-            script_wallets.add_local_signer(wallet);
-        }
+        let address = inject_wallet(state, wallet);
         Ok(address.abi_encode())
     }
 }
@@ -100,13 +99,15 @@ impl Cheatcode for rememberKeyCall {
 impl Cheatcode for rememberKeys_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { mnemonic, derivationPath, count } = self;
+        tracing::info!("Remembering {} keys", count);
         let wallets = derive_wallets::<English>(mnemonic, derivationPath, *count)?;
+
+        tracing::info!("Adding {} keys to script wallets", count);
+
         let mut addresses = Vec::<Address>::with_capacity(wallets.len());
         for wallet in wallets {
-            if let Some(script_wallets) = state.script_wallets() {
-                addresses.push(wallet.address());
-                script_wallets.add_local_signer(wallet);
-            }
+            let addr = inject_wallet(state, wallet);
+            addresses.push(addr);
         }
 
         Ok(addresses.abi_encode())
@@ -119,14 +120,25 @@ impl Cheatcode for rememberKeys_1Call {
         let wallets = derive_wallets_str(mnemonic, derivationPath, language, *count)?;
         let mut addresses = Vec::<Address>::with_capacity(wallets.len());
         for wallet in wallets {
-            if let Some(script_wallets) = state.script_wallets() {
-                addresses.push(wallet.address());
-                script_wallets.add_local_signer(wallet);
-            }
+            let addr = inject_wallet(state, wallet);
+            addresses.push(addr);
         }
 
         Ok(addresses.abi_encode())
     }
+}
+
+fn inject_wallet(state: &mut Cheatcodes, wallet: LocalSigner<SigningKey>) -> Address {
+    let address = wallet.address();
+    if let Some(script_wallets) = state.script_wallets() {
+        script_wallets.add_local_signer(wallet);
+    } else {
+        // This is needed in case of testing scripts, wherein script wallets are not set on setup.
+        let script_wallets = ScriptWallets::new(MultiWallet::default(), None);
+        script_wallets.add_local_signer(wallet);
+        Arc::make_mut(&mut state.config).script_wallets = Some(script_wallets);
+    }
+    address
 }
 
 impl Cheatcode for sign_1Call {
@@ -260,7 +272,7 @@ fn sign_with_wallet(
     } else if signers.len() == 1 {
         *signers.keys().next().unwrap()
     } else {
-        bail!("could not determine signer");
+        bail!("could not determine signer, there are multiple signers available use vm.sign(signer, digest) to specify one");
     };
 
     let wallet = signers
