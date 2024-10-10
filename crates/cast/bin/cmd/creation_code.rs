@@ -3,7 +3,7 @@ use alloy_provider::{ext::TraceApi, Provider};
 use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
 use cast::SimpleCast;
 use clap::{command, Parser};
-use eyre::Result;
+use eyre::{eyre, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
@@ -43,7 +43,7 @@ impl CreationCodeArgs {
         let Self { contract, etherscan, rpc, disassemble, without_args, only_args } = self;
 
         if without_args && only_args {
-            return Err(eyre::eyre!("--without-args and --only-args are mutually exclusive."));
+            return Err(eyre!("--without-args and --only-args are mutually exclusive."));
         }
 
         let config = Config::from(&etherscan);
@@ -83,12 +83,12 @@ async fn parse_code_output(
     }
 
     let abi = fetch_abi_from_etherscan(contract, etherscan).await?;
-    let abi = abi.into_iter().next().ok_or_else(|| eyre::eyre!("No ABI found."))?;
+    let abi = abi.into_iter().next().ok_or_eyre("No ABI found.")?;
     let (abi, _) = abi;
 
     if abi.constructor.is_none() {
         if only_args {
-            return Err(eyre::eyre!("No constructor found."));
+            return Err(eyre!("No constructor found."));
         }
         return Ok(bytecode);
     }
@@ -96,7 +96,7 @@ async fn parse_code_output(
     let constructor = abi.constructor.unwrap();
     if constructor.inputs.is_empty() {
         if only_args {
-            return Err(eyre::eyre!("No constructor arguments found."));
+            return Err(eyre!("No constructor arguments found."));
         }
         return Ok(bytecode);
     }
@@ -123,7 +123,7 @@ pub async fn fetch_creation_code(
     let creation_data = client.contract_creation_data(contract).await?;
     let creation_tx_hash = creation_data.transaction_hash;
     let tx_data = provider.get_transaction_by_hash(creation_tx_hash).await?;
-    let tx_data = tx_data.ok_or_else(|| eyre::eyre!("Could not find creation tx data."))?;
+    let tx_data = tx_data.ok_or_eyre("Could not find creation tx data.")?;
 
     let bytecode = if tx_data.inner.to.is_none() {
         // Contract was created using a standard transaction
@@ -134,7 +134,7 @@ pub async fn fetch_creation_code(
         let mut creation_bytecode = None;
 
         let traces = provider.trace_transaction(creation_tx_hash).await.map_err(|e| {
-            eyre::eyre!("Could not fetch traces for transaction {}: {}", creation_tx_hash, e)
+            eyre!("Could not fetch traces for transaction {}: {}", creation_tx_hash, e)
         })?;
 
         for trace in traces {
@@ -152,7 +152,7 @@ pub async fn fetch_creation_code(
             }
         }
 
-        creation_bytecode.ok_or_else(|| eyre::eyre!("Could not find contract creation trace."))?
+        creation_bytecode.ok_or_else(|| eyre!("Could not find contract creation trace."))?
     };
 
     Ok(bytecode)

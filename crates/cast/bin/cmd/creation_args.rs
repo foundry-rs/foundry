@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes};
 use clap::{command, Parser};
-use eyre::Result;
+use eyre::{eyre, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
@@ -53,16 +53,16 @@ async fn parse_creation_args(
     etherscan: &EtherscanOpts,
 ) -> Result<Vec<String>> {
     let abi = fetch_abi_from_etherscan(contract, etherscan).await?;
-    let abi = abi.into_iter().next().ok_or_else(|| eyre::eyre!("No ABI found."))?;
+    let abi = abi.into_iter().next().ok_or_eyre("No ABI found.")?;
     let (abi, _) = abi;
 
     if abi.constructor.is_none() {
-        return Err(eyre::eyre!("No constructor found."));
+        return Err(eyre!("No constructor found."));
     }
 
     let constructor = abi.constructor.unwrap();
     if constructor.inputs.is_empty() {
-        return Err(eyre::eyre!("No constructor arguments found."));
+        return Err(eyre!("No constructor arguments found."));
     }
 
     let args_size = constructor.inputs.len() * 32;
