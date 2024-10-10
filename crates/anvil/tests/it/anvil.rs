@@ -1,9 +1,15 @@
 //! tests for anvil specific logic
 
+use std::time::Duration;
+
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
-use anvil::{spawn, NodeConfig};
+
+use anvil::{
+    eth::miner::{SerializableFixedBlockTimeMiner, SerializableMiningMode},
+    spawn, NodeConfig,
+};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
@@ -32,6 +38,33 @@ async fn test_can_change_mining_mode() {
     tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_can_get_mining_mode() {
+    // init with mixed mining mode enable
+    let (api, _) =
+        spawn(NodeConfig::test().with_mixed_mining(true, Some(Duration::from_secs(1000)))).await;
+
+    assert!(matches!(
+        api.anvil_get_interval_mining().unwrap(),
+        SerializableMiningMode::Mixed(_, SerializableFixedBlockTimeMiner { period: 1000 })
+    ));
+
+    // Set the block interval mining to 0, which should switch the mining mode to "None"
+    api.anvil_set_interval_mining(0).unwrap();
+    assert_eq!(api.anvil_get_interval_mining().unwrap(), SerializableMiningMode::None);
+
+    // Set the mining mode to "FixedBlockTime" with a period of 1000 seconds
+    api.anvil_set_interval_mining(1000).unwrap();
+    assert_eq!(
+        api.anvil_get_interval_mining().unwrap(),
+        SerializableMiningMode::FixedBlockTime(SerializableFixedBlockTimeMiner { period: 1000 })
+    );
+
+    // Enable auto-mining mode
+    api.anvil_set_auto_mine(true).await.unwrap();
+    assert!(matches!(api.anvil_get_interval_mining().unwrap(), SerializableMiningMode::Auto(_)));
 }
 
 #[tokio::test(flavor = "multi_thread")]
