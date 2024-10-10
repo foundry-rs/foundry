@@ -69,6 +69,8 @@ impl CreationCodeArgs {
     }
 }
 
+/// Parses the creation bytecode to return either the bytecode, or bytecoe without constructor
+/// arguments or only the constructor arguments.
 async fn parse_code_output(
     bytecode: Bytes,
     contract: Address,
@@ -92,7 +94,6 @@ async fn parse_code_output(
     }
 
     let constructor = abi.constructor.unwrap();
-
     if constructor.inputs.is_empty() {
         if only_args {
             return Err(eyre::eyre!("No constructor arguments found."));
@@ -114,8 +115,6 @@ async fn parse_code_output(
 }
 
 /// Fetches the creation code of a contract from Etherscan and RPC.
-///
-/// If present, constructor arguments are appended to the end of the bytecode.
 pub async fn fetch_creation_code(
     contract: Address,
     client: Client,
