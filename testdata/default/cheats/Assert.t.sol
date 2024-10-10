@@ -823,11 +823,11 @@ contract AssertionsTest is DSTest {
         vm.assertApproxEqRel(uint256(0), uint256(0), uint256(0));
     }
 
-    function testAssertContains() public {
+    function testContains() public {
         string memory str1 = "this is a test";
         string memory str2 = "test";
         string memory str3 = "foundry";
-        assert(vm.assertContains(str1, str2));
-        assert(!vm.assertContains(str1, str3));
+        assert(vm.contains(str1, str2));
+        assert(!vm.contains(str1, str3));
     }
 }

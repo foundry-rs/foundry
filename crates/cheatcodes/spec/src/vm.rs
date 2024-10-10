@@ -1524,7 +1524,7 @@ interface Vm {
 
     /// Returns true if the left string contains the right string, otherwise returns false.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertContains(string calldata left, string calldata right) external returns (bool result);
+    function contains(string calldata left, string calldata right) external returns (bool result);
 
     // ======== OS and Filesystem ========
 

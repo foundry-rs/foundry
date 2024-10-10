@@ -989,26 +989,6 @@
     },
     {
       "func": {
-        "id": "assertContains",
-        "description": "Returns true if the left string contains the right string, otherwise returns false.",
-        "declaration": "function assertContains(string calldata left, string calldata right) external returns (bool result);",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "assertContains(string,string)",
-        "selector": "0x8489d8fc",
-        "selectorBytes": [
-          132,
-          137,
-          216,
-          252
-        ]
-      },
-      "group": "testing",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
         "id": "assertEqDecimal_0",
         "description": "Asserts that two `uint256` values are equal, formatting them with decimals in failure message.",
         "declaration": "function assertEqDecimal(uint256 left, uint256 right, uint256 decimals) external pure;",
@@ -3364,6 +3344,26 @@
         ]
       },
       "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "contains",
+        "description": "Returns true if the left string contains the right string, otherwise returns false.",
+        "declaration": "function contains(string calldata left, string calldata right) external returns (bool result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "contains(string,string)",
+        "selector": "0x3fb18aec",
+        "selectorBytes": [
+          63,
+          177,
+          138,
+          236
+        ]
+      },
+      "group": "testing",
       "status": "stable",
       "safety": "safe"
     },

@@ -44,7 +44,6 @@ interface Vm {
     function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata error) external pure;
     function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta) external pure;
     function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata error) external pure;
-    function assertContains(string calldata left, string calldata right) external returns (bool result);
     function assertEqDecimal(uint256 left, uint256 right, uint256 decimals) external pure;
     function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
     function assertEqDecimal(int256 left, int256 right, uint256 decimals) external pure;
@@ -163,6 +162,7 @@ interface Vm {
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);
     function computeCreateAddress(address deployer, uint256 nonce) external pure returns (address);
+    function contains(string calldata left, string calldata right) external returns (bool result);
     function cool(address target) external;
     function copyFile(string calldata from, string calldata to) external returns (uint64 copied);
     function copyStorage(address from, address to) external;

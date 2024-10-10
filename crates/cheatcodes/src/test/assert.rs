@@ -448,7 +448,7 @@ impl_assertions! {
     (assertApproxEqRelDecimal_2Call, assertApproxEqRelDecimal_3Call),
 }
 
-impl Cheatcode for assertContainsCall {
+impl Cheatcode for containsCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { left, right } = self;
         Ok(left.contains(right).abi_encode())
