@@ -2117,7 +2117,7 @@ forgetest_init!(can_remeber_keys, |prj, cmd| {
 import "forge-std/Script.sol";
 
 interface Vm {
-    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32clea count) external returns (address[] memory keyAddrs);
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
 }
 
 contract WalletScript is Script {
