@@ -101,13 +101,15 @@ impl Cheatcode for rememberKeysCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { mnemonic, derivationPath, count } = self;
         let wallets = derive_wallets::<English>(mnemonic, derivationPath, *count)?;
+        let mut addresses = Vec::<Address>::with_capacity(wallets.len());
         for wallet in wallets {
             if let Some(script_wallets) = state.script_wallets() {
+                addresses.push(wallet.address());
                 script_wallets.add_local_signer(wallet);
             }
         }
 
-        Ok(Default::default())
+        Ok(addresses.abi_encode())
     }
 }
 
@@ -338,7 +340,7 @@ fn derive_wallets<W: Wordlist>(
     for idx in 0..count {
         let wallet = MnemonicBuilder::<W>::default()
             .phrase(mnemonic)
-            .derivation_path(format!("{}{}", out, idx))?
+            .derivation_path(format!("{out}{idx}"))?
             .build()?;
         wallets.push(wallet);
     }

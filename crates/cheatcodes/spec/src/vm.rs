@@ -2404,9 +2404,10 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function rememberKey(uint256 privateKey) external returns (address keyAddr);
 
-    /// Adds private key
+    /// Derive a set number of wallets from a mnemonic at the derivation path `m/44'/60'/0'/0/{0..count}`.
+    /// Derived wallets are saved to the local forge wallet for later use and their addresses are returned.
     #[cheatcode(group = Crypto)]
-    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint8 count) external;
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint8 count) external returns (address[] memory keyAddrs);
 
     // -------- Uncategorized Utilities --------
 
