@@ -10,7 +10,7 @@ use foundry_config::Config;
 
 use super::{creation_code::fetch_creation_code, interface::fetch_abi_from_etherscan};
 
-/// CLI arguments for `cast creation-code`.
+/// CLI arguments for `cast creation-args`.
 #[derive(Parser)]
 pub struct CreationArgsArgs {
     /// An Ethereum address, for which the bytecode will be fetched.
@@ -46,6 +46,7 @@ impl CreationArgsArgs {
     }
 }
 
+/// Fetches the constructor arguments values and types from the creation bytecode and ABI.
 async fn parse_creation_args(
     bytecode: Bytes,
     contract: Address,
@@ -60,13 +61,11 @@ async fn parse_creation_args(
     }
 
     let constructor = abi.constructor.unwrap();
-
     if constructor.inputs.is_empty() {
         return Err(eyre::eyre!("No constructor arguments found."));
     }
 
     let args_size = constructor.inputs.len() * 32;
-
     let args_bytes = Bytes::from(bytecode[bytecode.len() - args_size..].to_vec());
 
     let display_args: Vec<String> = args_bytes
