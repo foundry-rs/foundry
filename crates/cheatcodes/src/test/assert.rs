@@ -1,5 +1,6 @@
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{hex, I256, U256};
+use alloy_sol_types::SolValue;
 use foundry_evm_core::{
     abi::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
@@ -450,11 +451,7 @@ impl_assertions! {
 impl Cheatcode for assertContainsCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { haystack, needle } = self;
-        if haystack.contains(needle) {
-            Ok(Default::default())
-        } else {
-            Err(format!("String '{haystack}' does not contain '{needle}'").into())
-        }
+        Ok(haystack.contains(needle).abi_encode())
     }
 }
 

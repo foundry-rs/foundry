@@ -1522,9 +1522,9 @@ interface Vm {
         string calldata error
     ) external pure;
 
-    /// Asserts that a string contains another string.
+    /// Return true if a string contains another string, otherwise return false.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertContains(string calldata haystack, string calldata needle) external pure;
+    function assertContains(string calldata haystack, string calldata needle) external returns (bool result);
 
     // ======== OS and Filesystem ========
 
