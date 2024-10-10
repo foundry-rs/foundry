@@ -35,7 +35,7 @@ pub trait TraceIdentifier {
     /// Attempts to identify an address in one or more call traces.
     fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity<'_>>
     where
-        A: Iterator<Item = (&'a Address, Option<&'a [u8]>)> + Clone;
+        A: Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)> + Clone;
 }
 
 /// A collection of trace identifiers.
@@ -55,7 +55,7 @@ impl Default for TraceIdentifiers<'_> {
 impl TraceIdentifier for TraceIdentifiers<'_> {
     fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity<'_>>
     where
-        A: Iterator<Item = (&'a Address, Option<&'a [u8]>)> + Clone,
+        A: Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)> + Clone,
     {
         let mut identities = Vec::new();
         if let Some(local) = &mut self.local {
