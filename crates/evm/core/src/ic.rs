@@ -1,12 +1,16 @@
-use revm::interpreter::opcode::{PUSH0, PUSH1, PUSH32};
-use rustc_hash::FxHashMap;
+use alloy_primitives::map::HashMap;
+use revm::interpreter::{
+    opcode::{PUSH0, PUSH1, PUSH32},
+    OpCode,
+};
+use revm_inspectors::opcode::immediate_size;
 
 /// Maps from program counter to instruction counter.
 ///
 /// Inverse of [`IcPcMap`].
 #[derive(Debug, Clone)]
 pub struct PcIcMap {
-    pub inner: FxHashMap<usize, usize>,
+    pub inner: HashMap<usize, usize>,
 }
 
 impl PcIcMap {
@@ -35,7 +39,7 @@ impl PcIcMap {
 ///
 /// Inverse of [`PcIcMap`].
 pub struct IcPcMap {
-    pub inner: FxHashMap<usize, usize>,
+    pub inner: HashMap<usize, usize>,
 }
 
 impl IcPcMap {
@@ -60,8 +64,8 @@ impl IcPcMap {
     }
 }
 
-fn make_map<const PC_FIRST: bool>(code: &[u8]) -> FxHashMap<usize, usize> {
-    let mut map = FxHashMap::default();
+fn make_map<const PC_FIRST: bool>(code: &[u8]) -> HashMap<usize, usize> {
+    let mut map = HashMap::default();
 
     let mut pc = 0;
     let mut cumulative_push_size = 0;
@@ -83,4 +87,31 @@ fn make_map<const PC_FIRST: bool>(code: &[u8]) -> FxHashMap<usize, usize> {
         pc += 1;
     }
     map
+}
+
+/// Represents a single instruction consisting of the opcode and its immediate data.
+pub struct Instruction<'a> {
+    /// OpCode, if it could be decoded.
+    pub op: Option<OpCode>,
+    /// Immediate data following the opcode.
+    pub immediate: &'a [u8],
+    /// Program counter of the opcode.
+    pub pc: usize,
+}
+
+/// Decodes raw opcode bytes into [`Instruction`]s.
+pub fn decode_instructions(code: &[u8]) -> Vec<Instruction<'_>> {
+    let mut pc = 0;
+    let mut steps = Vec::new();
+
+    while pc < code.len() {
+        let op = OpCode::new(code[pc]);
+        let immediate_size = op.map(|op| immediate_size(op, &code[pc + 1..])).unwrap_or(0) as usize;
+
+        steps.push(Instruction { op, pc, immediate: &code[pc + 1..pc + 1 + immediate_size] });
+
+        pc += 1 + immediate_size;
+    }
+
+    steps
 }

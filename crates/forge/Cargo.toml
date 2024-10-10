@@ -98,7 +98,6 @@ watchexec-events = "3.0"
 watchexec-signals = "3.0"
 clearscreen = "3.0"
 evm-disassembler.workspace = true
-rustc-hash.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
@@ -107,7 +106,7 @@ tower-http = { workspace = true, features = ["fs"] }
 opener = "0.7"
 
 # soldeer
-soldeer.workspace = true
+soldeer-commands.workspace = true
 quick-junit = "0.5.0"
 
 [target.'cfg(unix)'.dependencies]

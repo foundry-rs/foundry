@@ -335,8 +335,11 @@ impl CreateArgs {
 
         println!("Starting contract verification...");
 
-        let num_of_optimizations =
-            if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
+        let num_of_optimizations = if self.opts.compiler.optimize.unwrap_or_default() {
+            self.opts.compiler.optimizer_runs
+        } else {
+            None
+        };
         let verify = forge_verify::VerifyArgs {
             address,
             contract: Some(self.contract),

@@ -208,7 +208,7 @@ alloy-json-abi = "0.8.5"
 alloy-primitives = { version = "0.8.5", features = [
     "getrandom",
     "rand",
-    "map-fxhash",
+    "map-foldhash",
 ] }
 alloy-sol-macro-expander = "0.8.5"
 alloy-sol-macro-input = "0.8.5"
@@ -219,8 +219,9 @@ alloy-chains = "0.1"
 alloy-rlp = "0.3"
 alloy-trie = "0.6.0"
 
-## op-alloy for tests in anvil
-op-alloy-rpc-types = "0.2.9"
+## op-alloy 
+op-alloy-rpc-types = "0.3.3"
+op-alloy-consensus = "0.3.3"
 
 ## misc
 async-trait = "0.1"
@@ -249,7 +250,6 @@ k256 = "0.13"
 parking_lot = "0.12"
 mesc = "0.3"
 rand = "0.8"
-rustc-hash = "2.0"
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
@@ -275,11 +275,11 @@ reqwest = { version = "0.12", default-features = false }
 tower = "0.4"
 tower-http = "0.5"
 # soldeer
-soldeer = "=0.3.4"
+soldeer-commands = "=0.4.0"
 proptest = "1"
 comfy-table = "7"
 
-# [patch.crates-io]
+[patch.crates-io]
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }

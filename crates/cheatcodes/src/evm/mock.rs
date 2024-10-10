@@ -1,7 +1,7 @@
 use crate::{inspector::InnerEcx, Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Address, Bytes, U256};
 use revm::{interpreter::InstructionResult, primitives::Bytecode};
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::VecDeque};
 
 /// Mocked call data.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -65,6 +65,25 @@ impl Cheatcode for mockCall_1Call {
     }
 }
 
+impl Cheatcode for mockCalls_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { callee, data, returnData } = self;
+        let _ = make_acc_non_empty(callee, ccx.ecx)?;
+
+        mock_calls(ccx.state, callee, data, None, returnData, InstructionResult::Return);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for mockCalls_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { callee, msgValue, data, returnData } = self;
+        ccx.ecx.load_account(*callee)?;
+        mock_calls(ccx.state, callee, data, Some(msgValue), returnData, InstructionResult::Return);
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for mockCallRevert_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { callee, data, revertData } = self;
@@ -94,7 +113,6 @@ impl Cheatcode for mockFunctionCall {
     }
 }
 
-#[allow(clippy::ptr_arg)] // Not public API, doesn't matter
 fn mock_call(
     state: &mut Cheatcodes,
     callee: &Address,
@@ -103,9 +121,23 @@ fn mock_call(
     rdata: &Bytes,
     ret_type: InstructionResult,
 ) {
+    mock_calls(state, callee, cdata, value, std::slice::from_ref(rdata), ret_type)
+}
+
+fn mock_calls(
+    state: &mut Cheatcodes,
+    callee: &Address,
+    cdata: &Bytes,
+    value: Option<&U256>,
+    rdata_vec: &[Bytes],
+    ret_type: InstructionResult,
+) {
     state.mocked_calls.entry(*callee).or_default().insert(
         MockCallDataContext { calldata: Bytes::copy_from_slice(cdata), value: value.copied() },
-        MockCallReturnData { ret_type, data: Bytes::copy_from_slice(rdata) },
+        rdata_vec
+            .iter()
+            .map(|rdata| MockCallReturnData { ret_type, data: rdata.clone() })
+            .collect::<VecDeque<_>>(),
     );
 }
 

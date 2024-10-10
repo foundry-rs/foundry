@@ -488,6 +488,42 @@
           "description": "The amount of gas remaining."
         }
       ]
+    },
+    {
+      "name": "DebugStep",
+      "description": "The result of the `stopDebugTraceRecording` call",
+      "fields": [
+        {
+          "name": "stack",
+          "ty": "uint256[]",
+          "description": "The stack before executing the step of the run.\n stack\\[0\\] represents the top of the stack.\n and only stack data relevant to the opcode execution is contained."
+        },
+        {
+          "name": "memoryInput",
+          "ty": "bytes",
+          "description": "The memory input data before executing the step of the run.\n only input data relevant to the opcode execution is contained.\n e.g. for MLOAD, it will have memory\\[offset:offset+32\\] copied here.\n the offset value can be get by the stack data."
+        },
+        {
+          "name": "opcode",
+          "ty": "uint8",
+          "description": "The opcode that was accessed."
+        },
+        {
+          "name": "depth",
+          "ty": "uint64",
+          "description": "The call depth of the step."
+        },
+        {
+          "name": "isOutOfGas",
+          "ty": "bool",
+          "description": "Whether the call end up with out of gas error."
+        },
+        {
+          "name": "contractAddr",
+          "ty": "address",
+          "description": "The contract address where the opcode is running"
+        }
+      ]
     }
   ],
   "cheatcodes": [
@@ -3035,9 +3071,9 @@
       "func": {
         "id": "breakpoint_0",
         "description": "Writes a breakpoint to jump to in the debugger.",
-        "declaration": "function breakpoint(string calldata char) external;",
+        "declaration": "function breakpoint(string calldata char) external pure;",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "pure",
         "signature": "breakpoint(string)",
         "selector": "0xf0259e92",
         "selectorBytes": [
@@ -3055,9 +3091,9 @@
       "func": {
         "id": "breakpoint_1",
         "description": "Writes a conditional breakpoint to jump to in the debugger.",
-        "declaration": "function breakpoint(string calldata char, bool value) external;",
+        "declaration": "function breakpoint(string calldata char, bool value) external pure;",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "pure",
         "signature": "breakpoint(string,bool)",
         "selector": "0xf7d39a8d",
         "selectorBytes": [
@@ -3185,6 +3221,26 @@
           223,
           78,
           21
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "cloneAccount",
+        "description": "Clones a source account code, state, balance and nonce to a target account and updates in-memory EVM state.",
+        "declaration": "function cloneAccount(address source, address target) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "cloneAccount(address,address)",
+        "selector": "0x533d61c9",
+        "selectorBytes": [
+          83,
+          61,
+          97,
+          201
         ]
       },
       "group": "evm",
@@ -5377,6 +5433,26 @@
     },
     {
       "func": {
+        "id": "getScriptWallets",
+        "description": "Returns addresses of available unlocked wallets in the script environment.",
+        "declaration": "function getScriptWallets() external returns (address[] memory wallets);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "getScriptWallets()",
+        "selector": "0x7c49aa1f",
+        "selectorBytes": [
+          124,
+          73,
+          170,
+          31
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "indexOf",
         "description": "Returns the index of the first occurrence of a `key` in an `input` string.\nReturns `NOT_FOUND` (i.e. `type(uint256).max`) if the `key` is not found.\nReturns 0 in case of an empty `key`.",
         "declaration": "function indexOf(string calldata input, string calldata key) external pure returns (uint256);",
@@ -5600,7 +5676,7 @@
     {
       "func": {
         "id": "loadAllocs",
-        "description": "Load a genesis JSON file's `allocs` into the in-memory revm state.",
+        "description": "Load a genesis JSON file's `allocs` into the in-memory EVM state.",
         "declaration": "function loadAllocs(string calldata pathToAllocsJson) external;",
         "visibility": "external",
         "mutability": "",
@@ -5771,6 +5847,46 @@
           64,
           155,
           145
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCalls_0",
+        "description": "Mocks multiple calls to an address, returning specified data for each call.",
+        "declaration": "function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCalls(address,bytes,bytes[])",
+        "selector": "0x5c5c3de9",
+        "selectorBytes": [
+          92,
+          92,
+          61,
+          233
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "mockCalls_1",
+        "description": "Mocks multiple calls to an address with a specific `msg.value`, returning specified data for each call.",
+        "declaration": "function mockCalls(address callee, uint256 msgValue, bytes calldata data, bytes[] calldata returnData) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "mockCalls(address,uint256,bytes,bytes[])",
+        "selector": "0x08bcbae1",
+        "selectorBytes": [
+          8,
+          188,
+          186,
+          225
         ]
       },
       "group": "evm",
@@ -8785,6 +8901,26 @@
     },
     {
       "func": {
+        "id": "startDebugTraceRecording",
+        "description": "Records the debug trace during the run.",
+        "declaration": "function startDebugTraceRecording() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "startDebugTraceRecording()",
+        "selector": "0x419c8832",
+        "selectorBytes": [
+          65,
+          156,
+          136,
+          50
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "startMappingRecording",
         "description": "Starts recording all map SSTOREs for later retrieval.",
         "declaration": "function startMappingRecording() external;",
@@ -8897,6 +9033,26 @@
           34,
           227,
           201
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "stopAndReturnDebugTraceRecording",
+        "description": "Stop debug trace recording and returns the recorded debug trace.",
+        "declaration": "function stopAndReturnDebugTraceRecording() external returns (DebugStep[] memory step);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopAndReturnDebugTraceRecording()",
+        "selector": "0xced398a2",
+        "selectorBytes": [
+          206,
+          211,
+          152,
+          162
         ]
       },
       "group": "evm",
