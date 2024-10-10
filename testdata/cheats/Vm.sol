@@ -44,7 +44,7 @@ interface Vm {
     function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata error) external pure;
     function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta) external pure;
     function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata error) external pure;
-    function assertContains(string calldata haystack, string calldata needle) external returns (bool result);
+    function assertContains(string calldata left, string calldata right) external returns (bool result);
     function assertEqDecimal(uint256 left, uint256 right, uint256 decimals) external pure;
     function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
     function assertEqDecimal(int256 left, int256 right, uint256 decimals) external pure;
