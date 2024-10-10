@@ -261,9 +261,6 @@ Check the current git repository's status with `git status`.
 Then, you can track files with `git add ...` and then commit them with `git commit`,
 ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag.
 
-If none of the previous steps worked, please open an issue at:
-https://github.com/foundry-rs/foundry/issues/new/choose
-
 "#]]);
 
     // ensure nothing was emitted, dir is empty
