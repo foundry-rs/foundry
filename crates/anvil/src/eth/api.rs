@@ -4,10 +4,10 @@ use super::{
 };
 use crate::{
     eth::{
-        backend,
         backend::{
+            self,
             db::SerializableState,
-            mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
+            mem::{EXECUTOR, MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
             notifications::NewBlockNotifications,
             validate::TransactionValidator,
         },
@@ -23,8 +23,7 @@ use crate::{
             },
             Pool,
         },
-        sign,
-        sign::Signer,
+        sign::{self, Signer},
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
@@ -34,10 +33,14 @@ use crate::{
 use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account, TxEnvelope};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{eip2718::Decodable2718, BlockResponse};
+use alloy_network::{eip2718::Decodable2718, BlockResponse, TransactionBuilder};
 use alloy_primitives::{
     map::{HashMap, HashSet},
     Address, Bytes, Parity, TxHash, TxKind, B256, B64, U256, U64,
+};
+use alloy_provider::utils::{
+    eip1559_default_estimator, EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
+    EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE,
 };
 use alloy_rpc_types::{
     anvil::{
@@ -65,7 +68,7 @@ use anvil_core::{
             transaction_request_to_typed, PendingTransaction, ReceiptResponse, TypedTransaction,
             TypedTransactionRequest,
         },
-        wallet::WalletCapabilities,
+        wallet::{WalletCapabilities, WalletError},
         EthRequest,
     },
     types::{ReorgOptions, TransactionData, Work},
@@ -2386,13 +2389,98 @@ impl EthApi {
         Ok(self.backend.get_capabilities())
     }
 
-    pub fn wallet_send_transaction(
+    pub async fn wallet_send_transaction(
         &self,
-        _tx: WithOtherFields<TransactionRequest>,
+        mut request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
         node_info!("wallet_sendTransaction");
 
-        todo!("impl wallet_sendTransaction")
+        // Validate the request
+        // reject transactions that have a non-zero value to prevent draining the executor.
+        if request.value.is_some_and(|val| val > U256::ZERO) {
+            return Err(WalletError::ValueNotZero.into())
+        }
+
+        // reject transactions that have from set, as this will be the executor.
+        if request.from.is_some() {
+            return Err(WalletError::FromSet.into());
+        }
+
+        // reject transaction requests that have nonce set, as this is managed by the executor.
+        if request.nonce.is_some() {
+            return Err(WalletError::NonceSet.into());
+        }
+
+        let capabilities = self.get_capabilities()?;
+        let valid_delegations = capabilities
+            .get(self.chain_id())
+            .map(|caps| caps.delegation.addresses.clone())
+            .unwrap_or_default();
+
+        if let Some(authorizations) = &request.authorization_list {
+            if authorizations.iter().any(|auth| !valid_delegations.contains(&auth.address)) {
+                return Err(WalletError::InvalidAuthorization.into());
+            }
+        }
+
+        // match (request.authorization_list.is_some(), request.to) {
+        //     // if this is an eip-1559 tx, ensure that it is an account that delegates to a
+        //     // whitelisted address
+        //     (false, Some(TxKind::Call(addr))) => {
+        //         let acc =
+        //             self.get_account(addr,
+        // Some(BlockId::latest())).await.ok().unwrap_or_default();
+
+        //         // not a whitelisted address, or not an eip-7702 bytecode
+        //         // if delegated_address == Address::ZERO ||
+        //         //     !valid_delegations.contains(&delegated_address)
+        //         // {
+        //         //     return Err(WalletError::IllegalDestination.into());
+        //         // }
+        //     }
+        //     // if it's an eip-7702 tx, let it through
+        //     (true, _) => (),
+        //     // create tx's disallowed
+        //     _ => return Err(WalletError::IllegalDestination.into()),
+        // };
+
+        let nonce = self.get_transaction_count(EXECUTOR, Some(BlockId::latest())).await?;
+
+        request.nonce = Some(nonce);
+
+        let chain_id = self.chain_id();
+
+        request.chain_id = Some(chain_id);
+
+        let gas_limit = self.estimate_gas(request.clone(), Some(BlockId::latest()), None).await?;
+
+        request.gas = Some(gas_limit.to());
+
+        let fees = self
+            .fee_history(
+                U256::from(EIP1559_FEE_ESTIMATION_PAST_BLOCKS),
+                BlockNumber::Latest,
+                vec![EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE],
+            )
+            .await?;
+
+        let base_fee = fees.latest_block_base_fee().unwrap_or_default();
+
+        let estimation = eip1559_default_estimator(base_fee, &fees.reward.unwrap_or_default());
+
+        request.max_fee_per_gas = Some(estimation.max_fee_per_gas);
+        request.max_priority_fee_per_gas = Some(estimation.max_priority_fee_per_gas);
+        request.gas_price = None;
+
+        let wallet = self.backend.executor_wallet().ok_or(WalletError::InternalError)?;
+        let envelope = request.build(wallet).await.map_err(|e| {
+            tracing::error!("Failed to build transaction envelope: {:?}", e);
+            WalletError::InternalError
+        })?;
+
+        tracing::info!("Prepared Tx Envelope: {:#?}", envelope);
+
+        self.send_raw_transaction(envelope.encoded_2718().into()).await
     }
 }
 

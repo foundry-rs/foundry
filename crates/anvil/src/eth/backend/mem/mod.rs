@@ -36,6 +36,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_consensus::{Account, Header, Receipt, ReceiptWithBloom};
 use alloy_eips::eip4844::MAX_BLOBS_PER_BLOCK;
+use alloy_network::EthereumWallet;
 use alloy_primitives::{
     address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
 };
@@ -58,6 +59,7 @@ use alloy_rpc_types::{
     Transaction, TransactionReceipt,
 };
 use alloy_serde::WithOtherFields;
+use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
@@ -114,9 +116,9 @@ pub mod storage;
 pub const MIN_TRANSACTION_GAS: u128 = 21000;
 // Gas per transaction creating a contract.
 pub const MIN_CREATE_GAS: u128 = 53000;
-// Odyssey Address
-// address(bytes20(uint160(uint256(keccak256('Odyssey')))))
-pub const ODYSSEY_SPONSOR: Address = address!("32896927FB2b9f8D7260d723D3dc1667D74aC67e");
+// Executor
+pub const EXECUTOR: Address = address!("6634F723546eCc92277e8a2F93d4f248bf1189ea");
+pub const EXECUTOR_PK: &str = "0x502d47e1421cb9abef497096728e69f07543232b93ef24de4998e18b5fd9ba0f";
 // P256 Batch Delegation Contract
 // address(bytes20(uint160(uint256(keccak256('P256BatchDelegation')))))
 pub const P256_DELEGATION_CONTRACT: Address = address!("Fd3E3D82095E3C76Ca0a43e793651c47143C3308");
@@ -197,7 +199,9 @@ pub struct Backend {
     precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Prevent race conditions during mining
     mining: Arc<tokio::sync::Mutex<()>>,
+    // === wallet === //
     capabilities: WalletCapabilities,
+    executor_wallet: Option<EthereumWallet>,
 }
 
 impl Backend {
@@ -256,7 +260,7 @@ impl Backend {
             (cfg.slots_in_an_epoch, cfg.precompile_factory.clone())
         };
 
-        let capabilities = if alphanet {
+        let (capabilities, executor_wallet) = if alphanet {
             // Insert account that sponsors the delegated txs. And deploy P256 delegation contract.
             let mut db = db.write().await;
 
@@ -266,7 +270,7 @@ impl Backend {
             );
 
             let init_balance = Unit::ETHER.wei().saturating_mul(U256::from(10_000));
-            let _ = db.set_balance(ODYSSEY_SPONSOR, init_balance); // 10K ETH
+            let _ = db.set_balance(EXECUTOR, init_balance); // 10K ETH
 
             let mut capabilities = WalletCapabilities::default();
 
@@ -277,9 +281,13 @@ impl Backend {
                 },
             );
 
-            capabilities
+            let signer: PrivateKeySigner = EXECUTOR_PK.parse().unwrap();
+
+            let executor_wallet = EthereumWallet::new(signer);
+
+            (capabilities, Some(executor_wallet))
         } else {
-            WalletCapabilities::default()
+            (WalletCapabilities::default(), None)
         };
 
         let backend = Self {
@@ -304,6 +312,7 @@ impl Backend {
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
             capabilities,
+            executor_wallet,
         };
 
         if let Some(interval_block_time) = automine_block_time {
@@ -334,6 +343,10 @@ impl Backend {
     /// Updates memory limits that should be more strict when auto-mine is enabled
     pub(crate) fn update_interval_mine_block_time(&self, block_time: Duration) {
         self.states.write().update_interval_mine_block_time(block_time)
+    }
+
+    pub(crate) fn executor_wallet(&self) -> Option<&EthereumWallet> {
+        self.executor_wallet.as_ref()
     }
 
     /// Applies the configured genesis settings

@@ -30,3 +30,46 @@ impl WalletCapabilities {
         self.0.get(&chain_id)
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum WalletError {
+    /// The transaction value is not 0.
+    ///
+    /// The value should be 0 to prevent draining the sequencer.
+    #[error("tx value not zero")]
+    ValueNotZero,
+    /// The from field is set on the transaction.
+    ///
+    /// Requests with the from field are rejected, since it is implied that it will always be the
+    /// sequencer.
+    #[error("tx from field is set")]
+    FromSet,
+    /// The nonce field is set on the transaction.
+    ///
+    /// Requests with the nonce field set are rejected, as this is managed by the sequencer.
+    #[error("tx nonce is set")]
+    NonceSet,
+    /// An authorization item was invalid.
+    ///
+    /// The item is invalid if it tries to delegate an account to a contract that is not
+    /// whitelisted.
+    #[error("invalid authorization address")]
+    InvalidAuthorization,
+    /// The to field of the transaction was invalid.
+    ///
+    /// The destination is invalid if:
+    ///
+    /// - There is no bytecode at the destination, or
+    /// - The bytecode is not an EIP-7702 delegation designator, or
+    /// - The delegation designator points to a contract that is not whitelisted
+    #[error("the destination of the transaction is not a delegated account")]
+    IllegalDestination,
+    /// The transaction request was invalid.
+    ///
+    /// This is likely an internal error, as most of the request is built by the sequencer.
+    #[error("invalid tx request")]
+    InvalidTransactionRequest,
+    /// An internal error occurred.
+    #[error("internal error")]
+    InternalError,
+}

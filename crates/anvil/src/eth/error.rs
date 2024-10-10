@@ -5,6 +5,7 @@ use alloy_primitives::{Bytes, SignatureError};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as SignerError;
 use alloy_transport::TransportError;
+use anvil_core::eth::wallet::WalletError;
 use anvil_rpc::{
     error::{ErrorCode, RpcError},
     response::ResponseResult,
@@ -115,6 +116,26 @@ where
             EVMError::Database(err) => err.into(),
             EVMError::Precompile(err) => Self::Message(err),
             EVMError::Custom(err) => Self::Message(err),
+        }
+    }
+}
+
+impl From<WalletError> for BlockchainError {
+    fn from(value: WalletError) -> Self {
+        match value {
+            WalletError::ValueNotZero => Self::Message("tx value not zero".to_string()),
+            WalletError::FromSet => Self::Message("tx from field is set".to_string()),
+            WalletError::NonceSet => Self::Message("tx nonce is set".to_string()),
+            WalletError::InvalidAuthorization => {
+                Self::Message("invalid authorization address".to_string())
+            }
+            WalletError::IllegalDestination => Self::Message(
+                "the destination of the transaction is not a delegated account".to_string(),
+            ),
+            WalletError::InternalError => Self::Message("internal error".to_string()),
+            WalletError::InvalidTransactionRequest => {
+                Self::Message("invalid tx request".to_string())
+            }
         }
     }
 }
