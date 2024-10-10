@@ -3349,6 +3349,26 @@
     },
     {
       "func": {
+        "id": "contains",
+        "description": "Returns true if the left string contains the right string, otherwise returns false.",
+        "declaration": "function contains(string calldata left, string calldata right) external returns (bool result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "contains(string,string)",
+        "selector": "0x3fb18aec",
+        "selectorBytes": [
+          63,
+          177,
+          138,
+          236
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "cool",
         "description": "Marks the slots of an account and the account address as cold.",
         "declaration": "function cool(address target) external;",
