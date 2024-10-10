@@ -450,8 +450,8 @@ impl_assertions! {
 
 impl Cheatcode for assertContainsCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { haystack, needle } = self;
-        Ok(haystack.contains(needle).abi_encode())
+        let Self { left, right } = self;
+        Ok(left.contains(right).abi_encode())
     }
 }
 
