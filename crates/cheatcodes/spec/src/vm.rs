@@ -2404,6 +2404,10 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function rememberKey(uint256 privateKey) external returns (address keyAddr);
 
+    /// Adds private key
+    #[cheatcode(group = Crypto)]
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint8 count) external;
+
     // -------- Uncategorized Utilities --------
 
     /// Labels an address in call traces.

@@ -8,7 +8,7 @@ use alloy_signer_local::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
     },
-    MnemonicBuilder, PrivateKeySigner,
+    LocalSigner, MnemonicBuilder, PrivateKeySigner,
 };
 use alloy_sol_types::SolValue;
 use k256::{
@@ -94,6 +94,20 @@ impl Cheatcode for rememberKeyCall {
             script_wallets.add_local_signer(wallet);
         }
         Ok(address.abi_encode())
+    }
+}
+
+impl Cheatcode for rememberKeysCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { mnemonic, derivationPath, count } = self;
+        let wallets = derive_wallets::<English>(mnemonic, derivationPath, *count)?;
+        for wallet in wallets {
+            if let Some(script_wallets) = state.script_wallets() {
+                script_wallets.add_local_signer(wallet);
+            }
+        }
+
+        Ok(Default::default())
     }
 }
 
@@ -307,6 +321,29 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
         .build()?;
     let private_key = U256::from_be_bytes(wallet.credential().to_bytes().into());
     Ok(private_key.abi_encode())
+}
+
+fn derive_wallets<W: Wordlist>(
+    mnemonic: &str,
+    path: &str,
+    count: u8,
+) -> Result<Vec<LocalSigner<SigningKey>>> {
+    let mut out = path.to_string();
+
+    if !out.ends_with('/') {
+        out.push('/');
+    }
+
+    let mut wallets = Vec::with_capacity(count as usize);
+    for idx in 0..count {
+        let wallet = MnemonicBuilder::<W>::default()
+            .phrase(mnemonic)
+            .derivation_path(format!("{}{}", out, idx))?
+            .build()?;
+        wallets.push(wallet);
+    }
+
+    Ok(wallets)
 }
 
 #[cfg(test)]

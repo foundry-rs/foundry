@@ -3,6 +3,7 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
+use foundry_compilers::output;
 use foundry_test_utils::{
     rpc,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
@@ -2107,4 +2108,36 @@ Script ran successfully.
   0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
 
 "#]]);
+});
+
+forgetest_init!(can_remeber_keys, |prj, cmd| {
+    let script = prj
+        .add_source(
+            "Foo",
+            r#"
+import "forge-std/Script.sol";
+
+interface Vm {
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint8 count) external;
+    function getScriptWallets() external returns (address[] memory wallets);
+}
+
+contract WalletScript is Script {
+    function run() public {
+        string memory mnemonic = "test test test test test test test test test test test junk";
+        string memory derivationPath = "m/44'/60'/0'/0/";
+        Vm(address(vm)).rememberKeys(mnemonic, derivationPath, 10);
+        address[] memory wallets = Vm(address(vm)).getScriptWallets();
+        for (uint256 i = 0; i < wallets.length; i++) {
+            console.log(wallets[i]);
+        }
+    }
+}"#,
+        )
+        .unwrap();
+    let output = cmd.arg("script").arg(script).assert_success();
+
+    let output = output.get_output();
+
+    println!("{:#?}", output);
 });
