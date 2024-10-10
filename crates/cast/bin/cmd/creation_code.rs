@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{ext::TraceApi, Provider};
 use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
+use cast::SimpleCast;
 use clap::{command, Parser};
-use evm_disassembler::{disassemble_bytes, format_operations};
 use eyre::Result;
 use foundry_block_explorers::Client;
 use foundry_cli::{
@@ -11,6 +11,8 @@ use foundry_cli::{
 };
 use foundry_common::provider::RetryProvider;
 use foundry_config::Config;
+
+use super::interface::fetch_abi_from_etherscan;
 
 /// CLI arguments for `cast creation-code`.
 #[derive(Parser)]
@@ -22,6 +24,14 @@ pub struct CreationCodeArgs {
     #[arg(long)]
     disassemble: bool,
 
+    /// Return creation bytecode without constructor arguments appended.
+    #[arg(long)]
+    without_args: bool,
+
+    /// Return only constructor arguments.
+    #[arg(long)]
+    only_args: bool,
+
     #[command(flatten)]
     etherscan: EtherscanOpts,
     #[command(flatten)]
@@ -30,7 +40,12 @@ pub struct CreationCodeArgs {
 
 impl CreationCodeArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, etherscan, rpc, disassemble } = self;
+        let Self { contract, etherscan, rpc, disassemble, without_args, only_args } = self;
+
+        if without_args && only_args {
+            return Err(eyre::eyre!("--without-args and --only-args are mutually exclusive."));
+        }
+
         let config = Config::from(&etherscan);
         let chain = config.chain.unwrap_or_default();
         let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
@@ -41,8 +56,11 @@ impl CreationCodeArgs {
 
         let bytecode = fetch_creation_code(contract, client, provider).await?;
 
+        let bytecode =
+            parse_code_output(bytecode, contract, &etherscan, without_args, only_args).await?;
+
         if disassemble {
-            print!("{}", format_operations(disassemble_bytes(bytecode.into())?)?);
+            println!("{}", SimpleCast::disassemble(&bytecode)?);
         } else {
             print!("{bytecode}");
         }
@@ -51,10 +69,54 @@ impl CreationCodeArgs {
     }
 }
 
+async fn parse_code_output(
+    bytecode: Bytes,
+    contract: Address,
+    etherscan: &EtherscanOpts,
+    without_args: bool,
+    only_args: bool,
+) -> Result<Bytes> {
+    if !without_args && !only_args {
+        return Ok(bytecode);
+    }
+
+    let abi = fetch_abi_from_etherscan(contract, etherscan).await?;
+    let abi = abi.into_iter().next().ok_or_else(|| eyre::eyre!("No ABI found."))?;
+    let (abi, _) = abi;
+
+    if abi.constructor.is_none() {
+        if only_args {
+            return Err(eyre::eyre!("No constructor found."));
+        }
+        return Ok(bytecode);
+    }
+
+    let constructor = abi.constructor.unwrap();
+
+    if constructor.inputs.is_empty() {
+        if only_args {
+            return Err(eyre::eyre!("No constructor arguments found."));
+        }
+        return Ok(bytecode);
+    }
+
+    let args_size = constructor.inputs.len() * 32;
+
+    let bytecode = if without_args {
+        Bytes::from(bytecode[..bytecode.len() - args_size].to_vec())
+    } else if only_args {
+        Bytes::from(bytecode[bytecode.len() - args_size..].to_vec())
+    } else {
+        panic!("Unreachable.")
+    };
+
+    Ok(bytecode)
+}
+
 /// Fetches the creation code of a contract from Etherscan and RPC.
 ///
 /// If present, constructor arguments are appended to the end of the bytecode.
-async fn fetch_creation_code(
+pub async fn fetch_creation_code(
     contract: Address,
     client: Client,
     provider: RetryProvider,
