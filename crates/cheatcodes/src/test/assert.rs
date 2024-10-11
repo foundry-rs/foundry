@@ -1,6 +1,5 @@
-use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
+use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{hex, I256, U256};
-use alloy_sol_types::SolValue;
 use foundry_evm_core::{
     abi::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
@@ -446,13 +445,6 @@ impl_assertions! {
     |left, right, decimals, maxPercentDelta| int_assert_approx_eq_rel(*left, *right, *maxPercentDelta),
     |e| e.format_with_decimals(decimals),
     (assertApproxEqRelDecimal_2Call, assertApproxEqRelDecimal_3Call),
-}
-
-impl Cheatcode for containsCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { left, right } = self;
-        Ok(left.contains(right).abi_encode())
-    }
 }
 
 fn assert_true(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {

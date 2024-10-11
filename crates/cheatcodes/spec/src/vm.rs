@@ -1522,10 +1522,6 @@ interface Vm {
         string calldata error
     ) external pure;
 
-    /// Returns true if the left string contains the right string, otherwise returns false.
-    #[cheatcode(group = String, safety = Safe)]
-    function contains(string calldata subject, string calldata search) external returns (bool result);
-
     // ======== OS and Filesystem ========
 
     // -------- Metadata --------
@@ -1980,6 +1976,9 @@ interface Vm {
     /// Returns 0 in case of an empty `key`.
     #[cheatcode(group = String)]
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
+    /// Returns true if `search` is found in `subject`, false otherwise.
+    #[cheatcode(group = String)]
+    function contains(string calldata subject, string calldata search) external returns (bool result);
 
     // ======== JSON Parsing and Manipulation ========
 

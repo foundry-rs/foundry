@@ -51,4 +51,10 @@ contract StringManipulationTest is DSTest {
         assertEq(vm.indexOf(input, key3), 0);
         assertEq(vm.indexOf(input, key4), type(uint256).max);
     }
+
+    function testContains() public {
+        string memory subject = "this is a test";
+        assert(vm.contains(subject, "test"));
+        assert(!vm.contains(subject, "foundry"));
+    }
 }

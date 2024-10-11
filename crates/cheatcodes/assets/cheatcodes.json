@@ -3350,8 +3350,8 @@
     {
       "func": {
         "id": "contains",
-        "description": "Returns true if the left string contains the right string, otherwise returns false.",
-        "declaration": "function contains(string calldata left, string calldata right) external returns (bool result);",
+        "description": "Returns true if `search` is found in `subject`, false otherwise.",
+        "declaration": "function contains(string calldata subject, string calldata search) external returns (bool result);",
         "visibility": "external",
         "mutability": "",
         "signature": "contains(string,string)",
@@ -3363,7 +3363,7 @@
           236
         ]
       },
-      "group": "testing",
+      "group": "string",
       "status": "stable",
       "safety": "safe"
     },
