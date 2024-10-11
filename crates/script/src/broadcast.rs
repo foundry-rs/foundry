@@ -27,6 +27,7 @@ use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
 use std::sync::Arc;
+use std::cmp::Ordering;
 
 pub async fn estimate_gas<P, T>(
     tx: &mut WithOtherFields<TransactionRequest>,
@@ -70,10 +71,17 @@ pub async fn send_transaction(
             let nonce = provider.get_transaction_count(from).await?;
 
             let tx_nonce = tx.nonce.expect("no nonce");
-            if nonce > tx_nonce {
-                bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
-            } else if nonce < tx_nonce {
-                warn!("Expected nonce ({tx_nonce}) is ahead of provider nonce ({nonce}). Proceeding with expected.");
+
+            match nonce.cmp(&tx_nonce) {
+                Ordering::Greater => {
+                    bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+                }
+                Ordering::Less => {
+                    warn!("Expected nonce ({tx_nonce}) is ahead of provider nonce ({nonce}). Proceeding with expected.");
+                }
+                Ordering::Equal => {
+                    // Nonces are equal, no action needed
+                }
             }
         }
 
