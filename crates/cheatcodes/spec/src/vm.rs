@@ -1524,7 +1524,7 @@ interface Vm {
 
     /// Returns true if the left string contains the right string, otherwise returns false.
     #[cheatcode(group = String, safety = Safe)]
-    function contains(string calldata left, string calldata right) external returns (bool result);
+    function contains(string calldata subject, string calldata search) external returns (bool result);
 
     // ======== OS and Filesystem ========
 
