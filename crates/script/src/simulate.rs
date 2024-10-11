@@ -1,21 +1,19 @@
 use super::{
-    providers::ProvidersManager,
-    runner::ScriptRunner,
-    sequence::{ScriptSequence, ScriptSequenceKind},
-    transaction::TxWithMetadata,
+    multi_sequence::MultiChainSequence, providers::ProvidersManager, runner::ScriptRunner,
+    sequence::ScriptSequenceKind, transaction::TxWithMetadata,
 };
 use crate::{
     broadcast::{estimate_gas, BundledState},
     build::LinkedBuildData,
     execute::{ExecutionArtifacts, ExecutionData},
-    sequence::get_commit_hash,
+    sequence::{get_commit_hash, ScriptSequenceManager},
     ScriptArgs, ScriptConfig, ScriptResult,
 };
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{map::HashMap, utils::format_units, Address, Bytes, TxKind, U256};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
-use forge_script_sequence::MultiChainSequence;
+use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{get_contract_name, shell, ContractData};
@@ -390,7 +388,7 @@ impl FilledTransactionsState {
         multi: bool,
         chain: u64,
         transactions: VecDeque<TxWithMetadata>,
-    ) -> Result<ScriptSequence> {
+    ) -> Result<ScriptSequenceManager> {
         // Paths are set to None for multi-chain sequences parts, because they don't need to be
         // saved to a separate file.
         let paths = if multi {
@@ -418,8 +416,8 @@ impl FilledTransactionsState {
             })
             .collect();
 
-        Ok(ScriptSequence {
-            transactions,
+        let inner = ScriptSequence {
+            transactions: transactions.into_iter().map(|tx| tx.into()).collect(),
             returns: self.execution_artifacts.returns.clone(),
             receipts: vec![],
             pending: vec![],
@@ -428,6 +426,7 @@ impl FilledTransactionsState {
             libraries,
             chain,
             commit,
-        })
+        };
+        Ok(ScriptSequenceManager::new(inner))
     }
 }

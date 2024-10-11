@@ -15,6 +15,12 @@ pub struct TxWithMetadata {
     inner: TransactionWithMetadata,
 }
 
+impl From<TxWithMetadata> for TransactionWithMetadata {
+    fn from(tx: TxWithMetadata) -> Self {
+        tx.inner
+    }
+}
+
 impl TxWithMetadata {
     pub fn new(
         transaction: TransactionMaybeSigned,

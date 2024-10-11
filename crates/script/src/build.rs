@@ -1,13 +1,14 @@
 use crate::{
     broadcast::BundledState,
     execute::LinkedState,
-    sequence::{ScriptSequence, ScriptSequenceKind},
+    multi_sequence::MultiChainSequence,
+    sequence::{ScriptSequenceKind, ScriptSequenceManager},
     ScriptArgs, ScriptConfig,
 };
 use alloy_primitives::{Bytes, B256};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
-use forge_script_sequence::MultiChainSequence;
+use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::ScriptWallets;
 use foundry_common::{
     compile::ProjectCompiler, provider::try_get_http_provider, ContractData, ContractsByArtifact,
@@ -288,9 +289,10 @@ impl CompiledState {
 
         let (args, build_data, script_wallets, script_config) = if !self.args.unlocked {
             let mut froms = sequence.sequences().iter().flat_map(|s| {
-                s.transactions
+                s.inner()
+                    .transactions
                     .iter()
-                    .skip(s.receipts.len())
+                    .skip(s.inner().receipts.len())
                     .map(|t| t.transaction.from().expect("from is missing in script artifact"))
             });
 
@@ -318,7 +320,7 @@ impl CompiledState {
 
         // Collect libraries from sequence and link contracts with them.
         let libraries = match sequence {
-            ScriptSequenceKind::Single(ref seq) => Libraries::parse(&seq.libraries)?,
+            ScriptSequenceKind::Single(ref seq) => Libraries::parse(&seq.inner().libraries)?,
             // Library linking is not supported for multi-chain sequences
             ScriptSequenceKind::Multi(_) => Libraries::default(),
         };
@@ -343,6 +345,7 @@ impl CompiledState {
                 chain,
                 dry_run,
             )?;
+            let sequence = ScriptSequenceManager::new(sequence);
             Ok(ScriptSequenceKind::Single(sequence))
         } else {
             let sequence = MultiChainSequence::load(

@@ -1,6 +1,6 @@
 use crate::{
     receipts::{check_tx_status, format_receipt, TxStatus},
-    sequence::ScriptSequence,
+    sequence::ScriptSequenceManager,
 };
 use alloy_chains::Chain;
 use alloy_primitives::{
@@ -8,6 +8,7 @@ use alloy_primitives::{
     B256,
 };
 use eyre::Result;
+use forge_script_sequence::ScriptSequence;
 use foundry_cli::utils::init_progress;
 use foundry_common::provider::RetryProvider;
 use futures::StreamExt;
@@ -169,10 +170,11 @@ impl ScriptProgress {
     pub async fn wait_for_pending(
         &self,
         sequence_idx: usize,
-        deployment_sequence: &mut ScriptSequence,
+        deployment_sequence: &mut ScriptSequenceManager,
         provider: &RetryProvider,
         timeout: u64,
     ) -> Result<()> {
+        let deployment_sequence = deployment_sequence.inner_mut();
         if deployment_sequence.pending.is_empty() {
             return Ok(());
         }

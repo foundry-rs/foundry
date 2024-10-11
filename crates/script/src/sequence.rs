@@ -1,9 +1,9 @@
-use crate::verify::VerifyBundle;
+use crate::{multi_sequence::MultiChainSequence, verify::VerifyBundle};
 use alloy_primitives::{Address, TxHash};
 use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::{eyre, Result};
 use forge_script_sequence::{
-    transaction::AdditionalContract, ScriptSequence, ScriptSequenceKind, SensitiveScriptSequence,
+    transaction::AdditionalContract, ScriptSequence, SensitiveScriptSequence,
 };
 use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::Git;
@@ -19,6 +19,67 @@ pub fn get_commit_hash(root: &Path) -> Option<String> {
     Git::new(root).commit_hash(true, "HEAD").ok()
 }
 
+pub enum ScriptSequenceKind {
+    Single(ScriptSequenceManager),
+    Multi(MultiChainSequence),
+}
+
+impl ScriptSequenceKind {
+    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
+        match self {
+            Self::Single(sequence) => sequence.save(silent, save_ts),
+            Self::Multi(sequence) => sequence.save(silent, save_ts),
+        }
+    }
+
+    pub fn sequences(&self) -> &[ScriptSequenceManager] {
+        match self {
+            Self::Single(sequence) => std::slice::from_ref(sequence),
+            Self::Multi(sequence) => &sequence.deployments,
+        }
+    }
+
+    pub fn sequences_mut(&mut self) -> &mut [ScriptSequenceManager] {
+        match self {
+            Self::Single(sequence) => std::slice::from_mut(sequence),
+            Self::Multi(sequence) => &mut sequence.deployments,
+        }
+    }
+    /// Updates underlying sequence paths to not be under /dry-run directory.
+    pub fn update_paths_to_broadcasted(
+        &mut self,
+        config: &Config,
+        sig: &str,
+        target: &ArtifactId,
+    ) -> Result<()> {
+        match self {
+            Self::Single(sequence) => {
+                sequence.inner.paths = Some(ScriptSequence::get_paths(
+                    config,
+                    sig,
+                    target,
+                    sequence.inner.chain,
+                    false,
+                )?);
+            }
+            Self::Multi(sequence) => {
+                (sequence.path, sequence.sensitive_path) =
+                    MultiChainSequence::get_paths(config, sig, target, false)?;
+            }
+        };
+
+        Ok(())
+    }
+}
+
+impl Drop for ScriptSequenceKind {
+    fn drop(&mut self) {
+        if let Err(err) = self.save(false, true) {
+            error!(?err, "could not save deployment sequence");
+        }
+    }
+}
+
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -27,6 +88,19 @@ pub struct ScriptSequenceManager {
 }
 
 impl ScriptSequenceManager {
+    /// Creates a new instance of the script sequence manager
+    pub fn new(inner: ScriptSequence) -> Self {
+        Self { inner }
+    }
+
+    pub fn inner(&self) -> &ScriptSequence {
+        &self.inner
+    }
+
+    pub fn inner_mut(&mut self) -> &mut ScriptSequence {
+        &mut self.inner
+    }
+
     /// Loads The sequence for the corresponding json file
     pub fn load(
         config: &Config,
