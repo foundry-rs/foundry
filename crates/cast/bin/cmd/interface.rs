@@ -121,7 +121,7 @@ fn load_abi_from_artifact(path_or_contract: &str) -> Result<Vec<(JsonAbi, String
     let root = try_find_project_root(None)?;
     let config = load_config_with_root(Some(&root));
     let project = config.project()?;
-    let compiler = ProjectCompiler::new();
+    let compiler = ProjectCompiler::new().quiet(true);
 
     let contract = ContractInfo::new(path_or_contract);
     let target_path = if let Some(path) = &contract.path {

@@ -133,7 +133,7 @@ impl SelectorsSubcommands {
             Self::Collision { mut first_contract, mut second_contract, build } => {
                 // Compile the project with the two contracts included
                 let project = build.project()?;
-                let mut compiler = ProjectCompiler::new();
+                let mut compiler = ProjectCompiler::new().quiet(true);
 
                 if let Some(contract_path) = &mut first_contract.path {
                     let target_path = canonicalize(&*contract_path)?;
@@ -199,7 +199,7 @@ impl SelectorsSubcommands {
 
                 // compile the project to get the artifacts/abis
                 let project = build_args.project()?;
-                let outcome = ProjectCompiler::new().compile(&project)?;
+                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
                 let artifacts = if let Some(contract) = contract {
                     let found_artifact = outcome.find_first(&contract);
                     let artifact = found_artifact
@@ -285,7 +285,7 @@ impl SelectorsSubcommands {
                 };
 
                 let project = build_args.project()?;
-                let outcome = ProjectCompiler::new().compile(&project)?;
+                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
                 let artifacts = outcome
                     .into_artifacts_with_files()
                     .filter(|(file, _, _)| {

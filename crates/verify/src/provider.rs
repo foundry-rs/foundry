@@ -50,7 +50,10 @@ impl VerificationContext {
             *selection = OutputSelection::common_output_selection(["abi".to_string()])
         });
 
-        let output = ProjectCompiler::new().files([self.target_path.clone()]).compile(&project)?;
+        let output = ProjectCompiler::new()
+            .quiet(true)
+            .files([self.target_path.clone()])
+            .compile(&project)?;
 
         let artifact = output
             .find(&self.target_path, &self.target_name)
@@ -66,7 +69,10 @@ impl VerificationContext {
             *selection = OutputSelection::common_output_selection(["metadata".to_string()]);
         });
 
-        let output = ProjectCompiler::new().files([self.target_path.clone()]).compile(&project)?;
+        let output = ProjectCompiler::new()
+            .quiet(true)
+            .files([self.target_path.clone()])
+            .compile(&project)?;
 
         let artifact = output
             .find(&self.target_path, &self.target_name)
