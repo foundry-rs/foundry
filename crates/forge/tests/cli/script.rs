@@ -3,7 +3,11 @@
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
-use foundry_test_utils::{rpc, ScriptOutcome, ScriptTester};
+use foundry_test_utils::{
+    rpc,
+    util::{OTHER_SOLC_VERSION, SOLC_VERSION},
+    ScriptOutcome, ScriptTester,
+};
 use regex::Regex;
 use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
@@ -1518,36 +1522,45 @@ forgetest_async!(can_detect_contract_when_multiple_versions, |prj, cmd| {
 
     prj.add_script(
         "A.sol",
-        r#"pragma solidity 0.8.20;
+        &format!(
+            r#"
+pragma solidity {SOLC_VERSION};
 import "./B.sol";
 
-contract ScriptA {}
-"#,
+contract ScriptA {{}}
+"#
+        ),
     )
     .unwrap();
 
     prj.add_script(
         "B.sol",
-        r#"pragma solidity >=0.8.5 <=0.8.20;
+        &format!(
+            r#"
+pragma solidity >={OTHER_SOLC_VERSION} <={SOLC_VERSION};
 import 'forge-std/Script.sol';
 
-contract ScriptB is Script {
-    function run() external {
+contract ScriptB is Script {{
+    function run() external {{
         vm.broadcast();
         address(0).call("");
-    }
-}
-"#,
+    }}
+}}
+"#
+        ),
     )
     .unwrap();
 
     prj.add_script(
         "C.sol",
-        r#"pragma solidity 0.8.5;
+        &format!(
+            r#"
+pragma solidity {OTHER_SOLC_VERSION};
 import "./B.sol";
 
-contract ScriptC {}
-"#,
+contract ScriptC {{}}
+"#
+        ),
     )
     .unwrap();
 
@@ -2047,6 +2060,46 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]);
+});
+
+forgetest_init!(can_get_script_wallets, |prj, cmd| {
+    let script = prj
+        .add_source(
+            "Foo",
+            r#"
+import "forge-std/Script.sol";
+
+interface Vm {
+    function getScriptWallets() external returns (address[] memory wallets);
+}
+
+contract WalletScript is Script {
+    function run() public {
+        address[] memory wallets = Vm(address(vm)).getScriptWallets();
+        console.log(wallets[0]);
+    }
+}"#,
+        )
+        .unwrap();
+    cmd.arg("script")
+        .arg(script)
+        .args([
+            "--private-key",
+            "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6",
+            "-v",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
 
 "#]]);
 });

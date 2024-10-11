@@ -322,7 +322,7 @@ async fn main_args(args: Cast) -> Result<()> {
             println!("Computed Address: {}", computed.to_checksum(None));
         }
         CastSubcommand::Disassemble { bytecode } => {
-            println!("{}", SimpleCast::disassemble(&bytecode)?);
+            println!("{}", SimpleCast::disassemble(&hex::decode(bytecode)?)?);
         }
         CastSubcommand::Selectors { bytecode, resolve } => {
             let functions = SimpleCast::extract_functions(&bytecode)?;

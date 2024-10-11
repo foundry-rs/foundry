@@ -66,6 +66,7 @@ use anvil_core::eth::{
     utils::meets_eip155,
 };
 use anvil_rpc::error::RpcError;
+use chrono::Datelike;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
@@ -667,6 +668,11 @@ impl Backend {
         self.fees.base_fee()
     }
 
+    /// Returns whether the minimum suggested priority fee is enforced
+    pub fn is_min_priority_fee_enforced(&self) -> bool {
+        self.fees.is_min_priority_fee_enforced()
+    }
+
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
         self.fees.excess_blob_gas_and_price()
     }
@@ -1123,7 +1129,12 @@ impl Backend {
 
             node_info!("    Block Number: {}", block_number);
             node_info!("    Block Hash: {:?}", block_hash);
-            node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
+            if timestamp.year() > 9999 {
+                // rf2822 panics with more than 4 digits
+                node_info!("    Block Time: {:?}\n", timestamp.to_rfc3339());
+            } else {
+                node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
+            }
 
             let outcome = MinedBlockOutcome { block_number, included, invalid };
 

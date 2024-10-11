@@ -5,7 +5,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result};
 use forge::{
     decode::decode_console_logs,
-    gas_report::GasReport,
+    gas_report::{GasReport, GasReportKind},
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
@@ -112,7 +112,7 @@ pub struct TestArgs {
     json: bool,
 
     /// Output test results as JUnit XML report.
-    #[arg(long, conflicts_with = "json", help_heading = "Display options")]
+    #[arg(long, conflicts_with_all(["json", "gas_report"]), help_heading = "Display options")]
     junit: bool,
 
     /// Stop running tests after the first failure.
@@ -469,6 +469,9 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
+        // If we need to render to a serialized format, we should not print anything else to stdout.
+        let silent = self.gas_report && self.json;
+
         let num_filtered = runner.matching_test_functions(filter).count();
         if num_filtered != 1 && (self.debug.is_some() || self.flamegraph || self.flamechart) {
             let action = if self.flamegraph {
@@ -494,8 +497,20 @@ impl TestArgs {
             runner.decode_internal = InternalTraceMode::Full;
         }
 
-        if self.json {
-            let results = runner.test_collect(filter);
+        // Run tests in a non-streaming fashion and collect results for serialization.
+        if !self.gas_report && self.json {
+            let mut results = runner.test_collect(filter);
+            results.values_mut().for_each(|suite_result| {
+                for test_result in suite_result.test_results.values_mut() {
+                    if verbosity >= 2 {
+                        // Decode logs at level 2 and above.
+                        test_result.decoded_logs = decode_console_logs(&test_result.logs);
+                    } else {
+                        // Empty logs for non verbose runs.
+                        test_result.logs = vec![];
+                    }
+                }
+            });
             println!("{}", serde_json::to_string(&results)?);
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
@@ -511,7 +526,7 @@ impl TestArgs {
 
         let libraries = runner.libraries.clone();
 
-        // Run tests.
+        // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
         let show_progress = config.show_progress;
@@ -548,9 +563,13 @@ impl TestArgs {
         }
         let mut decoder = builder.build();
 
-        let mut gas_report = self
-            .gas_report
-            .then(|| GasReport::new(config.gas_reports.clone(), config.gas_reports_ignore.clone()));
+        let mut gas_report = self.gas_report.then(|| {
+            GasReport::new(
+                config.gas_reports.clone(),
+                config.gas_reports_ignore.clone(),
+                if self.json { GasReportKind::JSON } else { GasReportKind::Markdown },
+            )
+        });
 
         let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
 
@@ -571,30 +590,34 @@ impl TestArgs {
                 self.flamechart;
 
             // Print suite header.
-            println!();
-            for warning in suite_result.warnings.iter() {
-                eprintln!("{} {warning}", "Warning:".yellow().bold());
-            }
-            if !tests.is_empty() {
-                let len = tests.len();
-                let tests = if len > 1 { "tests" } else { "test" };
-                println!("Ran {len} {tests} for {contract_name}");
+            if !silent {
+                println!();
+                for warning in suite_result.warnings.iter() {
+                    eprintln!("{} {warning}", "Warning:".yellow().bold());
+                }
+                if !tests.is_empty() {
+                    let len = tests.len();
+                    let tests = if len > 1 { "tests" } else { "test" };
+                    println!("Ran {len} {tests} for {contract_name}");
+                }
             }
 
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
-                sh_println!("{}", result.short_result(name));
+                if !silent {
+                    sh_println!("{}", result.short_result(name));
 
-                // We only display logs at level 2 and above
-                if verbosity >= 2 {
-                    // We only decode logs from Hardhat and DS-style console events
-                    let console_logs = decode_console_logs(&result.logs);
-                    if !console_logs.is_empty() {
-                        println!("Logs:");
-                        for log in console_logs {
-                            println!("  {log}");
+                    // We only display logs at level 2 and above
+                    if verbosity >= 2 {
+                        // We only decode logs from Hardhat and DS-style console events
+                        let console_logs = decode_console_logs(&result.logs);
+                        if !console_logs.is_empty() {
+                            println!("Logs:");
+                            for log in console_logs {
+                                println!("  {log}");
+                            }
+                            println!();
                         }
-                        println!();
                     }
                 }
 
@@ -636,7 +659,7 @@ impl TestArgs {
                     }
                 }
 
-                if !decoded_traces.is_empty() {
+                if !silent && !decoded_traces.is_empty() {
                     sh_println!("Traces:");
                     for trace in &decoded_traces {
                         sh_println!("{trace}");
@@ -743,7 +766,9 @@ impl TestArgs {
             }
 
             // Print suite summary.
-            sh_println!("{}", suite_result.summary());
+            if !silent {
+                sh_println!("{}", suite_result.summary());
+            }
 
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
@@ -764,7 +789,7 @@ impl TestArgs {
             outcome.gas_report = Some(finalized);
         }
 
-        if !outcome.results.is_empty() {
+        if !silent && !outcome.results.is_empty() {
             sh_println!("{}", outcome.summary(duration));
 
             if self.summary {
@@ -1046,7 +1071,7 @@ contract FooBarTest is DSTest {
         let call_cnts = gas_report
             .contracts
             .values()
-            .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.calls.len())))
+            .flat_map(|c| c.functions.values().flat_map(|f| f.values().map(|v| v.frames.len())))
             .collect::<Vec<_>>();
         // assert that all functions were called at least 100 times
         assert!(call_cnts.iter().all(|c| *c > 100));

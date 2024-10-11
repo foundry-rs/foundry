@@ -581,9 +581,8 @@ pub struct MinedTransactionReceipt {
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_return)]
 mod tests {
-    #![allow(clippy::needless_return)]
-
     use super::*;
     use crate::eth::backend::db::Db;
     use alloy_primitives::{hex, Address};

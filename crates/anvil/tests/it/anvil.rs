@@ -1,5 +1,6 @@
 //! tests for anvil specific logic
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use anvil::{spawn, NodeConfig};
@@ -75,4 +76,15 @@ async fn test_can_use_default_genesis_timestamp() {
         0u64,
         provider.get_block(0.into(), false.into()).await.unwrap().unwrap().header.timestamp
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_can_handle_large_timestamp() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let num = 317071597274;
+    api.evm_set_next_block_timestamp(num).unwrap();
+    api.mine_one().await;
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.timestamp, num);
 }
