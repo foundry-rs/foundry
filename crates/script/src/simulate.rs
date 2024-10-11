@@ -227,7 +227,7 @@ impl PreSimulationState {
 }
 
 /// At this point we have converted transactions collected during script execution to
-/// [TransactionWithMetadata] objects which contain additional metadata needed for broadcasting and
+/// [TxWithMetadata] objects which contain additional metadata needed for broadcasting and
 /// verification.
 pub struct FilledTransactionsState {
     pub args: ScriptArgs,
@@ -239,8 +239,8 @@ pub struct FilledTransactionsState {
 }
 
 impl FilledTransactionsState {
-    /// Bundles all transactions of the [`TransactionWithMetadata`] type in a list of
-    /// [`ScriptSequence`]. List length will be higher than 1, if we're dealing with a multi
+    /// Bundles all transactions of the [`TxWithMetadata`] type in a list of
+    /// [`ScriptSequenceManager`]. List length will be higher than 1, if we're dealing with a multi
     /// chain deployment.
     ///
     /// Each transaction will be added with the correct transaction type and gas estimation.
