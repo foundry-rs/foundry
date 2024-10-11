@@ -1,4 +1,3 @@
-use super::{multi_sequence::MultiChainSequence, NestedValue};
 use crate::{
     transaction::{AdditionalContract, TransactionWithMetadata},
     verify::VerifyBundle,
@@ -6,6 +5,7 @@ use crate::{
 use alloy_primitives::{hex, map::HashMap, Address, TxHash};
 use alloy_rpc_types::AnyTransactionReceipt;
 use eyre::{eyre, ContextCompat, Result, WrapErr};
+use forge_script_sequence::{MultiChainSequence, NestedValue};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cli::utils::{now, Git};
 use foundry_common::{fs, shell, TransactionMaybeSigned, SELECTOR_LEN};

@@ -3477,6 +3477,7 @@ dependencies = [
  "dialoguer",
  "dunce",
  "eyre",
+ "forge-script-sequence",
  "forge-verify",
  "foundry-cheatcodes",
  "foundry-cli",

@@ -22,6 +22,7 @@ use build::PreprocessedState;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
+use forge_script_sequence::NestedValue;
 use forge_verify::RetryArgs;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
@@ -50,13 +51,12 @@ use foundry_evm::{
     traces::{TraceMode, Traces},
 };
 use foundry_wallets::MultiWalletOpts;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use yansi::Paint;
 
 mod broadcast;
 mod build;
 mod execute;
-mod multi_sequence;
 mod progress;
 mod providers;
 mod receipts;
@@ -514,12 +514,6 @@ struct JsonResult<'a> {
     returns: &'a HashMap<String, NestedValue>,
     #[serde(flatten)]
     result: &'a ScriptResult,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct NestedValue {
-    pub internal_type: String,
-    pub value: String,
 }
 
 #[derive(Clone, Debug)]

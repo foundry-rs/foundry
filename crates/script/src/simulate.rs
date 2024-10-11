@@ -1,5 +1,4 @@
 use super::{
-    multi_sequence::MultiChainSequence,
     providers::ProvidersManager,
     runner::ScriptRunner,
     sequence::{ScriptSequence, ScriptSequenceKind},
@@ -16,6 +15,7 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{map::HashMap, utils::format_units, Address, Bytes, TxKind, U256};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
+use forge_script_sequence::MultiChainSequence;
 use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{get_contract_name, shell, ContractData};
