@@ -50,7 +50,7 @@ use foundry_evm::{
     traces::{TraceMode, Traces},
 };
 use foundry_wallets::MultiWalletOpts;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::PathBuf;
 use yansi::Paint;
 
@@ -155,6 +155,7 @@ pub struct ScriptArgs {
         long,
         requires = "debug",
         value_hint = ValueHint::FilePath,
+        value_name = "PATH"
     )]
     pub dump: Option<PathBuf>,
 
