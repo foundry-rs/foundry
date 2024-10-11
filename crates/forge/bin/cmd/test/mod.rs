@@ -101,9 +101,10 @@ pub struct TestArgs {
 
     /// Dumps all debugger steps to file.
     #[arg(
-    long,
-    requires = "debug",
-    value_hint = ValueHint::FilePath,
+        long,
+        requires = "debug",
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
     )]
     dump: Option<PathBuf>,
 
