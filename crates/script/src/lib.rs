@@ -155,6 +155,7 @@ pub struct ScriptArgs {
         long,
         requires = "debug",
         value_hint = ValueHint::FilePath,
+        value_name = "PATH"
     )]
     pub dump: Option<PathBuf>,
 
