@@ -1,13 +1,13 @@
 use crate::{
     broadcast::BundledState,
     execute::LinkedState,
-    multi_sequence::MultiChainSequence,
     sequence::{ScriptSequence, ScriptSequenceKind},
     ScriptArgs, ScriptConfig,
 };
 use alloy_primitives::{Bytes, B256};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
+use forge_script_sequence::MultiChainSequence;
 use foundry_cheatcodes::ScriptWallets;
 use foundry_common::{
     compile::ProjectCompiler, provider::try_get_http_provider, ContractData, ContractsByArtifact,

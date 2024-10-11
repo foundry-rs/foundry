@@ -8,7 +8,6 @@
 #[macro_use]
 extern crate tracing;
 
-use self::transaction::AdditionalContract;
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{
@@ -22,7 +21,7 @@ use build::PreprocessedState;
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
-use forge_script_sequence::NestedValue;
+use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::RetryArgs;
 use foundry_cli::{opts::CoreBuildArgs, utils::LoadConfig};
 use foundry_common::{
