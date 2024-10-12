@@ -227,7 +227,7 @@ impl FixedBlockTimeMiner {
     fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {
         if self.interval.poll_tick(cx).is_ready() {
             // drain the pool
-            return Poll::Ready(pool.ready_transactions().collect());
+            return Poll::Ready(pool.ready_transactions().collect())
         }
         Poll::Pending
     }
@@ -257,7 +257,7 @@ impl ReadyTransactionMiner {
         }
 
         if self.has_pending_txs == Some(false) {
-            return Poll::Pending;
+            return Poll::Pending
         }
 
         let transactions =
@@ -267,7 +267,7 @@ impl ReadyTransactionMiner {
         self.has_pending_txs = Some(transactions.len() >= self.max_transactions);
 
         if transactions.is_empty() {
-            return Poll::Pending;
+            return Poll::Pending
         }
 
         Poll::Ready(transactions)
@@ -304,19 +304,19 @@ pub struct SerializableReadyTransactionMiner {
     max_transactions: usize,
 }
 
-impl From<&MiningMode> for SerializableMiningMode {
-    fn from(value: &MiningMode) -> Self {
-        match value {
-            MiningMode::None => Self::None,
-            MiningMode::Auto(miner) => Self::Auto(SerializableReadyTransactionMiner {
+impl MiningMode {
+    pub fn convert(&self) -> SerializableMiningMode {
+        match self {
+            Self::None => SerializableMiningMode::None,
+            Self::Auto(miner) => SerializableMiningMode::Auto(SerializableReadyTransactionMiner {
                 max_transactions: miner.max_transactions,
             }),
-            MiningMode::FixedBlockTime(miner) => {
-                Self::FixedBlockTime(SerializableFixedBlockTimeMiner {
+            Self::FixedBlockTime(miner) => {
+                SerializableMiningMode::FixedBlockTime(SerializableFixedBlockTimeMiner {
                     period: miner.interval.period().as_secs(),
                 })
             }
-            MiningMode::Mixed(ready_miner, fix_minder) => Self::Mixed(
+            Self::Mixed(ready_miner, fix_minder) => SerializableMiningMode::Mixed(
                 SerializableReadyTransactionMiner {
                     max_transactions: ready_miner.max_transactions,
                 },

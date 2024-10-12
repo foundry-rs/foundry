@@ -47,24 +47,24 @@ async fn test_can_get_mining_mode() {
         spawn(NodeConfig::test().with_mixed_mining(true, Some(Duration::from_secs(1000)))).await;
 
     assert!(matches!(
-        api.anvil_get_interval_mining().unwrap(),
+        api.anvil_get_mining_mode().unwrap(),
         SerializableMiningMode::Mixed(_, SerializableFixedBlockTimeMiner { period: 1000 })
     ));
 
     // Set the block interval mining to 0, which should switch the mining mode to "None"
     api.anvil_set_interval_mining(0).unwrap();
-    assert_eq!(api.anvil_get_interval_mining().unwrap(), SerializableMiningMode::None);
+    assert_eq!(api.anvil_get_mining_mode().unwrap(), SerializableMiningMode::None);
 
     // Set the mining mode to "FixedBlockTime" with a period of 1000 seconds
     api.anvil_set_interval_mining(1000).unwrap();
     assert_eq!(
-        api.anvil_get_interval_mining().unwrap(),
+        api.anvil_get_mining_mode().unwrap(),
         SerializableMiningMode::FixedBlockTime(SerializableFixedBlockTimeMiner { period: 1000 })
     );
 
     // Enable auto-mining mode
     api.anvil_set_auto_mine(true).await.unwrap();
-    assert!(matches!(api.anvil_get_interval_mining().unwrap(), SerializableMiningMode::Auto(_)));
+    assert!(matches!(api.anvil_get_mining_mode().unwrap(), SerializableMiningMode::Auto(_)));
 }
 
 #[tokio::test(flavor = "multi_thread")]
