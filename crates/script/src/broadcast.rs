@@ -26,8 +26,7 @@ use foundry_common::{
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
-use std::sync::Arc;
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::Arc};
 
 pub async fn estimate_gas<P, T>(
     tx: &mut WithOtherFields<TransactionRequest>,
