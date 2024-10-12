@@ -1,7 +1,6 @@
-use alloy_primitives::{Bytes, Uint, U256};
+use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
-use alloy_transport::TransportResult;
 use cast::{revm::primitives::EnvWithHandlerCfg, traces::TraceKind};
 use clap::Parser;
 use eyre::{Result, WrapErr};
@@ -22,7 +21,7 @@ use foundry_config::{
 use foundry_evm::{
     executors::{EvmError, TracingExecutor},
     opts::EvmOpts,
-    utils::configure_tx_env,
+    utils::{configure_quorum, configure_tx_env},
 };
 
 /// CLI arguments for `cast run`.
@@ -232,36 +231,7 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            if let Some(signature) = tx.inner.signature {
-                let v = signature.v;
-
-                // 37/38 for private quorum transactions, tessera hash is 64 bytes
-                let is_private_quorum_txn =
-                    (v == Uint::from(37) || v == Uint::from(38)) && tx.input.len() == 64;
-
-                if is_private_quorum_txn {
-                    println!("Private quorum transaction detected.");
-
-                    let result: TransportResult<Bytes> = provider
-                        .client()
-                        .request("eth_getQuorumPayload", (tx.input.clone(),))
-                        .await;
-
-                    match result {
-                        Ok(tessera_input) => {
-                            println!(
-                                "Executing private quorum transaction with quorum payload: {:?}",
-                                tessera_input.to_string()
-                            );
-                            tx.input = tessera_input;
-                        }
-                        Err(e) => {
-                            println!("eth_getQuorumPayload threw an error: {e}, cannot fetch transaction input {:?}", tx.hash);
-                        }
-                    }
-                }
-            }
-
+            configure_quorum(&mut tx, provider).await;
             configure_tx_env(&mut env, &tx.inner);
 
             if let Some(to) = tx.to {
