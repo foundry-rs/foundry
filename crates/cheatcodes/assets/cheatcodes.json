@@ -3349,6 +3349,26 @@
     },
     {
       "func": {
+        "id": "contains",
+        "description": "Returns true if `search` is found in `subject`, false otherwise.",
+        "declaration": "function contains(string calldata subject, string calldata search) external returns (bool result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "contains(string,string)",
+        "selector": "0x3fb18aec",
+        "selectorBytes": [
+          63,
+          177,
+          138,
+          236
+        ]
+      },
+      "group": "string",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "cool",
         "description": "Marks the slots of an account and the account address as cold.",
         "declaration": "function cool(address target) external;",
