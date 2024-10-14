@@ -1,6 +1,9 @@
 use super::{
-    multi_sequence::MultiChainSequence, providers::ProvidersManager, runner::ScriptRunner,
-    sequence::ScriptSequenceKind, transaction::TxWithMetadata,
+    multi_sequence::MultiChainSequence,
+    providers::ProvidersManager,
+    runner::ScriptRunner,
+    sequence::ScriptSequenceKind,
+    transaction::{with_execution_result, ScriptTransactionBuilder},
 };
 use crate::{
     broadcast::{estimate_gas, BundledState},
@@ -13,7 +16,7 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{map::HashMap, utils::format_units, Address, Bytes, TxKind, U256};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
-use forge_script_sequence::ScriptSequence;
+use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{get_contract_name, shell, ContractData};
@@ -58,8 +61,7 @@ impl PreSimulationState {
             .into_iter()
             .map(|tx| {
                 let rpc = tx.rpc.expect("missing broadcastable tx rpc url");
-                TxWithMetadata::new(
-                    tx.transaction,
+                ScriptTransactionBuilder::new(tx.transaction).build(
                     rpc,
                     &address_to_abi,
                     &self.execution_artifacts.decoder,
@@ -89,8 +91,8 @@ impl PreSimulationState {
     /// Collects gas usage and metadata for each transaction.
     pub async fn simulate_and_fill(
         &self,
-        transactions: VecDeque<TxWithMetadata>,
-    ) -> Result<VecDeque<TxWithMetadata>> {
+        transactions: VecDeque<TransactionWithMetadata>,
+    ) -> Result<VecDeque<TransactionWithMetadata>> {
         trace!(target: "script", "executing onchain simulation");
 
         let runners = Arc::new(
@@ -107,7 +109,7 @@ impl PreSimulationState {
         let futs = transactions
             .into_iter()
             .map(|mut transaction| async {
-                let mut runner = runners.get(&transaction.rpc()).expect("invalid rpc url").write();
+                let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
 
                 let tx = transaction.tx_mut();
                 let to = if let Some(TxKind::Call(to)) = tx.to() { Some(to) } else { None };
@@ -137,7 +139,7 @@ impl PreSimulationState {
                 };
 
                 let transaction =
-                    transaction.with_execution_result(&result, self.args.gas_estimate_multiplier);
+                    with_execution_result(transaction, &result, self.args.gas_estimate_multiplier);
 
                 eyre::Ok((Some(transaction), is_noop_tx, result.traces))
             })
@@ -162,7 +164,7 @@ impl PreSimulationState {
 
             if let Some(tx) = tx {
                 if is_noop_tx {
-                    let to = tx.contract_address().unwrap();
+                    let to = tx.contract_address.unwrap();
                     shell::println(format!("Script contains a transaction to {to} which does not contain any code.").yellow())?;
 
                     // Only prompt if we're broadcasting and we've not disabled interactivity.
@@ -227,7 +229,7 @@ impl PreSimulationState {
 }
 
 /// At this point we have converted transactions collected during script execution to
-/// [TxWithMetadata] objects which contain additional metadata needed for broadcasting and
+/// [TransactionWithMetadata] objects which contain additional metadata needed for broadcasting and
 /// verification.
 pub struct FilledTransactionsState {
     pub args: ScriptArgs,
@@ -235,11 +237,11 @@ pub struct FilledTransactionsState {
     pub script_wallets: ScriptWallets,
     pub build_data: LinkedBuildData,
     pub execution_artifacts: ExecutionArtifacts,
-    pub transactions: VecDeque<TxWithMetadata>,
+    pub transactions: VecDeque<TransactionWithMetadata>,
 }
 
 impl FilledTransactionsState {
-    /// Bundles all transactions of the [`TxWithMetadata`] type in a list of
+    /// Bundles all transactions of the [`TransactionWithMetadata`] type in a list of
     /// [`ScriptSequenceManager`]. List length will be higher than 1, if we're dealing with a multi
     /// chain deployment.
     ///
@@ -263,8 +265,8 @@ impl FilledTransactionsState {
         let mut txes_iter = self.transactions.clone().into_iter().peekable();
 
         while let Some(mut tx) = txes_iter.next() {
-            let tx_rpc = tx.rpc();
-            let provider_info = manager.get_or_init_provider(&tx.rpc(), self.args.legacy).await?;
+            let tx_rpc = tx.rpc.to_owned();
+            let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy).await?;
 
             if let Some(tx) = tx.tx_mut().as_unsigned_mut() {
                 // Handles chain specific requirements for unsigned transactions.
@@ -314,7 +316,7 @@ impl FilledTransactionsState {
             // We only create a [`ScriptSequence`] object when we collect all the rpc related
             // transactions.
             if let Some(next_tx) = txes_iter.peek() {
-                if next_tx.rpc() == tx_rpc {
+                if next_tx.rpc == tx_rpc {
                     continue;
                 }
             }
@@ -387,7 +389,7 @@ impl FilledTransactionsState {
         &self,
         multi: bool,
         chain: u64,
-        transactions: VecDeque<TxWithMetadata>,
+        transactions: VecDeque<TransactionWithMetadata>,
     ) -> Result<ScriptSequenceManager> {
         // Paths are set to None for multi-chain sequences parts, because they don't need to be
         // saved to a separate file.
@@ -417,7 +419,7 @@ impl FilledTransactionsState {
             .collect();
 
         let inner = ScriptSequence {
-            transactions: transactions.into_iter().map(|tx| tx.into()).collect(),
+            transactions,
             returns: self.execution_artifacts.returns.clone(),
             receipts: vec![],
             pending: vec![],
