@@ -371,6 +371,8 @@ interface Vm {
     function record() external;
     function recordLogs() external;
     function rememberKey(uint256 privateKey) external returns (address keyAddr);
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, string calldata language, uint32 count) external returns (address[] memory keyAddrs);
     function removeDir(string calldata path, bool recursive) external;
     function removeFile(string calldata path) external;
     function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);

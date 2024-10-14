@@ -7535,6 +7535,46 @@
     },
     {
       "func": {
+        "id": "rememberKeys_0",
+        "description": "Derive a set number of wallets from a mnemonic at the derivation path `m/44'/60'/0'/0/{0..count}`.\nThe respective private keys are saved to the local forge wallet for later use and their addresses are returned.",
+        "declaration": "function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rememberKeys(string,string,uint32)",
+        "selector": "0x97cb9189",
+        "selectorBytes": [
+          151,
+          203,
+          145,
+          137
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rememberKeys_1",
+        "description": "Derive a set number of wallets from a mnemonic in the specified language at the derivation path `m/44'/60'/0'/0/{0..count}`.\nThe respective private keys are saved to the local forge wallet for later use and their addresses are returned.",
+        "declaration": "function rememberKeys(string calldata mnemonic, string calldata derivationPath, string calldata language, uint32 count) external returns (address[] memory keyAddrs);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rememberKeys(string,string,string,uint32)",
+        "selector": "0xf8d58eaf",
+        "selectorBytes": [
+          248,
+          213,
+          142,
+          175
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "removeDir",
         "description": "Removes a directory at the provided path.\nThis cheatcode will revert in the following situations, but is not limited to just these cases:\n- `path` doesn't exist.\n- `path` isn't a directory.\n- User lacks permissions to modify `path`.\n- The directory is not empty and `recursive` is false.\n`path` is relative to the project root.",
         "declaration": "function removeDir(string calldata path, bool recursive) external;",
