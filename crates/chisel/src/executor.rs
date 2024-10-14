@@ -49,6 +49,22 @@ impl SessionSource {
             // Fetch the run function's body statement
             let run_func_statements = compiled.intermediate.run_func_body()?;
 
+            // Record loc of first yul block return statement (if any).
+            // This is used to decide which is the final statement within the `run()` method.
+            // see <https://github.com/foundry-rs/foundry/issues/4617>.
+            let last_yul_return = run_func_statements.iter().find_map(|statement| {
+                if let pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } = statement {
+                    if let Some(statement) = block.statements.last() {
+                        if let pt::YulStatement::FunctionCall(yul_call) = statement {
+                            if yul_call.id.name == "return" {
+                                return Some(statement.loc())
+                            }
+                        }
+                    }
+                }
+                None
+            });
+
             // Find the last statement within the "run()" method and get the program
             // counter via the source map.
             if let Some(final_statement) = run_func_statements.last() {
@@ -58,9 +74,13 @@ impl SessionSource {
                 //
                 // There is some code duplication within the arms due to the difference between
                 // the [pt::Statement] type and the [pt::YulStatement] types.
-                let source_loc = match final_statement {
+                let mut source_loc = match final_statement {
                     pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } => {
-                        if let Some(statement) = block.statements.last() {
+                        // Select last non variable declaration statement, see <https://github.com/foundry-rs/foundry/issues/4938>.
+                        let last_statement = block.statements.iter().rev().find(|statement| {
+                            !matches!(statement, pt::YulStatement::VariableDeclaration(_, _, _))
+                        });
+                        if let Some(statement) = last_statement {
                             statement.loc()
                         } else {
                             // In the case where the block is empty, attempt to grab the statement
@@ -87,6 +107,13 @@ impl SessionSource {
                     }
                     _ => final_statement.loc(),
                 };
+
+                // Consider yul return statement as final statement (if it's loc is lower) .
+                if let Some(yul_return) = last_yul_return {
+                    if yul_return.end() < source_loc.start() {
+                        source_loc = yul_return;
+                    }
+                }
 
                 // Map the source location of the final statement of the `run()` function to its
                 // corresponding runtime program counter
@@ -306,7 +333,6 @@ impl SessionSource {
                     CheatsConfig::new(
                         &self.config.foundry_config,
                         self.config.evm_opts.clone(),
-                        None,
                         None,
                         None,
                         Some(self.solc.version.clone()),
