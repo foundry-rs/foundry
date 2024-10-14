@@ -60,6 +60,11 @@ pub struct BuildArgs {
     #[serde(skip)]
     pub sizes: bool,
 
+    /// Ignore initcode contract bytecode size limit introduced by EIP-3860
+    #[arg(long)]
+    #[serde(skip)]
+    pub ignore_eip_3860: bool,
+
     #[command(flatten)]
     #[serde(flatten)]
     pub args: CoreBuildArgs,
@@ -79,8 +84,8 @@ impl BuildArgs {
     pub fn run(self) -> Result<ProjectCompileOutput> {
         let mut config = self.try_load_config_emit_warnings()?;
 
-        if install::install_missing_dependencies(&mut config, self.args.silent) &&
-            config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config, self.args.silent)
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config();
@@ -102,6 +107,7 @@ impl BuildArgs {
             .files(files)
             .print_names(self.names)
             .print_sizes(self.sizes)
+            .ignore_eip_3860(self.ignore_eip_3860)
             .quiet(self.format_json)
             .bail(!self.format_json);
 
@@ -156,6 +162,10 @@ impl Provider for BuildArgs {
 
         if self.sizes {
             dict.insert("sizes".to_string(), true.into());
+        }
+
+        if self.ignore_eip_3860 {
+            dict.insert("ignore_eip_3860".to_string(), true.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
