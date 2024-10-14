@@ -39,7 +39,7 @@ pub struct ResolveArgs {
     /// Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
     ///
     /// Verbosity levels:
-    /// - 2: Print sources
+    /// - 2: Print source paths.
     #[arg(long, short, verbatim_doc_comment, action = ArgAction::Count, help_heading = "Display options")]
     pub verbosity: u8,
 
@@ -193,14 +193,14 @@ Solidity:
     });
 
     const CONTRACT_A: &str = r#"
-//SPDX-license-identifier: MIT
+// SPDX-license-identifier: MIT
 pragma solidity 0.8.4;
 
 contract ContractA {}
 "#;
 
     const CONTRACT_B: &str = r#"
-//SPDX-license-identifier: MIT
+// SPDX-license-identifier: MIT
 pragma solidity 0.8.11;
 
 contract ContractB {}
