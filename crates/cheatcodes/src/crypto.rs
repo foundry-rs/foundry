@@ -135,7 +135,7 @@ fn inject_wallet(state: &mut Cheatcodes, wallet: LocalSigner<SigningKey>) -> Add
         // This is needed in case of testing scripts, wherein script wallets are not set on setup.
         let script_wallets = ScriptWallets::new(MultiWallet::default(), None);
         script_wallets.add_local_signer(wallet);
-        state.wallets = Some(script_wallets);
+        state.set_wallets(script_wallets);
     }
     address
 }
