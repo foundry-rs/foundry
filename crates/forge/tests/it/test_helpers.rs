@@ -364,7 +364,7 @@ pub fn rpc_endpoints() -> RpcEndpoints {
         ("optimism", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Optimism))),
         ("arbitrum", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
         ("polygon", RpcEndpoint::Url(next_rpc_endpoint(NamedChain::Polygon))),
-        ("avaxTestnet", RpcEndpoint::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
+        ("avaxTestnet", RpcEndpoint::Url("https://rpc.ankr.com/avalanche_fuji".into())),
         ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".into())),
     ])
 }
