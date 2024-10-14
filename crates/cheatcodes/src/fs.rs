@@ -5,11 +5,14 @@ use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
 use alloy_primitives::{hex, map::Entry, Bytes, U256};
+use alloy_rpc_types::AnyTransactionReceipt;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
+use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
 use revm::interpreter::CreateInputs;
+use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
     io::{BufRead, BufReader, Write},
@@ -623,6 +626,110 @@ fn prompt(
             println!();
             Err("Prompt timed out".into())
         }
+    }
+}
+
+impl Cheatcode for getDeploymentCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let broadcast = BroadcastReader::new(contractName.clone(), *chainId);
+
+        let deployment = broadcast.find_latest(&state.config.root)?;
+
+        let (_tx, receipt) = broadcast.parse_deployment(deployment)?;
+
+        Ok(receipt.transaction_hash.abi_encode())
+    }
+}
+
+struct BroadcastReader {
+    contract_name: String,
+    chain_id: u64,
+}
+
+impl BroadcastReader {
+    fn new(contract_name: String, chain_id: u64) -> Self {
+        Self { contract_name, chain_id }
+    }
+
+    fn read_latest(&self, root: &Path) -> eyre::Result<ScriptSequence, crate::error::Error> {
+        let broadcast_path = root
+            .join("broadcast")
+            .join(format!("{}.s.sol", self.contract_name))
+            .join(self.chain_id.to_string());
+
+        if !broadcast_path.exists() {
+            bail!("deployment not found");
+        }
+
+        fs::read_json_file(&broadcast_path.join("run-latest.json"))
+            .map_err(|e| fmt_err!("failed reading deployment: {e}"))
+    }
+
+    fn parse_deployment(
+        &self,
+        deployment: ScriptSequence,
+    ) -> Result<(TransactionWithMetadata, AnyTransactionReceipt)> {
+        let tx = deployment.transactions.into_iter().find(|tx| {
+            tx.contract_name.clone().is_some_and(|cn| {
+                cn == self.contract_name &&
+                    (tx.opcode == CallKind::Create || tx.opcode == CallKind::Create2)
+            })
+        });
+
+        if let Some(tx) = tx {
+            let receipt = deployment
+                .receipts
+                .into_iter()
+                .find(|receipt| tx.hash.is_some_and(|hash| hash == receipt.transaction_hash));
+
+            if let Some(receipt) = receipt {
+                return Ok((tx, receipt));
+            }
+        }
+
+        bail!("deployment not found");
+    }
+
+    fn find_latest(&self, root: &Path) -> eyre::Result<ScriptSequence, crate::error::Error> {
+        let latest_deployment: Result<ScriptSequence> = self.read_latest(root);
+
+        if latest_deployment.is_ok() {
+            return Ok(latest_deployment.unwrap());
+        }
+
+        let broadcast_path = root
+            .join("broadcast")
+            .join(format!("{}.s.sol", self.contract_name))
+            .join(self.chain_id.to_string());
+
+        // Iterate over the files in the broadcast path directory except for the run-latest.json
+        let files = std::fs::read_dir(&broadcast_path)?
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let path = entry.path();
+                if path.file_name()?.to_string_lossy() == "run-latest.json" {
+                    return None;
+                }
+                Some(path)
+            })
+            .collect::<Vec<_>>();
+
+        let deployments = files
+            .iter()
+            .map(|path| {
+                fs::read_json_file(path).map_err(|e| fmt_err!("failed reading deployment: {e}"))
+            })
+            .collect::<Result<Vec<ScriptSequence>>>()?;
+
+        // Find the deployment with the latest timestamp
+        let target = deployments
+            .into_iter()
+            .max_by_key(|deployment| deployment.timestamp)
+            .ok_or_else(|| fmt_err!("no deployments found"))?;
+
+        Ok(target)
     }
 }
 

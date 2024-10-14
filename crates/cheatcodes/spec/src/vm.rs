@@ -1670,6 +1670,10 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
 
+    /// Returns the most recent deployment for the given contract on `chainId`
+    #[cheatcode(group = Filesystem)]
+    function getDeployment(string memory contractName, uint64 chainId) external returns (bytes32 txHash);
+
     // -------- Foreign Function Interface --------
 
     /// Performs a foreign function call via the terminal.
