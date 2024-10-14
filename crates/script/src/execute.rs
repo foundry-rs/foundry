@@ -14,7 +14,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::TransactionInput;
 use async_recursion::async_recursion;
 use eyre::{OptionExt, Result};
-use foundry_cheatcodes::ScriptWallets;
+use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
     fmt::{format_token, format_token_raw},
@@ -41,7 +41,7 @@ use yansi::Paint;
 pub struct LinkedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
+    pub script_wallets: Wallets,
     pub build_data: LinkedBuildData,
 }
 
@@ -92,7 +92,7 @@ impl LinkedState {
 pub struct PreExecutionState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
+    pub script_wallets: Wallets,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
 }
@@ -274,7 +274,7 @@ pub struct ExecutionArtifacts {
 pub struct ExecutedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
+    pub script_wallets: Wallets,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_result: ScriptResult,

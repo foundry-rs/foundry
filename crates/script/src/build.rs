@@ -8,7 +8,7 @@ use crate::{
 use alloy_primitives::{Bytes, B256};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
-use foundry_cheatcodes::ScriptWallets;
+use foundry_cheatcodes::Wallets;
 use foundry_common::{
     compile::ProjectCompiler, provider::try_get_http_provider, ContractData, ContractsByArtifact,
 };
@@ -156,7 +156,7 @@ impl LinkedBuildData {
 pub struct PreprocessedState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
+    pub script_wallets: Wallets,
 }
 
 impl PreprocessedState {
@@ -239,7 +239,7 @@ impl PreprocessedState {
 pub struct CompiledState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
+    pub script_wallets: Wallets,
     pub build_data: BuildData,
 }
 

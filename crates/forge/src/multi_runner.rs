@@ -242,7 +242,6 @@ impl MultiContractRunner {
             &self.config,
             self.evm_opts.clone(),
             Some(self.known_contracts.clone()),
-            None,
             Some(artifact_id.name.clone()),
             Some(artifact_id.version.clone()),
         );
