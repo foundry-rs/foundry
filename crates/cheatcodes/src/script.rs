@@ -61,7 +61,7 @@ impl Cheatcode for stopBroadcastCall {
     }
 }
 
-impl Cheatcode for getScriptWalletsCall {
+impl Cheatcode for getWalletsCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let script_wallets =
             ccx.state.script_wallets().cloned().map(|sw| sw.signers().unwrap_or_default());
