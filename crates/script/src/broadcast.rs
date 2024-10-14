@@ -79,10 +79,11 @@ pub async fn send_transaction(
                             bail!("After 5 attempts, provider nonce ({nonce}) is still behind expected nonce ({tx_nonce}).")
                         }
                         warn!("Expected nonce ({tx_nonce}) is ahead of provider nonce ({nonce}). Retrying in 1 second...");
-                        std::thread::sleep(std::time::Duration::from_millis(1000));
+                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
                     }
                     Ordering::Equal => {
                         // Nonces are equal, we can proceed
+                        break;
                     }
                 }
             }
