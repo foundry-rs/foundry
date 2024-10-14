@@ -111,9 +111,9 @@ impl Wallets {
         Self { inner: Arc::new(Mutex::new(WalletsInner { multi_wallet, provided_sender })) }
     }
 
-    /// Consumes [ScriptWallets] and returns [MultiWallet].
+    /// Consumes [Wallets] and returns [MultiWallet].
     ///
-    /// Panics if [ScriptWallets] is still in use.
+    /// Panics if [Wallets] is still in use.
     pub fn into_multi_wallet(self) -> MultiWallet {
         Arc::into_inner(self.inner)
             .map(|m| m.into_inner().multi_wallet)

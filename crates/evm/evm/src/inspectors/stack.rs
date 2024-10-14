@@ -57,7 +57,7 @@ pub struct InspectorStackBuilder {
     pub enable_isolation: bool,
     /// Whether to enable Alphanet features.
     pub alphanet: bool,
-    /// Wallets
+    /// The wallets to set in the cheatcodes context.
     pub wallets: Option<Wallets>,
 }
 
