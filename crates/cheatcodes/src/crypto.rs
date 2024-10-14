@@ -17,7 +17,6 @@ use k256::{
     elliptic_curve::{bigint::ArrayEncoding, sec1::ToEncodedPoint},
 };
 use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey as P256SigningKey};
-use std::sync::Arc;
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -136,7 +135,7 @@ fn inject_wallet(state: &mut Cheatcodes, wallet: LocalSigner<SigningKey>) -> Add
         // This is needed in case of testing scripts, wherein script wallets are not set on setup.
         let script_wallets = ScriptWallets::new(MultiWallet::default(), None);
         script_wallets.add_local_signer(wallet);
-        Arc::make_mut(&mut state.config).script_wallets = Some(script_wallets);
+        state.wallets = Some(script_wallets);
     }
     address
 }

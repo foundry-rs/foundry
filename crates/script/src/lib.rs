@@ -611,12 +611,12 @@ impl ScriptConfig {
                             &self.config,
                             self.evm_opts.clone(),
                             Some(known_contracts),
-                            Some(script_wallets),
                             Some(target.name),
                             Some(target.version),
                         )
                         .into(),
                     )
+                    .wallets(script_wallets)
                     .enable_isolation(self.evm_opts.isolate)
             });
         }
