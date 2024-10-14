@@ -20,7 +20,7 @@ pub fn get_commit_hash(root: &Path) -> Option<String> {
 }
 
 pub enum ScriptSequenceKind {
-    Single(ScriptSequenceManager),
+    Single(ScriptSequence),
     Multi(MultiChainSequence),
 }
 
@@ -32,14 +32,14 @@ impl ScriptSequenceKind {
         }
     }
 
-    pub fn sequences(&self) -> &[ScriptSequenceManager] {
+    pub fn sequences(&self) -> &[ScriptSequence] {
         match self {
             Self::Single(sequence) => std::slice::from_ref(sequence),
             Self::Multi(sequence) => &sequence.deployments,
         }
     }
 
-    pub fn sequences_mut(&mut self) -> &mut [ScriptSequenceManager] {
+    pub fn sequences_mut(&mut self) -> &mut [ScriptSequence] {
         match self {
             Self::Single(sequence) => std::slice::from_mut(sequence),
             Self::Multi(sequence) => &mut sequence.deployments,
@@ -54,13 +54,8 @@ impl ScriptSequenceKind {
     ) -> Result<()> {
         match self {
             Self::Single(sequence) => {
-                sequence.inner.paths = Some(ScriptSequence::get_paths(
-                    config,
-                    sig,
-                    target,
-                    sequence.inner.chain,
-                    false,
-                )?);
+                sequence.paths =
+                    Some(ScriptSequence::get_paths(config, sig, target, sequence.chain, false)?);
             }
             Self::Multi(sequence) => {
                 (sequence.path, sequence.sensitive_path) =

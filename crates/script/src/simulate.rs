@@ -9,7 +9,7 @@ use crate::{
     broadcast::{estimate_gas, BundledState},
     build::LinkedBuildData,
     execute::{ExecutionArtifacts, ExecutionData},
-    sequence::{get_commit_hash, ScriptSequenceManager},
+    sequence::get_commit_hash,
     ScriptArgs, ScriptConfig, ScriptResult,
 };
 use alloy_network::TransactionBuilder;
@@ -242,7 +242,7 @@ pub struct FilledTransactionsState {
 
 impl FilledTransactionsState {
     /// Bundles all transactions of the [`TransactionWithMetadata`] type in a list of
-    /// [`ScriptSequenceManager`]. List length will be higher than 1, if we're dealing with a multi
+    /// [`ScriptSequence`]. List length will be higher than 1, if we're dealing with a multi
     /// chain deployment.
     ///
     /// Each transaction will be added with the correct transaction type and gas estimation.
@@ -390,7 +390,7 @@ impl FilledTransactionsState {
         multi: bool,
         chain: u64,
         transactions: VecDeque<TransactionWithMetadata>,
-    ) -> Result<ScriptSequenceManager> {
+    ) -> Result<ScriptSequence> {
         // Paths are set to None for multi-chain sequences parts, because they don't need to be
         // saved to a separate file.
         let paths = if multi {
@@ -418,7 +418,7 @@ impl FilledTransactionsState {
             })
             .collect();
 
-        let inner = ScriptSequence {
+        let sequence = ScriptSequence {
             transactions,
             returns: self.execution_artifacts.returns.clone(),
             receipts: vec![],
@@ -429,6 +429,6 @@ impl FilledTransactionsState {
             chain,
             commit,
         };
-        Ok(ScriptSequenceManager::new(inner))
+        Ok(sequence)
     }
 }

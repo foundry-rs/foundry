@@ -1,6 +1,7 @@
-use crate::sequence::ScriptSequenceManager;
 use eyre::{ContextCompat, Result, WrapErr};
-use forge_script_sequence::{now, sig_to_file_name, SensitiveScriptSequence, DRY_RUN_DIR};
+use forge_script_sequence::{
+    now, sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR,
+};
 use foundry_common::fs;
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
@@ -13,7 +14,7 @@ use std::{
 /// Holds the sequences of multiple chain deployments.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct MultiChainSequence {
-    pub deployments: Vec<ScriptSequenceManager>,
+    pub deployments: Vec<ScriptSequence>,
     #[serde(skip)]
     pub path: PathBuf,
     #[serde(skip)]
@@ -30,18 +31,14 @@ pub struct SensitiveMultiChainSequence {
 impl SensitiveMultiChainSequence {
     fn from_multi_sequence(sequence: MultiChainSequence) -> Self {
         Self {
-            deployments: sequence
-                .deployments
-                .into_iter()
-                .map(|sequence| sequence.inner().clone().into())
-                .collect(),
+            deployments: sequence.deployments.into_iter().map(|sequence| sequence.into()).collect(),
         }
     }
 }
 
 impl MultiChainSequence {
     pub fn new(
-        deployments: Vec<ScriptSequenceManager>,
+        deployments: Vec<ScriptSequence>,
         sig: &str,
         target: &ArtifactId,
         config: &Config,

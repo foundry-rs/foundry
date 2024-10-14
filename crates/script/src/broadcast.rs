@@ -242,12 +242,12 @@ impl BundledState {
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
             let provider = Arc::new(try_get_http_provider(sequence.rpc_url())?);
-            let already_broadcasted = sequence.inner().receipts.len();
+            let already_broadcasted = sequence.receipts.len();
 
-            let seq_progress = progress.get_sequence_progress(i, sequence.inner());
+            let seq_progress = progress.get_sequence_progress(i, sequence);
 
-            if already_broadcasted < sequence.inner().transactions.len() {
-                let is_legacy = Chain::from(sequence.inner().chain).is_legacy() || self.args.legacy;
+            if already_broadcasted < sequence.transactions.len() {
+                let is_legacy = Chain::from(sequence.chain).is_legacy() || self.args.legacy;
                 // Make a one-time gas price estimation
                 let (gas_price, eip1559_fees) = match (
                     is_legacy,
@@ -281,7 +281,6 @@ impl BundledState {
                 // Iterate through transactions, matching the `from` field with the associated
                 // wallet. Then send the transaction. Panics if we find a unknown `from`
                 let transactions = sequence
-                    .inner()
                     .transactions
                     .iter()
                     .skip(already_broadcasted)
@@ -295,7 +294,7 @@ impl BundledState {
                             TransactionMaybeSigned::Unsigned(mut tx) => {
                                 let from = tx.from.expect("No sender for onchain transaction!");
 
-                                tx.set_chain_id(sequence.inner().chain);
+                                tx.set_chain_id(sequence.chain);
 
                                 // Set TxKind::Create explicitly to satisfy `check_reqd_fields` in
                                 // alloy
@@ -322,7 +321,7 @@ impl BundledState {
                     .collect::<Result<Vec<_>>>()?;
 
                 let estimate_via_rpc =
-                    has_different_gas_calc(sequence.inner().chain) || self.args.skip_simulation;
+                    has_different_gas_calc(sequence.chain) || self.args.skip_simulation;
 
                 // We only wait for a transaction receipt before sending the next transaction, if
                 // there is more than one signer. There would be no way of assuring
@@ -332,7 +331,7 @@ impl BundledState {
                 let sequential_broadcast = estimate_via_rpc ||
                     self.args.slow ||
                     required_addresses.len() != 1 ||
-                    !has_batch_support(sequence.inner().chain);
+                    !has_batch_support(sequence.chain);
 
                 // We send transactions and wait for receipts in batches.
                 let batch_size = if sequential_broadcast { 1 } else { self.args.batch_size };
@@ -393,15 +392,14 @@ impl BundledState {
             }
 
             let (total_gas, total_gas_price, total_paid) =
-                sequence.inner().receipts.iter().fold((0, 0, 0), |acc, receipt| {
+                sequence.receipts.iter().fold((0, 0, 0), |acc, receipt| {
                     let gas_used = receipt.gas_used;
                     let gas_price = receipt.effective_gas_price;
                     (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
                 });
             let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
-            let avg_gas_price =
-                format_units(total_gas_price / sequence.inner().receipts.len() as u128, 9)
-                    .unwrap_or_else(|_| "N/A".to_string());
+            let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u128, 9)
+                .unwrap_or_else(|_| "N/A".to_string());
 
             seq_progress.inner.write().set_status(&format!(
                 "Total Paid: {} ETH ({} gas * avg {} gwei)\n",
@@ -428,10 +426,10 @@ impl BundledState {
             if self.args.verifier.verifier == VerificationProviderType::Etherscan &&
                 self.script_config
                     .config
-                    .get_etherscan_api_key(Some(sequence.inner().chain.into()))
+                    .get_etherscan_api_key(Some(sequence.chain.into()))
                     .is_none()
             {
-                eyre::bail!("Missing etherscan key for chain {}", sequence.inner().chain);
+                eyre::bail!("Missing etherscan key for chain {}", sequence.chain);
             }
         }
 

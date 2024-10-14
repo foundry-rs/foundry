@@ -1,7 +1,4 @@
-use crate::{
-    receipts::{check_tx_status, format_receipt, TxStatus},
-    sequence::ScriptSequenceManager,
-};
+use crate::receipts::{check_tx_status, format_receipt, TxStatus};
 use alloy_chains::Chain;
 use alloy_primitives::{
     map::{B256HashMap, HashMap},
@@ -170,11 +167,10 @@ impl ScriptProgress {
     pub async fn wait_for_pending(
         &self,
         sequence_idx: usize,
-        deployment_sequence: &mut ScriptSequenceManager,
+        deployment_sequence: &mut ScriptSequence,
         provider: &RetryProvider,
         timeout: u64,
     ) -> Result<()> {
-        let deployment_sequence = deployment_sequence.inner_mut();
         if deployment_sequence.pending.is_empty() {
             return Ok(());
         }

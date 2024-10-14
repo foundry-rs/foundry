@@ -1,9 +1,6 @@
 use crate::{
-    broadcast::BundledState,
-    execute::LinkedState,
-    multi_sequence::MultiChainSequence,
-    sequence::{ScriptSequenceKind, ScriptSequenceManager},
-    ScriptArgs, ScriptConfig,
+    broadcast::BundledState, execute::LinkedState, multi_sequence::MultiChainSequence,
+    sequence::ScriptSequenceKind, ScriptArgs, ScriptConfig,
 };
 use alloy_primitives::{Bytes, B256};
 use alloy_provider::Provider;
@@ -289,10 +286,9 @@ impl CompiledState {
 
         let (args, build_data, script_wallets, script_config) = if !self.args.unlocked {
             let mut froms = sequence.sequences().iter().flat_map(|s| {
-                s.inner()
-                    .transactions
+                s.transactions
                     .iter()
-                    .skip(s.inner().receipts.len())
+                    .skip(s.receipts.len())
                     .map(|t| t.transaction.from().expect("from is missing in script artifact"))
             });
 
@@ -320,7 +316,7 @@ impl CompiledState {
 
         // Collect libraries from sequence and link contracts with them.
         let libraries = match sequence {
-            ScriptSequenceKind::Single(ref seq) => Libraries::parse(&seq.inner().libraries)?,
+            ScriptSequenceKind::Single(ref seq) => Libraries::parse(&seq.libraries)?,
             // Library linking is not supported for multi-chain sequences
             ScriptSequenceKind::Multi(_) => Libraries::default(),
         };
@@ -345,7 +341,6 @@ impl CompiledState {
                 chain,
                 dry_run,
             )?;
-            let sequence = ScriptSequenceManager::new(sequence);
             Ok(ScriptSequenceKind::Single(sequence))
         } else {
             let sequence = MultiChainSequence::load(
