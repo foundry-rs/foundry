@@ -43,21 +43,16 @@ impl<'a> LocalTraceIdentifier<'a> {
         let mut min_score = f64::MAX;
         let mut min_score_id = None;
 
-        let mut check = |id| {
+        let mut check_creation_code = |id| {
             let contract = self.known_contracts.get(id)?;
-            if let Some(deployed_bytecode) = contract.deployed_bytecode() {
-                let mut score = bytecode_diff_score(deployed_bytecode, runtime_code);
-
-                // Compute and use creation code score.
-                if let Some(bytecode) = contract.bytecode() {
-                    score += bytecode_diff_score(bytecode, creation_code);
-                    score /= 2.0;
-                }
+            if let Some(bytecode) = contract.bytecode() {
+                let score = bytecode_diff_score(bytecode, creation_code);
 
                 if score == 0.0 {
-                    trace!(target: "evm::traces", "found exact match");
+                    trace!(target: "evm::traces", "found exact match for creation code");
                     return Some((id, &contract.abi));
                 }
+
                 if score < min_score {
                     min_score = score;
                     min_score_id = Some((id, &contract.abi));
@@ -76,7 +71,7 @@ impl<'a> LocalTraceIdentifier<'a> {
             if len > max_len {
                 break;
             }
-            if let found @ Some(_) = check(id) {
+            if let found @ Some(_) = check_creation_code(id) {
                 return found;
             }
         }
@@ -86,12 +81,39 @@ impl<'a> LocalTraceIdentifier<'a> {
         let idx = self.find_index(min_len);
         for i in idx..same_length_idx {
             let (id, _) = self.ordered_ids[i];
-            if let found @ Some(_) = check(id) {
+            if let found @ Some(_) = check_creation_code(id) {
                 return found;
             }
         }
 
         trace!(target: "evm::traces", %min_score, "no exact match found");
+
+        // Fallback to comparing deployed bytecode if min score greater than threshold.
+        if min_score >= 0.85 {
+            let mut check_deployed_code = |id| {
+                let contract = self.known_contracts.get(id)?;
+                if let Some(bytecode) = contract.deployed_bytecode() {
+                    let score = bytecode_diff_score(bytecode, runtime_code);
+
+                    if score == 0.0 {
+                        trace!(target: "evm::traces", "found exact match for deployed code");
+                        return Some((id, &contract.abi));
+                    }
+
+                    if score < min_score {
+                        min_score = score;
+                        min_score_id = Some((id, &contract.abi));
+                    }
+                }
+                None
+            };
+
+            for (artifact, _) in &self.ordered_ids {
+                if let found @ Some(_) = check_deployed_code(artifact) {
+                    return found;
+                }
+            }
+        }
 
         // Note: the diff score can be inaccurate for small contracts so we're using a relatively
         // high threshold here to avoid filtering out too many contracts.
