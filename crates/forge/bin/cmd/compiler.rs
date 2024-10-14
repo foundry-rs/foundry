@@ -206,15 +206,53 @@ pragma solidity 0.8.11;
 contract ContractB {}
 "#;
 
+    const VYPER_INTERFACE: &str = r#"
+# pragma version ^0.3.10
+
+@external
+@view
+def number() -> uint256:
+    return empty(uint256)
+
+@external
+def set_number(new_number: uint256):
+    pass
+
+@external
+def increment() -> uint256:
+    return empty(uint256)
+"#;
+
+    const VYPER_CONTRACT: &str = r#"
+import ICounter
+implements: ICounter
+
+number: public(uint256)
+
+@external
+def set_number(new_number: uint256):
+    self.number = new_number
+
+@external
+def increment() -> uint256:
+    self.number += 1
+    return self.number
+"#;
+
     forgetest_init!(can_list_resolved_multiple_compiler_versions, |prj, cmd| {
         prj.add_source("ContractA", CONTRACT_A).unwrap();
         prj.add_source("ContractB", CONTRACT_B).unwrap();
+        prj.add_raw_source("ICounter.vy", VYPER_INTERFACE).unwrap();
+        prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
 
         cmd.args(["compiler", "resolve"]).assert_success().stdout_eq(str![[r#"
 Solidity:
 - 0.8.4
 - 0.8.11
 - 0.8.27
+
+Vyper:
+- 0.4.0
 
 
 "#]]);
@@ -223,6 +261,8 @@ Solidity:
     forgetest_init!(can_list_resolved_multiple_compiler_versions_verbose, |prj, cmd| {
         prj.add_source("ContractA", CONTRACT_A).unwrap();
         prj.add_source("ContractB", CONTRACT_B).unwrap();
+        prj.add_raw_source("ICounter.vy", VYPER_INTERFACE).unwrap();
+        prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
 
         cmd.args(["compiler", "resolve", "-v"]).assert_success().stdout_eq(str![[r#"
 Solidity:
@@ -262,7 +302,83 @@ Solidity:
 ├── src/Counter.sol
 └── test/Counter.t.sol
 
+Vyper:
+
+0.4.0:
+├── src/Counter.vy
+└── src/ICounter.vy
+
 
 "#]]);
+    });
+
+    forgetest_init!(can_list_resolved_multiple_compiler_versions_json, |prj, cmd| {
+        prj.add_source("ContractA", CONTRACT_A).unwrap();
+        prj.add_source("ContractB", CONTRACT_B).unwrap();
+        prj.add_raw_source("ICounter.vy", VYPER_INTERFACE).unwrap();
+        prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
+
+        // {
+        //     "Solidity":[
+        //         [
+        //             "0.8.4",
+        //             [
+        //                 "src/ContractA.sol"
+        //             ]
+        //         ],
+        //         [
+        //             "0.8.11",
+        //             [
+        //                 "src/ContractB.sol"
+        //             ]
+        //         ],
+        //         [
+        //             "0.8.27",
+        //             [
+        //                 "lib/forge-std/src/Base.sol",
+        //                 "lib/forge-std/src/Script.sol",
+        //                 "lib/forge-std/src/StdAssertions.sol",
+        //                 "lib/forge-std/src/StdChains.sol",
+        //                 "lib/forge-std/src/StdCheats.sol",
+        //                 "lib/forge-std/src/StdError.sol",
+        //                 "lib/forge-std/src/StdInvariant.sol",
+        //                 "lib/forge-std/src/StdJson.sol",
+        //                 "lib/forge-std/src/StdMath.sol",
+        //                 "lib/forge-std/src/StdStorage.sol",
+        //                 "lib/forge-std/src/StdStyle.sol",
+        //                 "lib/forge-std/src/StdToml.sol",
+        //                 "lib/forge-std/src/StdUtils.sol",
+        //                 "lib/forge-std/src/Test.sol",
+        //                 "lib/forge-std/src/Vm.sol",
+        //                 "lib/forge-std/src/console.sol",
+        //                 "lib/forge-std/src/console2.sol",
+        //                 "lib/forge-std/src/interfaces/IERC165.sol",
+        //                 "lib/forge-std/src/interfaces/IERC20.sol",
+        //                 "lib/forge-std/src/interfaces/IERC721.sol",
+        //                 "lib/forge-std/src/interfaces/IMulticall3.sol",
+        //                 "lib/forge-std/src/mocks/MockERC20.sol",
+        //                 "lib/forge-std/src/mocks/MockERC721.sol",
+        //                 "lib/forge-std/src/safeconsole.sol",
+        //                 "script/Counter.s.sol",
+        //                 "src/Counter.sol",
+        //                 "test/Counter.t.sol"
+        //             ]
+        //         ]
+        //     ],
+        //     "Vyper":[
+        //         [
+        //             "0.4.0",
+        //             [
+        //                 "src/Counter.vy",
+        //                 "src/ICounter.vy"
+        //             ]
+        //         ]
+        //     ]
+        // }
+        cmd.args(["compiler", "resolve", "--json"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+{"Solidity":[["0.8.4",["src/ContractA.sol"]],["0.8.11",["src/ContractB.sol"]],["0.8.27",["lib/forge-std/src/Base.sol","lib/forge-std/src/Script.sol","lib/forge-std/src/StdAssertions.sol","lib/forge-std/src/StdChains.sol","lib/forge-std/src/StdCheats.sol","lib/forge-std/src/StdError.sol","lib/forge-std/src/StdInvariant.sol","lib/forge-std/src/StdJson.sol","lib/forge-std/src/StdMath.sol","lib/forge-std/src/StdStorage.sol","lib/forge-std/src/StdStyle.sol","lib/forge-std/src/StdToml.sol","lib/forge-std/src/StdUtils.sol","lib/forge-std/src/Test.sol","lib/forge-std/src/Vm.sol","lib/forge-std/src/console.sol","lib/forge-std/src/console2.sol","lib/forge-std/src/interfaces/IERC165.sol","lib/forge-std/src/interfaces/IERC20.sol","lib/forge-std/src/interfaces/IERC721.sol","lib/forge-std/src/interfaces/IMulticall3.sol","lib/forge-std/src/mocks/MockERC20.sol","lib/forge-std/src/mocks/MockERC721.sol","lib/forge-std/src/safeconsole.sol","script/Counter.s.sol","src/Counter.sol","test/Counter.t.sol"]]],"Vyper":[["0.4.0",["src/Counter.vy","src/ICounter.vy"]]]}
+"#]].is_jsonlines());
     });
 }

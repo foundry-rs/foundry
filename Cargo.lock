@@ -3737,8 +3737,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c6cc925fc9fdd73f1038c528fef17ddbdd7512311809ace7d1860fe3666dbb5"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=877ab1c#877ab1c3a45efd339d4c3bd6fd7c5942561c477a"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3775,8 +3774,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d5c999c80c6d702c51522f5b4a805bec5fcae978637f0c337fa5c7a4b43d863"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=877ab1c#877ab1c3a45efd339d4c3bd6fd7c5942561c477a"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3785,8 +3783,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3747cfeab1fc8299d70ceae0a28b7e2e005324e8eba78ac7d06729d67be5a1ec"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=877ab1c#877ab1c3a45efd339d4c3bd6fd7c5942561c477a"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3809,8 +3806,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbd5c142355bd4822b8a7ec37268cfafe37b2e36835fa8d067b2b9d5a22c7529"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=877ab1c#877ab1c3a45efd339d4c3bd6fd7c5942561c477a"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3824,8 +3820,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1291c05a4c8c3b4558eb1b50f53ee1f1b599ff2490d62cdc519ad5ae4b088d6"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=877ab1c#877ab1c3a45efd339d4c3bd6fd7c5942561c477a"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
