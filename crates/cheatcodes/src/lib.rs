@@ -45,7 +45,7 @@ mod inspector;
 mod json;
 
 mod script;
-pub use script::{ScriptWallets, ScriptWalletsInner};
+pub use script::{Wallets, WalletsInner};
 
 mod string;
 

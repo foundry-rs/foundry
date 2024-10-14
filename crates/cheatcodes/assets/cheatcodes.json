@@ -5453,18 +5453,18 @@
     },
     {
       "func": {
-        "id": "getScriptWallets",
+        "id": "getWallets",
         "description": "Returns addresses of available unlocked wallets in the script environment.",
-        "declaration": "function getScriptWallets() external returns (address[] memory wallets);",
+        "declaration": "function getWallets() external returns (address[] memory wallets);",
         "visibility": "external",
         "mutability": "",
-        "signature": "getScriptWallets()",
-        "selector": "0x7c49aa1f",
+        "signature": "getWallets()",
+        "selector": "0xdb7a4605",
         "selectorBytes": [
-          124,
-          73,
-          170,
-          31
+          219,
+          122,
+          70,
+          5
         ]
       },
       "group": "scripting",
